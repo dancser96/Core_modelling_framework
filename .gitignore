@@ -1,0 +1,31 @@
+# --- environments & caches ---
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+*.egg-info/
+build/
+dist/
+
+# --- editor / OS ---
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+
+# --- environment-specific config: never committed (bank paths, table names, secrets) ---
+conf/local/*
+!conf/local/README.md
+
+# --- data & run outputs: never committed (layered Kedro-style folders) ---
+data/*
+!data/README.md
+
+# --- legacy crunch run outputs ---
+legacy/**/artifacts/
+legacy/**/06_models/
+legacy/**/07_model_output/
+
+# --- personal Claude Code settings (project settings/skills/agents ARE committed) ---
+.claude/settings.local.json

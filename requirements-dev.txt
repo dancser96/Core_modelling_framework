@@ -1,0 +1,6 @@
+# Local development only (never required inside the bank).
+-r requirements.txt
+-e .
+pytest>=8
+ruff>=0.6
+ipykernel>=6
