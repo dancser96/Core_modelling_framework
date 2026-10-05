@@ -205,11 +205,17 @@ anything unverified as such. Run the **doc-sync** skill at the end of every task
 | Skill | `doc-sync` | End of every task — applies §8 |
 | Skill | `new-component` | Adding a new spine/lifecycle component |
 | Skill | `bank-parity-check` | New imports/deps, IO code, anything that must run inside the bank |
+| Skill | `brainstorming` | New or unsettled design, before the §1 plan |
+| Skill | `systematic-debugging` | Any bug, test failure or unexpected behaviour, before proposing a fix |
+| Skill | `verification-before-completion` | Before claiming anything is done, fixed or passing |
+| Skill | `claude-md-improver` / `/revise-claude-md` | Auditing CLAUDE.md or capturing session learnings |
 | Subagent | `code-reviewer` | Before declaring any code change done (fresh-context review) |
+| Subagent | `silent-failure-hunter` | Changes to error handling, fallbacks, coercion, IO or validation |
 | Subagent | `ml-correctness-auditor` | Changes to data, splits, features, training, evaluation, calibration, inference |
 | Subagent | `compat-guardian` | Changes to config schemas, public API or artifact formats |
 
-How to add more: `docs/guides/skills_and_agents.md`.
+Vendored items and their sources: `.claude/skills/SOURCES.md`. How to add more:
+`docs/guides/skills_and_agents.md`.
 
 ---
 

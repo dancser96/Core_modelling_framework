@@ -21,11 +21,25 @@ gets them through git.
 | Skill | `doc-sync` | Applies the documentation update rules at the end of a task |
 | Skill | `new-component` | Adds a new component with its doc, config section, tests and status row |
 | Skill | `bank-parity-check` | Checks deps, imports and IO against the bank environment |
+| Skill | `brainstorming` *(vendored)* | Clarifies intent and design before the CLAUDE.md plan step for new or unsettled work |
+| Skill | `systematic-debugging` *(vendored)* | Root cause before any fix; one hypothesis at a time |
+| Skill | `verification-before-completion` *(vendored)* | No "done" or "passing" claim without fresh command output |
+| Skill | `claude-md-improver` *(vendored)* | Audits CLAUDE.md and routes findings per §8 |
+| Command | `/revise-claude-md` *(vendored)* | Captures session learnings into CLAUDE.md or the right doc |
 | Subagent | `code-reviewer` | Fresh-context review for simplicity, clarity, structure |
 | Subagent | `ml-correctness-auditor` | Leakage, time separation, evaluation and calibration invariants |
 | Subagent | `compat-guardian` | Forward compatibility: config schemas, public API, artifact formats |
+| Subagent | `silent-failure-hunter` *(vendored)* | Swallowed exceptions, silent fallbacks, data coercion that hides failures |
+| Plugin | `pyright-lsp` | Live Python type checking for Claude (enabled in `.claude/settings.json`; optional local `pyright`) |
 
-Vendored third-party skills: none yet (record them in `.claude/skills/SOURCES.md`).
+Vendored items are adapted to this repo; sources, commits and local changes are in
+`.claude/skills/SOURCES.md`.
+
+**Deliberate exception to "everything lives in the repo":** Anthropic's `skill-creator` is used from
+the user-level plugin (`/plugin install example-skills@anthropic-agent-skills`), not vendored. It is
+~250KB with scripts that call `claude -p`, open a browser and load CDN assets: too heavy to review
+and not something to ship in the bank zip. `pyright-lsp` is likewise a marketplace plugin, because
+it is LSP configuration with no files to vendor.
 
 ## Anatomy
 
@@ -57,7 +71,7 @@ Manage subagents with `/agents`. If a new one doesn't show up, restart Claude Co
 
 1. Confirm it is a *repeated* procedure. One-offs belong in the prompt, not a skill.
 2. Write it in `.claude/skills/<name>/SKILL.md` or `.claude/agents/<name>.md`. Anthropic's
-   `skill-creator` skill (in `anthropics/skills`) is a good authoring aid.
+   `skill-creator` skill (user-level plugin, see above) is a good authoring aid.
 3. Test it: ask for a task that should trigger it and check that it does. Tighten the description if
    it doesn't.
 4. Add it to the inventory above and commit.
@@ -91,5 +105,8 @@ but vendor what you keep.
 
 Never add a skill that fetches remote content or instructions at runtime.
 
-**Sources worth knowing:** `anthropics/skills` (official examples, including `skill-creator`).
-Community collections exist; treat them as unvetted until reviewed.
+**Sources worth knowing:** `anthropics/skills` (official examples, including `skill-creator`),
+`anthropics/claude-plugins-official` (small single-purpose plugins whose agents and skills can be
+vendored file by file), `obra/superpowers` (process skills; strongly opinionated, adapt before use).
+Large all-in-one kits (e.g. ECC) are not a fit for this repo's code-light rules. Community
+collections exist; treat them as unvetted until reviewed.

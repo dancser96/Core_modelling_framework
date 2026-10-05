@@ -19,11 +19,14 @@ never from chat history.
    Ask it to read `docs/UPDATES.md` and the relevant component doc.
 2. **Plan first.** Ask for a plan (files, function names/signatures, what is left out). In the CLI,
    `Shift+Tab` cycles into plan mode. Approve or trim it — cutting scope here is the cheapest
-   anti-slop step.
+   anti-slop step. For new or unsettled design, "brainstorm this first" runs the `brainstorming`
+   skill before the plan.
 3. **Small steps.** One logical change per step. Review every diff line-by-line before accepting.
 4. **Checks.** `pytest`, `ruff check .`, then "run the code-reviewer subagent on this diff".
-   Add `ml-correctness-auditor` / `compat-guardian` when their triggers apply (`CLAUDE.md` §10).
-5. **Docs.** "Run doc-sync" — component doc, `UPDATES.md`, decisions if any.
+   Add `silent-failure-hunter` / `ml-correctness-auditor` / `compat-guardian` when their triggers
+   apply (`CLAUDE.md` §10). For bugs, "debug this systematically" runs `systematic-debugging`.
+5. **Docs.** "Run doc-sync" — component doc, `UPDATES.md`, decisions if any. Occasionally,
+   `/revise-claude-md` captures session learnings into `CLAUDE.md` or the right doc.
 6. **Commit and push** (one branch per task; merge when happy). The next machine picks up from git.
 
 ## Prompts that work well here

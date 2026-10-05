@@ -60,6 +60,9 @@ If LightGBM or XGBoost fail to import with an OpenMP error, `brew reinstall libo
    Claude Code).
 3. *Python: Select Interpreter* → `./.venv/bin/python`.
 4. Claude Code CLI: `curl -fsSL https://claude.ai/install.sh | bash`, then `claude` to log in.
-5. Optional: turn on VS Code **Settings Sync** so both machines share settings and extensions.
+5. Optional, gives Claude live Python type checking: `brew install pyright` (outside the venv; dev
+   machine only), then once in the repo
+   `claude plugin install pyright-lsp@claude-plugins-official --scope project`.
+6. Optional: turn on VS Code **Settings Sync** so both machines share settings and extensions.
 
 Next: `docs/guides/claude_code_workflow.md`.

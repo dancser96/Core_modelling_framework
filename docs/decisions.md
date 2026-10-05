@@ -23,3 +23,4 @@ Add a new entry rather than rewriting an old one; mark superseded entries.
 | D-016 | Scoring outputs are batch-scoped (`<outputs>/<scoring_batch_id>/{scores, manifest}`), written once per batch | Crunch lessons T6/T7 | decided |
 | D-017 | LLM-assisted modelling comes after internalisation; provider-agnostic interface (Anthropic API / Bedrock), token-frugal | Limited tokens and older models inside the bank | soft |
 | D-018 | Distribution (service vs forkable template repo) is undecided; the design must support both | Governance decision outside this repo | soft |
+| D-019 | Third-party Claude Code skills/agents are vendored file by file and adapted (sources in `.claude/skills/SOURCES.md`); no all-in-one kits (e.g. ECC). Exceptions: `skill-creator` stays user-level, `pyright-lsp` is enabled as a marketplace plugin | Keep the agent setup small and reviewable; heavy script bundles don't belong in the bank zip | decided |

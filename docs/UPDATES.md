@@ -35,6 +35,10 @@ Status values: `legacy-only` (exists only in legacy) · `designing` · `stub` (i
 
 ## Log (major changes only, newest first)
 
+- 2026-10-05 — Vendored and adapted `silent-failure-hunter`, `brainstorming`, `systematic-debugging`,
+  `verification-before-completion`, `claude-md-improver` + `/revise-claude-md`; enabled the
+  `pyright-lsp` plugin (D-019).
+
 - 2026-09-30 — Repo bootstrapped for Phase 2: `CLAUDE.md`, docs tree, component docs, skills,
   subagents, requirements pinned to bank parity, empty `core_modelling` package, crunch code moved to
   `legacy/propensity_crunch/`.

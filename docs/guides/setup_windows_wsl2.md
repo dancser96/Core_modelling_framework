@@ -94,5 +94,8 @@ pytest                        # 'no tests ran' is expected until the first tests
    claude                        # log in with your Claude account
    ```
 6. Notebooks: open any `.ipynb` and pick the `.venv` kernel.
+7. Optional, gives Claude live Python type checking: `sudo apt install -y pipx && pipx install
+   pyright` (outside the venv; dev machine only), then once in the repo
+   `claude plugin install pyright-lsp@claude-plugins-official --scope project`.
 
 Next: `docs/guides/claude_code_workflow.md`.
