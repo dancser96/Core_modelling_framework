@@ -7,6 +7,23 @@ description: "Use before designing a new component, feature, config section or a
 
 Help turn ideas into fully formed designs and specs through natural collaborative dialogue.
 
+## In this repo: major steps start wide
+
+For a **major step** (`CLAUDE.md` §1 workflow step 0: a new component, config section, public
+function or dependency, or anything the user calls a significant redesign or extension), add three
+things before proposing approaches:
+1. **Research.** Look up current best practice and how comparable frameworks solve the problem. Web
+   search is allowed. Keep the sources for the decision entry.
+2. **Critique.** Challenge the user's ideas as openly as your own. Say where a request leads to
+   over-engineering or a correctness risk, and offer the simpler option.
+3. **Holistic review.** Run the `holistic-review` skill so effects on every other component are
+   visible before the design narrows.
+
+Consult the way this user prefers (`CLAUDE.md` §9): numbered questions, each with a proposed
+default. Options come with when-to-use guidance and a recommendation, at an altitude that matches the
+phase. There is no research folder: findings feed the design, and outcomes (with sources) go to
+`docs/decisions.md`.
+
 Start by classifying how much process the request needs, then work
 through your path: understand the context, refine the idea, present a
 design, and get your human partner's approval.

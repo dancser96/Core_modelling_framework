@@ -18,14 +18,18 @@ gets them through git.
 | Kind | Name | Purpose |
 |---|---|---|
 | Skill | `simplicity-review` | Checklist review of a diff against the code-light rules |
-| Skill | `doc-sync` | Applies the documentation update rules at the end of a task |
+| Skill | `doc-sync` | Applies the documentation rules (`CLAUDE.md` §8) at the end of a task, including the local sync notes |
+| Skill | `holistic-review` | Cross-component review against goals, architecture, every component doc and the decision log, so no component is extended in isolation |
 | Skill | `new-component` | Adds a new component with its doc, config section, tests and status row |
 | Skill | `bank-parity-check` | Checks deps, imports and IO against the bank environment |
-| Skill | `brainstorming` *(vendored)* | Clarifies intent and design before the CLAUDE.md plan step for new or unsettled work |
+| Skill | `brainstorming` *(vendored)* | Clarifies intent and design before the CLAUDE.md plan step; for major steps adds research, critique and a holistic review |
 | Skill | `systematic-debugging` *(vendored)* | Root cause before any fix; one hypothesis at a time |
 | Skill | `verification-before-completion` *(vendored)* | No "done" or "passing" claim without fresh command output |
 | Skill | `claude-md-improver` *(vendored)* | Audits CLAUDE.md and routes findings per §8 |
 | Command | `/revise-claude-md` *(vendored)* | Captures session learnings into CLAUDE.md or the right doc |
+| Command | `/brief` | Briefing for the daily Lead DS sync; refreshes the shared `worknotes/sync.md` |
+| Command | `/handover <topic>` | Writes a chat handover for one topic to `worknotes/handovers/<topic>.md` |
+| Command | `/resume <topic>` | Resumes a topic in a new chat from its handover |
 | Subagent | `code-reviewer` | Fresh-context review for simplicity, clarity, structure |
 | Subagent | `ml-correctness-auditor` | Leakage, time separation, evaluation and calibration invariants |
 | Subagent | `compat-guardian` | Forward compatibility: config schemas, public API, artifact formats |

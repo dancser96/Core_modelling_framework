@@ -1,36 +1,66 @@
-# CLAUDE.md — retail.core_modelling
+# CLAUDE.md — core_modelling
 
-A config-driven modelling framework. Low- and medium-value use cases are meant to be delivered
-through it in ~3–4 weeks instead of ~3–4 months of bespoke work. Package: `src/core_modelling/`.
-**Current state:** Phase 2 has just started. The package is an empty skeleton; the working crunch
-implementation lives in `legacy/propensity_crunch/` as reference only.
+**What this is.** `core_modelling` is how the unit builds, ships and maintains models: a versioned
+Python library driven by one config file per use case, used through guided notebooks, a CLI and a
+Python API. It replaces months of bespoke work with delivery in days: about 3 days on the hands-off
+`quick` profile, up to about 3 weeks on `thorough`. It sets one standard for every stage of the data
+science lifecycle: correctness, reproducibility, maintainability, a shared vocabulary and an overview
+of every live model. Where we start from and where we want to reach: `docs/context/project.md`.
+
+- **Lifecycle:** Target Factory (optional) → EDA → Feature Checks → Training → Evaluation → register →
+  promote → deploy → Inference → Monitoring. Every stage runs alone from a config. Model tiers are
+  local → registered → production, and a data scientist's session never writes to production.
+- **Intermediate outputs:** every stage writes its own artifacts and a self-contained HTML report
+  (EDA, feature checks + feature ledger, model performance, model card, monitoring).
+- **Coverage:** panel tasks (one row per unit per period) first: binary, plus at least one more task
+  type in Phase 2. Series tasks (forecasting) come later. Any domain (retail, SME, corporate) and any
+  entity (subsidiary) is handled through configuration.
+- **Model types:** AutoML (FLAML) and predefined model families tuned with Optuna, behind one model
+  interface.
+- **Current state:** Phase 2, design baseline done; the package is still a skeleton. The crunch
+  implementation in `legacy/propensity_crunch/` is reference only. Status: `docs/UPDATES.md`. Plan
+  and open decisions: `docs/roadmap.md`. Vocabulary: `docs/glossary.md`. Reading order and the
+  stage → component map: `docs/README.md`.
 
 ## 0. Start of every session
 
-1. Read `docs/UPDATES.md` — current state, open items, what was done last.
-2. New to the repo or the task touches scope/goals: read `docs/context/project.md`.
-3. Working on a component: read `docs/components/<component>.md` and its legacy reference.
-4. Touching IO, dependencies or anything environment-specific: read `docs/context/environment.md`.
-5. Before designing anything: check `docs/decisions.md` so you don't re-litigate settled decisions.
+1. Read `docs/UPDATES.md`: current state and what was done last.
+2. Planning, prioritising or "what next": read `docs/roadmap.md` (milestones, backlog, open decisions).
+3. New to the repo, or the task touches scope or goals: read `docs/context/project.md` and
+   `docs/glossary.md`.
+4. Working on a component: find it in the stage map in `docs/README.md`, then read
+   `docs/components/<component>.md`, the docs in its **Related** line, and its legacy reference.
+5. Touching IO, dependencies or anything environment-specific: read `docs/context/environment.md`.
+6. Before designing anything: check `docs/decisions.md` so you don't re-litigate settled decisions.
+7. **Don't read `worknotes/` unless asked.** `/resume <topic>` loads a handover; `/brief` (or "what
+   happened recently?") reads the sync page.
 
 ---
 
 ## 1. Prime directive: code-light, no slop
 
-Every line you write will be read and reviewed by a human. The failure mode this repo exists to
-avoid is the huge AI-generated pipeline nobody understands. Readable, boring, small code wins over
-clever, complete or "future-proof" code. When in doubt, write less.
+Every line you write will be read and reviewed by a human. The failure mode this repo exists to avoid
+is the huge AI-generated pipeline nobody understands. Readable, boring, small code wins over clever,
+complete or "future-proof" code. When in doubt, write less.
 
 **Rules**
 
 1. **Simplest thing that works.** Build what the current task needs; nothing speculative.
-2. **Functions first.** Use classes only for data that travels together (Pydantic config models,
-   small dataclasses). No inheritance hierarchies, ABCs, metaclasses, registries built from
-   decorators, dependency-injection frameworks or "manager"/"factory"/"engine" classes.
+2. **Functions first.** Functions are the default. A class is fine when state and behaviour genuinely
+   travel together across calls. Examples:
+   - Pydantic config models and small dataclasses;
+   - scikit-learn-compatible estimator/transformer wrappers (subclassing `BaseEstimator`, which
+     pickling, SHAP and pipelines need);
+   - a small `Protocol` shared by interchangeable parts, e.g. the AutoML and predefined-model paths.
+
+   Inherit only from library base classes, or one shallow level of your own, and say why in the
+   step summary. Still no ABC hierarchies, metaclasses, decorator registries, dependency-injection
+   frameworks or "manager"/"factory"/"engine" classes.
 3. **One function, one job.** Aim for ≤ ~40 lines. If it grows, split it into well-named helpers.
 4. **Names say what things do.** Functions are `verb_noun` (`load_snapshot`, `compute_psi`,
-   `promote_model`). Only standard abbreviations (`df`, `cfg`, `auc`, `oot`, `psi`). No `utils.py`
-   / `helpers.py` dumping grounds — a module is named for its one concept.
+   `promote_model`). Only standard abbreviations (`df`, `cfg`, `auc`, `oot`, `psi`). No `utils.py` /
+   `helpers.py` dumping grounds — a module is named for its one concept. Terms follow
+   `docs/glossary.md`.
 5. **Files by responsibility.** One module ≈ one concept, roughly ≤ 300 lines. If you can't name the
    module in two words, it is doing too much.
 6. **No abstraction before a second real use.** The exception is §3 "shapes must be task-agnostic":
@@ -38,38 +68,55 @@ clever, complete or "future-proof" code. When in doubt, write less.
 7. **Extension points are plain dicts** mapping names to functions
    (`METRICS_BY_TASK = {"binary": binary_metrics}`). No plugin frameworks.
 8. **Fail loud.** Never swallow exceptions. Validate at boundaries (config load, data contract) with
-   clear messages; catch only what you can actually handle.
+   clear messages; catch only what you can actually handle. Anything that *should* work and doesn't
+   is an error. The one exception is an output declared incompatible *up front*, e.g. a view a model
+   family can't produce according to the compatibility table. It is skipped and shown as "not
+   available: reason". That is decided before running, never by catching an error (D-035).
 9. **Comments say why, not what.** Docstrings are one summary line, plus arguments only when not
-   obvious. No commented-out code, no dead code, no TODOs without a row in `docs/UPDATES.md`.
+   obvious. No commented-out code, no dead code, no TODOs without a row in `docs/UPDATES.md` or
+   `docs/roadmap.md`.
 10. **Type hints on public functions**, kept simple (`pd.DataFrame`, `dict[str, float]`).
-11. **Use the library.** Prefer pandas / PySpark / scikit-learn built-ins over hand-rolled versions.
+11. **Use the library.** Prefer pandas / PySpark / scikit-learn / scipy built-ins over hand-rolled
+    versions.
 12. **No new dependency without asking.** It must also be installable inside the bank (see §5).
 13. **Small, reviewable steps.** One logical change per step, roughly ≤ 200 changed lines unless
     agreed. Stop, summarise, let the user review.
 
 **Workflow for any non-trivial task**
-1. Propose a plan first: files to touch, function names + signatures, what is deliberately left out.
-   Wait for approval.
+
+0. **Major steps start wide.** A major step is a new component, config section, public function or
+   dependency, or anything the user calls a significant redesign or extension. Before the plan:
+   - Use `brainstorming`: research current best practice (web search allowed; cite sources) and
+     critique the user's ideas as openly as your own.
+   - Run `holistic-review`, so the effects on every other component are on the table.
+
+   **Never tunnel:** no component, and no legacy port, is extended in isolation. Outcomes go to
+   `docs/decisions.md` with sources; there is no research folder.
+1. Propose a plan: files to touch, function names + signatures, what is deliberately left out. Wait
+   for approval.
 2. Implement in small steps. Run `pytest` and `ruff check .` after each.
-3. Before calling it done, run the **code-reviewer** subagent on the diff (plus the specialised
-   subagents in §10 when their trigger applies). Fix or explicitly justify every finding.
-4. Update docs per §8. Report: what changed, why, what to review first, open risks.
+3. Before calling it done, run the **code-reviewer** subagent on the diff, plus the specialised
+   subagents in §10 when their trigger applies. Fix or explicitly justify every finding.
+4. Update docs per §8, including `worknotes/sync.md` and `worknotes/log.md`. Report: what changed, why, what to review
+   first, open risks.
 
 ---
 
 ## 2. Where simplicity does NOT win: forward compatibility
 
-The framework will push updates into every use case built on it, so breaking changes are expensive.
-Simplicity never justifies a silent breaking change.
+Each use case pins the framework version it runs with and upgrades at its own pace (D-047). Many
+versions therefore run at once and write to the same shared tables, and every upgrade must keep a
+use case and its production model working. Simplicity never justifies a silent breaking change, and
+pinning doesn't relax this.
 
 - **Public API** = the functions listed in `docs/architecture.md` §Public API. Everything else is
   private (`_name`) and can change freely.
 - **Every config carries `schema_version`.** A schema change means: bump the version, write a small
   migration function old → new, add a test that loads an old config. Old configs keep loading and
   emit a deprecation warning.
-- **Artifact formats are versioned the same way:** model card, manifest, scores schema, registry
-  entries.
-- **Deprecate before removing** — keep the deprecated path for at least one minor version.
+- **Artifact formats are versioned the same way:** model bundle (D-051), model card, manifest,
+  scores schema, feature ledger, drift reference, registry records, monitoring tables.
+- **Deprecate before removing:** keep the deprecated path for at least one minor version.
 - **Semantic versioning** via `__version__` in `src/core_modelling/__init__.py`.
 - Run the **compat-guardian** subagent whenever you touch config schemas, public functions or
   artifact formats.
@@ -79,28 +126,40 @@ Simplicity never justifies a silent breaking change.
 ## 3. Architecture rules (details: `docs/architecture.md`)
 
 - **Logic lives only in `src/core_modelling/`.** Production runs use `.py` only:
-  `python -m core_modelling run <config>` plus an importable Python API.
-- **Notebooks are an interface, never a workspace.** They import, call, display. They define no
-  functions and are never duplicated per product — switch the config and rerun. Reports come from
-  frozen configs, not from hand-edited notebooks.
-- **A use case = configs (+ the standard notebooks).** Custom code only through the named extension
-  points (mostly Data Creation). Any use case with free-form code reverts to the bespoke 3-month
-  pattern this framework replaces.
-- **Environment-specific things live only in the environment adapter + `conf/local/`**
-  (gitignored): Spark session, HDFS transport, paths, table names, compat shims. **No bank names,
-  paths, table names or people's names anywhere in the repo.**
-- **Task-agnostic shapes.** Configs carry `task` (only `binary` is built now; `regression`,
-  `multiclass`, `time_to_event` and `forecasting` come later). Metric/evaluation/calibration choices
-  dispatch on `task` through plain dicts. Never bake binary assumptions into data contracts,
-  artifact schemas or output tables (e.g. an output column is `score`, not `propensity`).
-- **Segment-agnostic.** No retail-specific names in framework code; retail is configuration.
-- **Standalone units.** Data Creation, EDA, Feature Checks, Training, Evaluation, Promotion,
-  Inference and Tracking each run on their own from a config and write their own artifacts.
-- **Stepwise traceability.** Filters and selections are declared as ordered steps in config, and
-  each step logs what it removed and why.
-- **Lifecycle tiers: local → registered → production.** Promotion (local → registered) and
-  deployment (registered → production) are explicit, gated steps, separate from inference.
-  Inference consumes registered/production models only (local models only in dev mode).
+  `python -m core_modelling run <config>` plus an importable Python API. There is no service layer
+  (D-024).
+- **Notebooks are an interface for production work.** The framework's guided notebooks import, call
+  and display; they define no functions and carry well-written instructions. Users may copy them and
+  explore freely, but nothing a production run, registered model or report depends on may live in a
+  notebook. Reports come from frozen configs (D-039).
+- **A use case = one config file** (+ its notebook copies). Custom code goes only through the named
+  extension points (mostly Target Factory). A use case with free-form code reverts to the bespoke,
+  months-long pattern this framework replaces.
+- **Environment-specific things live only in the environment adapter + `conf/local/`** (gitignored):
+  Spark session, HDFS transport, paths, table names, compat shims, report theme. **No bank names,
+  paths, table names or people's names anywhere in the repo**; use roles instead.
+- **Task-agnostic shapes.** Configs carry `task`. Panel tasks come first (binary built, plus at least
+  one more task type in Phase 2); series tasks come later. Every task-specific choice (target builder,
+  EDA ranking, leakage screen, selection rule, contract checks, baselines, metrics, views,
+  calibration, output columns…) dispatches on `task` through one per-task spec dict (D-050). Never
+  bake binary or single-month assumptions into
+  data contracts, artifact schemas or output tables (an output column is `score`, not `propensity`).
+- **Domain- and entity-agnostic.** Domains (retail, SME, corporate) and entities (subsidiaries) are
+  configuration, never names in code. Data is never merged across entities, and a use case lists the
+  entities it applies to (D-034).
+- **Standalone stages.** Target Factory, EDA, Feature Checks, Training, Evaluation, register /
+  promote / deploy, Inference and Monitoring each run on their own from a config and write their own
+  artifacts and report.
+- **Stepwise traceability.** Filters and selections are ordered steps in config, and each step logs
+  what it removed or flagged and why. Every candidate feature's path (checks, human decisions,
+  automated selection, use in the model) is recorded in the feature ledger.
+- **Guided, not guessed.** Every non-trivial choice (decision/metric, split, sampling, modelling path)
+  has documented options with when-to-use guidance. Profiles set the defaults, and reports open by
+  stating what was chosen (D-032).
+- **Lifecycle tiers: local → registered → production.** register, promote and deploy are explicit,
+  gated steps, separate from inference. A DS session never writes to production: deploy runs through
+  the change-request process (D-033). Inference consumes registered/production models only (local
+  models only in dev mode).
 
 ---
 
@@ -108,110 +167,189 @@ Simplicity never justifies a silent breaking change.
 
 1. **Time separation.** Features are as-of the observation month; the target is strictly after it.
    Forward windows exclude the current month; backward windows include it.
-2. **Out-of-time evaluation** on a later period whose target window does not overlap training's.
-3. **Baseline and metric are declared in config before any result is seen.**
-4. **Fit and select inside the training split only.** No feature selection or fitted transform
-   ever sees evaluation data.
-5. **Checks wrap the engine.** The AutoML engine sees only the vetted feature set; OOT evaluation
-   runs outside the engine.
+2. **Out-of-time validation.** The validation (OOT) month comes after the observation window, and its
+   target window does not overlap any training target window (`v ≥ tk + w`).
+3. **Baseline and metric (or the decision they derive from) are declared in config before any result
+   is seen.**
+4. **Fit and select on the train split only.** No feature selection, tuning choice or fitted
+   transform ever sees test or validation data. Checks that use labels (EDA feature–target views and
+   ranking, leakage screens, stability of AUC) use train-split clients within the observation window.
+   Label-free comparisons (e.g. PSI) may use later months, except the validation month (D-048).
+5. **Checks wrap the engine.** The modelling engine sees only the vetted feature set; validation runs
+   outside the engine.
 6. **Leakage screens flag, never auto-drop.** Columns used to build the target are excluded
    automatically (lineage), not by memory.
-7. **Downsampling is train-only**, and calibration is applied only when downsampling happened.
+7. **Downsampling is train-only.** Whenever sampling happened, a prior-shift offset is applied,
+   computed from the true rate and the effective (weighted) training rate, so it is zero when sampling
+   didn't change the class balance. A separate calibration step (e.g. Platt or isotonic) is fitted on
+   out-of-fold predictions inside train, never on test or validation (D-049).
 8. **Contract checks run on the true population**, before any downsampling.
-9. **Eligibility is applied identically** to train, OOT and inference.
-10. **Everything is reproducible:** frozen config + config hash + feature signature + model hash.
-    Every score can be traced to its model and config.
+9. **Eligibility is applied identically** to every month of train/test, validation and inference.
+10. **Everything is reproducible:** frozen config + config hash + data-definition hash + feature
+    signature + model hash + code version. Every score can be traced to its model and config. This
+    assumes a source month never changes after it has been loaded.
+11. **Train and test are split by client.** They share the observation window, so no client appears in
+    both, and any CV inside train is grouped by client too.
+12. **Sampling never depends on a client's outcomes unless weights undo it**, and it happens after the
+    client split.
+13. **No model without data knowledge.** Training requires EDA and Feature Checks artifacts for the
+    same data-definition hash; hands-off profiles run them automatically (D-031).
 
-Run the **ml-correctness-auditor** subagent whenever you touch data creation, splits, features,
-training, evaluation, calibration or inference.
+Run the **ml-correctness-auditor** subagent whenever you touch Target Factory, the dataset/splits,
+features, training, evaluation, calibration or inference.
 
 ---
 
 ## 5. Environment and bank parity (details: `docs/context/environment.md`)
 
 - **Code flows one way:** zip → copied into an internal repo. **Real data never exists outside the
-  bank** — develop and test only on synthetic data with local Spark.
+  bank**: develop and test only on synthetic data with local Spark.
 - `requirements.txt` holds the bank-parity pins (Python 3.11, PySpark 3.4.3, Java 11). Don't upgrade
   or add packages without asking.
+- Also in the devcontainer, and usable (pin on first use): scipy, statsmodels, seaborn, plotly,
+  jinja2. Optuna is installed on top, like FLAML. Versions are in `docs/context/environment.md`.
 - **Known traps** (full list: `docs/context/lessons.md`):
   - PySpark 3.4 + numpy 2 needs the `np.NaN` compat shim *before* importing pyspark/flaml.
   - Never pass `hdfs://` URIs through `pathlib`. `pathlib` and `pickle` cannot read HDFS.
-  - Prune columns and rows in Spark before `toPandas()`.
+  - Prune columns and rows (and sample) in Spark before `toPandas()`.
   - No cwd-relative paths — roots come from config.
   - FLAML metric names are its own (`ap`, not `average_precision`).
-  - FLAML 2.7 + xgboost 3.2 compatibility is **unverified**.
+  - FLAML 2.7 + xgboost 3.2 and the Optuna 5.0 API are **unverified**.
+  - Assume no internet inside the bank: reports embed plotly.js, never load it from a CDN.
 - Use the **bank-parity-check** skill when adding imports/dependencies or touching IO.
 
 ---
 
 ## 6. Legacy code policy
 
-`legacy/propensity_crunch/` is the working implementation from the 2–3 week crunch that preceded Phase 2.
-It is **reference, not a constraint**: pull ideas and proven logic from it, and rewrite freely.
-Never import from it. Don't edit it. Its lessons are in `docs/context/lessons.md`. Some changes made inside the bank never came back out (see `legacy/README.md`);
-treat legacy as close to, but not exactly, the internal state.
+`legacy/propensity_crunch/` is the working implementation from the 2–3 week crunch that preceded
+Phase 2. It is **reference, not a constraint**: pull ideas and proven logic from it, and rewrite
+freely. Never import from it. Don't edit it. Its lessons are in `docs/context/lessons.md`. Some
+changes made inside the bank never came back out (see `legacy/README.md`), so treat legacy as close
+to, but not exactly, the internal state. Crunch names differ: Data Creation → Target Factory.
 
 ---
 
 ## 7. Testing (Phase 2 build-out)
 
 - **Now:** light tests. Write them for the correctness invariants (§4), the config/schema migration
-  paths (§2), plus one end-to-end test on a synthetic panel with real local Spark.
-- **Before migration into the bank (later):** every function tested, internal CI/CD and Sonar
-  checks passing. Don't build that yet — just don't write code that makes it hard.
+  paths (§2), plus one end-to-end test on synthetic data with real local Spark.
+- **Synthetic data** (`synthetic/`, dev-only) is the shared dataset for tests, notebooks and demos.
+  It is generated once into `data/01_raw/` and read through `conf/local/` exactly like real data
+  (`docs/components/test_harness.md`).
+- **Before migration into the bank (later):** every function tested, internal CI/CD and Sonar checks
+  passing. Don't build that yet — just don't write code that makes it hard.
 - Tests follow the same code-light rules. No mocks where real local Spark or real small data works.
 
 ---
 
-## 8. Documentation rules — what to update when
+## 8. Documentation: what lives where, when to update, when to create
 
-Docs describe the **current state**. History goes to `docs/UPDATES.md` and `docs/decisions.md`.
-Update docs **in the same change** as the code.
+Docs describe the **current state**. History goes to the `docs/UPDATES.md` log and to
+`docs/decisions.md`. Update docs **in the same change** as the code or decision that triggers them.
+Each fact has **one owner doc**; every other doc links to it instead of repeating it.
+
+**Doc map**
+
+| Doc | Owns | Git | Read |
+|---|---|---|---|
+| `CLAUDE.md` | Working rules for this repo | committed | Always (auto-loaded) |
+| `docs/README.md` | Reading order + stage → component map | committed | Finding your way; after adding/renaming docs |
+| `docs/UPDATES.md` | Status table + log of major changes | committed | Every session start |
+| `docs/roadmap.md` | Phases, milestones, depth levels, backlog, **open decisions (OD-nn)**, Chief DS topics | committed | Planning, "what next", sync prep |
+| `docs/context/project.md` | Why, where we start → where we want to reach, goals, scope, roles | committed | New to the repo; scope questions |
+| `docs/glossary.md` | Vocabulary | committed | Naming anything; unfamiliar term |
+| `docs/architecture.md` | Target design, stage map, package layout, Public API | committed | Structural work |
+| `docs/decisions.md` | Decision log (D-nnn) | committed | Before designing |
+| `docs/components/<c>.md` | One component or versioned artifact: purpose, requirements, interface, open questions | committed | Working on it |
+| `docs/context/lessons.md` | Traps (T-nn) and lessons | committed | Before related code |
+| `docs/context/environment.md` | Versions and bank behaviour | committed | IO / dependencies |
+| `docs/guides/*.md` | How-tos: setup, Claude Code workflow, skills & agents | committed | As needed |
+| `worknotes/sync.md` | Sync page for the builder and the Lead DS: what to review, open questions for both, recent developments | committed | Before each sync; `/brief` |
+| `worknotes/log.md` | Verbose trail behind the sync page | committed | When detail is needed |
+| `worknotes/handovers/<topic>.md` | One chat handover per topic (several in parallel) | committed | Only via `/resume <topic>` |
+
+**Update triggers**
 
 | Trigger | Update |
 |---|---|
-| A component's behaviour or interface changes | `docs/components/<component>.md` (Status, Interface, Current state) |
+| Any turn that changed files, settled something or produced a finding | Refresh `worknotes/sync.md` (Lead DS review items, shared open questions, recent developments) and append to `worknotes/log.md`. Every time, not only for big changes. Both are read by the Lead DS: keep them clear and short |
+| A component's behaviour, interface or design changes | `docs/components/<component>.md` (Status, requirements, Interface, Open questions) |
 | A config field is added, changed or removed | `docs/components/config.md` + example in `conf/base/`; §2 procedure if breaking |
-| A decision is made (pattern, dependency, lifecycle, naming) | New entry in `docs/decisions.md`; `docs/architecture.md` if structure changes |
-| Work item started / finished / blocked | `docs/UPDATES.md` status table; dated log line if major |
-| A new bug class or trap is found | `docs/context/lessons.md` → Known traps |
+| An artifact format changes (card, manifest, scores, ledger, registry, monitoring tables) | The owning component doc + the §2 procedure; run compat-guardian |
+| A public function is added or changed | `docs/architecture.md` → Public API |
+| A decision is made (pattern, dependency, lifecycle, naming) | New row in `docs/decisions.md` (mark rows it supersedes); `docs/architecture.md` if structure changes |
+| A question is opened, answered or parked | `docs/roadmap.md` → Open decisions (add, update or delete the OD row); component-only questions go in that doc's Open questions |
+| Work item started / finished / blocked | `docs/UPDATES.md` status table (dated log line if major); milestone/backlog in `docs/roadmap.md` |
+| A new term, or a term changes meaning | `docs/glossary.md` first, then use it consistently |
+| A new bug class, trap or chart-design lesson | `docs/context/lessons.md` (next T-number); chart rules in `docs/components/reporting.md` |
 | An environment fact changes (versions, bank behaviour) | `docs/context/environment.md` + `requirements.txt` |
-| A new component | New `docs/components/<component>.md` from the template + index + UPDATES row (use **new-component**) |
-| A new skill or agent | Inventory in `docs/guides/skills_and_agents.md` |
-| Scope, goals or priorities change | `docs/context/project.md` |
+| A doc is added, renamed or deleted | `docs/README.md` (reading order and/or stage → component map) + `docs/components/README.md` index |
+| A new component | New doc from the template via **new-component** + components index + stage map in `docs/README.md` + UPDATES row + roadmap backlog |
+| A new skill, agent or command | §10 + `docs/guides/skills_and_agents.md` |
+| Scope, goals, priorities or roles change | `docs/context/project.md` (+ `docs/roadmap.md` if phasing changes) |
 
-Style: verdict first, concise, integrated (edit the existing text, don't append sections). Flag
-anything unverified as such. Run the **doc-sync** skill at the end of every task.
+**When to create a new doc.** Only when the content has a reader and a lifecycle no existing doc owns:
+- a new component or versioned artifact → `docs/components/<name>.md` from the template;
+- a how-to people will follow → `docs/guides/<name>.md`;
+- a cross-cutting design topic that three or more components depend on → a component-style doc,
+  linked from `docs/architecture.md`.
+
+Otherwise extend the owning doc. **Never** create per-task summaries, research notes, meeting notes or
+copies of a decision: those go to `worknotes/log.md`, `docs/decisions.md` or the owning doc.
+
+**How to create, rename or delete one.**
+- Start with a verdict or status line and a **Related** line.
+- Link both ways: the new doc links what it depends on, and the docs that rely on it link back.
+- Register it: `docs/README.md` (reading order or stage map), `docs/components/README.md` for
+  component docs, the doc map above if it's a new kind of doc.
+- When renaming or deleting, grep for every reference and fix them in the same change.
+
+**References.** Relative paths; D-nnn (decisions), OD-nn (open decisions), T-nn (traps), §n (this
+file).
+
+**Style.** Verdict first, concise, integrated: edit text in place, don't append "update" sections.
+Flag anything unverified. No people's names (roles only) and no bank identifiers, including in
+`worknotes/`. Run the **doc-sync** skill at the end of every task.
 
 ---
 
 ## 9. Working with the user
 
+- **Roles.** The user is the senior DS who builds the framework and owns every decision; all design
+  flows through them. The Lead DS reviews in a daily ~1h sync (prepare with `/brief`). The Chief DS
+  sets direction. Refer to people by role only.
 - **Ask first** before: a new dependency, a public API or schema change, a large refactor, deleting
   anything, or anything that touches the lifecycle tiers.
-- **Verify, don't assume.** Check library behaviour against the pinned version. Say when something
-  is opinion or unverified.
-- **Push back** when a request leads to over-engineering or a correctness risk — explain why and
-  offer the simpler option. Ruthless-mentor tone, not adversarial.
-- **No people's names** in docs or code.
+- **Consult well.**
+  - Ask numbered questions (continue the numbering across rounds), each with your proposed default.
+  - For genuine choices, lay out the options with when-to-use guidance and a recommendation.
+  - Match the altitude to the phase: directions first, details when that component is designed.
+- **Verify, don't assume.** Check library behaviour against the pinned version. Say when something is
+  opinion or unverified.
+- **Push back** when a request leads to over-engineering or a correctness risk: explain why and offer
+  the simpler option. Ruthless-mentor tone, not adversarial.
 
 ---
 
-## 10. Skills and subagents (in this repo)
+## 10. Skills, subagents and commands (in this repo)
 
 | Kind | Name | Use when |
 |---|---|---|
 | Skill | `simplicity-review` | Reviewing any diff against §1 before presenting it |
 | Skill | `doc-sync` | End of every task — applies §8 |
-| Skill | `new-component` | Adding a new spine/lifecycle component |
+| Skill | `holistic-review` | Every major step (§1 workflow step 0) and before finalising a plan touching more than one stage |
+| Skill | `new-component` | Adding a new stage, lifecycle unit or versioned artifact |
 | Skill | `bank-parity-check` | New imports/deps, IO code, anything that must run inside the bank |
-| Skill | `brainstorming` | New or unsettled design, before the §1 plan |
+| Skill | `brainstorming` | New or unsettled design, before the §1 plan (includes research + critique) |
 | Skill | `systematic-debugging` | Any bug, test failure or unexpected behaviour, before proposing a fix |
 | Skill | `verification-before-completion` | Before claiming anything is done, fixed or passing |
 | Skill | `claude-md-improver` / `/revise-claude-md` | Auditing CLAUDE.md or capturing session learnings |
+| Command | `/brief` | Before the daily Lead DS sync, or "what happened recently?" |
+| Command | `/handover <topic>` / `/resume <topic>` | Moving a long context to a new chat, per topic |
 | Subagent | `code-reviewer` | Before declaring any code change done (fresh-context review) |
 | Subagent | `silent-failure-hunter` | Changes to error handling, fallbacks, coercion, IO or validation |
-| Subagent | `ml-correctness-auditor` | Changes to data, splits, features, training, evaluation, calibration, inference |
+| Subagent | `ml-correctness-auditor` | Changes to targets, dataset/splits, features, training, evaluation, calibration, inference |
 | Subagent | `compat-guardian` | Changes to config schemas, public API or artifact formats |
 
 Vendored items and their sources: `.claude/skills/SOURCES.md`. How to add more:
@@ -233,18 +371,23 @@ ruff check . && ruff format <changed files>  # lint; format only files you touch
 ```
 CLAUDE.md                  this file (always loaded)
 src/core_modelling/        the package (currently a skeleton)
+synthetic/                 planned: dev-only synthetic data package (not part of core_modelling)
 conf/base/                 committed configs and examples
-conf/local/                gitignored: environment-specific paths/tables (bank side)
+conf/local/                gitignored: environment-specific paths/tables/theme (bank side)
 data/                      gitignored: Kedro-style layered data folders (see data/README.md)
-notebooks/                 thin interface notebooks (rules: notebooks/README.md)
+notebooks/                 guided interface notebooks (rules: notebooks/README.md)
 tests/                     light tests (policy: tests/README.md)
+worknotes/                 sync page + log for the builder and the Lead DS, chat handovers
 legacy/propensity_crunch/  crunch implementation — reference only
+docs/README.md             reading order + stage → component map (the docs' front door)
 docs/UPDATES.md            state + major changes (read first)
+docs/roadmap.md            phases, milestones, backlog, open decisions
+docs/glossary.md           vocabulary
 docs/context/              project.md, environment.md, lessons.md
 docs/architecture.md       target design
 docs/decisions.md          decision log
-docs/components/           one doc per component
+docs/components/           one doc per component or versioned artifact
 docs/guides/               setup (WSL2 / macOS), Claude Code workflow, skills & agents
 docs/reference/            original roadmap + spine/governance reference (historical)
-.claude/skills/, .claude/agents/   project skills and subagents
+.claude/                   project skills, subagents and commands
 ```

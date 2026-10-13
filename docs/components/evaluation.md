@@ -1,37 +1,57 @@
 # Evaluation
 **Status:** legacy-only · **Legacy:** `src/evaluate.py`, `src/importance.py`, `src/analysis.py`
+**Related:** [reporting](reporting.md) · [training](training.md) · [dataset](dataset.md) · [lifecycle](lifecycle.md)
+(gates) · D-035, D-036, D-038, D-050, D-053 · OD-12
 
 ## Purpose
-Judge a model out-of-time against declared baselines, outside the engine. Produce the numbers and
-views needed for promotion gates, the model card and the business conversation.
+Judge a model out of time against declared baselines, outside the engine. Produce the numbers and
+views needed for gates, the model card, model comparison and the business conversation: the widest
+practical set of metrics and charts, produced reliably for every model family.
 
 ## Phase 2 requirements
-1. Metrics dispatched by `task` (dict). For binary:
-   - AUC, PR-AUC, base rate
-   - precision / recall / lift at `top_pct` and `top_n` slices (config lists)
-2. **Segment-stratified metrics** (config-declared segment columns), so pooled AUC isn't mistaken
-   for within-segment skill.
-3. Baselines: population base rate (always), previous model, historic predicted rate — as declared.
-4. Views:
-   - cumulative gains
-   - calibration / reliability curve
-   - score distribution
-   - permutation importance
-   - numeric direction (PDP/ICE)
-   - categorical per-level direction table
-   - optional SHAP beeswarm (sampled)
-5. Results are structured data first (dicts/tables); plots and reports are rendered from them.
+1. **Metrics from the per-task spec** (D-050). Binary: AUC, PR-AUC, base rate; precision / recall / lift at the
+   `top_pct` and `top_n` slices. What gets emphasised follows the declared decision.
+2. **Test vs validation:** metrics on test (unseen clients, same months) and on validation (OOT). The
+   gap separates overfitting from decay over time. Optional: validation on test clients only
+   (unseen clients and an unseen month), the cleanest estimate.
+3. **Stratified metrics are mandatory** (D-038). Every metric is shown overall and per level of each
+   configured variable. Levels are capped (top levels + "other"), and strata below the per-task
+   minimum support (binary: positives) are shown as insufficient.
+4. **Baselines:** population base rate (always), previous model, historic predicted rate, as declared.
+5. **Views are organised as slots**, each with an ordered list of methods. The method is chosen per
+   model family from a **compatibility table** (view × family → method, or "not available: reason"):
+   - **core** (which ones: OD-12): gains / lift, calibration (reliability), score distribution,
+     stratified metrics, permutation importance, one feature-effects slot;
+   - **extended:** SHAP (tree explainer where supported, otherwise model-agnostic on a sample),
+     PDP / ICE, categorical per-level direction tables, …
+
+   Complementary methods from different families share a slot: one cell shows whichever the model
+   supports, labelled with the method used.
+6. **Failure policy** (D-035): a view the table declares compatible must work, and a failure is an
+   error. Incompatible views are skipped by design and shown as "not available: reason".
+7. **Model comparison is first-class.** Several runs (AutoML vs predefined, challenger vs champion,
+   window variants) are shown on the identical validation set, overlaid and side by side. Where the
+   rows match, differences come from a **paired bootstrap** over validation clients, which gives much
+   tighter intervals than comparing two separate ones. The window ablation's design is owned by
+   [dataset](dataset.md). When a sweep picks a variant, the report labels the winner's validation
+   result as optimistic (D-053).
+8. Results are structured data first; plots and reports are rendered from them.
 
 ## Design constraints
-- Rank metrics are unaffected by calibration; reliability curves use calibrated scores.
+- Rank metrics are unaffected by calibration. Reliability curves use calibrated scores, on axes
+  fitted to the data (T16).
 - PR-AUC is not comparable across use cases (its floor is the base rate). Say so in reports.
+- A view's runtime is not a reason to drop it; compatibility and reliability are.
 
 ## Lessons from the crunch
-Pooled AUC inflation; importance caveats (collinearity splits credit; native importance
-misaligned with raw-string categoricals; SHAP cost).
+Pooled AUC inflation. Importance caveats: collinearity splits credit; native importance misaligned
+with raw-string categoricals. SHAP failed across the original estimator set and had to be disabled
+(T17).
 
 ## Interface
 *(fill when built)*
 
 ## Open questions
-- Which views are mandatory in the model card vs optional.
+- The mandatory core set per task (OD-12).
+- Parked proposal: store all results as tidy tables, with bootstrap intervals by default. Revisit when
+  evaluation is designed in depth.

@@ -1,35 +1,76 @@
-# Lifecycle: promotion, registry, deployment
+# Lifecycle: register, promote, deploy
 **Status:** designing · **Legacy:** `src/inference.py` (`promote_model`, `verify_model`, manifests) — promotion was coupled to inference in the crunch
+**Related:** [inference](inference.md) · [monitoring](monitoring.md) · [reporting](reporting.md) (model card) ·
+[environment](environment.md) · D-033, D-034, D-047, D-051, D-052 · OD-06, OD-07, OD-08, OD-09, OD-14
 
 ## Purpose
-Set the unit's new standard for keeping 50–100 live models maintainable. There are three tiers with
-explicit, recorded transitions:
-- **local:** experiments
-- **registered:** immutable, hashed, on HDFS inside the bank
-- **production:** a per-use-case pointer to one registered model
+The unit's new standard for keeping 50–100 live models maintainable: three tiers with explicit,
+recorded transitions, and a clear view of what is registered and what is in production.
+
+## Tiers and steps
+
+```
+LOCAL        experiments; cheap, disposable
+  │ register   gates (what "registered" means: OD-09)
+REGISTERED   immutable, content-hashed, versioned per model key
+  │ promote    choose the version for production; the approved PR is the sign-off;
+  │            builds a verified bundle (model, frozen config, card, drift reference, checksums,
+  │            framework version)
+  │ deploy     the change-request process copies the bundle to production paths and records it
+PRODUCTION   one version per model key in Phase 2 (OD-07)
+```
+
+- **A DS session never writes to production.** Production changes go through change requests (CR),
+  which need pre-agreed windows and platform and security approval. `deploy` is the framework command
+  the CR process runs; it verifies checksums before copying.
+- **Production paths, not sandpit paths.** The way currently proposed inside the bank points
+  production at the registered (sandpit) paths. The Lead DS's view is that the model should be moved
+  to production paths, so deployment may simply be a job that copies the selected model there. To be
+  confirmed with the platform colleagues and the Chief DS (OD-06, OD-08).
+- **Sign-off:** external in Phase 2 (CR + code review by the project owner/lead), recorded as the
+  approved PR. Phase 3 adds a sign-off log in the registry that pulls the approvers.
+- **Model key** = (entity, domain, use case, split). split = `all` in Phase 2; it is reserved for
+  per-segment models later.
 
 ## Phase 2 requirements
-1. **Promotion** (local → registered) is its own step with gates:
-   - complete, valid model card
-   - OOT result vs the declared baseline meets the configured bar
-   - contract checks passed
+1. register, promote and deploy are separate commands with recorded outcomes. None of them happens as
+   a side effect of inference.
+2. Registered models are immutable. A retrain is a new version of the same model key, linked to the
+   previous one (OD-07). A refit carries a link to its evaluated parent run (D-052).
+3. **Integrity:** every load verifies the content hash.
+4. **Visibility: two tables people can query.**
+   - Registered models: run id, model key, version, code version (framework version + use-case repo
+     commit), status, path, dates, headline metrics.
+   - Production models: the same, for deployed versions only.
 
-   It copies the minimal reproducible bundle (model, frozen config, card) and records `model_hash`.
-2. **Registry records:** a simple, versioned record per registered model (use case, `run_id`,
-   `model_hash`, dates, metrics summary, status). Plain files first; no database until needed.
-3. **Deployment** (registered → production) is explicit, recorded and reversible (points back to
-   the previous model).
-4. **Retirement** is recorded, not deleted.
-5. Integrity: every load from the registry verifies the content hash.
+   Storage design: OD-08. MLflow later, if adopted (OD-13).
+5. **Model inventory** (an overview of every model across use cases and entities) is in scope; its
+   design is open (OD-14).
+6. Retirement and rollback are recorded, not deleted.
 
 ## Design constraints
-- Registered models are immutable; a new version means a new `run_id`.
-- Path construction goes through the environment adapter, because the bank layout is still
-  evolving.
+- Paths go through the environment adapter. The bank-side layout (entity × domain folders,
+  permissions) is open (OD-06).
+- Registry records are versioned artifacts (`CLAUDE.md` §2).
 
 ## Lessons from the crunch
 Promote-on-inference coupling; hash verification; manifest reproduction; T2–T4 for HDFS handling.
 
 ## Open questions
-- The bank-side layout and naming of the registered/production tiers.
-- Who can deploy (governance), and whether deployment needs a sign-off record.
+- High-level designs for the local → registered → production cycle, deployment and the registry are
+  needed **soon** (builder and Lead DS agree); OD-06 to OD-09 are the pieces.
+- The exact CR steps (who runs what, windows, approvals) are not known in detail yet; the current
+  design assumes the CR process runs the framework's `deploy` command. Confirm with the platform
+  colleagues.
+- OD-06: folder layout per entity × domain; are storage permissions separate per entity?
+- OD-07: model versions per key, one production version per key, shadow challengers.
+- OD-08: registry storage. Proposal (not agreed):
+  - append-only event records (registered, promoted, deployed, retired, rolled back) on HDFS, with
+    tables on top;
+  - "current production" as a view;
+  - records shaped like MLflow's concepts (experiment, run, params, metrics, artifacts, registered
+    model, version), so a later move is a mapping, not a redesign.
+- OD-09: what "registered" means (any kept run vs a gated production candidate).
+- OD-14: model inventory design.
+- Not to solve now: the code version of a run made from uncommitted code, and which repo's PR is
+  the sign-off (depends on OD-02, OD-05).

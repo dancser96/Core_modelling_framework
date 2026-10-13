@@ -40,6 +40,20 @@ reported back **in words** and re-applied here.
 Newer devcontainer images may move packages forward. When the user reports new versions, update
 this table and `requirements.txt` in the same change and re-run the tests.
 
+**Also in the standard devcontainer (usable; pin in `requirements.txt` on first use, D-042):**
+
+| Package | Version | Likely use |
+|---|---|---|
+| scipy | 1.16.2 | Synthetic data, statistics (also a scikit-learn dependency) |
+| statsmodels | 0.14.5 | Statistical tests and intervals |
+| seaborn | 0.13.2 | Exploration in notebooks (reports use plotly) |
+| plotly | 6.3.1 | Report charts (D-036) |
+| jinja2 | 3.1.6 | Required by pandas Styler for styled HTML tables |
+
+**Installed on top, like FLAML:** optuna 5.0.0 (the version `pip install optuna` resolves to inside
+the bank; the predefined-model tuning path, D-037). Its API is unverified here: check
+multi-objective studies and pruning against 5.0 before relying on them.
+
 ## Known compatibility facts
 
 - **Verified in the crunch:** PySpark 3.4.3 + numpy 2.x breaks at import of pandas-on-Spark
@@ -56,6 +70,16 @@ this table and `requirements.txt` in the same change and re-run the tests.
   a small FLAML run that includes `xgboost` in `estimator_list` before relying on it.
 - **Unverified:** PySpark 3.4.3 `toPandas()` with pandas 2.2.3 and Arrow for all column types
   (datetime columns in particular). Test on the synthetic panel with Arrow on and off.
+- **Unverified:** FLAML 2.7 grouped CV (`split_type="group"` with `groups`), needed because train
+  rows repeat clients across months (`docs/components/dataset.md`).
+- **Assumed, unverified:** a source month never changes after it has been loaded (no late-arriving
+  rows or restatements). Reproducibility from frozen config + hashes depends on it (`CLAUDE.md`
+  §4.10); the data-definition hash describes the data, it doesn't fingerprint it.
+- **Unverified:** which engine-native model formats (LightGBM text, XGBoost JSON, CatBoost binary)
+  can be extracted from FLAML 2.7's fitted models on the pinned versions (D-051).
+- **Assumed, unverified:** no internet access from the bank's notebooks, so reports embed plotly.js
+  instead of loading it from a CDN (~4–5 MB per report). Plotly rendering inside the bank's
+  JupyterLab is also unverified.
 
 ## Environment adapter (the seam)
 
@@ -64,8 +88,9 @@ All of the following live in one place (the `environment` component) and are dri
 - Spark session creation and settings (including Arrow)
 - The compat shim
 - The read/write transport (filesystem vs `hdfs dfs`)
-- Root paths for data, models, registry and outputs
-- Hive table names
+- Root paths for data, models, registry and outputs (per entity where needed, OD-06)
+- Source resolution: logical source → Hive table or path (the synthetic dataset on a laptop)
+- The report theme file (after internalisation)
 
 The framework code never branches on "am I inside the bank". It calls the adapter, and the config
 decides.
@@ -73,7 +98,9 @@ decides.
 ## Runtime notes (from the crunch)
 
 - Retail scale is ~2M rows per month × ~50 columns per model (ceiling ~5M × 400).
-  Single-node pandas and FLAML are fine **if** columns and rows are pruned in Spark first.
+  Single-node pandas and FLAML are fine **if** columns and rows are pruned in Spark first. With
+  multi-month observation windows this becomes e.g. ~24M unit-months for 12 months, so Spark-side
+  sampling against a row budget is the normal case (`docs/components/dataset.md`).
 - `toPandas()` of the full width is the main OOM risk. Downsampling after collection won't prevent
   an OOM, so sample negatives in Spark before collecting.
 - FLAML is time-budgeted. At 2M rows, LightGBM tends to consume most of the budget, and other

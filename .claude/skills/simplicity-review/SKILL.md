@@ -21,8 +21,10 @@ author.
 
 - [ ] **Needed now?** Is every function, parameter and option used by the current task? Remove
       speculative ones.
-- [ ] **Functions over classes.** Any class that isn't pure data (Pydantic model / dataclass)?
-      Any inheritance, ABC, decorator-registry or factory?
+- [ ] **Functions over classes.** Is every class justified by state and behaviour that travel
+      together (Pydantic model, dataclass, scikit-learn-compatible wrapper, small `Protocol`)? Any
+      inheritance beyond a library base class or one shallow level, and is it explained? Any ABC
+      hierarchy, decorator registry, factory or manager class? (`CLAUDE.md` §1 rule 2)
 - [ ] **Size.** Functions longer than ~40 lines, or modules longer than ~300 lines? Split them by
       responsibility.
 - [ ] **Names.** Does each name say what it does (`verb_noun`)? Vague names (`process`, `handle`,
@@ -34,7 +36,10 @@ author.
 - [ ] **Comments.** Do they explain *why*? No commented-out code, dead code or unlogged TODOs.
 - [ ] **Library first.** Is anything hand-rolled that pandas / PySpark / sklearn already does?
 - [ ] **Dependencies.** Any new import outside `requirements.txt`? That needs approval.
-- [ ] **Notebooks.** Any function definitions or logic in notebooks? Move them to the package.
+- [ ] **Notebooks.** Any function definitions or logic in the framework's notebooks? Move them to
+      the package. Does any production path depend on notebook code?
+- [ ] **Failure policy.** Is anything skipped by catching an error? Only views declared incompatible
+      up front may be skipped (`CLAUDE.md` §1 rule 8).
 - [ ] **Generality.** Any binary-only assumption leaking into shared shapes (column names, schemas)?
       Conversely, any generic machinery built for a single task?
 

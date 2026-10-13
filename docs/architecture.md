@@ -1,137 +1,201 @@
 # Target architecture (Phase 2)
 
-**Status:** target design — **nothing below is built yet** unless `docs/UPDATES.md` says so. This
-file is the map. When code diverges from it, update this file (see `CLAUDE.md` §8).
+**Status:** target design. **Nothing below is built yet** unless `docs/UPDATES.md` says so. This file
+is the map. When code diverges from it, update this file (`CLAUDE.md` §8). Why the framework exists
+and what it aims for: `docs/context/project.md`. Terms: `docs/glossary.md`.
 
-**Verdict:** a small installable package of plain functions, driven by versioned configs.
-- It runs as standalone stages, from notebooks or the CLI.
+**Verdict:** a versioned Python library of plain functions, driven by one config file per use case.
+- Each stage runs alone, from guided notebooks, the CLI or the Python API, and writes its own
+  artifacts and HTML report.
 - An environment adapter isolates everything bank-specific.
-- A three-tier model lifecycle makes 50–100 live models maintainable.
+- A three-tier lifecycle (local → registered → production) keeps a large estate of models
+  maintainable.
 
 ## 1. Framework vs use case
 
 ```
-framework (this package, updated centrally)         use case (per modelling problem)
-─────────────────────────────────────────          ─────────────────────────────────
-src/core_modelling/  plain functions                conf/…/<use_case>.yaml  (the whole definition)
-standard notebooks   thin interface                 extension functions — only where allowed
-CLI + Python API     automated runs                 (mostly Data Creation)
+framework (versioned library, pinned per use case)    use case (one modelling problem)
+───────────────────────────────────────────────       ─────────────────────────────────────
+src/core_modelling/   plain functions                  one config file (the whole definition,
+guided notebooks      interface + learning               per-entity instances inside)
+CLI + Python API      automated / production runs      extension functions, only at named
+                                                         points (mostly Target Factory)
+                                                       its own copies of the guided notebooks
+                                                         to explore in
 ```
 
-A use case contains configs and, rarely, a small extension function registered at a named
-extension point. This split is what makes central updates possible, whether distribution ends up as
-a service or a forkable template.
+There is no service layer (D-024). Each use case pins the framework version it runs with, upgrades
+at its own pace, and scores its models with that version (D-047). Many versions therefore write to
+the same shared tables at once, so a new version must not break use cases or those tables
+(`CLAUDE.md` §2). Still open: where use cases live and how users get the notebooks (OD-02), and the
+distribution channel and release path (OD-04).
 
-## 2. Stages (standalone units)
+## 2. Stages
 
-Each stage is callable alone from a config and writes its own artifacts. The end-to-end run just
-calls them in order.
+Every stage can be called alone from a config and writes its own artifacts. An end-to-end run calls
+them in order (D-028).
 
-| Stage | Consumes | Produces |
-|---|---|---|
-| **data_creation** | Raw monthly panel | Enriched panel with targets and rollup features (one table, many use cases) |
-| **eda** | Panel slice for the use case | Analyst-grade profile and report (tables + plots + narrative sections) |
-| **feature_checks** | Panel slice + candidates | Stepwise screening log, flag tables, proposed exclusions |
-| **training** | Vetted features + training month | Model + training artifacts in the **local** tier |
-| **evaluation** | Model + OOT month + baselines | Metrics, slices, stability, explainability, model card sections |
-| **promotion** | Local run + gates | **Registered** model (immutable, hashed) |
-| **deployment** | Registered model | **Production** pointer (what scheduled inference uses) |
-| **inference** | Registered/production model + a month/table | Batch-scoped scores + manifest |
-| **tracking** | Scores + matured labels + baselines | Realised performance and impact vs baselines; drift |
+| Stage | Consumes | Produces | Doc |
+|---|---|---|---|
+| **target_factory** (optional) | Source table(s) | Targets + target lineage (saved, or passed on in memory); labels for scored months, for monitoring | [target_factory](components/target_factory.md) |
+| **eda** | Data definition (entity, source, eligibility, target, time, candidates) | EDA report; ledger columns (univariate ranking, key features) | [eda](components/eda.md) |
+| **feature_checks** | Same + EDA ledger | Check log, flags, proposed decisions, ledger columns, report | [feature_checks](components/feature_checks.md) |
+| **training** | Resolved features + train split | Local-tier run: model bundle, selection in the ledger, training metadata, drift reference; optionally a refit linked to it (D-052) | [training](components/training.md) |
+| **evaluation** | Model + test + OOT validation + baselines | Metrics (overall and stratified), views, comparisons, card sections, report | [evaluation](components/evaluation.md) |
+| **register** | Local run + gates | Registered version (immutable, hashed) | [lifecycle](components/lifecycle.md) |
+| **promote** | Registered version + approved PR | Promotion record + verified deployment bundle | [lifecycle](components/lifecycle.md) |
+| **deploy** | Bundle, run by the change-request process | Production copy + production record | [lifecycle](components/lifecycle.md) |
+| **inference** | Production (or pinned registered) model + a month | Batch-scoped scores + manifest | [inference](components/inference.md) |
+| **monitoring** | Scores, inputs, drift reference, matured labels, baselines | Monitoring tables + report | [monitoring](components/monitoring.md) |
+
+**Cross-cutting pieces:**
+- [config](components/config.md)
+- [dataset](components/dataset.md): observation window, splits, sampling
+- [feature ledger](components/feature_ledger.md)
+- [reporting](components/reporting.md)
+- [environment adapter](components/environment.md)
+- [run modes](components/run_modes.md)
+- [synthetic data](components/test_harness.md) (dev only)
+
+**Due-diligence gate (§4.13):** training requires EDA and Feature Checks artifacts for the same
+data-definition hash. Hands-off profiles run them automatically (D-031).
 
 ## 3. Config
 
-- YAML validated by Pydantic v2. Every config has **`schema_version`** and **`task`**.
-- **`conf/base/`** is committed: framework defaults and use-case configs with placeholders.
-  **`conf/local/`** is gitignored: environment-specific values (paths, tables, Spark settings).
+- **One YAML file per use case** (the goal, D-043), validated by Pydantic v2. It carries
+  `schema_version`, `task`, `profile` and `decision`. Shared sections (entities, data, time,
+  features) plus one section per stage. Details: [config](components/config.md).
+- **`conf/base/`** is committed and holds framework defaults and generic use-case configs.
+  **`conf/local/`** is gitignored and holds environment-specific values (tables, paths, Spark, theme).
   They merge base → local at load.
-- **Stepwise sections.** Filtering and selection are ordered lists of named steps. Each step
-  records rows/columns in, rows/columns out, and the reason. That becomes the traceable decision log
-  for EDA, Feature Checks and eligibility.
+- **Profiles** (`quick` / `standard` / `thorough`) set defaults for every stage (D-023). The
+  **decision** drives the metric, the gates and what reports emphasise (D-032).
+- **Stepwise sections:** eligibility and feature checks are ordered lists of named steps, and each
+  step logs rows/columns in → out and the reason. The feature ledger carries the per-feature trail.
 - **Frozen config:** the fully resolved config saved with every artifact. Reports and reproduction
   use only frozen configs.
 - Breaking a schema follows `CLAUDE.md` §2 (version bump + migration + test).
 
-## 4. Model lifecycle
+## 4. Time model and splits
 
 ```
-training ──► LOCAL (many experimental runs, cheap, disposable)
-               │  promotion: gates = complete card, OOT pass vs declared baseline, contract ok
-               ▼
-            REGISTERED (immutable, content-hashed, on HDFS inside the bank)
-               │  deployment: explicit, recorded, reversible
-               ▼
-            PRODUCTION (pointer per use case → one registered model)
-inference: reads REGISTERED/PRODUCTION only; writes <outputs>/<scoring_batch_id>/{scores, manifest}
+months  …─[backward windows ≤ 6m]─┤ observation window t1 … tk ├─ target windows ─┤ v ├─ … ─┤ inference ├
+train + test   all eligible unit-months in t1 … tk, split by client (train | test)
+validation     the OOT month v ≥ tk + w, so its target window never overlaps a training target window
 ```
+
+Features are as-of each observation month; targets look forward `(1, w)`. Validation is a single
+month for panel tasks (series tasks will need rolling validation). Checks that use labels see
+train-split clients within the window only; label-free comparisons may use later months except `v`
+(D-048). The window's effects on every
+stage are tabulated in [dataset](components/dataset.md).
+
+## 5. Model lifecycle
+
+`training → LOCAL → register → REGISTERED → promote → deploy → PRODUCTION`. Inference reads
+production (or a pinned registered version); local models only in dev mode. Gates, sign-off, the
+change-request path and the open questions are owned by [lifecycle](components/lifecycle.md).
 
 - **Identities:**
   - `run_id` = config hash + timestamp
   - `model_hash` = content hash of the model file
-  - `feature_signature` = hash of the feature list
-  - `scoring_batch_id` = timestamp
-- **Manifests** link a scoring batch to the registered models (by `run_id` + `model_hash`).
+  - `feature_signature` = hash of the final feature list
+  - `data_definition_hash` (see [config](components/config.md))
+  - model key = (entity, domain, use case, split), with split = `all` in Phase 2
+  - `scoring_batch_id`
+  - code version = framework version + use-case repo commit
+- **The model bundle is a versioned artifact:** plain-data encoder and calibration, and the
+  engine's native model format where available (D-051).
+- **A DS session never writes to production** (D-033).
+- **Manifests** link a scoring batch to the models that produced it (`run_id` + `model_hash`).
   Reproduction verifies the hash before loading.
-- The folder layout inside the bank is still evolving. Keep path construction in one place (the
-  environment adapter) so the layout can change without touching logic.
+- The bank-side layout is still evolving (OD-06), so path construction stays in the environment
+  adapter.
 
-## 5. Baselines and tracking
+## 6. Baselines and monitoring
 
-- Baselines are declared in config before results:
-  - `population_base_rate` — the default, and the standard for business reporting.
-  - `previous_model` — the prior registered model's scores.
-  - `historic_predicted_rate` — historic baselining.
-- Tracking joins scores to matured labels later (propensity outcomes mature over weeks or months).
-  It reports realised lift/precision in the targeted slices against the baselines, plus input drift
-  meanwhile.
+- Baselines are declared in config before results: `population_base_rate` (default; the standard for
+  business reporting), `previous_model`, `historic_predicted_rate`.
+- Training saves a **drift reference** computed on the true population, and Target Factory builds
+  labels for scored months (D-054).
+- Monitoring has four layers (D-040):
+  - operational health and input/score drift: deep in Phase 2;
+  - realised performance against baselines and business impact: thin in Phase 2, built so they work
+    as soon as outcomes exist.
 
-## 6. Run modes
+  Details: [monitoring](components/monitoring.md).
 
-- **Manual:** standard notebooks per stage. Import, call one function per step, display. Switch the
-  config and rerun.
-- **Automated:** `python -m core_modelling run <config> [--stages …]` and the equivalent Python API.
-- **Service-style** (HTTP/scheduler) comes later, as a thin layer over the same API.
+## 7. Run modes
 
-## 7. Generality without frameworks
+- **Manual:** guided notebooks, one per stage. They load the config, call the stage and display its
+  artifacts. Users may copy them and explore; production never depends on notebook code (D-039).
+- **Automated / production:** `python -m core_modelling run <config> [--stages …]` and the matching
+  Python API, plus separate `register`, `promote` and `deploy` commands. Scheduling, if any, calls
+  the CLI.
+- **Experiment sweeps:** run one config with a single field varied (e.g. the observation window) and
+  compare the variants on the same validation set. A sweep that picks a variant labels the winner's
+  validation result as optimistic (D-053). The same mechanism is what the LLM branch will later
+  drive. Details: [run modes](components/run_modes.md), [dataset](components/dataset.md).
 
-- **Task:** metrics, calibration and output schemas dispatch through plain dicts keyed by `task`.
-  Only `binary` has implementations; others fail with a clear "not implemented" message.
-- **Scale:** population size and positive rate drive defaults (sampling, top-k slices, CV folds)
-  through explicit config, not magic.
-- **Segment:** no segment names in code. Segments are configs and data.
+## 8. Generality without frameworks
 
-## 8. Environment adapter
+- **Task:** every task-specific hook (target builder, EDA ranking, leakage screen, selection rule,
+  contract checks, baselines, metrics, views, calibration, output columns…) lives in one per-task
+  spec dict keyed by `task` (D-050). Panel tasks come first: binary plus one more in Phase 2. Unbuilt tasks fail with a
+  clear "not implemented".
+- **Domains, entities, sources:** configuration only; never names in code; no data merged across
+  entities (D-034).
+- **Scale:** Spark prunes and samples, training is single-node on the collected sample, and scoring
+  runs in Spark ([dataset](components/dataset.md) explains when that stops being enough).
+- **Defaults:** profiles and the declared decision drive defaults explicitly; population size and
+  positive rate inform them, with no hidden magic.
+
+## 9. Reports
+
+Every stage renders through one shared writer as self-contained HTML (pandas Styler tables + plotly
+with embedded plotly.js). Each report has a summary page with a choices block, then core views,
+extended views ("not available: reason" where a view is incompatible) and an appendix. Chart axes
+follow the data. Details: [reporting](components/reporting.md), [evaluation](components/evaluation.md).
+
+## 10. Environment adapter
 
 One module owns:
 - the Spark session
 - the compat shim
 - the transport (filesystem vs `hdfs dfs`)
-- path construction
-- table resolution
+- path construction, per tier and entity
+- table resolution (logical source → physical table)
+- the report theme location
 
-Framework code calls only its functions. See `docs/context/environment.md`.
+Framework code calls only its functions. On a laptop, `conf/local/` points the logical sources at the
+synthetic dataset. See [environment](components/environment.md) and
+[`docs/context/environment.md`](context/environment.md).
 
-## 9. Proposed package layout (to confirm as components get built)
+## 11. Proposed package layout (to confirm as components get built)
 
 ```
 src/core_modelling/
   __init__.py        version
   __main__.py        CLI entry (run <config>)
-  config/            schema, loading (base+local merge), migrations
+  config/            schema, loading (base+local merge), profiles, migrations
   environment.py     Spark session, compat shim, transport, paths
-  data_creation/     rollups, target builders (extension point)
-  eda/               profiling, report assembly
-  feature_checks/    screening steps, stability, lineage guard
-  training/          engine wrapper (FLAML), sampling, calibration
-  evaluation/        metrics by task, slices, baselines, explainability
-  lifecycle/         promotion, deployment, registry records
+  dataset.py         observation window, eligibility, splits, sampling, collection
+  target_factory/    target builders by task (extension point), lineage
+  eda/               population/target profile, univariate ranking, key features, pivots
+  feature_checks/    check steps, stability, lineage guard
+  ledger.py          feature ledger: create, append, resolve the final feature list
+  training/          model interface, AutoML path (FLAML), predefined path (Optuna),
+                     automated selection, categorical encoding, calibration
+  evaluation/        metrics by task, stratified metrics, baselines, view slots, comparison
+  lifecycle/         register, promote, deploy, registry records
   inference/         scoring, batch outputs, manifests
-  tracking/          outcome joins, drift, impact vs baselines
-  reporting/         shared report writer (markdown/HTML) used by eda/evaluation/cards
+  monitoring/        health, drift, outcome joins, impact vs baselines
+  reporting/         HTML writer, plotly charts, styled tables, model card, themes
+synthetic/           dev-only synthetic data package (top level; not part of core_modelling)
 ```
 
-A folder becomes a single module file when it only needs one. Don't create empty sub-packages
-ahead of need.
+A folder becomes a single module file when it only needs one. Don't create empty sub-packages ahead
+of need.
 
 ## Public API
 

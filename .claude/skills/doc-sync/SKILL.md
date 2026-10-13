@@ -1,37 +1,45 @@
 ---
 name: doc-sync
-description: Bring the repo documentation in line with the code at the end of a task, applying the update rules in CLAUDE.md §8. Use this at the end of every task that changed code, config, dependencies or decisions, when the user says "update the docs", "sync docs", "wrap up", or before committing.
+description: Bring the repo documentation in line with the code and decisions at the end of a task, applying the update rules in CLAUDE.md §8 (owner docs, update triggers, creation rules, cross-links, local sync notes). Use this at the end of every task that changed code, config, dependencies, decisions or open questions, when the user says "update the docs", "sync docs", "wrap up", or before committing.
 ---
 
 # Doc sync
 
 The docs are how work continues across machines and sessions; chat history is lost. Stale docs are
-worse than none. Docs describe the **current state**. History goes to `docs/UPDATES.md` (log) and
-`docs/decisions.md`.
+worse than none. Docs describe the **current state**. History goes to the `docs/UPDATES.md` log and
+to `docs/decisions.md`. The rules live in `CLAUDE.md` §8 (doc map, update triggers, when to create
+a doc); this skill applies them.
 
 ## Steps
 
-1. List what changed: `git diff --stat` plus the conversation's decisions.
-2. For each change, apply the matching rule(s):
-
-| Change | Update |
-|---|---|
-| Component behaviour or interface | `docs/components/<c>.md` — Status, Interface, requirements met |
-| Config field added/changed/removed | `docs/components/config.md`, example in `conf/base/`; breaking → CLAUDE.md §2 procedure |
-| Decision made | New row in `docs/decisions.md`; `docs/architecture.md` if structure changed |
-| Work item progressed | `docs/UPDATES.md` status table; a dated log line only if major |
-| New bug class / trap | `docs/context/lessons.md` → Known traps (next T-number) |
-| Environment fact | `docs/context/environment.md` + `requirements.txt` |
-| Public function added/changed | `docs/architecture.md` → Public API table |
-| New skill/agent | `docs/guides/skills_and_agents.md` inventory |
-| Scope/goals/priorities | `docs/context/project.md` |
-
-3. Edit existing text in place (integrate; don't append new sections). Keep it verdict-first and
-   concise. Mark unverified claims as unverified.
-4. Report the list of doc files touched, with one line each on what changed.
+1. **List what changed:** `git status`, `git diff --stat`, plus the conversation's decisions,
+   answered questions and new open questions.
+2. **Apply the matching triggers** from `CLAUDE.md` §8. The ones most often missed:
+   - a decision → a new D-row in `docs/decisions.md`, with superseded rows marked;
+   - an open question opened, answered or parked → its OD row in `docs/roadmap.md` (an answered OD
+     row becomes a D-row and is deleted);
+   - a status change → `docs/UPDATES.md` (log line only if major) and the milestone/backlog in
+     `docs/roadmap.md`;
+   - a new or changed term → `docs/glossary.md`;
+   - an artifact format or config change → the owning component doc + the `CLAUDE.md` §2 procedure.
+3. **One owner per fact.** If the same fact now appears in two docs, keep it in its owner (§8 doc
+   map) and replace the copy with a link.
+4. **Cross-links.** Every component doc you touched has a correct **Related** line. Every new doc is
+   registered in its index and linked both ways. After a rename or delete, `grep -rn "<old name>"`
+   over `*.md` and fix every hit. Relative links must resolve.
+5. **Style.** Edit text in place (integrate; don't append "update" sections). Verdict first,
+   concise. Mark unverified claims as unverified. Roles, not names; no bank identifiers.
+6. **Worknotes (shared with the Lead DS).** Refresh `worknotes/sync.md` (review items for the Lead
+   DS, open questions for both of us, recent developments, demo next) and append an entry to
+   `worknotes/log.md`. Use the templates in `worknotes/README.md`. This happens every time, not only
+   for big changes.
+7. **Docs guide.** If a doc was added, renamed or deleted, update `docs/README.md` (reading order,
+   stage → component map).
+8. **Report** the doc files touched, one line each on what changed.
 
 ## Don't
 
 - Don't write narrative history into component docs.
 - Don't document code that doesn't exist yet as if it did (use "planned" / "designing").
-- Don't add bank names, paths, table names or people's names.
+- Don't create a new doc where an existing owner doc can be extended (`CLAUDE.md` §8 creation rules).
+- Don't add bank names, paths, table names or people's names, including in `worknotes/`.

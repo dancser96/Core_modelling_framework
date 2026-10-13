@@ -25,6 +25,8 @@ harness, an environment adapter and explicit invariants. Legacy file references 
 | T13 | Hardcoded window literals | The panel-edge guard hardcoded `3` | Windows come from config only |
 | T14 | FLAML trial counting | Reading the search log gave wrong counts (path issue) | Use `automl.config_history` and `best_config_per_estimator` |
 | T15 | Stubs hide environment bugs | The smoke test passed while T1–T7 were live | Real local Spark on a synthetic panel for the e2e test |
+| T16 | Fixed chart ranges at low prevalence | Calibration curves drawn on (0, 1) and binned bar charts of tiny rates showed nothing; most chart fixes made inside the bank were range fixes | Axes follow the data (`(0, 1.25 × max)` for rates); show lift vs base rate with counts. Chart rules: `docs/components/reporting.md` |
+| T17 | Explainer incompatibility | SHAP errored for most of the original estimator set and had to be disabled | Decide view × model-family compatibility up front (`docs/components/evaluation.md`); never wrap a view in try/except |
 
 ## Statistical lessons
 
@@ -49,7 +51,9 @@ harness, an environment adapter and explicit invariants. Legacy file references 
   ROC-AUC and top-k lift.
 - **Pooled AUC is inflated.** 0.85–0.95 on a heterogeneous base is not within-segment skill. Report
   segment-stratified metrics.
-- **Single training month** bakes in that month's seasonality. Record it in the model card.
+- **Single training month** bakes in that month's seasonality. Phase 2 trains on an observation
+  window (D-030; `docs/components/dataset.md`); the model card records the window and per-month base
+  rates.
 - **Importance.** Permutation importance splits credit across correlated features. Native
   importance doesn't align with raw-string categoricals (FLAML encodes them internally). SHAP via
   `PermutationExplainer` works for any model but is slow — sample it. Per-level categorical tables
@@ -61,7 +65,12 @@ harness, an environment adapter and explicit invariants. Legacy file references 
 ## Design lessons (kept for Phase 2)
 
 - **Two feature views of one config.** Exploration reads the candidates; the model reads the
-  survivors (candidates − exclusions). One file, and excluded features stay inspectable.
+  survivors (candidates − exclusions). One file, and excluded features stay inspectable. Phase 2
+  extends this to candidates + human decisions (both directions) + the feature ledger.
+- **EDA has to earn its place first.** In the crunch, EDA gave so little insight (and its charts
+  showed nothing at low prevalence) that the notebooks were run in reverse order, checks first.
+  Phase 2 keeps EDA first but changes its content, and draws clear lines: EDA understands, Feature
+  Checks gates, Training selects (D-028).
 - **Config-driven top-k metrics:** percentile slices plus absolute-count slices (a count larger than
   the population is skipped). Full-population stats are always reported.
 - **Frozen config + hashes** (config hash, feature signature, model content hash) made every score
@@ -73,15 +82,17 @@ harness, an environment adapter and explicit invariants. Legacy file references 
 - **Promote-on-inference was a crunch shortcut.** Phase 2 separates promotion from inference.
 - **The model card holds structured facts only** (calibration, downsampling, selected model,
   `best_config`) — no hardcoded prose caveats.
-- **Notebooks as interface worked.** One notebook per stage; switch the product and rerun.
+- **Notebooks as interface worked.** One notebook per stage; switch the product and rerun. Phase 2
+  makes them guided (instructions on what to look at and decide) and lets users copy them to explore
+  (D-039).
 
 ## Legacy map (where to look)
 
 | Concern | Legacy file(s) |
 |---|---|
 | Config schema, validation, two feature views | `configs/_schema.py`, `configs/_TEMPLATE.yaml` |
-| Rollups / target building | `src/rollups.py`, `notebooks/Data_Creation.ipynb` |
-| Spark IO, labelled frames, downsampling | `src/io.py`, `src/dataset.py` |
+| Rollups / target building (now Target Factory) | `src/rollups.py`, `notebooks/Data_Creation.ipynb` |
+| Spark IO, labelled frames, downsampling (now the dataset component) | `src/io.py`, `src/dataset.py` |
 | Contract checks, leakage screen | `src/contract.py`, `src/leakage.py` |
 | EDA / feature statistics / plots | `src/feature_stats.py`, `src/plots.py`, `notebooks/EDA.ipynb` |
 | Training orchestration | `src/run.py` |

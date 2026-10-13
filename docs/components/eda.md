@@ -1,37 +1,70 @@
 # EDA
 **Status:** legacy-only (major rethink) · **Legacy:** `src/feature_stats.py`, `src/plots.py`, `notebooks/EDA.ipynb`
+**Related:** [dataset](dataset.md) · [feature ledger](feature_ledger.md) · [feature checks](feature_checks.md) ·
+[reporting](reporting.md) (chart rules) · D-031, D-048, D-050 · OD-12
 
 ## Purpose
-A standalone unit whose output is partly what a data analyst would deliver: a readable,
-reproducible profile and report of a use case's population, target and candidate features,
-generated from a frozen config. It informs decisions; it never changes data.
+The first stage after the target exists, and it has to be worth running first. It gives a fast,
+readable picture of the population, the target and the features that matter, built for low
+prevalence. It informs decisions and never changes data. In the crunch, EDA produced so little insight
+that the notebooks were run in reverse order. Phase 2 fixes the content, not the order.
+
+## What belongs where
+- **EDA understands:** population, target, key features, segment differences. It computes the
+  univariate ranking once and writes it to the feature ledger, where Feature Checks and key-feature
+  selection reuse it.
+- **Feature Checks gates:** pass / flag per feature ([feature checks](feature_checks.md)).
+- **Training selects:** relevance-based selection on the train split only
+  ([training](training.md)).
 
 ## Phase 2 requirements
-1. Runs alone from a config and produces a report artifact (tables + plots + short generated
-   narrative sections) through the shared reporting component.
-2. Population view: size, eligibility funnel (from stepwise eligibility logs), target base rate
-   over several months (checks representativeness and seasonality of the training month),
-   segment mix.
-3. Feature view on the candidates:
-   - univariate summary (nulls, quantiles)
-   - distributions by target
-   - target-rate deciles
-   - event rate per categorical level
-   - correlation and VIF
-4. Relevance ranking by univariate AUC, which works at any prevalence. MI only above a prevalence
-   threshold, or not at all (lessons: MI at low prevalence).
-5. Must stay fast at 2M+ rows: compute in Spark or on samples, with sampling declared in config and
-   stated in the report.
+1. Runs alone from a config and produces an HTML report through [reporting](reporting.md). Hands-off
+   profiles run it automatically with the default content (D-031).
+2. **Population and target:**
+   - sizes and the eligibility funnel per month;
+   - base rate per month over every month up to the window's end (population level: seasonality,
+     how representative the window is). Later months stay hidden, because their target windows
+     overlap the validation month's (D-048);
+   - positive rows vs positive events;
+   - base rate by segment and by each stratification variable.
+
+   Base-rate views, like the ranking statistic, come from the per-task spec (D-050).
+3. **Univariate ranking** of every candidate on train-split clients in the window. The statistic
+   comes from the per-task spec (D-050); binary: direction-agnostic AUC plus direction,
+   missingness, number of levels. Written to the ledger. MI only above a prevalence
+   threshold, or not at all.
+4. **Key features** = the top-N by the ranking plus user-listed ones. Each gets a deep dive:
+   - lift vs base rate across quantile bins, with Wilson intervals and positive counts;
+   - distribution by target (violin / box; log scale for heavy tails);
+   - target-rate pivots by segment, styled to highlight what stands out;
+   - categorical level tables (rate, lift, count, interval).
+5. **Segment comparisons** for the configured stratification variables: headline rates and
+   key-feature behaviour side by side.
+6. **Low prevalence by design:**
+   - rates shown as lift vs base rate, with intervals and counts;
+   - cells with too few positives suppressed;
+   - axes follow the data ([reporting](reporting.md) chart rules);
+   - no chart whose bars are all near zero.
+7. **Iterative analysis:** notebook functions for styled pivots (rate / lift with counts and
+   intervals, by any dimensions, with any filter), so analysts can play around without writing code.
+   The report itself stays tight.
+8. **Train-split clients in the window only** for feature–target views (§4.4, D-048);
+   population-level rates may show every month up to the window's end.
+9. **Fast at 2M+ rows per month:** aggregate in Spark or on declared samples, and say so in the report.
 
 ## Design constraints
-- Report content comes from functions; notebooks only display it.
-- Every number in the report is reproducible from the frozen config.
+- Report content comes from functions; notebooks display it and add exploration.
+- Every number is reproducible from the frozen config and data-definition hash.
 
 ## Lessons from the crunch
-MI uselessness at 0.04–0.2% prevalence; the 30–40 min runtime; notebooks copied per product (don't).
+MI uselessness at 0.04–0.2% prevalence; the 30–40 min runtime; notebooks copied per product; charts
+that showed nothing at low prevalence (T16); EDA run last because it gave no insight.
 
 ## Interface
 *(fill when built)*
 
 ## Open questions
-- Detailed report contents and format (HTML vs markdown). **The user will provide more input.**
+- Default number of key features per profile; exact report sections (structure agreed: summary page
+  + core + extended, see [reporting](reporting.md); content OD-12).
+- Which pivot dimensions to pre-compute in the report vs leave to the notebook functions.
+- Ranking statistic and base-rate views for the second task type (D-050, OD-15).
