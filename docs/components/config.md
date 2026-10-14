@@ -63,9 +63,10 @@ populations.
 6. **Stepwise sections:** eligibility and feature-check steps are ordered and named, and each produces
    a log entry (rows/cols in → out, reason).
 7. **Features:** candidates are explicit lists or patterns. Human decisions go both ways: `exclude`
-   (with a reason) and `keep` (despite a flag or against automated pruning, with a reason). Automated
-   decisions are *not* written into the config; they live in the feature ledger and the frozen config
-   (persistence across reruns: OD-10).
+   and `keep` (despite a flag or against automated pruning), as grouped lists with one note per group
+   (whether a note is required: OD-10). Automated decisions are *not* written into the config as
+   outcomes: the config holds the rules that make them (ordered, named steps, like eligibility), and
+   their outcomes live in the feature ledger and the frozen config (D-058).
 8. **Time:** observation window, target window, validation month and inference month. Validated at
    load:
    - window order;
@@ -104,8 +105,8 @@ time checks.
 ## Open questions
 - Exact section layout and field names (settled while building the walking skeleton).
 - How a use-case extension function is referenced, and where its code lives (OD-05).
-- The config lifecycle from Target Factory to promotion: persisting human and automated decisions
-  without multiple config versions (OD-10).
+- The config lifecycle from Target Factory to promotion: persisting human decisions without
+  multiple config versions, including the flag case (OD-10).
 - Profile defaults per stage (set as each stage is built).
 - Identities, to specify when the config is built (M2):
   - the config hash covers the frozen config, including `conf/local/` values (paths, tables), so

@@ -66,6 +66,10 @@ multi-objective studies and pruning against 5.0 before relying on them.
   - `pathlib.Path.read_*` and `pickle` can't read HDFS.
   - Reading or writing HDFS files outside Spark needs the `hdfs dfs` CLI (`-put`, `-get`, `-cat`),
     which is available internally.
+- **Verified (2026-10-14, local):** FLAML 2.7.0 `AutoML.fit(estimator_list=["lgbm"], custom_hp=...)`
+  searches one model family inside our own ranges (partial overrides of the default space work).
+  `automl.config_history` keeps only improving trials; a per-trial history needs FLAML's log file
+  (unverified).
 - **Unverified:** FLAML 2.7.0 with xgboost 3.2.0. XGBoost 3.x changed parts of its API. Check with
   a small FLAML run that includes `xgboost` in `estimator_list` before relying on it.
 - **Unverified:** PySpark 3.4.3 `toPandas()` with pandas 2.2.3 and Arrow for all column types

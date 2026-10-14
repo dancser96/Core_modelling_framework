@@ -108,13 +108,16 @@ months"; there is no hard deadline). Build order and milestones: `docs/roadmap.m
 
 ## People and rhythm
 
+Short forms in notes and meeting material: **SDS** (the builder), **LDS** (the Lead DS), **CDS** (the
+Chief DS).
+
 - **The framework's builder** (a senior DS) does the work and owns every design decision; all
   decisions flow through them.
 - **The Lead DS** reviews in a daily ~1-hour sync (design, reviews, ideas). Each sync is prepared with
   `/brief` from `worknotes/sync.md`.
-- **The Chief DS** sets direction. A design meeting is planned for the week of 2026-10-12 (topics:
-  `docs/roadmap.md`).
-- **Platform / MLE colleagues** own the production paths and the change-request process.
+- **The Chief DS** sets direction. A design meeting is on 2026-10-15 (topics: `docs/roadmap.md`).
+- **Platform / MLE colleagues** own the production paths and the change-request process. Who builds
+  the registry and deployment (an MLE/MLOps colleague?) and when they join: OD-23.
 - **Users** are the unit's data scientists. **Consumers** are the business and the strategy team
   (via reports and monitoring).
 
@@ -134,7 +137,7 @@ many versions write to the same shared tables (`CLAUDE.md` §2).
 1. **Original plan** (`docs/reference/`): a phased roadmap built on a spine (feature/target contract
    → population/eligibility → feature checks → model production → OOT evaluation → model card →
    batch scoring), with three shared agreements (config shape, component interface, card shape)
-   checked automatically. It had two sponsors: retail model delivery, and an LLM-assisted modelling
+   checked automatically. It was reviewed with the Chief DS around August 2026. It had two sponsors: retail model delivery, and an LLM-assisted modelling
    loop growing as a branch off the stable backbone.
 2. **The crunch** (2–3 weeks, politically urgent): basic activation-propensity scores for ~10 retail
    products on a single training month, built in notebooks + YAML configs with FLAML. It worked:

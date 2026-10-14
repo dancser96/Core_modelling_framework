@@ -39,9 +39,11 @@ decisions; the ledger holds the evidence and the trail.
   unresolved flags are listed on the model card and block registration (D-031).
 - **Human decisions go both ways.** *Exclude* removes a feature that passed. *Keep* resolves a flag
   and protects the feature from automated pruning, e.g. keeping both of a highly correlated pair when
-  both are strong. Every human decision carries a reason.
-- **Automated decisions are recorded here** together with the rule that made them. They are not
-  written back into the config; how they persist across reruns is OD-10.
+  both are strong. Human decisions are grouped lists with one note per group; whether a note is
+  required is OD-10 (proposal: only for a `keep` that resolves a flag).
+- **Automated decisions are recorded here** together with the rule that made them. The config holds
+  only the rule, so a rerun on unchanged data gives the same outcome; the model bundle freezes the
+  features it uses (D-058).
 - **Final features** = candidates − lineage exclusions − human excludes − automated drops (features
   with a human *keep* are never dropped automatically). This list equals the frozen config's
   resolved feature list, and its hash is the feature signature.
@@ -53,5 +55,4 @@ decisions; the ledger holds the evidence and the trail.
     per run?
   - human decisions copied in when Feature Checks runs go stale if the config is edited later.
     Record them at training time, from the frozen config?
-- Config lifecycle: how accepted automated decisions persist without multiple config versions
-  (OD-10).
+- Config lifecycle for human decisions, including the flag case (OD-10).

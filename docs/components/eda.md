@@ -26,6 +26,8 @@ that the notebooks were run in reverse order. Phase 2 fixes the content, not the
      how representative the window is). Later months stay hidden, because their target windows
      overlap the validation month's (D-048);
    - positive rows vs positive events;
+   - per-month row and positive counts are also saved as data in the EDA artifacts, so a later run
+     on the same data definition shows when a source month was restated (`CLAUDE.md` §4.10);
    - base rate by segment and by each stratification variable.
 
    Base-rate views, like the ranking statistic, come from the per-task spec (D-050).

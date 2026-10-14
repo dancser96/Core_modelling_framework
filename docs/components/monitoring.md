@@ -31,5 +31,11 @@ and the strategy team that relays results to the business.
 
 ## Open questions
 - Tooling: MLflow or not, what to expose, where dashboards live (OD-13, after the Chief DS meeting).
+  MLflow suits the registry and experiment tracking better than tracking decay over time, and the
+  Chief DS is expected to see it the same way. The monitoring design itself (what is computed,
+  stored and shown, and where) needs much more work.
 - How monitoring feeds the model inventory (OD-14).
+- Who acts on a flag and owns a live model after its builder moves on. Proposal for the CDS: a
+  central team monitors the live models.
+- Whether the existing data observability framework can be reused for monitoring (OD-13).
 - Retraining automation and retirement policy (recorded as policy first, automation later).

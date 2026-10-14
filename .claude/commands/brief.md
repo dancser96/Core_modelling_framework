@@ -19,8 +19,10 @@ memory, so it works in a fresh chat.
    - **Discuss:** the open questions for this sync, most blocking first (OD-numbers, one line of
      context each, plus our current leaning).
    - **Risks / needs a decision:** anything blocked, unverified or drifting from the goals.
-4. Refresh `sync.md` so it reads well for the Lead DS: tick or remove reviewed items, update the
-   open-questions table and "Demo next", and set `last briefed`. Don't commit anything; the user
+4. Refresh `sync.md` following the rules in `worknotes/README.md` → "Writing `sync.md` for the LDS":
+   new decisions by reference at the top, review list by importance then recency (tick or remove only
+   items the user says the LDS finished), "since the last sync" pruned to what the LDS needs, the
+   open-questions table and "Demo next" updated, and `last sync` set. Don't commit anything; the user
    commits and pushes.
 
 Keep it skimmable: the user reads it right before a one-hour meeting. Roles only, no names; no bank

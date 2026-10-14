@@ -1,7 +1,7 @@
 # Lifecycle: register, promote, deploy
 **Status:** designing · **Legacy:** `src/inference.py` (`promote_model`, `verify_model`, manifests) — promotion was coupled to inference in the crunch
 **Related:** [inference](inference.md) · [monitoring](monitoring.md) · [reporting](reporting.md) (model card) ·
-[environment](environment.md) · D-033, D-034, D-047, D-051, D-052 · OD-06, OD-07, OD-08, OD-09, OD-14
+[environment](environment.md) · D-033, D-034, D-047, D-051, D-052 · OD-06, OD-07, OD-08, OD-09, OD-14, OD-23
 
 ## Purpose
 The unit's new standard for keeping 50–100 live models maintainable: three tiers with explicit,
@@ -58,11 +58,15 @@ Promote-on-inference coupling; hash verification; manifest reproduction; T2–T4
 
 ## Open questions
 - High-level designs for the local → registered → production cycle, deployment and the registry are
-  needed **soon** (builder and Lead DS agree); OD-06 to OD-09 are the pieces.
+  needed **soon** (builder and Lead DS agree); OD-06 to OD-09 are the pieces. The builder won't
+  design the registry and deployment alone, especially if they are to become the unit's new registry
+  type: Chief DS and MLE/MLOps input is needed. The proposals below are straw men. Who builds them,
+  and when that person joins: OD-23.
 - The exact CR steps (who runs what, windows, approvals) are not known in detail yet; the current
   design assumes the CR process runs the framework's `deploy` command. Confirm with the platform
   colleagues.
-- OD-06: folder layout per entity × domain; are storage permissions separate per entity?
+- OD-06: folder layout per entity × domain. Keep the current folder structure that emulates the
+  permission barriers? Are storage permissions actually separate per entity? (Chief DS question.)
 - OD-07: model versions per key, one production version per key, shadow challengers.
 - OD-08: registry storage. Proposal (not agreed):
   - append-only event records (registered, promoted, deployed, retired, rolled back) on HDFS, with
