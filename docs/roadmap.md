@@ -79,7 +79,7 @@ At most 2–3 deepening rounds will happen in a phase; don't plan for more.
 - Framework-made pooled vs per-segment modelling decisions (uses the reserved `split` in the model
   key).
 - Shadow challenger scoring (if OD-07 agrees).
-- MLflow integration (if OD-13 agrees); alerting; retrain automation (the policy is recorded in
+- MLflow for the registry and experiment tracking (if OD-08 and OD-13 agree); alerting; retrain automation (the policy is recorded in
   Phase 2).
 - Series task family (forecasting, rolling validation).
 - Spark-native training engine, only if a use case needs it (`dataset.md`).
@@ -99,34 +99,35 @@ and delete the row here.
 | OD-02 | Where a use case lives (repo per use case / per domain / other) and how users get the guided notebooks | Not one shared repo with code folders; users get their own notebook copies to explore | Chief DS meeting (b) | `components/run_modes.md` |
 | OD-04 | Release path: zip → internal repo → internal CI → package repository (e.g. Nexus, where users pin versions)? Who publishes; whether CI/Sonar must pass first; is git clone fine in Phase 2 | Lead DS suggested Nexus distribution with version pins | Chief DS meeting (b) | `components/run_modes.md` |
 | OD-05 | Where use-case extension code lives (use-case repo, referenced by import path, vs upstreamed into the framework) | — | Builder | `components/config.md` |
-| OD-06 | Folder layout per entity × domain (separate parent folders or not); are storage permissions separate per entity? | — | Lead DS + platform colleagues | `components/lifecycle.md` |
-| OD-07 | Model versions per key; one production version per key; shadow challenger | Proposal in `lifecycle.md` | Above the builder: Lead DS / Chief DS (e) | `components/lifecycle.md` |
-| OD-08 | Registry storage: append-only event records, tables on top, records shaped like MLflow's; code version | Proposal in `lifecycle.md` | Platform/MLE + Chief DS (e, f) | `components/lifecycle.md` |
-| OD-09 | What "registered" means: any kept run, or a gated production candidate | — | Chief DS meeting (e) | `components/lifecycle.md` |
-| OD-10 | Config lifecycle from Target Factory to promotion: how human *and* automated feature decisions persist across reruns without multiple config versions | Open, a big design question. Includes the flag case: a hands-off run can't be registered while a flag is unresolved, and writing the `keep` into the config changes the config hash, so the run's frozen config no longer matches and registering would need an identical retrain | Builder | `components/config.md`, `components/feature_ledger.md` |
+| OD-06 | Folder layout per entity × domain: keep the current folder structure that emulates the permission barriers (separate parent folders), or not? Are storage permissions actually separate per entity? | — (question for the Chief DS, raised 2026-10-13) | Chief DS meeting (d); permission facts from the Lead DS + platform colleagues | `components/lifecycle.md` |
+| OD-07 | Model versions per key; one production version per key; shadow challenger | Straw man in `lifecycle.md`; the builder won't design this alone (OD-23) | Above the builder: Lead DS / Chief DS (e) | `components/lifecycle.md` |
+| OD-08 | Registry storage: append-only event records, tables on top, records shaped like MLflow's; code version | Straw man in `lifecycle.md`. If this becomes the unit's new registry type, it needs Chief DS and MLE/MLOps input, not a design by the builder alone (OD-23). MLflow fits the registry and experiment tracking better than monitoring (OD-13) | Platform/MLE + Chief DS (e, f) | `components/lifecycle.md` |
+| OD-09 | What "registered" means: any kept run, or a gated production candidate | — (needs Chief DS input; OD-23) | Chief DS meeting (e) | `components/lifecycle.md` |
+| OD-10 | Config lifecycle from Target Factory to promotion: how human feature decisions persist across reruns without multiple config versions (automated filters: D-058) | Record as much as possible. Human filters are grouped lists with one note per group, not per feature; proposal: only a `keep` group that resolves a flag must carry a note, enforced at config load, because it unblocks registration (D-031). SDS leaning to accept; confirm once seen in practice. Still open, the flag case: a hands-off run can't be registered while a flag is unresolved, and writing the `keep` into the config changes the config hash, so the run's frozen config no longer matches and registering would need an identical retrain | Builder | `components/config.md`, `components/feature_ledger.md` |
 | OD-11 | Feature ledger: review the sketch | Sketch written. To fix: EDA and Feature Checks write their columns before any `run_id` exists, and two runs on the same data share them (one part per data definition, one per run?); human decisions copied in at Feature Checks go stale when the config is edited later (record them at training time?) | Builder | `components/feature_ledger.md` |
 | OD-12 | The mandatory "core" report views per task | Structure agreed (summary page + core + extended); content open | Builder + Lead DS | `components/evaluation.md` |
-| OD-13 | Monitoring tooling: MLflow or not, what to expose, where dashboards live | After the Chief DS meeting. A non-local MLflow instance may take a while to stand up; until then, quick registry tables (Lead DS) | Chief DS meeting (f) | `components/monitoring.md` |
+| OD-13 | Monitoring tooling: MLflow or not, what to expose, where dashboards live | The Chief DS is expected to be sceptical of MLflow here: it suits the registry and experiment tracking (OD-08), not tracking decay over time. Monitoring and the downstream stages need much more design. A non-local MLflow instance may take a while to stand up; until then, quick registry tables (Lead DS) | Chief DS meeting (f) | `components/monitoring.md` |
 | OD-14 | Model inventory design | In scope, possibly richer than registry tables | Builder + Lead DS | `components/lifecycle.md` |
-| OD-15 | Which second task type to build in Phase 2; chosen by the end of M1 (D-050) | Open; the goal is proving extensibility, not solving a specific problem. One idea raised: regression with an asymmetric (quantile) loss, e.g. CatBoost quantile regression (inspired by an earlier liquidity-forecasting project where under- and over-funding cost differently; some data may exist) | Builder | `context/project.md` |
-| OD-16 | Synthetic data: product archetypes, ballpark rates, two entities with different schemas | Rates to come from the builder | Builder | `components/test_harness.md` |
+| OD-15 | Phase 2 modelling scope: is there a second task type, which one, and are both modelling paths built (D-020, D-037)? Chosen by the end of M1 (D-050) | Undecided. The Lead DS would be comfortable with FLAML only and binary only: as a pinned package, major upgrades can ship later; and the Lead DS doubts anything gets built between the first and second release if they are only 2–3 months apart. The builder's idea: FLAML only, but binary plus regression. Verified on FLAML 2.7.0 (2026-10-14): `estimator_list` + `custom_hp` limit the search to one model family with our own ranges, so FLAML only can still offer a predefined family. Whatever is decided, regression's per-task spec is designed in M1 (D-060). Earlier idea: regression with an asymmetric (quantile) loss, from a liquidity-forecasting project. The goal is proving extensibility, not solving a specific problem | Chief DS meeting (a), then the builder | `context/project.md` |
+| OD-16 | Synthetic data: ballpark rates and income thresholds per product; a second entity with a different schema | Products, segment mix and mart shape settled (D-056). Rates and thresholds proposed in build steps 1–2 for the builder to correct; second entity in M3 | Builder | `components/test_harness.md` |
 | OD-17 | Sampling for multi-month training (row-level / client-level / outcome-stratified with weights) and the window ablation design | Default: row-level negative sampling, stratified by month, after the client split; options 2–3 offered with guidance. Settle after comparing all three against the oracle on synthetic data. Ablation: paired bootstrap on one validation month, plus a row-count-matched control and per-month models | Builder | `components/dataset.md` |
 | OD-18 | Inference output: extra columns for the campaign system; separate manifests from score files; the exact format | Details to come from the Lead DS. Candidate columns to consider: `domain` and `split` (the rest of the model key), `scoring_batch_id`, and a date column named after the glossary's inference month | Lead DS | `components/inference.md` |
 | OD-19 | Where engineered features come from long term; whether a feature-aggregation spec is needed (LLM loop) | Phase 2: features come from upstream; spec shape only | Builder | `components/target_factory.md` |
 | OD-20 | Documentation approach for users (generated docs, pages, wiki…), and the glossary's reach | Parked: too early | Chief DS meeting (c) | — |
 | OD-21 | Eventual task scope | Framing agreed (panel tasks vs series tasks; nearby problems not excluded); the list is open | Chief DS meeting (a) | `context/project.md` |
 | OD-22 | Trade-off chart (D-037): may it use the test metric, or only client-grouped CV inside train? Choosing a trial on test data conflicts with `CLAUDE.md` §4.4, and the test-vs-validation gap only separates overfitting from decay if test never chose anything | Leaning: CV inside train only; test reported, never chosen on | Builder + Lead DS | `components/training.md` |
+| OD-23 | Who builds the registry and deployment (an MLE/MLOps colleague?), and at what point they join the project | The builder won't design the registry and deployment alone, especially if it is to become the unit's new registry type. Until then, register / promote / deploy are thin but real (D-059). The original plan had a part-time ML engineering lane for registration, the deployment path and drift alerting (`docs/reference/`) | Chief DS meeting (e) | `components/lifecycle.md` |
 
-## Chief DS design meeting (week of 2026-10-12)
+## Chief DS design meeting (2026-10-15, 2 × 30 min)
 
-Preparation (a pre-read built from the rows above) is still pending. Topics and the open decisions
-they settle:
+Meeting material (drafts): `worknotes/chief_ds_meeting/` (overview and questions). Topics and the
+open decisions they settle:
 
 | Topic | Related |
 |---|---|
-| (a) Scope: binary, regression, multiclass, churn, forecasting, time series… | OD-21, OD-15 |
+| (a) Scope: binary, regression, multiclass, churn, forecasting, time series…; Phase 2: binary only or binary + regression, FLAML only or both modelling paths | OD-21, OD-15, D-020, D-037 |
 | (b) Consumption: git clone, Nexus distribution, API (unlikely), other | D-024, D-047, OD-02, OD-04 |
 | (c) Documentation: generated docs, pages, markdown, wiki | OD-20 |
-| (d) Structure: domain/entity-agnostic; key steps | D-028 (verify), D-034, OD-06 |
-| (e) Promotion / deployment / consumption; breakpoints between local, registered and production; the Phase 2 definition of done's production step | D-033, D-055, OD-07, OD-08, OD-09 |
-| (f) Monitoring: MLflow, how, what to expose | D-040, OD-13, OD-14 |
+| (d) Structure: domain/entity-agnostic; key steps; keep the folder structure that emulates the permission barriers? | D-028 (verify), D-034, OD-06 |
+| (e) Promotion / deployment / consumption; breakpoints between local, registered and production; the Phase 2 definition of done's production step | D-033, D-055, OD-07, OD-08, OD-09; who builds the registry and deployment, and when they join (OD-23) |
+| (f) Monitoring: MLflow (registry and tracking vs decay over time), how, what to expose | D-040, OD-13, OD-14 |

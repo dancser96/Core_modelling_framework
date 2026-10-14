@@ -14,22 +14,22 @@ Status values: `legacy-only` (exists only in legacy) · `designing` · `stub` (i
 |---|---|---|
 | Repo bootstrap (docs, skills, agents, requirements, package skeleton) | built | |
 | Design baseline (docs rebuilt after three review rounds + Lead DS notes) | built | 2026-10-12; milestone M0 |
-| Environment adapter (Spark session, compat shim, transport, paths, sources) | legacy-only | Traps T1–T5 |
+| Environment adapter (Spark session, compat shim, transport, paths, sources) | built | Partial: compat shim + local Spark session (M1 step 0, D-057); transport, paths, sources in M2. Traps T1–T5, T18 |
 | Config spine (single file, profiles, decision, entities, data-definition hash, migrations) | designing | `components/config.md` |
-| Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | designing | Next milestone (M1); replaces the stub-based smoke test (T15) |
+| Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | designing | M1 in progress: spec settled 2026-10-14 (D-056); step 0 (Spark harness) in review; replaces the stub-based smoke test (T15) |
 | Target Factory (targets only, optional) | legacy-only | Renamed from Data Creation (D-029) |
 | Dataset: observation window, client-grouped split, OOT validation, sampling | designing | Big-ticket item (D-030); sampling choice OD-17 |
 | EDA (worth running first; low-prevalence aware) | legacy-only | Major rethink |
 | Feature Checks (correctness and quality only) | legacy-only | Major rethink; selection moved to Training (D-028) |
 | Feature ledger | designing | Sketch awaiting review (OD-11) |
-| Training (AutoML + predefined/Optuna paths, selection, encoding, calibration) | legacy-only | D-037 |
+| Training (AutoML + predefined/Optuna paths, selection, encoding, calibration) | legacy-only | D-037; FLAML only under review (OD-15) |
 | Evaluation (stratified metrics, compatibility table, comparison) | legacy-only | Core views OD-12 |
 | Reporting (self-contained HTML, plotly, chart rules) + model card | legacy-only | D-036 |
-| Lifecycle: register / promote / deploy, registry tables, inventory | designing | OD-06–OD-09, OD-14 |
+| Lifecycle: register / promote / deploy, registry tables, inventory | designing | OD-06–OD-09, OD-14; needs Chief DS + MLE/MLOps input, who builds it OD-23 |
 | Inference (batch-scoped, manifest, reinference) | legacy-only | Output columns / layout OD-18 |
-| Monitoring (operational + drift deep; performance + impact thin) | designing | Renamed from Tracking (D-040); tooling OD-13 |
+| Monitoring (operational + drift deep; performance + impact thin) | designing | Renamed from Tracking (D-040); tooling OD-13; downstream design still largely open |
 | CLI / Python API / guided notebooks / experiment sweeps | designing | D-024, D-039 |
-| Second task type | designing | Which one: OD-15, chosen by the end of M1; per-task spec D-050 |
+| Second task type | designing | Whether and which: OD-15 (Chief DS), chosen by the end of M1; per-task spec D-050 |
 | LLM-assisted modelling branch | designing | After internalisation |
 | Full test coverage + CI/Sonar readiness | designing | Before migration (M5) |
 
