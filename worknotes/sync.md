@@ -1,5 +1,5 @@
 # Sync page
-_For the SDS and the LDS · last updated: 2026-10-14 · last sync: 2026-10-13_
+_For the SDS and the LDS · last updated: 2026-10-14 · last sync: 2026-10-13 (2026-10-14: CDS prep only)_
 
 **New decisions since the last sync:** D-056–D-061 (`docs/decisions.md`)
 
@@ -7,8 +7,6 @@ Detail behind each item: `worknotes/log.md`. Open decisions (OD-nn): `docs/roadm
 page is written: `worknotes/README.md`.
 
 ## For the LDS: to review (most important first, then newest)
-- [ ] **CDS meeting material** — `worknotes/chief_ds_meeting/overview.md` and `questions.md` —
-      feedback wanted before tomorrow: anything to cut, add or reframe?
 - [ ] **Synthetic data spec** — `docs/components/test_harness.md` — feedback wanted: is the
       synthetic retail book (segment mix, products, eligibility thresholds) realistic enough to
       develop against?
@@ -41,25 +39,22 @@ page is written: `worknotes/README.md`.
 
 | Question | Context | Current leaning | Needs |
 |---|---|---|---|
-| CDS meeting, 2026-10-15 (2 × 30 min) | Covers OD-06–OD-09, OD-13, OD-15, OD-23 and D-055 | Drafts ready; modelling half as our proposal, downstream designed with the CDS | SDS + LDS, then the CDS |
+| CDS meeting, 2026-10-15 (2 × 30 min) | Covers OD-06–OD-09, OD-13, OD-15, OD-23 and D-055 | Material reviewed together on 10-14; questions carry our joint proposals; the lifecycle design gets a separate blank-slate session | SDS + LDS, then the CDS |
 | Depth per component (OD-01) | full / deep / thin / stub | — | SDS + LDS |
 | Human feature decisions (OD-10) | Resolving a flag after training would force an identical retrain | Grouped lists, one note per group; only a `keep` that resolves a flag needs one | SDS |
 
 ## Since the last sync
-- **CDS meeting material is ready for our discussion.** The overview is a ~15-minute design update;
-  the questions are 23 over topics a–f, 8 starred. On your OD-15 position: FLAML can be limited to
-  one model family, so "FLAML only" can still offer a predefined family. — look at:
-  `worknotes/chief_ds_meeting/`
 - **Synthetic data: spec settled, first code running.** The synthetic retail book is specified, and
   a local Spark harness (the first framework code) passes its tests; the generator is next, built
   in reviewed steps. — look at: `docs/components/test_harness.md`
 
 ## Demo next
-- Walk through the CDS meeting drafts: `worknotes/chief_ds_meeting/overview.md`, then
-  `questions.md`.
+- The CDS meeting outcomes (2026-10-15), then where the synthetic data generator stands.
 
 ## Last 7 days
-- 10-14 — **CDS meeting drafts**, three rounds with the SDS — `worknotes/chief_ds_meeting/`
+- 10-14 — **CDS meeting material**: three rounds with the SDS, then a review with the LDS that added
+  our joint proposals (OD-02, OD-04, OD-15, OD-21) and split off a blank-slate lifecycle session —
+  `worknotes/chief_ds_meeting/`
 - 10-14 — **Follow-ups to the 10-13 sync**: feature decisions, lifecycle depth, regression shapes,
   targets — D-058–D-061
 - 10-13–14 — **Synthetic data (M1)**: feature-mart spec settled, local Spark harness running —

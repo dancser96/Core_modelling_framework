@@ -82,6 +82,27 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   rather than a pitch, timers removed. Questions: d3 (shared targets) answered "no" → D-061; e2
   (who else joins), e4 (outside models in the registry) and f3 (campaign link) dropped;
   "registered" merged with the lifecycle steps into one starred question. 23 questions, 8 starred.
+- 2026-10-14, round 4 (SDS + LDS prep sync; no comments on the overview): the questions now carry
+  our joint proposals, "(new)" markers removed, renumbered:
+  - a1 proposal: binary, possibly with regression; a2 proposal: FLAML only; the old a3 (release
+    rhythm) dropped to stay on the short-to-medium term; a3 (was a4) is now a prioritisation
+    question with the proposed order binary → regression → multiclass → time-to-event →
+    forecasting → nearby problems, the regulated-models part unchanged;
+  - b2 proposal: package distribution through Nexus; b3 starred, proposal: one repo per entity ×
+    domain (2 × 3), caveat: needs standardised upstream data; the feature-source question (old d3)
+    folded into it;
+  - the lifecycle questions (old e2–e5) moved to a separate box, "to be covered in a separate
+    session", where the CDS ideates from a blank slate (s1–s4); (e) keeps e1 (ML engineering
+    capacity) and the definition-of-done confirm (e2);
+  - f1 also asks whether the existing data observability framework can be reused; f2 proposal: a
+    central team monitors the live models; c2 proposal: the current group model validation
+    framework (already in the Kedro project template), is it sufficient?
+  - proposals recorded as leanings on OD-02, OD-04, OD-15, OD-21, plus OD-13, OD-07–OD-09 (separate
+    session), `monitoring.md` and the Phase 3 backlog.
+- 2026-10-14, e2 refocused: milestones are not anchored to outside-the-bank steps, so the
+  definition-of-done confirm only asks about internal systems (the first change request runs
+  `deploy` and the production model scores). D-055 status noted; its wording changes after the
+  CDS confirms.
 - Why: the CDS meeting is on 2026-10-15.
 - Files: `docs/roadmap.md`, `docs/decisions.md`, `docs/UPDATES.md`,
   `docs/context/{project,environment}.md`,

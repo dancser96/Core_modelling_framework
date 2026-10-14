@@ -273,7 +273,7 @@ Each fact has **one owner doc**; every other doc links to it instead of repeatin
 
 | Trigger | Update |
 |---|---|
-| Any turn that changed files, settled something or produced a finding | Refresh `worknotes/sync.md` (Lead DS review items, shared open questions, recent developments) and append to `worknotes/log.md`. Every time, not only for big changes. Both are read by the Lead DS: keep them clear and short |
+| Any turn that changed files, settled something or produced a finding | Refresh `worknotes/sync.md` (rules: `worknotes/README.md` → "Writing `sync.md` for the LDS") and append to `worknotes/log.md`. Every time, not only for big changes. Both are read by the Lead DS: keep them clear and short |
 | A component's behaviour, interface or design changes | `docs/components/<component>.md` (Status, requirements, Interface, Open questions) |
 | A config field is added, changed or removed | `docs/components/config.md` + example in `conf/base/`; §2 procedure if breaking |
 | An artifact format changes (card, manifest, scores, ledger, registry, monitoring tables) | The owning component doc + the §2 procedure; run compat-guardian |
