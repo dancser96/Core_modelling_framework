@@ -22,7 +22,8 @@ validation     the OOT month v ≥ tk + w: its target window (v+1 … v+w) start
 - Backward windows default to ≤ 6 months, because some sources won't have more than 24 months of
   history.
 - Validation is a single month for panel tasks. Series tasks will need rolling validation (later).
-- Example on the 24-month synthetic panel with 6-month backward windows, `w = 3`:
+- Example on the 24-month synthetic panel with 6-month backward windows, `w = 3` (an illustration:
+  the window is chosen per use case, and the synthetic data is built for none in particular, D-068):
   - window = months 6–11;
   - validation month = 14, labels mature by 17;
   - months 18–21 are free to test scoring plus monitoring with matured labels.

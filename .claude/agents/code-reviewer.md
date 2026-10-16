@@ -16,7 +16,7 @@ Review for:
 1. **Necessity.** Anything not required by the task (options, parameters, layers, "future" hooks)?
 2. **Simplicity.** Classes where functions suffice (classes must earn it per `CLAUDE.md` §1 rule 2);
    inheritance beyond a library base or one shallow level; registries, factories; long functions
-   (> ~40 lines); long modules (> ~300 lines); mixed responsibilities.
+   (> ~50 lines); long modules (> ~300 lines); mixed responsibilities.
 3. **Naming.** Does each name tell a reader what it does, without opening it?
 4. **Structure.** Is each module one concept? Utilities in a dumping ground?
 5. **Errors.** Swallowed exceptions, silent fallbacks, vague messages. The only allowed skip is a

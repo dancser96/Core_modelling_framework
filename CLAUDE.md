@@ -56,7 +56,7 @@ complete or "future-proof" code. When in doubt, write less.
    Inherit only from library base classes, or one shallow level of your own, and say why in the
    step summary. Still no ABC hierarchies, metaclasses, decorator registries, dependency-injection
    frameworks or "manager"/"factory"/"engine" classes.
-3. **One function, one job.** Aim for ≤ ~40 lines. If it grows, split it into well-named helpers.
+3. **One function, one job.** Aim for ≤ ~50 lines. If it grows, split it into well-named helpers.
 4. **Names say what things do.** Functions are `verb_noun` (`load_snapshot`, `compute_psi`,
    `promote_model`). Only standard abbreviations (`df`, `cfg`, `auc`, `oot`, `psi`). No `utils.py` /
    `helpers.py` dumping grounds — a module is named for its one concept. Terms follow
@@ -82,8 +82,9 @@ complete or "future-proof" code. When in doubt, write less.
 11. **Use the library.** Prefer pandas / PySpark / scikit-learn / scipy built-ins over hand-rolled
     versions.
 12. **No new dependency without asking.** It must also be installable inside the bank (see §5).
-13. **Small, reviewable steps.** One logical change per step, roughly ≤ 200 changed lines unless
-    agreed. Stop, summarise, let the user review.
+13. **Small, reviewable steps.** One logical change per step, roughly ≤ 300–400 changed lines
+    unless agreed. Stop, summarise, let the user review. A larger agreed build ships with a review
+    guide that says what to read, in which order, and what "right" looks like (D-067).
 
 **Workflow for any non-trivial task**
 

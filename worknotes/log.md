@@ -2,7 +2,7 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
-### 2026-10-13 → 2026-10-15 — Synthetic data (M1): design round, spec, steps 0–2
+### 2026-10-13 → 2026-10-16 — Synthetic data (M1): design round, spec, steps 0–2, one-go plan
 - 2026-10-13, design round 1 opened (Q76–Q105): the SDS described the feature groups (client
   description, flows and cash, digital, loans, wealth) and asked for proactive feature suggestions
   plus a proof plan per build step. Main points of Claude's review of `test_harness.md`:
@@ -161,14 +161,44 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   - measured for the plan: the canonical preset now generates in 9 s with 31 columns, 1.3 GB in
     memory (2.1 GB peak); at ~150 columns the mart must be written month by month and the
     canonical checks must read column subsets.
+- 2026-10-16, question round answered, spec completed, plan written:
+  - committed steps 0–2 together with the CDS meeting material (`2e50bc4`, SDS: fine to keep them
+    in one commit);
+  - SDS answers (defaults otherwise): Q141 size rules relaxed for good (functions ~50 lines,
+    steps ~300–400 lines, D-067); Q147 the review guide lives in `synthetic/REVIEW.md`, the SDS
+    reviews first and then a summary goes to the sync page for the LDS; the notebook is pushed
+    with outputs, so no HTML export; Q149 no cuts, only the iteration steps go; Q151 levels:
+    current/savings 40 / 4 / 1.5 / 0.5, card spend 0.4 / 0.3 / 0.3 / 0.35, card limit
+    3 / 2.5 / 2 / 1.5 (× income), the rest as proposed; Q154 amounts as doubles, one decimal
+    column that must work (`cc_limit`); Q163 card limits from a few product tiers, rarely adjusted;
+    Q171 subcategory shares more extreme per profile; Q174 "never logged in" is null; Q175
+    seasonality per profile (Mass travels little; school fees vary less than income, so they weigh
+    most on lower Affluent); Q177 Private clearly apart, the rest overlapping; Q179 the generator
+    assumes no observation window (the `dataset.md` example is closer to reality); Q182 one
+    logical lowercase grammar (the real mart's naming is poor); Q186–Q190 traps on two products
+    only (card acquisition, personal-loan opening), several kinds each, planted columns with a
+    `_trap_<kind>` suffix and one trap summary (D-069); Q203 the CLI goes in the review guide;
+  - `test_harness.md` rewritten as the full spec: amounts (levels, variation, current/savings
+    booking identity, subcategories, card tiers and revolvers, loans, deposits, wealth with a
+    market index, FX, logins, time effects per profile, overlap), the column list (≈ 145),
+    nulls and types, the trap summary, the oracle (window probabilities on demand, standard
+    targets, regression oracle), interface and budgets. Numerically checked first: the Hill
+    estimator recovers the tail index within ≈ 5% through the lognormal body, and `exponnorm`
+    gives the exact median offset;
+  - build plan with agent instructions: `worknotes/handovers/synthetic_build.md` (stages A–F,
+    module map, month loop, streams, signatures, independent checks per family, mutation tests,
+    integration protocol, review package);
+  - `CLAUDE.md` §1 rules 3 and 13, the simplicity-review skill and the code-reviewer agent updated
+    (D-067); `notebooks/README.md` exception for the synthetic notebook; `dataset.md` example
+    marked as an illustration.
 - Files: `docs/components/{test_harness,environment,target_factory}.md`,
   `docs/{UPDATES,architecture,decisions,glossary,roadmap}.md`,
   `docs/context/{lessons,environment}.md`, `docs/guides/setup_{macos,windows_wsl2}.md`,
   `requirements.txt`, `requirements-dev.txt`, `synthetic/`, `src/core_modelling/{_compat,environment}.py`,
   `tests/{conftest,test_spark_roundtrip,test_synthetic_population}.py`,
   `notebooks/{00_synthetic_data.ipynb,README.md}`, `pyproject.toml` (ruff).
-- Decisions / open decisions: D-056, D-057, D-062–D-066; D-042 status; OD-16 settled.
-- Still open: Q140–Q208 (the question round for steps 3–7); which Spark session arguments the
+- Decisions / open decisions: D-056, D-057, D-062–D-069; D-042 status; OD-16 settled.
+- Still open: building stages A–F; which Spark session arguments the
   bank needs (M2).
 
 ### 2026-10-14 — Worknotes: sync page and log rules for the LDS

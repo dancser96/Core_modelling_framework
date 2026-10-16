@@ -25,7 +25,7 @@ author.
       together (Pydantic model, dataclass, scikit-learn-compatible wrapper, small `Protocol`)? Any
       inheritance beyond a library base class or one shallow level, and is it explained? Any ABC
       hierarchy, decorator registry, factory or manager class? (`CLAUDE.md` §1 rule 2)
-- [ ] **Size.** Functions longer than ~40 lines, or modules longer than ~300 lines? Split them by
+- [ ] **Size.** Functions longer than ~50 lines, or modules longer than ~300 lines? Split them by
       responsibility.
 - [ ] **Names.** Does each name say what it does (`verb_noun`)? Vague names (`process`, `handle`,
       `data2`, `utils`)?

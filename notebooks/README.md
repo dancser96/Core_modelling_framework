@@ -15,7 +15,8 @@ functions and a way to learn how things work under the hood (D-039, `docs/compon
      short markdown cell saying what to check in its output.
   4. **Display cells** that render the artifacts the functions produced.
 - Reports are produced by package functions from the frozen config, not assembled here.
-- Clear outputs before committing (they may contain data).
+- Clear outputs before committing (they may contain data). Exception: `00_synthetic_data` is
+  committed with its outputs, since it only ever shows synthetic data (D-068).
 
 **Exploring in your own copy is encouraged.** Copy a notebook and play: pivots, filters, extra
 charts. But nothing a production run, registered model or report depends on may live in a notebook.
