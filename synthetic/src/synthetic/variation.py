@@ -6,9 +6,12 @@ effect and monthly AR(1) noise, plus (balances) the log of a persistent power-la
 (flows) the current/savings balance's random part × the balance elasticity. A median offset `c`
 (an exponentially modified normal's median, `scipy.stats.exponnorm`) makes the random part's median
 exactly 1 for a client at its own trait means, so the median amount lands on the spec's multiple.
-This module holds those parts, the overdispersed counts and the subcategory splits (Dirichlet
-shares; parts rounded to the cent that add up to the total exactly). `measure_offsets` and
-`log_variation` are shared by every amount mechanism and by the regression oracle (stage E).
+This module holds those parts, the levels they multiply, the overdispersed counts and the
+subcategory splits (Dirichlet shares; parts rounded to the cent that add up to the total exactly).
+`measure_offsets` and `log_variation` are shared by every amount mechanism and by the regression
+oracle (stage E). Functions that take arrays work on any shape, as the regression oracle's
+(clients, paths) arrays need: a per-client input then comes as an `(n, 1)` column, so it
+broadcasts over the paths.
 """
 
 import numpy as np
@@ -53,6 +56,16 @@ def draw_counts(rng: np.random.Generator, mean: np.ndarray, shape: float) -> np.
     return rng.poisson(mean * rng.gamma(shape, 1 / shape, np.shape(mean)))
 
 
+def draw_transaction_counts(
+    rng: np.random.Generator, amount: np.ndarray, mean: np.ndarray, shape: float
+) -> np.ndarray:
+    """Transactions behind an amount: 1 + overdispersed counts where it is positive, else 0.
+
+    Drawn for every element whatever the amount, so the stream never depends on an outcome.
+    """
+    return np.where(np.asarray(amount) > 0, 1 + draw_counts(rng, mean, shape), 0)
+
+
 def draw_shares(
     rng: np.random.Generator, mean_shares: np.ndarray, concentration: float
 ) -> np.ndarray:
@@ -90,6 +103,23 @@ def tilted_shares(spec: dict, table: str, profiles: np.ndarray, dz: np.ndarray) 
             log_tilt = log_tilt + loading * dz[..., LATENTS.index(trait)]
         log_tilts.append(log_tilt)
     return base * np.exp(np.stack(log_tilts, axis=-1))
+
+
+def measures_of_kind(spec: dict, kind: str) -> list[str]:
+    """The measures of one kind ("stock" or "flow") in the spec's order: the columns of that
+    kind's state arrays."""
+    names = [name for name, cfg in spec["levels"]["measures"].items() if cfg["kind"] == kind]
+    if not names:
+        raise ValueError(f"no measure of kind {kind!r}")
+    return names
+
+
+def measure_level(spec: dict, measure: str, profiles: np.ndarray, base: np.ndarray) -> np.ndarray:
+    """A measure's median before its random part: the profile's multiple × the hidden `base`
+    (the wealth base for balances, the true income for flows). `profiles` are PROFILE_ORDER codes
+    that broadcast with `base`."""
+    multiples = np.asarray(spec["levels"]["measures"][measure]["multiples"], dtype=float)
+    return multiples[profiles] * base
 
 
 def measure_offsets(spec: dict) -> dict[str, np.ndarray]:
@@ -139,8 +169,7 @@ def log_variation(
     measures, phi = spec["levels"]["measures"], spec["levels"]["balance_elasticity"]
     out = {}
     for kind in ("stock", "flow"):  # stocks first: every flow carries D
-        names = [name for name, cfg in measures.items() if cfg["kind"] == kind]
-        for j, name in enumerate(names):  # column j of the kind's state arrays
+        for j, name in enumerate(measures_of_kind(spec, kind)):  # column j of the state arrays
             cfg = measures[name]
             trait = cfg["loading"] * dz[..., LATENTS.index(cfg["trait"])]
             part = trait + state[f"{kind}_effect"][..., j] + state[f"{kind}_noise"][..., j]

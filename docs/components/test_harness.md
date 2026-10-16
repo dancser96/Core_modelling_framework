@@ -368,9 +368,10 @@ thinner tail through their link to the balance (elasticity 0.3).
   transfer.
 
 ### Subcategories
-Each client has persistent mean shares: the profile's base shares, tilted by traits and descriptors,
-renormalised. Monthly shares vary around them (Dirichlet, concentration 50), so subcategories aren't
-perfectly collinear with their totals; they add up to the total exactly.
+Each client's mean shares are the profile's base shares, tilted by its current trait deviations and
+descriptors, renormalised: as persistent as the traits (recomputed each month, not stored). Monthly
+shares vary around them (Dirichlet, concentration 50), so subcategories aren't perfectly collinear
+with their totals; they add up to the total exactly.
 
 | Profile | Outflow (spending): remittance / cash / bills / transfers | Card spend: travel / retail / online / dining |
 |---|---|---|
@@ -416,8 +417,8 @@ perfectly collinear with their totals; they add up to the total exactly.
 - **Term deposit:** the balance is drawn at adoption and at each 12-month rollover (the stock formula
   with fresh noise, at least AED 10k) and stays fixed in between. 0 when not held.
 - **Wealth:** assets under management = the stock formula × one shared market index (monthly log
-  return N(0.005, 0.03²), 1 at the first simulated month, recorded in the truth). Digital and
-  traditional wealth have their own client effects and noise. 0 when not held.
+  return N(0.005, 0.03²), 1 in the month the starting book is drawn, recorded in the truth).
+  Digital and traditional wealth have their own client effects and noise. 0 when not held.
 
 ### FX and logins
 - **FX** is a separate activity: currency conversion, foreign transfers and travel money; remittances
@@ -548,7 +549,8 @@ count     = active · (1 + Poisson(μ_k · exp(0.3 Δz_activity) · G)),   G ~ G
 shares_t  ~ Dirichlet(50 · s̄_i),   s̄_i = base_p ⊙ tilts_i / Σ;   sub-amount = round(total · share)
 card      M_t = carried_t + 0.03 · carried_t · revolver + spend_t,
           carried_t = revolver · (1 − k_i) · M_t−1,   repayment_t = M_t−1 − carried_t
-          spend_t = min(wanted_t, limit − (1.03 · carried_t if revolver)),   utilisation = M_t / limit
+          spend_t = min(wanted_t · (1 − u_t−1 if revolver), limit − (1.03 · carried_t if revolver))
+          utilisation u_t = M_t / limit
 loan      instalment = P r / (1 − (1 + r)^−n),   outstanding after j instalments = P (1 + r)^j − A ((1 + r)^j − 1) / r
 ```
 Sub-amounts are rounded first and the total is their sum, so subcategories add up exactly.

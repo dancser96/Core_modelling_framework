@@ -16,7 +16,14 @@ import pandas as pd
 
 from synthetic.population import profile_values, subsegment_medians
 from synthetic.seasons import bonus_due, school_fee_due, season_factor
-from synthetic.variation import draw_counts, draw_shares, split_amount, tilted_shares
+from synthetic.variation import (
+    draw_counts,
+    draw_shares,
+    draw_transaction_counts,
+    measure_level,
+    split_amount,
+    tilted_shares,
+)
 
 INFLOW_PARTS = ("salary", "transfers", "other")  # the inflow subcategories, in the mart's order
 
@@ -71,13 +78,12 @@ def fx_amounts(
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, np.ndarray]:
     """FX volume and count: multiple × true income × summer factor × variation, when active."""
-    levels = spec["levels"]
-    level = profile_values(clients, levels["measures"]["fx_vol"]["multiples"])
-    level = level * clients["true_income"].to_numpy(dtype=float)
+    counts = spec["levels"]["counts"]
+    level = measure_level(spec, "fx_vol", profiles, clients["true_income"].to_numpy(dtype=float))
     season = season_factor(spec, "fx_vol", profiles, month)
     volume = np.where(active, np.round(level * season * np.exp(log_part), 2), 0.0)
-    count = draw_counts(rng, levels["counts"]["fx"] * count_tilt, levels["counts"]["gamma_shape"])
-    return volume, np.where(volume > 0, 1 + count, 0)
+    count = draw_transaction_counts(rng, volume, counts["fx"] * count_tilt, counts["gamma_shape"])
+    return volume, count
 
 
 def _inflow(
@@ -112,16 +118,21 @@ def _outflow_shares(
     spec: dict, clients: pd.DataFrame, profiles: np.ndarray, dz: np.ndarray
 ) -> np.ndarray:
     """Each client's mean spending shares: tilted by traits, remittance only for remitters and
-    scaled by nationality group and (income / subsegment median)^elasticity; renormalised."""
+    scaled by nationality group and (income / subsegment median)^elasticity; renormalised.
+
+    A remitter whose nationality group has no factor raises (UAE and GCC nationals never remit,
+    so only they have none).
+    """
     remit = spec["levels"]["subcategories"]["remittance"]
     shares = tilted_shares(spec, "outflow_casa", profiles, dz)
     relative = clients["true_income"].to_numpy(dtype=float) / subsegment_medians(spec, clients)
-    factor = (
-        clients["remitter_flag"].to_numpy()
-        # UAE and GCC nationals never remit, so they have no factor.
-        * clients["nationality_group"].map(remit["nationality_factor"]).fillna(0.0).to_numpy()
-        * relative ** remit["income_elasticity"]
-    )
+    remitter = clients["remitter_flag"].to_numpy(dtype=bool)
+    groups = clients["nationality_group"]
+    group_factor = groups.map(remit["nationality_factor"]).to_numpy(dtype=float)
+    missing = remitter & np.isnan(group_factor)
+    if missing.any():
+        raise KeyError(f"no remittance factor for remitters of {sorted(set(groups[missing]))}")
+    factor = np.where(remitter, group_factor * relative ** remit["income_elasticity"], 0.0)
     column = _outflow_names(spec).index("remittance")
     shares[:, column] = shares[:, column] * factor
     return shares / shares.sum(axis=1, keepdims=True)
@@ -143,19 +154,19 @@ def _columns(
     """
     counts, shape = spec["levels"]["counts"], spec["levels"]["counts"]["gamma_shape"]
     in_count = draw_counts(rng, counts["inflow_casa"] * count_tilt, shape)
-    out_count = draw_counts(rng, counts["outflow_casa"] * count_tilt, shape)
-    remitted = draw_counts(rng, counts["remittance"] * count_tilt, shape)
+    other_out = sum(x for name, x in outflow.items() if name != "remittance")
+    out_count = draw_transaction_counts(rng, other_out, counts["outflow_casa"] * count_tilt, shape)
+    remittance = outflow["remittance"]
+    remitted = draw_transaction_counts(rng, remittance, counts["remittance"] * count_tilt, shape)
     in_total, out_total = np.round(sum(inflow.values()), 2), np.round(sum(outflow.values()), 2)
     in_count = np.maximum((inflow["salary"] > 0) + in_count + booked_in, 1)
-    remitted = np.where(outflow["remittance"] > 0, 1 + remitted, 0)
-    other_out = sum(x for name, x in outflow.items() if name != "remittance") > 0
     return {
         "inflow_casa_vol": in_total,
         **{f"inflow_casa_{name}_vol": inflow[name] for name in INFLOW_PARTS},
         "inflow_casa_cnt": np.where(in_total > 0, in_count, 0),
         "outflow_casa_vol": out_total,
         **{f"outflow_casa_{name}_vol": x for name, x in outflow.items()},
-        "outflow_casa_cnt": np.where(other_out, 1 + out_count, 0) + remitted,
+        "outflow_casa_cnt": out_count + remitted,
         "outflow_casa_remittance_cnt": remitted,
     }
 

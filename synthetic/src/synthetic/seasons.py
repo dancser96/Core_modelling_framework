@@ -60,11 +60,14 @@ def season_factor(
     """A measure's seasonal factor per profile in `month` (1 outside its months).
 
     Measures are the keys of the spec's seasonal tables: `casa_bal`, `fx_vol` and `travel_spend`
-    in summer, `card_other_spend` in December.
+    in summer, `card_other_spend` in December; a measure in no table raises `KeyError` (a typo
+    would otherwise mean no season at all).
     """
     seasons, out = spec["seasons"], np.ones(np.shape(profiles))
     tables = [(seasons["summer_months"], seasons["summer"]), (seasons["december"]["months"],
               seasons["december"])]  # fmt: skip
+    if not any(measure in table for _, table in tables):
+        raise KeyError(f"no seasonal table holds the measure {measure!r}")
     for months, table in tables:
         if month_of_year(month) in months and measure in table:
             out = out * np.asarray(table[measure])[profiles]

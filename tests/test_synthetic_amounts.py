@@ -4,19 +4,21 @@ import pandas as pd
 import pytest
 
 from synthetic.check_suite import run_checks
-from synthetic.checks_amount_levels import check_amount_levels
+from synthetic.checks_amount_mix import check_amount_mix
 from synthetic.generate import generate_mart
 from synthetic.presets import PRESETS
 
-FAMILIES = ["amount_rules", "amount_levels", "seasons"]
+FAMILIES = ["amount_rules", "amount_levels", "amount_mix", "seasons"]
+RULE_FAMILIES = ["amount_rules"]  # the others have no rule rows: they run only at canonical size
 GAP = "rank corr casa_bal vs spend_cc_vol: pooled"
 
 
-@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("family", RULE_FAMILIES)
 def test_amount_rules_hold_on_unit(unit_output: tuple[str, dict], family: str) -> None:
     """On the unit preset, every rule of the family that must always hold passes."""
     checks = run_checks(unit_output[0], [family])[family]
     rules = checks[checks["rule"]]
+    assert len(rules) > 0, f"{family} has no rule rows"
     assert rules["passed"].all(), rules[~rules["passed"]].to_string()
 
 
@@ -34,7 +36,7 @@ def _pooled_gap(separation: float, monkeypatch: pytest.MonkeyPatch) -> float:
     """Pooled minus within-subsegment rank correlation of balance with card spend (30k clients)."""
     spec = dict(PRESETS["unit"]["spec"], separation=separation)
     monkeypatch.setitem(PRESETS, "unit", dict(PRESETS["unit"], spec=spec))
-    checks: pd.DataFrame = check_amount_levels(*generate_mart("unit", n_clients=30_000))
+    checks: pd.DataFrame = check_amount_mix(*generate_mart("unit", n_clients=30_000))
     return float(checks.loc[checks["check"].str.startswith(GAP), "realised"].iloc[0])
 
 

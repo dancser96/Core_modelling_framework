@@ -19,39 +19,8 @@ wins; fix this file. Removed when M1 closes.
 | E | Oracle: window probabilities, metrics, relevance, regression oracle, `truth.json` (step 6) | not started | |
 | F | Output, source mapping, CLI, budgets, notebook, review guide (step 7) | not started | |
 
-## Pending fixes (apply after the Stage C builder reports; files it doesn't own first)
-Stage B review (6335a3d), blocking:
-1. `flows.py:120-123` remittance factor: no `fillna(0.0)`; raise if a remitter's nationality group
-   has no factor; `np.where(remitter, factor × relative^elasticity, 0)`.
-2. `seasons.season_factor`: raise `KeyError` for a measure in no table.
-3. `logins.py:43`: age centre 40 → `LEVELS["logins"]["mobile_share"]["age_centre"]`.
-4. Split `checks_amount_levels.py` (355 lines): keep amount ÷ level rows; move `_check_pooled`,
-   `_check_remittance`, `_casa_season`/`_check_ramp`, `_check_logins` to `checks_amount_mix.py`
-   (`check_amount_mix`), register it, add to the amount tests.
-Suggestions to apply:
-5. `(n, 1)` convention for per-client inputs in `cards`/`variation` docstrings; `step_card` raises
-   unless `np.ndim(repay_share) == np.ndim(last_balance)`.
-6. `cards.draw_limits` → array function `limit_tier(spec, profiles, income)` + ±1 move from
-   `rng.random(shape)` (Stage E reuses it).
-7. Docstrings: hidden attributes come from the `attributes` stream (`amounts.py`, plan §2.2).
-8. `checks_amount_rules`: rows for a card given up this month (`held_before & ~held`): `cc_bal`,
-   `cc_limit`, spend, interest 0; `repayment_cc_vol` = last `cc_bal` ± 0.01.
-9. `tests/test_synthetic_amounts.py` fast test: assert `len(rules) > 0` (families without rules run
-   only in the slow test).
-10. Spec text: mean subcategory shares follow the client's current trait deviations (as persistent
-    as the traits; not stored state); market index is 1 in the month the starting book is drawn;
-    maths §5 spend formula gets the revolver factor `× (1 − u_{t−1})`. Plan §2.3 likewise.
-11. `step_amounts` (55 lines): move mart/oracle dict assembly into a helper.
-12. One `variation.measure_level(spec, measure, profiles, base)` for the five "multiple × base"
-    sites; one counts helper for `np.where(amount > 0, 1 + draw_counts(...), 0)`; one
-    `measures_of_kind(spec, kind)` for the three filters.
-13. `levels.inflow_other_share.private_extra` → its own key `inflow_other_private_extra`.
-14. `generate._keep_and_append`: also check the new arrays' lengths against the new clients.
-15. Shared checks-side helpers for restated spec values (`_expected_medians`,
-    `_expected_latent_means`; `checks_amount_levels._deviation`) in one module, so
-    `checks_population` gets back under ~300 lines.
-16. Names: `balances.py` `months` → `months_on_book`, `last_months` → `months_since_draw`;
-    `cards.py` `rate` → `monthly_interest`.
+## Pending fixes
+Stage B review fixes applied (2026-10-16).
 
 ## Read first
 1. `CLAUDE.md` §1 (code rules), §4 (ML invariants), §5 (environment traps).
@@ -147,7 +116,7 @@ burn-in; from Stage D, month `t` is final once `t+3` exists, for the leak column
 `finish_simulation` flushes the rest with truncated windows. `generate_mart` and `output.write_mart`
 both drive this loop and differ only in where the months go. Order within one month:
 1. exits and entries (population stream); new clients get descriptors, traits, income, true income,
-   wealth base and hidden attributes (`amounts.draw_hidden_attributes`, amounts stream);
+   wealth base and hidden attributes (`amounts.draw_hidden_attributes`, attributes stream);
 2. one AR(1) step of the traits for clients who stayed;
 3. holdings (`step_holdings`, with the month for time terms);
 4. amounts (`step_amounts`: current/savings activity and balance, flows, card, loans, deposit,
@@ -159,8 +128,8 @@ both drive this loop and differ only in where the months go. Order within one mo
 7. look-ahead buffer → leak columns for month `t − 3` → emit.
 
 Per-client state is reindexed every month the same way (keep stayers, append new clients): one
-helper `_keep_and_append(state: dict, stay: np.ndarray, new: dict) -> dict` for all state dicts
-(holdings, amounts, history, trap state).
+helper `_keep_and_append(state: dict, stay: np.ndarray, new: dict, n_new: int) -> dict` for all
+state dicts (holdings, amounts, history, trap state).
 
 ### 2.3 State and hidden attributes
 - **`clients` DataFrame** (static per client): descriptors, dates, `income`, `salary_transfer_flag`,
@@ -170,8 +139,10 @@ helper `_keep_and_append(state: dict, stay: np.ndarray, new: dict) -> dict` for 
 - **holdings state** (as now) + chains `cc_activity`, `casa_activity`, `cc_revolver`.
 - **amounts state** (per client): client effects and AR noise per measure, power-law multipliers per
   stock, last current/savings balance and its random part, card limit and balance, loan principal
-  per slot, term-deposit balance and months since rollover, days since last login (NaN = never),
-  mean subcategory shares; plus the market index (scalar, per month).
+  per slot, term-deposit balance and months since rollover, days since last login (NaN = never);
+  plus the market index (scalar, per month; 1 in the month the starting book is drawn). Mean
+  subcategory shares are not state: they follow the client's current trait deviations (as
+  persistent as the traits).
 - **history** (mart): per rolled-up measure an `(n, 6)` array, newest last; last non-zero month per
   recency measure.
 
@@ -181,7 +152,7 @@ helper `_keep_and_append(state: dict, stay: np.ndarray, new: dict) -> dict` for 
 | population | subsegments, descriptors, dates, income, exits, entries (as now) |
 | latents | traits (as now) |
 | holdings | one uniform per product (incl. the new chains) and client per month (as now) |
-| amounts | hidden attributes of new clients; effects, noise, multipliers; current/savings, flows, subcategories, loans, deposit, wealth, FX, market shock |
+| amounts | effects, noise, multipliers; current/savings, flows, subcategories, loans, deposit, wealth, FX, market shock |
 | cards | limit tiers and adjustments; travel months; card subcategory shares and counts |
 | logins | login counts, days since last login |
 | traps | null controls and quality columns |
@@ -334,8 +305,8 @@ Details and pitfalls:
   is paid by slots that were open at the end of last month (including one maturing this month).
 - **Term deposit:** balance at adoption and each 12th month held; starting holders get a uniform
   phase (0–11).
-- **Wealth:** the market index starts at 1 at the first simulated month; its monthly log return is
-  drawn from the amounts stream once per month.
+- **Wealth:** the market index is 1 in the month the starting book is drawn; its monthly log
+  return is drawn from the amounts stream once per month.
 - **Logins:** active ⇒ at least one login; `days_since_last_login` NaN until the first login;
   starting-book registered-but-dormant clients start at a uniform 30–720 days.
 - **New-client ramp** applies to the observed current/savings balance only.

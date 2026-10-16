@@ -14,15 +14,9 @@ Every amount is rounded to the cent and is exactly 0 without the product.
 import numpy as np
 import pandas as pd
 
-from synthetic.population import months_on_book, profile_values
+from synthetic.population import months_on_book
 from synthetic.seasons import season_factor
-
-
-def stock_level(spec: dict, measure: str, clients: pd.DataFrame) -> np.ndarray:
-    """A balance's median per client before its random part: multiple × wealth base."""
-    multiples = spec["levels"]["measures"][measure]["multiples"]
-    # An explicit dtype: an empty batch of new clients carries object columns.
-    return profile_values(clients, multiples) * clients["wealth_base"].to_numpy(dtype=float)
+from synthetic.variation import measure_level
 
 
 def casa_balance(
@@ -30,7 +24,7 @@ def casa_balance(
     clients: pd.DataFrame,
     profiles: np.ndarray,
     log_part: np.ndarray,
-    months: np.ndarray,
+    months_on_book: np.ndarray,
     month: np.datetime64,
     held: np.ndarray,
     active: np.ndarray,
@@ -38,7 +32,7 @@ def casa_balance(
 ) -> np.ndarray:
     """The observed current/savings monthly average balance.
 
-    Active: the path, level × salary-transfer adjustment × ramp (by `months` on book) × summer
+    Active: the path, level × salary-transfer adjustment × ramp (by months on book) × summer
     dip × exp(log part). Dormant: last month's balance. Without the account: 0. `profiles` are
     PROFILE_ORDER codes.
     """
@@ -46,11 +40,13 @@ def casa_balance(
     transfer = clients["salary_transfer_flag"].to_numpy()
     adjust = np.where(transfer, 1.0, levels["no_salary_transfer"]["casa_bal"])
     ramp_factors = levels["new_client_ramp"]
-    ramp = np.ones(len(months))
+    ramp = np.ones(len(months_on_book))
     for i, factor in enumerate(ramp_factors):  # months on book 1, 2, …
-        ramp = np.where(months == i + 1, factor, ramp)
+        ramp = np.where(months_on_book == i + 1, factor, ramp)
     season = season_factor(spec, "casa_bal", profiles, month)
-    level = stock_level(spec, "casa_bal", clients) * adjust * ramp * season
+    # An explicit dtype: an empty batch of new clients carries object columns.
+    wealth_base = clients["wealth_base"].to_numpy(dtype=float)
+    level = measure_level(spec, "casa_bal", profiles, wealth_base) * adjust * ramp * season
     path = np.round(level * np.exp(log_part), 2)
     return np.where(held, np.where(active, path, last), 0.0)
 
@@ -58,37 +54,40 @@ def casa_balance(
 def deposit_balance(
     spec: dict,
     clients: pd.DataFrame,
+    profiles: np.ndarray,
     log_part: np.ndarray,
     held: np.ndarray,
     gained: np.ndarray,
     last: np.ndarray,
-    last_months: np.ndarray,
+    months_since_draw: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Term-deposit balance and months since it was drawn.
 
     Drawn (at least the minimum) at adoption and when a term ends, fixed in between; 0 without a
-    deposit. `last_months` counts the held months since the last draw (0 in the draw month).
+    deposit. `months_since_draw` is last month's count of held months since the last draw (0 in
+    the draw month).
     """
     deposit = spec["levels"]["deposit"]
-    months = np.where(held, last_months + 1, 0)
-    draw = held & (gained | (months >= deposit["term_months"]))
-    value = np.maximum(
-        np.round(stock_level(spec, "td_bal", clients) * np.exp(log_part), 2), deposit["minimum"]
-    )
+    since_draw = np.where(held, months_since_draw + 1, 0)
+    draw = held & (gained | (since_draw >= deposit["term_months"]))
+    level = measure_level(spec, "td_bal", profiles, clients["wealth_base"].to_numpy(dtype=float))
+    value = np.maximum(np.round(level * np.exp(log_part), 2), deposit["minimum"])
     balance = np.where(draw, value, np.where(held, last, 0.0))
-    return balance, np.where(draw, 0, months)
+    return balance, np.where(draw, 0, since_draw)
 
 
 def wealth_balance(
     spec: dict,
     measure: str,
     clients: pd.DataFrame,
+    profiles: np.ndarray,
     log_part: np.ndarray,
     held: np.ndarray,
     market: float,
 ) -> np.ndarray:
     """Assets under management: level × market index × exp(log part) when held, else 0."""
-    value = np.round(stock_level(spec, measure, clients) * market * np.exp(log_part), 2)
+    level = measure_level(spec, measure, profiles, clients["wealth_base"].to_numpy(dtype=float))
+    value = np.round(level * market * np.exp(log_part), 2)
     return np.where(held, value, 0.0)
 
 
@@ -149,12 +148,14 @@ def start_balances(
         principal = draw_principals(spec, key, clients, rng.standard_normal((n, slots)))
         state[f"{key}_principal"] = np.where(holdings[f"{key}_remaining"] > 0, principal, 0.0)
     held = holdings["casa_held"] & (not new_to_bank)
-    months = months_on_book(clients, month)
+    tenure = months_on_book(clients, month)
     state["casa_bal"] = casa_balance(
-        spec, clients, profiles, log_parts["casa_bal"], months, month, held, held, none
+        spec, clients, profiles, log_parts["casa_bal"], tenure, month, held, held, none
     )
     td = holdings["td_held"]
-    state["td_bal"] = deposit_balance(spec, clients, log_parts["td_bal"], td, td, none, none)[0]
+    state["td_bal"] = deposit_balance(
+        spec, clients, profiles, log_parts["td_bal"], td, td, none, none
+    )[0]
     state["td_months"] = np.where(td, phase, 0)
     return state
 
@@ -175,21 +176,21 @@ def step_balances(
     `state["casa_bal"]` stays last month's: the flows book the change. Draws: one principal per
     loan type and client, for an account opening now.
     """
-    months = months_on_book(clients, month)
+    tenure = months_on_book(clients, month)
     casa = casa_balance(
-        spec, clients, profiles, log_parts["casa_bal"], months, month, holdings["casa_held"],
+        spec, clients, profiles, log_parts["casa_bal"], tenure, month, holdings["casa_held"],
         holdings["casa_activity_active"], state["casa_bal"],
     )  # fmt: skip
     new, columns = _step_loans(spec, state, clients, holdings, rng)
     new["td_bal"], new["td_months"] = deposit_balance(
-        spec, clients, log_parts["td_bal"], holdings["td_held"], holdings["td_gained"],
+        spec, clients, profiles, log_parts["td_bal"], holdings["td_held"], holdings["td_gained"],
         state["td_bal"], state["td_months"],
     )  # fmt: skip
     columns["td_bal"] = new["td_bal"]
     for key in ("wealth_digital", "wealth_trad"):
         held = holdings[f"{key}_held"]
         columns[f"{key}_bal"] = wealth_balance(
-            spec, f"{key}_bal", clients, log_parts[f"{key}_bal"], held, market
+            spec, f"{key}_bal", clients, profiles, log_parts[f"{key}_bal"], held, market
         )
     return new, {"casa_bal": casa, **columns}
 

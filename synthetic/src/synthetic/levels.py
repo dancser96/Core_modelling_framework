@@ -40,9 +40,10 @@ LEVELS = {
         "activity_loading": 0.3,  # means × exp(0.3 × activity deviation)
         "outflow_casa": 12, "spend_cc": 10, "inflow_casa": 2, "remittance": 0.5, "fx": 1.0,
     },
-    # Share of non-salary inflow that is "other" rather than transfers.
+    # Share of non-salary inflow that is "other" rather than transfers, by employment.
     "inflow_other_share": {"Employed": 0.2, "Self-employed": 0.6, "Unemployed": 0.3, "Retired": 0.5,
-                           "Other": 0.7, "private_extra": 0.1},
+                           "Other": 0.7},
+    "inflow_other_private_extra": 0.1,  # added to the "other" share in Private
     "subcategories": {
         "concentration": 50,  # Dirichlet concentration of monthly shares around the client's mean
         "outflow_casa": {
@@ -83,7 +84,7 @@ LEVELS = {
     "logins": {
         "per_month": [7, 10, 13, 16],  # logins a month of an active user
         "digital_loading": 0.4,
-        "mobile_share": {"intercept": 1.5, "digital": 0.5, "age_per_decade": -0.3},
+        "mobile_share": {"intercept": 1.5, "digital": 0.5, "age_per_decade": -0.3, "age_centre": 40},
         "gamma_shape": 2.0,
         "dormant_start_days": [30, 720],  # starting book: registered, dormant, logged in before
     },

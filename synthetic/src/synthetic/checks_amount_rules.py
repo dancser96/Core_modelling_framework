@@ -1,10 +1,11 @@
 """Step-3 rules for amounts: exact zeros, identities, and the card, loan and deposit mechanics.
 
 Every row is a rule that holds in every client-month (tolerance 0), so the fast suite runs it on
-the small preset: zeros for non-holders and dormant users, subcategories that add up to their
-totals, the current/savings booking identity, card interest, repayment and limits, loan balances,
-the term deposit's 12-month terms, salary and bonuses, remittance, logins and the days since the
-last login, amounts in whole cents. Each rule is restated from the spec (test_harness.md "Amounts",
+the small preset: zeros for non-holders and dormant users, a card given up this month repaying its
+whole last balance and nothing else, subcategories that add up to their totals, the
+current/savings booking identity, card interest, repayment and limits, loan balances, the term
+deposit's 12-month terms, salary and bonuses, remittance, logins and the days since the last
+login, amounts in whole cents. Each rule is restated from the spec (test_harness.md "Amounts",
 maths §5) and read from the mart, with the oracle's hidden attributes where the spec defines a rule
 through them (true income, bonus month, remitter and revolver flags). "Last month" is the client's
 previous row, or nothing held for a new client's first row; rules about last month skip the first
@@ -45,7 +46,7 @@ COUNTED = [("outflow_casa_remittance_vol", "outflow_casa_remittance_cnt"),
            ("outflow_casa_vol", "outflow_casa_cnt")]  # fmt: skip
 SUM_TOL = 0.005  # totals are sums of parts rounded to 0.01; float sums stay well within this
 BOOKING_TOL = 0.02  # inflow − outflow against the balance change, after rounding both sides
-CENT_TOL = 0.01  # a salary equal to the true income, rounded to the cent
+CENT_TOL = 0.01  # one cent: a salary equal to the true income, a repayment to the last balance
 MART_COLUMNS = [
     "client_id", "snapshot_month", "subsegment", "nationality_group", "salary_transfer_flag",
     "relationship_days", "casa_active_flag", "cc_flag", "cc_active_flag", "td_flag",
@@ -63,6 +64,7 @@ def check_amount_rules(mart: pd.DataFrame, oracle: pd.DataFrame, truth: dict) ->
     panel = sorted_panel(spec, mart, oracle)
     rows = (
         _check_card(spec, panel)
+        + _check_card_given_up(panel)
         + _check_loans(panel)
         + _check_deposit_and_wealth(spec, panel)
         + _check_casa(panel)
@@ -110,6 +112,22 @@ def _check_card(spec: dict, panel: pd.DataFrame) -> list[dict]:
         violations_row(f"card dormant: {column} = 0", panel.loc[~active, column] != 0)
         for column in ("spend_cc_vol", "spend_cc_cnt")
     ]
+    return rows
+
+
+def _check_card_given_up(panel: pd.DataFrame) -> list[dict]:
+    """A card given up this month (held at the end of last month, not now): no limit, balance,
+    spend or interest, and a repayment of its whole last balance."""
+    gave_up = before(panel, "cc_flag", False).astype(bool) & ~panel["cc_flag"].to_numpy()
+    last_bal = before(panel, "cc_bal", 0.0).astype(float)
+    zeros = ["cc_limit", "cc_bal", *[c for c in CARD_FLOWS if c != "repayment_cc_vol"]]
+    rows = [
+        violations_row(f"card given up this month: {column} = 0", panel.loc[gave_up, column] != 0)
+        for column in zeros
+    ]
+    unpaid = np.abs(panel["repayment_cc_vol"].to_numpy() - last_bal) > CENT_TOL
+    check = f"card given up this month: repayment_cc_vol = last cc_bal ±{CENT_TOL}"
+    rows.append(violations_row(check, unpaid[gave_up]))
     return rows
 
 

@@ -11,6 +11,7 @@ docs/components/test_harness.md explain them.
 
 from synthetic.levels import LEVELS, SEASONS
 from synthetic.products import HOLDING_RULES, PRODUCTS
+from synthetic.trap_spec import TRAPS
 
 LATENTS = ("wealth", "activity", "digital", "credit", "crossborder")
 NATIONALITY_GROUPS = ("ASIA", "ARAB", "WESTERN", "UAE", "GCC", "AFRICA", "OTHER")
@@ -247,6 +248,7 @@ RETAIL = {
     "holding_rules": HOLDING_RULES,
     "levels": LEVELS,
     "seasons": SEASONS,
+    "traps": TRAPS,
 }
 
 PRESETS = {

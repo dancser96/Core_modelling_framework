@@ -13,6 +13,7 @@ import pandas as pd
 
 from synthetic import (
     checks_amount_levels,
+    checks_amount_mix,
     checks_amount_rules,
     checks_holding_drivers,
     checks_holdings,
@@ -38,6 +39,7 @@ CHECK_FAMILIES = {
     "holding_drivers": _family(checks_holding_drivers, "check_holding_drivers"),
     "amount_rules": _family(checks_amount_rules, "check_amount_rules"),
     "amount_levels": _family(checks_amount_levels, "check_amount_levels"),
+    "amount_mix": _family(checks_amount_mix, "check_amount_mix"),
     "seasons": _family(checks_seasons, "check_seasons"),
     "mart": _family(checks_mart, "check_mart"),
 }

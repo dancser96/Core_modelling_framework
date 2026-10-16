@@ -2,7 +2,7 @@
 
 Every amount is a median multiple of a hidden base per profile (`levels.LEVELS`): flows scale with
 the true income, balances with the wealth base. `draw_hidden_attributes` draws, once per client and
-from the amounts stream, the attributes the amounts need: the remitter flag, the bonus month and
+from the attributes stream, the attributes the amounts need: the remitter flag, the bonus month and
 size, the school-fee payer flag and annual fee, the card repayment share, and the "other" share of
 non-salary inflow (no draw). `start_amounts` draws each new client's persistent parts (client
 effects, AR(1) noise at its stationary start, power-law multipliers) and, for the starting book,
@@ -12,7 +12,8 @@ steps; balances (current/savings, term deposit, wealth with the market index, lo
 the current/savings flows, which book the card repayment and loan instalments; FX; logins. It
 returns the new state, the month's mart columns (in the mart's order) and the hidden oracle
 columns. The market index (`step_market`) is shared by every client, so it lives outside the
-per-client state. Streams: amounts, cards and logins (worknotes/handovers/synthetic_build.md §2.4).
+per-client state. Streams: attributes (the hidden attributes), amounts, cards and logins
+(worknotes/handovers/synthetic_build.md §2.4).
 """
 
 import numpy as np
@@ -30,6 +31,7 @@ from synthetic.variation import (
     draw_multipliers,
     log_variation,
     measure_offsets,
+    measures_of_kind,
     start_noise,
     step_noise,
 )
@@ -38,7 +40,8 @@ from synthetic.variation import (
 def draw_hidden_attributes(
     spec: dict, clients: pd.DataFrame, age: np.ndarray, rng: np.random.Generator
 ) -> pd.DataFrame:
-    """Hidden attributes of newly drawn clients; `age` is their age when drawn.
+    """Hidden attributes of newly drawn clients (`rng`: the attributes stream); `age` is their age
+    when drawn.
 
     Every draw is one value per client, made for everyone and used where it applies, so the stream
     stays aligned whatever the clients' outcomes.
@@ -62,10 +65,9 @@ def draw_hidden_attributes(
     fee = profile_values(clients, school["annual_fee"]) * np.exp(
         school["fee_sd"] * rng.standard_normal(n)
     )
-    other = levels["inflow_other_share"]
     other_share = (
-        clients["employment_status"].map(other).to_numpy(dtype=float)
-        + other["private_extra"] * (clients["profile"] == "private").to_numpy()
+        clients["employment_status"].map(levels["inflow_other_share"]).to_numpy(dtype=float)
+        + levels["inflow_other_private_extra"] * (clients["profile"] == "private").to_numpy()
     )
     return pd.DataFrame(
         {
@@ -99,8 +101,8 @@ def start_amounts(
     """
     n, levels, rng = len(clients), spec["levels"], rngs["amounts"]
     measures, flow = levels["measures"], levels["flow_noise"]
-    stocks = _stocks(spec)
-    n_flows = len(measures) - len(stocks)
+    stocks = measures_of_kind(spec, "stock")
+    n_flows = len(measures_of_kind(spec, "flow"))
     state = {
         "stock_effect": draw_effects(rng, n, np.array([measures[k]["effect_sd"] for k in stocks])),
         "flow_effect": draw_effects(rng, n, np.full(n_flows, flow["effect_sd"])),
@@ -111,7 +113,7 @@ def start_amounts(
     profiles, dz = _profile_codes(clients), z - means
     log_parts = log_variation(spec, measure_offsets(spec), state, dz, profiles)
     state |= start_balances(spec, clients, profiles, log_parts, holdings, month, new_to_bank, rng)
-    state |= start_card(spec, clients, dz, holdings, rngs["cards"])
+    state |= start_card(spec, clients, profiles, dz, holdings, rngs["cards"])
     registered, active = holdings["ebanking_held"], holdings["digital_active"]
     state["login_days"] = start_days_since_login(spec, registered, active, month, rngs["logins"])
     return state
@@ -140,12 +142,7 @@ def step_amounts(
     flows keep their link to it. Own-product payments leave the account as outflow transfers.
     """
     levels, rng = spec["levels"], rngs["amounts"]
-    stock, flow = levels["stock_noise"], levels["flow_noise"]
-    state = dict(
-        state,
-        stock_noise=step_noise(state["stock_noise"], stock["rho"], stock["sd"], rng),
-        flow_noise=step_noise(state["flow_noise"], flow["rho"], flow["sd"], rng),
-    )
+    state = _step_noises(spec, state, rng)
     profiles, dz = _profile_codes(clients), z - means
     log_parts = log_variation(spec, measure_offsets(spec), state, dz, profiles)
     count_tilt = np.exp(levels["counts"]["activity_loading"] * dz[:, LATENTS.index("activity")])
@@ -163,26 +160,49 @@ def step_amounts(
         spec, clients, profiles, log_parts, dz, month, holdings["casa_activity_active"],
         casa_bal - state["casa_bal"], payments, count_tilt, rng,
     )  # fmt: skip
-    fx_vol, fx_cnt = fx_amounts(
+    fx = fx_amounts(
         spec, clients, profiles, log_parts["fx_vol"], month, holdings["fx_active"], count_tilt, rng
     )
     age = client_age(clients, month)
     login_days, logins = login_amounts(
         spec, state["login_days"], profiles, holdings, dz, age, month, rngs["logins"]
     )
-    mart = {"casa_bal": casa_bal, **flows, **card, **balances, "fx_vol": fx_vol,
-            "fx_cnt": fx_cnt, **logins}  # fmt: skip
     state = state | balance_state | card_state | {"casa_bal": casa_bal, "login_days": login_days}
-    pareto = state["stock_pareto"]
-    oracle = {
-        f"pareto_{name.removesuffix('_bal')}": pareto[:, j] for j, name in enumerate(_stocks(spec))
-    }
+    mart, oracle = _month_columns(
+        spec, state["stock_pareto"], casa_bal, flows, card, balances, fx, logins
+    )
     return state, mart, oracle
 
 
-def _stocks(spec: dict) -> list[str]:
-    """The balance measures (stocks), in the spec's order: the columns of the stock arrays."""
-    return [k for k, m in spec["levels"]["measures"].items() if m["kind"] == "stock"]
+def _step_noises(
+    spec: dict, state: dict[str, np.ndarray], rng: np.random.Generator
+) -> dict[str, np.ndarray]:
+    """The state after one month of the stocks' and the flows' AR(1) noise."""
+    stock, flow = spec["levels"]["stock_noise"], spec["levels"]["flow_noise"]
+    return dict(
+        state,
+        stock_noise=step_noise(state["stock_noise"], stock["rho"], stock["sd"], rng),
+        flow_noise=step_noise(state["flow_noise"], flow["rho"], flow["sd"], rng),
+    )
+
+
+def _month_columns(
+    spec: dict,
+    pareto: np.ndarray,
+    casa_bal: np.ndarray,
+    flows: dict[str, np.ndarray],
+    card: dict[str, np.ndarray],
+    balances: dict[str, np.ndarray],
+    fx: tuple[np.ndarray, np.ndarray],
+    logins: dict[str, object],
+) -> tuple[dict[str, object], dict[str, np.ndarray]]:
+    """The month's mart columns in the mart's order, and the oracle's power-law multipliers."""
+    fx_vol, fx_cnt = fx
+    mart = {"casa_bal": casa_bal, **flows, **card, **balances, "fx_vol": fx_vol,
+            "fx_cnt": fx_cnt, **logins}  # fmt: skip
+    stocks = measures_of_kind(spec, "stock")
+    oracle = {f"pareto_{name.removesuffix('_bal')}": pareto[:, j] for j, name in enumerate(stocks)}
+    return mart, oracle
 
 
 def _profile_codes(clients: pd.DataFrame) -> np.ndarray:

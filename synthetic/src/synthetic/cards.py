@@ -1,40 +1,59 @@
 """The credit card's amounts: limit, wanted spend, and the month's step from balance to balance.
 
 A limit is set when the card is taken: the largest product tier at or below the profile's multiple
-× true income (at least the lowest tier), one tier up or down for a few new cards by the credit
-trait. The wanted spend is a flow (`variation.log_variation`) split into travel, retail, online and
-dining by monthly Dirichlet shares around the client's tilted mean shares; travel happens only in
-travel months, and the summer and December factors multiply the travel and the other parts (so the
-total rises with them). `step_card` then caps the spend at the room left under the limit and moves
-the month-end balance (test_harness.md "Credit card", maths §5): a transactor repays last month's
-balance in full; a revolver repays its share of it, carries the rest and pays interest on what it
-carried; a card given up repays its whole balance and ends at 0. `wanted_spend` and `step_card`
-work on arrays of any matching shape and take no pandas objects, so the regression oracle can run
-them on (clients, paths) arrays.
+× true income (at least the lowest tier, `limit_tier`), one tier up or down for a few new cards by
+the credit trait. The wanted spend is a flow (`variation.log_variation`) split into travel, retail,
+online and dining by monthly Dirichlet shares around the client's tilted mean shares; travel
+happens only in travel months, and the summer and December factors multiply the travel and the
+other parts (so the total rises with them). `step_card` then caps the spend at the room left under
+the limit and moves the month-end balance (test_harness.md "Credit card", maths §5): a transactor
+repays last month's balance in full; a revolver repays its share of it, carries the rest and pays
+interest on what it carried, and spends less as its card fills up; a card given up repays its
+whole balance and ends at 0. `limit_tier`, `draw_limits`, `wanted_spend` and `step_card` work on
+arrays of any matching shape and take no pandas objects, so the regression oracle can run them on
+(clients, paths) arrays; per-client inputs then come as `(n, 1)` columns, so they broadcast over
+the paths.
 """
 
 import numpy as np
 import pandas as pd
 
-from synthetic.population import profile_values
 from synthetic.presets import LATENTS
 from synthetic.seasons import season_factor, travel_chance
-from synthetic.variation import draw_counts, draw_shares, split_amount, tilted_shares
+from synthetic.variation import (
+    draw_shares,
+    draw_transaction_counts,
+    measure_level,
+    split_amount,
+    tilted_shares,
+)
 
 TRAVEL = "travel"  # the card subcategory that happens only in travel months
 
 
+def limit_tier(spec: dict, profiles: np.ndarray, income: np.ndarray) -> np.ndarray:
+    """Index of the largest limit tier at or below the profile's limit multiple × true income
+    (at least the lowest tier). `profiles` are PROFILE_ORDER codes that broadcast with `income`."""
+    card = spec["levels"]["card"]
+    target = np.asarray(card["limit_multiples"], dtype=float)[profiles] * income
+    tiers = np.asarray(card["limit_tiers"], dtype=float)
+    return np.maximum(np.searchsorted(tiers, target, side="right") - 1, 0)
+
+
 def draw_limits(
-    spec: dict, clients: pd.DataFrame, credit_dev: np.ndarray, rng: np.random.Generator
+    spec: dict,
+    profiles: np.ndarray,
+    income: np.ndarray,
+    credit_dev: np.ndarray,
+    rng: np.random.Generator,
 ) -> np.ndarray:
-    """A limit tier for every client, for those taking a card now (one draw per client)."""
+    """A limit for every element, for those taking a card now: its tier, one up (credit trait
+    above the client's mean) or down for the spec's adjusted share. One draw per element."""
     card = spec["levels"]["card"]
     tiers = np.asarray(card["limit_tiers"], dtype=float)
-    target = profile_values(clients, card["limit_multiples"]) * clients["true_income"].to_numpy(
-        dtype=float
-    )
-    tier = np.maximum(np.searchsorted(tiers, target, side="right") - 1, 0)
-    moved = rng.random(len(clients)) < card["adjusted_share"]
+    tier = limit_tier(spec, profiles, income)
+    shape = np.broadcast_shapes(np.shape(tier), np.shape(credit_dev))
+    moved = rng.random(shape) < card["adjusted_share"]
     tier = np.where(moved, tier + np.where(credit_dev > 0, 1, -1), tier)
     return tiers[np.clip(tier, 0, len(tiers) - 1)]
 
@@ -55,7 +74,7 @@ def wanted_spend(
     """
     levels = spec["levels"]
     names = levels["subcategories"]["spend_cc"]["names"]
-    level = np.asarray(levels["measures"]["spend_cc"]["multiples"])[profiles] * income
+    level = measure_level(spec, "spend_cc", profiles, income)
     chance = travel_chance(spec, profiles, dz[..., LATENTS.index("crossborder")], month)
     travelling = rng.random(np.shape(chance)) < chance
     # Outside travel months the travel share goes to the others (a Gamma with shape 0 is 0).
@@ -79,18 +98,24 @@ def step_card(
     active: np.ndarray,
     wanted: np.ndarray,
     repay_share: np.ndarray,
-    rate: float,
+    monthly_interest: float,
 ) -> dict[str, np.ndarray]:
     """One month of the card: carried, interest, spend, repayment, balance, utilisation.
 
     `limit` is this month's (0 without a card); `revolver`, `held` and `active` are the states at
     the end of this month, `held_before` at the end of last month. Utilisation is NaN without a
-    card.
+    card. The per-client `repay_share` has as many axes as the balances (`(n, 1)` against
+    `(n, paths)`), so it can't broadcast along the wrong axis.
     """
+    if np.ndim(repay_share) != np.ndim(last_balance):
+        raise ValueError(
+            f"repay_share has {np.ndim(repay_share)} axes, the balances {np.ndim(last_balance)}: "
+            "pass per-client values as an (n, 1) column against (n, paths)"
+        )
     keeps = held & held_before & revolver
     carried = np.where(keeps, np.round((1 - repay_share) * last_balance, 2), 0.0)
     repayment = np.where(held_before, np.round(last_balance - carried, 2), 0.0)
-    interest = np.round(rate * carried, 2)
+    interest = np.round(monthly_interest * carried, 2)
     room = np.maximum(np.round(limit - carried - interest, 2), 0.0)
     safe_limit = np.where(held, limit, 1.0)  # no division by a missing card's 0
     # A revolver spends less as its card fills up, so few sit exactly at the limit.
@@ -115,12 +140,14 @@ def capped_parts(parts: np.ndarray, wanted: np.ndarray, spend: np.ndarray) -> np
 def start_card(
     spec: dict,
     clients: pd.DataFrame,
+    profiles: np.ndarray,
     dz: np.ndarray,
     holdings: dict[str, np.ndarray],
     rng: np.random.Generator,
 ) -> dict[str, np.ndarray]:
     """Card state of newly drawn clients: a limit for the starting book's cards, no balance."""
-    limits = draw_limits(spec, clients, dz[:, LATENTS.index("credit")], rng)
+    income = clients["true_income"].to_numpy(dtype=float)
+    limits = draw_limits(spec, profiles, income, dz[:, LATENTS.index("credit")], rng)
     return {"cc_limit": np.where(holdings["cc_held"], limits, 0.0), "cc_bal": np.zeros(len(limits))}
 
 
@@ -143,9 +170,9 @@ def card_amounts(
     """
     card, held = spec["levels"]["card"], holdings["cc_held"]
     held_before = state["cc_limit"] > 0
-    new_limits = draw_limits(spec, clients, dz[:, LATENTS.index("credit")], rng)
-    limit = np.where(held, np.where(holdings["cc_gained"], new_limits, state["cc_limit"]), 0.0)
     income = clients["true_income"].to_numpy(dtype=float)
+    new_limits = draw_limits(spec, profiles, income, dz[:, LATENTS.index("credit")], rng)
+    limit = np.where(held, np.where(holdings["cc_gained"], new_limits, state["cc_limit"]), 0.0)
     wanted, parts = wanted_spend(spec, profiles, income, log_part, dz, month, rng)
     step = step_card(
         state["cc_bal"], limit, holdings["cc_revolver_active"], held, held_before,
@@ -154,14 +181,16 @@ def card_amounts(
     )  # fmt: skip
     parts = capped_parts(parts, wanted, step["spend"])
     counts = spec["levels"]["counts"]
-    spend_count = draw_counts(rng, counts["spend_cc"] * count_tilt, counts["gamma_shape"])
+    spend_count = draw_transaction_counts(
+        rng, step["spend"], counts["spend_cc"] * count_tilt, counts["gamma_shape"]
+    )
     names = spec["levels"]["subcategories"]["spend_cc"]["names"]
     columns = {
         "cc_limit": limit,
         "cc_bal": step["balance"],
         "cc_utilisation_ratio": step["utilisation"],
         "spend_cc_vol": np.round(parts.sum(axis=1), 2),
-        "spend_cc_cnt": np.where(step["spend"] > 0, 1 + spend_count, 0),
+        "spend_cc_cnt": spend_count,
         **{f"spend_cc_{name}_vol": parts[:, j] for j, name in enumerate(names)},
         "repayment_cc_vol": step["repayment"],
         "interest_cc_vol": step["interest"],

@@ -40,7 +40,7 @@ def draw_logins(
     share = expit(
         mobile_cfg["intercept"]
         + mobile_cfg["digital"] * digital_dev
-        + mobile_cfg["age_per_decade"] * (age - 40) / 10
+        + mobile_cfg["age_per_decade"] * (age - mobile_cfg["age_centre"]) / 10
     )
     mobile = draw_counts(rng, total * share * login_drift(spec, month), cfg["gamma_shape"])
     online = draw_counts(rng, total * (1 - share), cfg["gamma_shape"])

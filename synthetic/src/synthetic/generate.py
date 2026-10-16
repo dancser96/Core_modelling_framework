@@ -151,14 +151,15 @@ def advance_simulation(sim: dict) -> tuple[dict, list[tuple[pd.DataFrame, pd.Dat
         next_id=new["next_id"],
     )
     clients, z, means = advanced["clients"], advanced["z"], advanced["means"]
-    holdings = _keep_and_append(sim["holdings"], stay, new_holdings)
+    n_new = len(new["clients"])
+    holdings = _keep_and_append(sim["holdings"], stay, new_holdings, n_new)
     holdings, chances = step_holdings(spec, holdings, clients, z, month, calib, rngs["holdings"])
     market = step_market(spec, list(sim["market_index"].values())[-1], rngs["amounts"])
-    amounts = _keep_and_append(sim["amounts"], stay, new_amounts)
+    amounts = _keep_and_append(sim["amounts"], stay, new_amounts, n_new)
     amounts, mart_amounts, oracle_amounts = step_amounts(
         spec, amounts, clients, z, means, holdings, month, market, rngs
     )
-    history = _keep_and_append(sim["history"], stay, start_history(len(new["clients"])))
+    history = _keep_and_append(sim["history"], stay, start_history(n_new), n_new)
     advanced |= {
         "holdings": holdings,
         "amounts": amounts,
@@ -229,11 +230,12 @@ def _turn_over(
     return stay, _new_clients(spec, subsegment, month, rngs, new_to_bank=True, first_id=next_id)
 
 
-def _keep_and_append(state: dict, stay: np.ndarray, new: dict) -> dict:
-    """Per-client state arrays of the clients who stayed, followed by the new clients' arrays."""
+def _keep_and_append(state: dict, stay: np.ndarray, new: dict, n_new: int) -> dict:
+    """Per-client state arrays of the clients who stayed, followed by the `n_new` new clients'
+    arrays."""
     if state.keys() != new.keys():
         raise ValueError(f"state keys differ: {sorted(state.keys() ^ new.keys())}")
-    if {len(v) for v in state.values()} - {len(stay)} or len({len(v) for v in new.values()}) > 1:
+    if {len(v) for v in state.values()} - {len(stay)} or {len(v) for v in new.values()} - {n_new}:
         raise ValueError("state arrays must line up with the clients")
     return {key: np.concatenate([values[stay], new[key]]) for key, values in state.items()}
 
