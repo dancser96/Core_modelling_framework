@@ -69,6 +69,13 @@ def ratio_name(base: str) -> str:
     return base + RATIO_SUFFIX
 
 
+def trap_name(name: str, kind: str) -> str:
+    """`{name}_trap_{kind}`: a planted trap column (D-069), e.g. `extra_0001_trap_weak`."""
+    if kind not in TRAP_KINDS:
+        raise ValueError(f"unknown trap kind {kind!r}; one of {TRAP_KINDS}")
+    return f"{name}_trap_{kind}"
+
+
 def parse_column(name: str, products: list[str]) -> dict:
     """The parts of a column name: `group` (plain, state, activity, rollup, recency, ratio, trap)
     and the group's fields; rollups, recency and ratios carry their base's parts under `of`.

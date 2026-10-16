@@ -16,14 +16,25 @@ the mart's derived columns (test_harness.md, "Columns" and "Null rule, history a
 - a ratio is the average of months 0–2 over that of months 3–5, null with fewer than 6 months on
   the book or a zero 3–5 average.
 Derived values are not rounded. `arrow_schema` gives every column its written type from the kind
-its name carries (`names.parse_column`).
+its name carries (`names.parse_column`); a planted trap column has its own (`TRAP_TYPES`), extra
+columns are floats.
 """
 
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 
-from synthetic.names import parse_column, ratio_name, recency_name, rollup_name
+from synthetic.names import parse_column, ratio_name, recency_name, rollup_name, trap_name
+from synthetic.traps import (
+    APPLICATION,
+    BRANCH_VISITS,
+    LANGUAGE,
+    LEAK,
+    PAPER_STATEMENT,
+    PREMIUM,
+    RISK_GRADE,
+    UPSTREAM,
+)
 
 WINDOW_MONTHS = 6  # the longest window: months 0–5
 AVERAGED = (  # 3- and 6-month averages
@@ -76,6 +87,18 @@ KIND_TYPES = {
     "years": pa.int64(),
     "days": pa.int64(),
 }
+# Written type of each planted trap column; the all-null grade is a string column, not null-typed.
+TRAP_TYPES = {
+    LEAK: pa.int64(),
+    UPSTREAM: pa.int64(),  # 0/1 with nulls
+    APPLICATION: pa.int64(),
+    PREMIUM: pa.float64(),
+    BRANCH_VISITS: pa.int64(),
+    LANGUAGE: pa.string(),
+    PAPER_STATEMENT: pa.int32(),  # a flag
+    RISK_GRADE: pa.string(),
+}
+EXTRA_KINDS = ("weak", "noise")  # extra columns: floats
 
 
 def start_history(n: int) -> dict[str, np.ndarray]:
@@ -125,8 +148,9 @@ def arrow_schema(columns: list[str], products: list[str]) -> pa.Schema:
     """The written type of each mart column, from the kind its name carries.
 
     Flags int32; counts and nullable counters int64; amounts, averages, deviations and ratios
-    float64; `cc_limit` decimal(18, 2); categoricals and statuses strings. `products` are the
-    spec's product keys (`names.parse_column`).
+    float64; `cc_limit` decimal(18, 2); categoricals and statuses strings; trap columns as
+    `TRAP_TYPES`, extra columns float64. `products` are the spec's product keys
+    (`names.parse_column`).
     """
     return pa.schema([(name, _written_type(parse_column(name, products))) for name in columns])
 
@@ -179,4 +203,8 @@ def _written_type(parts: dict) -> pa.DataType:
         return pa.float64()
     if group == "rollup":
         return _written_type(parts["of"])
+    if group == "trap" and parts["kind"] in EXTRA_KINDS:
+        return pa.float64()
+    if group == "trap":
+        return TRAP_TYPES[trap_name(parts["name"], parts["kind"])]  # an unknown trap: KeyError
     raise ValueError(f"no written type for a {group} column: {parts}")

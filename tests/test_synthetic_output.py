@@ -6,7 +6,6 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from synthetic.generate import generate_mart
 from synthetic.output import load_truth, read_output, write_mart
 
 
@@ -50,11 +49,3 @@ def test_load_truth_refuses_another_generator_version(
     (tmp_path / "truth.json").write_text(json.dumps(stale))
     with pytest.raises(ValueError, match="generate it again"):
         load_truth(str(tmp_path))
-
-
-def test_switches_not_built_yet_fail_loud() -> None:
-    """Dirty data and extra columns come with build step 5; asking for them now raises."""
-    with pytest.raises(NotImplementedError):
-        generate_mart("unit", dirty=True)
-    with pytest.raises(NotImplementedError):
-        generate_mart("unit", n_extra_columns=10)

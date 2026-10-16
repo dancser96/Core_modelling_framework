@@ -8,16 +8,19 @@ in memory, `output.write_mart` writes each to disk as it comes. Each month: clie
 clients join (rates per profile, higher for the lower segments), the hidden traits take one AR(1)
 step, holdings and usage states move with each client's chances (time terms included), the amounts
 follow from the holdings at the month's end (with the shared market index), and the month's rows
-come out twice (`month_rows`): mart rows (what upstream would publish) and oracle rows (hidden
-truth: traits, hidden attributes and the chance behind every event, never features). Burn-in
-months run but come out nowhere. Each mechanism draws from its own random stream (`STREAMS`), so a
-later build step never changes the columns of an earlier one.
+come out twice (`month_rows`): mart rows (what upstream would publish, the trap and extra columns
+included: `traps`) and oracle rows (hidden truth: traits, hidden attributes and the chance behind
+every event, never features). Three trap columns look ahead (`traps.finalize_leaks`), so a panel
+month waits in a buffer until the months its windows read have run; burn-in months run but come
+out nowhere. Dirty data (`dirty`) is planted in the finished panel. Each mechanism draws from its
+own random stream (`STREAMS`), so a later build step never changes the columns of an earlier one.
 """
 
 import numpy as np
 import pandas as pd
 
 from synthetic.amounts import draw_hidden_attributes, start_amounts, step_amounts, step_market
+from synthetic.dirty import dirty_panel
 from synthetic.hazards import calibrate
 from synthetic.holdings import start_holdings, step_holdings
 from synthetic.latents import draw_latents, latent_means, step_latents
@@ -32,6 +35,13 @@ from synthetic.population import (
     subsegment_medians,
 )
 from synthetic.presets import LATENTS, PRESETS
+from synthetic.traps import (
+    extra_columns,
+    finalize_leaks,
+    lookahead_months,
+    start_trap_state,
+    trap_columns,
+)
 from synthetic.truth import build_truth
 
 # New mechanisms are appended here: SeedSequence.spawn keeps the earlier streams identical.
@@ -59,15 +69,18 @@ def generate_mart(
     dirty: bool = False,
     n_extra_columns: int = 0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-    """Return (mart, oracle, truth) in memory (small presets). The oracle holds the hidden truth."""
-    if dirty:
-        raise NotImplementedError("dirty-data switches are not built yet (test_harness step 5)")
+    """Return (mart, oracle, truth) in memory (small presets). The oracle holds the hidden truth.
+
+    `dirty` plants the dirty-data defects (`dirty`); `n_extra_columns` adds extra columns.
+    """
     sim = start_simulation(preset, n_clients, seed, n_months, n_extra_columns)
     frames = []
     while sim["month"] < sim["last_month"]:
         sim, final = advance_simulation(sim)
         frames += final
     frames += finish_simulation(sim)
+    if dirty:
+        sim, frames = dirty_panel(sim, frames)
     mart = pd.concat([m for m, _ in frames], ignore_index=True)
     oracle = pd.concat([o for _, o in frames], ignore_index=True)
     return mart, oracle, build_truth(sim)
@@ -82,8 +95,6 @@ def start_simulation(
     The starting book is drawn one month before the burn-in starts; `n_clients` and `n_months`
     default to the preset's.
     """
-    if n_extra_columns:
-        raise NotImplementedError("extra columns are not built yet (test_harness step 5)")
     spec = PRESETS[preset]["spec"]
     n_clients = PRESETS[preset]["n_clients"] if n_clients is None else n_clients
     n_months = PRESETS[preset]["n_months"] if n_months is None else n_months
@@ -115,6 +126,8 @@ def start_simulation(
         "rngs": rngs,
         "calibration": calib,
         "turnover": [],
+        "n_extra_columns": n_extra_columns,
+        "buffer": [],  # panel months waiting for their look-ahead columns
     }
 
 
@@ -124,10 +137,9 @@ def advance_simulation(sim: dict) -> tuple[dict, list[tuple[pd.DataFrame, pd.Dat
     Exits and entries apply to the clients on the books at the start of the month; then one AR(1)
     step of the traits for those who stayed, then holdings move, then the market index and the
     amounts, then each client's history (for the mart's rollups, recency and ratios) takes the
-    month's amounts. Per-client state (holdings, amounts, history) keeps the stayers and appends
-    the new clients.
-    With no look-ahead columns yet, a panel month is final as soon as it has run; burn-in months
-    return none.
+    month's amounts. Per-client state (holdings, amounts, history, trap state) keeps the stayers
+    and appends the new clients. Panel months wait in the look-ahead buffer (`_buffer_month`);
+    burn-in months return none.
     """
     spec, rngs, calib, month = sim["spec"], sim["rngs"], sim["calibration"], sim["month"] + 1
     clients = sim["clients"]
@@ -165,17 +177,41 @@ def advance_simulation(sim: dict) -> tuple[dict, list[tuple[pd.DataFrame, pd.Dat
         "amounts": amounts,
         "history": advance_history(history, mart_amounts, month.astype(int)),
         "market_index": {**sim["market_index"], str(month): market},
+        "trap_state": _keep_and_append(sim["trap_state"], stay, new["trap_state"], n_new),
     }
     if month < sim["first_month"]:
         return advanced, []
     records = _turnover_records(spec, sim["clients"], stay, new["clients"], month)
     advanced["turnover"] = sim["turnover"] + records
-    return advanced, [month_rows(advanced, chances, mart_amounts, oracle_amounts)]
+    return _buffer_month(advanced, chances, mart_amounts, oracle_amounts)
 
 
 def finish_simulation(sim: dict) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
-    """The months still buffered when the panel ends: none while no column looks ahead."""
-    return []
+    """The months still buffered when the panel ends, oldest first, their look-ahead columns
+    from the months that follow inside the panel (truncated windows)."""
+    buffer, rng = sim["buffer"], sim["rngs"]["leaks"]
+    return [
+        (finalize_leaks(sim["spec"], buffer[start:], rng), buffer[start][1])
+        for start in range(len(buffer))
+    ]
+
+
+def _buffer_month(
+    sim: dict,
+    chances: dict[str, np.ndarray],
+    mart_amounts: dict[str, object],
+    oracle_amounts: dict[str, np.ndarray],
+) -> tuple[dict, list[tuple[pd.DataFrame, pd.DataFrame]]]:
+    """Put the panel month's rows (trap and extra columns included) in the look-ahead buffer;
+    once it holds more than `traps.lookahead_months`, the oldest month is final."""
+    spec, rngs = sim["spec"], sim["rngs"]
+    traps = trap_columns(spec, sim["trap_state"], rngs["traps"])
+    traps |= extra_columns(spec, sim["n_extra_columns"], sim["z"], rngs["extras"])
+    buffer = [*sim["buffer"], month_rows(sim, chances, mart_amounts, oracle_amounts, traps)]
+    if len(buffer) <= lookahead_months(spec):
+        return sim | {"buffer": buffer}, []
+    final = (finalize_leaks(spec, buffer, rngs["leaks"]), buffer[0][1])
+    return sim | {"buffer": buffer[1:]}, [final]
 
 
 def _new_clients(
@@ -186,7 +222,8 @@ def _new_clients(
     new_to_bank: bool,
     first_id: int,
 ) -> dict:
-    """Clients of the given subsegments with their hidden traits, income, hidden attributes, ids.
+    """Clients of the given subsegments with their hidden traits, income, hidden attributes, ids
+    and persistent trap values (`traps.start_trap_state`).
 
     The wealth base (hidden) is the subsegment's median income × exp(wealth loading × the wealth
     trait's deviation): no employment multiplier, so a retired Private client has small flows but
@@ -208,7 +245,9 @@ def _new_clients(
     )
     n = len(clients)
     clients.insert(0, "client_id", np.arange(first_id, first_id + n))
-    return {"clients": clients, "means": means, "z": z, "next_id": first_id + n}
+    trap_state = start_trap_state(spec, n, rngs["traps"])
+    return {"clients": clients, "means": means, "z": z, "next_id": first_id + n,
+            "trap_state": trap_state}  # fmt: skip
 
 
 def _turn_over(

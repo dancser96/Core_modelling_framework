@@ -2,11 +2,12 @@
 
 Called by the month loop (`generate.advance_simulation`) once a panel month has run. Mart rows hold
 the keys, the client description, day counters, holdings and states, the current-month amounts and
-the columns derived from each client's history (rollups, recency, ratios: `mart`), in the spec's
-column order; oracle rows hold the hidden traits, the chance behind every event, the hidden client
-attributes (true income, wealth base, remitter and school-fee payer flags, bonus month), the hidden
-chains (revolver state) and the power-law multipliers. Flags become 0/1 integers, the mart's flag
-type.
+the columns derived from each client's history (rollups, recency, ratios: `mart`), then the trap
+columns that need no look-ahead and the extra columns (`traps`), in the spec's column order (the
+look-ahead trap columns join before the other trap columns once the month is final); oracle rows
+hold the hidden traits, the chance behind every event, the hidden client attributes (true income,
+wealth base, remitter and school-fee payer flags, bonus month), the hidden chains (revolver state)
+and the power-law multipliers. Flags become 0/1 integers, the mart's flag type.
 """
 
 import numpy as np
@@ -42,10 +43,12 @@ def month_rows(
     chances: dict[str, np.ndarray],
     mart_amounts: dict[str, object],
     oracle_amounts: dict[str, np.ndarray],
+    traps: dict[str, object],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """The mart rows and oracle rows of the month; day counters are as of the month's last day.
 
-    `mart_amounts` and `oracle_amounts` are the month's amount columns (`amounts.step_amounts`).
+    `mart_amounts` and `oracle_amounts` are the month's amount columns (`amounts.step_amounts`),
+    `traps` its trap and extra columns (`traps.trap_columns`, `traps.extra_columns`).
     """
     clients, month = sim["clients"], sim["month"]
     month_end = (month + 1).astype("datetime64[D]").astype(int) - 1
@@ -64,6 +67,7 @@ def month_rows(
             **mart_holdings,
             **mart_amounts,
             **history_columns(sim["history"], months_on_book(clients, month), month.astype(int)),
+            **traps,
         }
     )
     oracle = pd.DataFrame(

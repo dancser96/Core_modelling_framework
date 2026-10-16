@@ -6,6 +6,9 @@ import pytest
 from synthetic.check_suite import run_checks
 from synthetic.generate import generate_mart
 from synthetic.mart import DERIVED_COLUMNS
+from synthetic.traps import APPLICATION, LEAK, UPSTREAM
+
+LOOKAHEAD_COLUMNS = [LEAK, UPSTREAM, APPLICATION]  # read up to 3 months ahead
 
 
 def test_population_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
@@ -38,13 +41,22 @@ def test_months_do_not_depend_on_later_months(
     unit: tuple[pd.DataFrame, pd.DataFrame, dict],
 ) -> None:
     """Prefix stability: 20 and 24 months from the same seed agree on months 1–20, in every mart
-    column (the rollups, recency and ratios included) and every oracle column."""
+    column (the rollups, recency and ratios included) and every oracle column, except the three
+    look-ahead trap columns in months 18–20, whose windows the shorter panel truncates."""
     mart, oracle, _ = unit
     short_mart, short_oracle, _ = generate_mart("unit", seed=0, n_months=20)
-    assert short_mart["snapshot_month"].nunique() == 20
+    months = sorted(short_mart["snapshot_month"].unique())
+    assert len(months) == 20
     assert set(DERIVED_COLUMNS) <= set(short_mart.columns)
-    in_short = (mart["snapshot_month"] <= short_mart["snapshot_month"].max()).to_numpy()
-    pd.testing.assert_frame_equal(mart[in_short].reset_index(drop=True), short_mart)
+    in_short = (mart["snapshot_month"] <= months[-1]).to_numpy()
+    long_mart = mart[in_short].reset_index(drop=True)
+    pd.testing.assert_frame_equal(
+        long_mart.drop(columns=LOOKAHEAD_COLUMNS), short_mart.drop(columns=LOOKAHEAD_COLUMNS)
+    )
+    complete = (short_mart["snapshot_month"] < months[-3]).to_numpy()  # months 1–17
+    pd.testing.assert_frame_equal(
+        long_mart.loc[complete, LOOKAHEAD_COLUMNS], short_mart.loc[complete, LOOKAHEAD_COLUMNS]
+    )
     pd.testing.assert_frame_equal(oracle[in_short].reset_index(drop=True), short_oracle)
 
 

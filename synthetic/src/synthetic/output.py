@@ -22,6 +22,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from synthetic import __version__
+from synthetic.dirty import dirty_panel
 from synthetic.generate import advance_simulation, finish_simulation, start_simulation
 from synthetic.mart import arrow_schema
 from synthetic.truth import build_truth
@@ -42,19 +43,26 @@ def write_mart(
     """Generate month by month, write the partitioned mart, oracle and truth.json; return truth.
 
     `out_dir` must not hold a dataset already: months left over from another run would mix in.
+    With `dirty` on, the defects are planted in the whole panel (`dirty.dirty_panel`), so every
+    month is held until the end (small presets).
     """
-    if dirty:
-        raise NotImplementedError("dirty-data switches are not built yet (test_harness step 5)")
     out = Path(out_dir)
     existing = [name for name in (*TABLES, "truth.json") if (out / name).exists()]
     if existing:
         raise FileExistsError(f"{out} already holds {existing}; write into an empty folder")
     sim = start_simulation(preset, n_clients, seed, n_months, n_extra_columns)
     products = list(sim["spec"]["products"])
+    held = []
     while sim["month"] < sim["last_month"]:
         sim, final = advance_simulation(sim)
-        _write_months(out, final, products)
-    _write_months(out, finish_simulation(sim), products)
+        if dirty:
+            held += final
+        else:
+            _write_months(out, final, products)
+    final = held + finish_simulation(sim)
+    if dirty:
+        sim, final = dirty_panel(sim, final)
+    _write_months(out, final, products)
     truth = build_truth(sim)
     (out / "truth.json").write_text(json.dumps(truth, indent=1))
     return truth

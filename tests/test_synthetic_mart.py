@@ -11,19 +11,12 @@ from synthetic.checks_mart import snapshot_columns
 from synthetic.names import parse_column
 from synthetic.presets import PRESETS
 
-# Build stage D adds the 8 trap columns and removes this exclusion: until then the mart lacks them.
-SNAPSHOT_ROW = "column list equals the snapshot"
 TOLERANCE = 1e-6
-
-
-def _without_snapshot_row(checks: pd.DataFrame) -> pd.DataFrame:
-    """The check table without the column-list row, which fails until stage D (trap columns)."""
-    return checks[checks["check"] != SNAPSHOT_ROW]
 
 
 def test_mart_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
     """On the unit preset, every row of the mart family (all rules) passes."""
-    checks = _without_snapshot_row(run_checks(unit_output[0], ["mart"])["mart"])
+    checks = run_checks(unit_output[0], ["mart"])["mart"]
     rules = checks[checks["rule"]]
     assert len(rules) == len(checks) and rules["passed"].all(), rules[~rules["passed"]].to_string()
 
@@ -32,15 +25,12 @@ def test_mart_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
 def test_mart_checks_pass_on_canonical(canonical_output: tuple[str, dict, dict]) -> None:
     """Every row passes at the canonical size, on a fifth of the clients (every column is read)."""
     checks = run_checks(canonical_output[0], ["mart"], client_sample=5)["mart"]
-    checks = _without_snapshot_row(checks)
     assert checks["passed"].all(), checks[~checks["passed"]].to_string()
 
 
 def test_mart_columns_follow_the_snapshot(unit: tuple[pd.DataFrame, pd.DataFrame, dict]) -> None:
-    """The mart's columns are the committed snapshot's, in order, but for the trap columns that
-    build stage D adds (it then drops this filter: the mart family checks the full list)."""
-    expected = [c for c in snapshot_columns() if "_trap_" not in c]
-    assert list(unit[0].columns) == expected
+    """The mart's columns are the committed snapshot's, in order (the 8 trap columns last)."""
+    assert list(unit[0].columns) == snapshot_columns()
 
 
 def test_names_parse_into_their_parts() -> None:
@@ -61,7 +51,8 @@ def test_names_parse_into_their_parts() -> None:
 
 
 def test_spark_reads_the_written_types(spark: SparkSession, unit_output: tuple[str, dict]) -> None:
-    """Spark reads flags as int, counts as bigint, `cc_limit` as decimal(18,2), the month a date."""
+    """Spark reads flags as int, counts as bigint, `cc_limit` as decimal(18,2), the month a date,
+    and each trap column with its own type (the all-null one as a string)."""
     types = dict(spark.read.parquet(f"{unit_output[0]}/mart").dtypes)
     assert {t for c, t in types.items() if c.endswith("_flag")} == {"int"}
     assert types["cc_limit"] == "decimal(18,2)"
@@ -74,6 +65,9 @@ def test_spark_reads_the_written_types(spark: SparkSession, unit_output: tuple[s
     ]
     assert {types[c] for c in counters} == {"bigint"}
     assert (types["casa_bal_0_5_months_std"], types["td_status"]) == ("double", "string")
+    # Leak, upstream target, process leak, the 3 null controls, near-constant flag, all-null.
+    traps = [types[c] for c in snapshot_columns() if "_trap_" in c]
+    assert traps == ["bigint", "bigint", "bigint", "double", "bigint", "string", "int", "string"]
 
 
 def _months(first: int, last: int) -> WindowSpec:
