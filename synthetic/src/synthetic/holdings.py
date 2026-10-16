@@ -12,7 +12,10 @@ month: credit card and e-banking at the client's steady-state share, other 0/1 p
 from the client's history since relationship start (`hazards.held_at_start`, Binomial openings for
 loans), usage at its steady state. New clients start without products (usage at its steady state)
 and live the same history. Every month `step_holdings` moves all products from the state at the end
-of the previous month and returns the chance behind every mart-visible event, for the oracle.
+of the previous month, with the month's time terms in the scores, and returns the chance behind
+every event, for the oracle. Usage chains that require a product are at risk only while it is held
+(card activity and the revolver state need a card, current/savings activity the static account).
+`holding_columns` turns the state into mart columns, plus the hidden chains for the oracle.
 """
 
 import numpy as np
@@ -43,7 +46,7 @@ def start_holdings(
         if product["kind"] == "static":
             state[f"{key}_held"] = u < product["share"]
             continue
-        client_score = product_score(spec, key, clients, z, age)
+        client_score = product_score(spec, key, clients, z, age, month)
         log_odds = _intercepts(calib[key], clients) + client_score
         if product["kind"] == "holding":
             held, churned = held_at_start(spec, key, calib[key], log_odds, months)
@@ -88,7 +91,7 @@ def step_holdings(
         if product["kind"] == "static":
             continue
         u = rng.random(n)  # one draw per product and client, in a fixed order
-        client_score = product_score(spec, key, clients, z, age)
+        client_score = product_score(spec, key, clients, z, age, month)
         log_odds = _intercepts(calib[key], clients) + client_score
         if product["kind"] == "holding":
             onboarding = before["onboarding_left"] > 0
@@ -106,9 +109,15 @@ def step_holdings(
     return state, chances
 
 
-def holding_columns(spec: dict, state: dict[str, np.ndarray]) -> dict[str, object]:
-    """The mart columns of the current state: flags, statuses, account counts, product count."""
-    columns, product_cnt = {}, 0
+def holding_columns(
+    spec: dict, state: dict[str, np.ndarray]
+) -> tuple[dict[str, object], dict[str, np.ndarray]]:
+    """Columns of the current state: for the mart, and the hidden chains' flags for the oracle.
+
+    Mart: flags, statuses, account counts, months to maturity, usage flags, product count. Usage
+    chains never count as products; one with `in_mart` False goes to the oracle instead.
+    """
+    columns, hidden, product_cnt = {}, {}, 0
     for key, product in spec["products"].items():
         if product["kind"] in ("static", "holding"):
             held = state[f"{key}_held"]
@@ -129,9 +138,10 @@ def holding_columns(spec: dict, state: dict[str, np.ndarray]) -> dict[str, objec
             )
             product_cnt = product_cnt + (count > 0)
         else:
-            columns[f"{key}_active_flag"] = state[f"{key}_active"]
+            target = columns if product.get("in_mart", True) else hidden
+            target[product.get("flag", f"{key}_active_flag")] = state[f"{key}_active"]
     columns["product_cnt"] = np.asarray(product_cnt, dtype=int)
-    return columns
+    return columns, hidden
 
 
 def _intercepts(product_calib: dict, clients: pd.DataFrame) -> np.ndarray:
@@ -213,16 +223,19 @@ def _step_usage(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Dormant clients may wake up, active ones may lapse (updates `state`).
 
-    A product that requires another (digital needs e-banking) is at risk only if the client held
+    A chain that requires a product (digital needs e-banking) is at risk only if the client held
     it at the end of last month, and goes dormant if the client loses it this month; in the month
-    after registering, the wake chance is the client's steady-state active share. The returned
-    chances price exactly the transitions the mart shows, these included.
+    after adopting it, the wake chance is the client's steady-state active share. A static product
+    (the current/savings account) is never lost or gained. The returned chances price exactly the
+    transitions the mart shows, these included.
     """
     active, required = before[f"{key}_active"], spec["products"][key].get("requires")
     if required:
         held_before, held_now = before[f"{required}_held"], state[f"{required}_held"]
-        keep = 1 - calib[required]["leave_chance"]
-        wake = np.where(before[f"{required}_gained"], wake / (wake + lapse), wake)
+        keep = 1.0
+        if spec["products"][required]["kind"] != "static":
+            keep = 1 - calib[required]["leave_chance"]
+            wake = np.where(before[f"{required}_gained"], wake / (wake + lapse), wake)
     else:
         held_before = held_now = np.ones_like(active)
         keep = 1.0

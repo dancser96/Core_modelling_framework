@@ -3,6 +3,7 @@
 Each check compares two groups' event rates as a log ratio. Other drivers (traits, age, profile,
 salary transfer) differ between the groups, so each group's events are divided by the sum of its
 chances without the effect under test, restated from the product spec (test_harness.md maths §3).
+Events come from `holding_events`, like the holdings family's.
 """
 
 import numpy as np
@@ -10,16 +11,28 @@ import pandas as pd
 from scipy.special import expit
 
 from synthetic.check_table import Z_TOL, row
-from synthetic.holding_events import before, product_keys, sum_row
+from synthetic.holding_events import (
+    PANEL_MART_COLUMNS,
+    PANEL_ORACLE_COLUMNS,
+    before,
+    build_panel,
+    oracle_events,
+    product_keys,
+    sum_row,
+)
 
+MART_COLUMNS = PANEL_MART_COLUMNS
+ORACLE_COLUMNS = PANEL_ORACLE_COLUMNS
 NEAR_THRESHOLD = 0.2  # income within ±20% of a product's minimum
 
 
-def check_drivers(
-    spec: dict, calib: dict, panel: pd.DataFrame, events: dict[str, dict]
-) -> list[dict]:
+def check_holding_drivers(mart: pd.DataFrame, oracle: pd.DataFrame, truth: dict) -> pd.DataFrame:
     """The income-threshold jump (and exemptions) and the churned odds, against the spec."""
-    return _check_threshold(spec, calib, panel, events) + _check_churned(spec, calib, panel, events)
+    spec, calib = truth["spec"], truth["calibration"]
+    panel = build_panel(spec, mart, oracle)
+    events = oracle_events(spec, panel)
+    rows = _check_threshold(spec, calib, panel, events) + _check_churned(spec, calib, panel, events)
+    return pd.DataFrame(rows)
 
 
 def _log_odds(spec: dict, calib: dict, key: str, panel: pd.DataFrame) -> np.ndarray:
@@ -35,7 +48,8 @@ def _log_odds(spec: dict, calib: dict, key: str, panel: pd.DataFrame) -> np.ndar
     if "peak" in age_cfg:
         out = out - age_cfg["curvature"] * ((age - age_cfg["peak"]) / 10) ** 2
     for column, effect in product.get("effects", {}).items():
-        out = out + panel[column].map(effect).fillna(0.0).to_numpy()
+        # truth.json keys are strings (True reads back as "True"): look levels up as strings.
+        out = out + panel[column].astype(str).map(effect).fillna(0.0).to_numpy()
     return out
 
 

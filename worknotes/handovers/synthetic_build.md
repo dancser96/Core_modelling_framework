@@ -12,7 +12,7 @@ wins; fix this file. Removed when M1 closes.
 ## State
 | Stage | Builds (test_harness step) | Status | Commit |
 |---|---|---|---|
-| A | Foundations: refactor, 0/1 flags, hidden attributes, new chains, time hooks, writer, slow suite | not started | |
+| A | Foundations: refactor, 0/1 flags, hidden attributes, new chains, time hooks, writer, slow suite | done (review pending) | see log |
 | B | Amounts, time effects, segment overlap (step 3) | not started | |
 | C | Mart: names, rollups, null rule, types, prefix stability (step 4) | not started | |
 | D | Traps, drift evidence, dirty switches, extra columns (step 5) | not started | |
@@ -166,6 +166,11 @@ helper `_keep_and_append(state: dict, stay: np.ndarray, new: dict) -> dict` for 
 - `read_output(out_dir, table, columns)` reads with pyarrow, adds `snapshot_month` as a date,
   casts decimals to float (the synthetic package's own reader; the Spark test asserts the decimal
   type).
+- **`truth` keys are strings** (JSON): `build_truth` turns every dict key into `str(key)` (`True` →
+  `"True"`, school-fee terms `{"9": 0.4, …}`), NaN into null, tuples into lists, and round-trips
+  through JSON, so the in-memory truth equals what `load_truth` reads. Checks reading
+  `truth["spec"]` must look keys up as strings.
+- `write_mart` refuses a folder that already holds output (no mixing of runs).
 - `load_truth(out_dir)` raises if `truth["generator_version"]` differs from
   `synthetic.__version__` (stale-data guard). Bump `__version__` to `0.3.0` when the build is done.
 
@@ -197,7 +202,7 @@ helper `_keep_and_append(state: dict, stay: np.ndarray, new: dict) -> dict` for 
 2. **True income and wealth base:** `draw_income` also returns `true_income` (the value before
    hiding; no new draws). `_new_clients` adds `wealth_base` = subsegment median income ×
    exp(`income.wealth_loading` × wealth deviation) (spec "Hidden client attributes").
-3. **Hidden attributes:** `amounts.draw_hidden_attributes(spec, clients, rng) -> pd.DataFrame` with
+3. **Hidden attributes:** `amounts.draw_hidden_attributes(spec, clients, age, rng) -> pd.DataFrame` with
    the columns of §2.3 (values: spec "Amounts" → current/savings, subcategories, credit card, time
    effects). Stage B adds the rest of `amounts`.
 4. **`separation`** in `RETAIL` (default 1.0): `latent_means` uses

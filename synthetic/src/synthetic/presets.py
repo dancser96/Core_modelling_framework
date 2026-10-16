@@ -3,11 +3,13 @@
 The spec is plain data: subsegments with their segment, share, income level, age and hidden-trait
 means; four profiles (private, priority, affluent, mass) that set the nationality, employment and
 emirate mixes, turnover and how spread out and correlated the hidden traits are; the income model;
-and the products and holding rules (from `products`). The generator reads only this dict, so another domain or entity is another spec, not new
-code. Values are ballpark, close to public UAE figures without copying any bank's book; the tables
-in docs/components/test_harness.md explain them.
+the products and holding rules (from `products`); amount levels and time effects (from `levels`).
+The generator reads only this dict, so another domain or entity is another spec, not new code.
+Values are ballpark, close to public UAE figures without copying any bank's book; the tables in
+docs/components/test_harness.md explain them.
 """
 
+from synthetic.levels import LEVELS, SEASONS
 from synthetic.products import HOLDING_RULES, PRODUCTS
 
 LATENTS = ("wealth", "activity", "digital", "credit", "crossborder")
@@ -148,6 +150,9 @@ RETAIL = {
     # New-to-bank clients are younger than the book; without this the book ages over the panel.
     "new_to_bank_age_shift": -5,
     "latent_rho": 0.95,
+    # Scales the distances between subsegment trait means around their book-weighted centre: at
+    # 0.5 subsegments overlap more and pooled relationships move towards within-subsegment ones.
+    "separation": 1.0,
     "national_group": "UAE",  # no residence length for nationals
     # Years between arrival in the country and relationship start: most open an account soon after
     # arriving, the rest had lived here for years (switchers). The same mix applies to existing and
@@ -240,6 +245,8 @@ RETAIL = {
     },
     "products": PRODUCTS,
     "holding_rules": HOLDING_RULES,
+    "levels": LEVELS,
+    "seasons": SEASONS,
 }
 
 PRESETS = {

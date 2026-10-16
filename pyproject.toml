@@ -32,6 +32,8 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slow: canonical-size checks (pytest -m slow)"]
+addopts = "-m 'not slow'"  # a later `-m slow` on the command line overrides it
 
 [tool.ruff]
 line-length = 100
@@ -46,5 +48,6 @@ select = ["E", "F", "I", "B", "ANN", "D1"]
 [tool.ruff.lint.per-file-ignores]
 # Aligned data tables are easier to review than wrapped ones.
 "synthetic/src/synthetic/presets.py" = ["E501"]
+"synthetic/src/synthetic/levels.py" = ["E501"]
 # Notebooks open with a guide cell instead of a module docstring.
 "*.ipynb" = ["D100"]

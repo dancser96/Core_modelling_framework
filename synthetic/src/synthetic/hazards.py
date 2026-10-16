@@ -1,14 +1,14 @@
 """Each client's monthly chance of adopting, opening, waking up or lapsing, per product.
 
 A chance is `σ(intercept + score)` on the log-odds scale. The score holds everything that makes
-clients differ: hidden traits, age, descriptors (e.g. salary transfer) and the half-strict income
-threshold. The intercept is set once per product and profile (`calibrate`), on the starting book,
-so that the book matches the spec's shares; how long a holding lasts then follows from the spec's
-event volume. Products without an onboarding wave build up over each client's months on book from
-"never held" at relationship start; `share_held_after` gives the exact chance of each state for the
-stepped monthly process, and the starting book is drawn from it, so holdings agree with tenure,
-income and traits from the first month. The same functions give the generator its chances and the
-oracle its truth.
+clients differ: hidden traits, age, descriptors (e.g. salary transfer), the half-strict income
+threshold and, given a month, the time terms (`seasons`). The intercept is set once per product
+and profile (`calibrate`), on the starting book, so that the book matches the spec's shares; how
+long a holding lasts then follows from the spec's event volume. Products without an onboarding
+wave build up over each client's months on book from "never held" at relationship start;
+`share_held_after` gives the exact chance of each state for the stepped monthly process, and the
+starting book is drawn from it, so holdings agree with tenure, income and traits from the first
+month. The same functions give the generator its chances and the oracle its truth.
 """
 
 import numpy as np
@@ -18,12 +18,22 @@ from scipy.special import expit, logit
 
 from synthetic.presets import LATENTS
 from synthetic.products import PROFILE_ORDER
+from synthetic.seasons import after_bonus, wake_shift
 
 
 def product_score(
-    spec: dict, key: str, clients: pd.DataFrame, z: np.ndarray, age: np.ndarray
+    spec: dict,
+    key: str,
+    clients: pd.DataFrame,
+    z: np.ndarray,
+    age: np.ndarray,
+    month: np.datetime64 | None = None,
 ) -> np.ndarray:
-    """A product's log-odds score per client, before the profile intercept."""
+    """A product's log-odds score per client, before the profile intercept.
+
+    With a month it adds the time terms (seasonal wake-ups, the uptake trend, the bonus trigger);
+    calibration calls it without one (test_harness.md maths §3).
+    """
     product, rules = spec["products"][key], spec["holding_rules"]
     loadings = np.array([product.get("traits", {}).get(name, 0.0) for name in LATENTS])
     out = z @ loadings
@@ -37,6 +47,8 @@ def product_score(
     if "min_income" in product:
         below = below_threshold(rules, clients, product["min_income"])
         out = out + np.log(rules["below_threshold_odds"]) * below
+    if month is not None:
+        out = out + wake_shift(spec, key, clients, month) + after_bonus(spec, key, clients, month)
     return out
 
 

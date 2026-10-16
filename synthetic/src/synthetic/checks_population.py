@@ -10,15 +10,38 @@ spec, never taken from the generator's own functions, so a generator bug can't p
 import numpy as np
 import pandas as pd
 
-from synthetic.check_table import Z_TOL, profile_of, row, share_row, violations_row
+from synthetic.check_table import (
+    Z_TOL,
+    flags_as_bool,
+    profile_of,
+    row,
+    share_row,
+    violations_row,
+)
 from synthetic.presets import EMIRATES, EMPLOYMENT, LATENTS, NATIONALITY_GROUPS
 
 WEALTH = LATENTS.index("wealth")
+MART_COLUMNS = [
+    "client_id",
+    "snapshot_month",
+    "segment",
+    "subsegment",
+    "nationality_group",
+    "nationality",
+    "employment_status",
+    "income",
+    "salary_transfer_flag",
+    "emirate",
+    "age",
+    "residence_days",
+    "relationship_days",
+]
+ORACLE_COLUMNS = ["client_id", "snapshot_month", *[f"z_{name}" for name in LATENTS]]
 
 
 def check_population(mart: pd.DataFrame, oracle: pd.DataFrame, truth: dict) -> pd.DataFrame:
     """Step 1: mix, day counters, dates, residence and income nulls, latent traits, turnover."""
-    spec = truth["spec"]
+    spec, mart = truth["spec"], flags_as_bool(mart)
     months = mart["snapshot_month"]
     first, last = mart[months == months.min()], mart[months == months.max()]
     rows = (
@@ -220,12 +243,20 @@ def _check_latents(spec: dict, df: pd.DataFrame, oracle: pd.DataFrame) -> list[d
 
 
 def _expected_latent_means(spec: dict, df: pd.DataFrame) -> np.ndarray:
-    """Restated from the spec: subsegment mean + nationality shift + employment shift."""
+    """Restated from the spec: subsegment mean + nationality shift + employment shift.
+
+    Subsegment means sit at centre + separation × (mean − centre), the centre being their
+    share-weighted mean (test_harness.md maths §1).
+    """
+    subs = spec["subsegments"]
+    means = np.array([s["latent_mean"] for s in subs.values()])
+    shares = np.array([s["share"] for s in subs.values()])
+    centre = shares @ means / shares.sum()
+    separated = dict(zip(subs, centre + spec["separation"] * (means - centre), strict=True))
     rows = zip(df["subsegment"], df["nationality_group"], df["employment_status"], strict=True)
     return np.array(
         [
-            np.add(spec["subsegments"][s]["latent_mean"], spec["latent_shift_nationality"][g])
-            + spec["latent_shift_employment"][e]
+            separated[s] + spec["latent_shift_nationality"][g] + spec["latent_shift_employment"][e]
             for s, g, e in rows
         ]
     ).reshape(len(df), len(LATENTS))

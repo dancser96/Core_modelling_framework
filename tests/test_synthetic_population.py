@@ -3,19 +3,21 @@
 import pandas as pd
 import pytest
 
-from synthetic.checks_population import check_population
+from synthetic.check_suite import run_checks
 from synthetic.generate import generate_mart
 
 
-@pytest.fixture(scope="module")
-def unit() -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-    """The unit preset with seed 0, generated once for the module."""
-    return generate_mart("unit", seed=0)
+def test_population_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
+    """On the unit preset, every rule that must always hold (tolerance 0) passes."""
+    checks = run_checks(unit_output[0], ["population"])["population"]
+    rules = checks[checks["tolerance"] == 0]
+    assert len(rules) and rules["passed"].all(), rules[~rules["passed"]].to_string()
 
 
-def test_population_checks_pass(canonical: tuple[pd.DataFrame, pd.DataFrame, dict]) -> None:
+@pytest.mark.slow
+def test_population_checks_pass_on_canonical(canonical_output: tuple[str, dict, dict]) -> None:
     """Every row of the step-1 check table passes at the canonical size."""
-    checks = check_population(*canonical)
+    checks = run_checks(canonical_output[0], ["population"])["population"]
     assert checks["passed"].all(), checks[~checks["passed"]].to_string()
 
 
@@ -29,6 +31,18 @@ def test_same_seed_same_data_other_seed_differs(
     pd.testing.assert_frame_equal(mart, again_mart)
     pd.testing.assert_frame_equal(oracle, again_oracle)
     assert not mart.equals(other_mart)
+
+
+def test_months_do_not_depend_on_later_months(
+    unit: tuple[pd.DataFrame, pd.DataFrame, dict],
+) -> None:
+    """Prefix stability: 20 and 24 months from the same seed agree on months 1–20."""
+    mart, oracle, _ = unit
+    short_mart, short_oracle, _ = generate_mart("unit", seed=0, n_months=20)
+    assert short_mart["snapshot_month"].nunique() == 20
+    in_short = (mart["snapshot_month"] <= short_mart["snapshot_month"].max()).to_numpy()
+    pd.testing.assert_frame_equal(mart[in_short].reset_index(drop=True), short_mart)
+    pd.testing.assert_frame_equal(oracle[in_short].reset_index(drop=True), short_oracle)
 
 
 def test_mart_holds_no_hidden_truth(unit: tuple[pd.DataFrame, pd.DataFrame, dict]) -> None:

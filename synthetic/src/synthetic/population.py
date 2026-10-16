@@ -3,7 +3,8 @@
 Each client gets a subsegment (and with it a segment and a profile), a nationality group and
 country, an employment status, an emirate, a birth month, a relationship start and a residence
 start. Income and the salary-transfer flag are drawn separately (`draw_income`), after the hidden
-traits, because income rises with the wealth trait. Dates are stored as integer months or days
+traits, because income rises with the wealth trait; the true income (hidden) is the income before
+some of it is hidden as undeclared. Dates are stored as integer months or days
 since 1970, so pandas never reinterprets their units; the month loop turns them into age and day
 counters. Draws run in a fixed order: reordering them changes the data for a given seed.
 """
@@ -13,6 +14,7 @@ import pandas as pd
 from scipy import stats
 
 from synthetic.presets import EMIRATES, EMPLOYMENT, NATIONALITY_GROUPS
+from synthetic.products import PROFILE_ORDER
 
 DAYS_PER_YEAR = 365.25
 
@@ -42,10 +44,11 @@ def draw_clients(
 def draw_income(
     spec: dict, clients: pd.DataFrame, wealth_dev: np.ndarray, rng: np.random.Generator
 ) -> pd.DataFrame:
-    """Declared income (null when not declared) and the salary-transfer flag.
+    """Declared income (null when not declared), the salary-transfer flag and the true income.
 
     `wealth_dev` is the wealth trait minus its mean, in within-profile standard deviations, so
-    income rises with wealth inside each subsegment.
+    income rises with wealth inside each subsegment. The true income (hidden) is the declared
+    income before hiding; it exists for every client.
     """
     cfg = spec["income"]
     median = clients["subsegment"].map(lambda s: spec["subsegments"][s]["median_income"]).to_numpy()
@@ -61,8 +64,15 @@ def draw_income(
     missing = rng.random(len(clients)) < p_missing
     p_salary = clients["profile"].map(lambda p: spec["profiles"][p]["salary_transfer"]).to_numpy()
     salary = (emp == "Employed").to_numpy() & (rng.random(len(clients)) < p_salary)
-    income = np.where(missing, np.nan, np.round(np.exp(log_income), -1))
-    return pd.DataFrame({"income": income, "salary_transfer_flag": salary}, index=clients.index)
+    true_income = np.round(np.exp(log_income), -1)
+    return pd.DataFrame(
+        {
+            "income": np.where(missing, np.nan, true_income),
+            "salary_transfer_flag": salary,
+            "true_income": true_income,
+        },
+        index=clients.index,
+    )
 
 
 def _draw_descriptors(spec: dict, subsegment: np.ndarray, rng: np.random.Generator) -> pd.DataFrame:
@@ -176,3 +186,9 @@ def months_on_book(clients: pd.DataFrame, month: np.datetime64) -> np.ndarray:
     """Monthly steps a client has lived by the end of `month`, the join month included."""
     days = clients["relationship_start"].to_numpy().astype("datetime64[D]")
     return month.astype(int) - days.astype("datetime64[M]").astype(int) + 1
+
+
+def profile_values(clients: pd.DataFrame, values: list[float]) -> np.ndarray:
+    """Each client's entry of a per-profile list of the spec (order: PROFILE_ORDER)."""
+    lookup = dict(zip(PROFILE_ORDER, values, strict=True))
+    return clients["profile"].map(lookup).to_numpy(dtype=float)

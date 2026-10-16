@@ -10,10 +10,15 @@ Plain data, read by `hazards` and `holdings`. Each product is set with as few nu
   log-odds scale, so clients differ within a profile and their chances move as their traits drift.
 
 Kinds: `holding` is a 0/1 product (it can be lost and re-adopted); `loans` are account counts that
-close only at maturity; `usage` is an active/dormant state; `static` never changes after joining.
+close only at maturity; `usage` is an active/dormant chain; `static` never changes after joining.
 Products with `onboarding` (credit card, e-banking) are taken up by many new clients within their
-first `onboarding_months`; the others build up over each client's tenure. Values are ballpark
-(public UAE figures, D-064).
+first `onboarding_months`; the others build up over each client's tenure. A usage chain may
+`requires` another product (at risk only while the client holds it), and has two optional fields:
+`flag`, its column name (default `<key>_active_flag`), and `in_mart` (default True; False keeps a
+hidden state such as the revolver out of the mart and in the oracle). Chains never count as
+products. `HOLDING_RULES["bonus_trigger"]` raises some products' adoption odds in the months after
+a client's bonus (the bonus itself is in `levels.SEASONS`). Values are ballpark (public UAE
+figures, D-064).
 """
 
 PROFILE_ORDER = ("private", "priority", "affluent", "mass")  # order of every `shares` list
@@ -26,6 +31,12 @@ HOLDING_RULES = {
     "churned_odds": 2.0,  # clients who held the product before re-adopt at twice the odds
     "max_loan_accounts": 4,
     "lapse_loading": 0.5,  # usage: the drivers that wake a client also keep it active (× this)
+    # A bonus multiplies these products' adoption odds in the `months_after` months that follow it.
+    "bonus_trigger": {
+        "products": ["td", "wealth_digital", "wealth_trad"],
+        "odds": 2.0,
+        "months_after": 2,
+    },
 }
 
 PRODUCTS = {
@@ -37,7 +48,7 @@ PRODUCTS = {
         shares=[0.85, 0.80, 0.65, 0.30],
         events_per_100k=500,
         min_income=5_000,
-        traits={"credit": 0.6, "activity": 0.3},
+        traits={"credit": 0.6, "activity": 0.3, "digital": 0.3},  # digital: the Simpson's trap
         effects={"salary_transfer_flag": {True: 0.7}},
     ),
     "td": dict(
@@ -86,7 +97,8 @@ PRODUCTS = {
         min_income=5_000,
         traits={"credit": 0.6, "wealth": -0.3},
         age={"peak": 35, "curvature": 0.6},  # inverted U, peaking in the mid-30s (trap F18)
-        effects={"salary_transfer_flag": {True: 1.0}},
+        # Ghana: a rare high-rate level (trap).
+        effects={"salary_transfer_flag": {True: 1.0}, "nationality": {"Ghana": 1.5}},
     ),
     "loan_auto": dict(
         kind="loans",
@@ -107,7 +119,8 @@ PRODUCTS = {
         age={"peak": 42, "curvature": 0.5},
         effects={"nationality_group": {"UAE": 0.5, "GCC": 0.5, "WESTERN": 0.5}},
     ),
-    # Usage: `shares` is the share active; FX for every client, digital among e-banking clients.
+    # Usage: `shares` is the share active; FX for every client, the others among the clients
+    # holding the product they require.
     "fx": dict(
         kind="usage",
         label="FX activity",
@@ -123,5 +136,34 @@ PRODUCTS = {
         requires="ebanking",
         traits={"digital": 0.8},
         age={"slope_per_decade": -0.2},
+    ),
+    "cc_activity": dict(
+        kind="usage",
+        label="card activity",
+        shares=[0.85, 0.85, 0.80, 0.75],
+        mean_active_months=24,
+        requires="cc",
+        traits={"activity": 0.6},
+        flag="cc_active_flag",
+    ),
+    "casa_activity": dict(
+        kind="usage",
+        label="current/savings activity",
+        shares=[0.91, 0.93, 0.94, 0.96],
+        mean_active_months=180,
+        requires="casa",
+        traits={"activity": 0.5},
+        effects={"salary_transfer_flag": {True: 2.4}},  # salary-transfer clients rarely go dormant
+        flag="casa_active_flag",
+    ),
+    "cc_revolver": dict(
+        kind="usage",
+        label="revolver (carries a card balance)",
+        shares=[0.10, 0.20, 0.30, 0.45],
+        mean_active_months=24,
+        requires="cc",
+        traits={"credit": 0.5, "wealth": -0.3},
+        flag="revolver_flag",
+        in_mart=False,  # hidden: interest above 0 reveals it
     ),
 }

@@ -2,9 +2,11 @@
 
 Every client has five traits (wealth, activity, digital, credit appetite, cross-border). Each has a
 long-run mean, the subsegment's mean plus shifts for nationality group and employment, and a
-profile-specific spread and correlation. Month to month the traits follow a stationary AR(1), so
-they persist but drift, and their distribution never changes. Later build steps feed them into
-product adoption, usage and amounts; the oracle file records them for checking.
+profile-specific spread and correlation. The spec's `separation` moves the subsegment means
+towards (below 1) or away from (above 1) their book-weighted centre. Month to month the traits
+follow a stationary AR(1), so they persist but drift, and their distribution never changes. Later
+build steps feed them into product adoption, usage and amounts; the oracle file records them for
+checking.
 """
 
 import numpy as np
@@ -16,13 +18,27 @@ from synthetic.presets import LATENTS
 def latent_means(spec: dict, clients: pd.DataFrame) -> np.ndarray:
     """Each client's long-run mean: subsegment mean plus nationality-group and employment shifts."""
     shape = (len(clients), len(LATENTS))  # explicit, so zero clients still gives a 2-D array
-    subs = spec["subsegments"]
-    base = np.array([subs[s]["latent_mean"] for s in clients["subsegment"]]).reshape(shape)
+    subs = _separated_means(spec)
+    base = np.array([subs[s] for s in clients["subsegment"]]).reshape(shape)
     nat_shift = spec["latent_shift_nationality"]
     nat = np.array([nat_shift[g] for g in clients["nationality_group"]]).reshape(shape)
     emp_shift = spec["latent_shift_employment"]
     emp = np.array([emp_shift[e] for e in clients["employment_status"]]).reshape(shape)
     return base + nat + emp
+
+
+def _separated_means(spec: dict) -> dict[str, np.ndarray]:
+    """Subsegment means at the spec's `separation`: centre + separation × (mean − centre).
+
+    The centre is the share-weighted mean of the subsegment means. Written as
+    mean + (separation − 1) × (mean − centre), so at 1 the means stay bit-identical.
+    """
+    subs = spec["subsegments"]
+    means = np.array([s["latent_mean"] for s in subs.values()], dtype=float)
+    shares = np.array([s["share"] for s in subs.values()])
+    centre = shares @ means / shares.sum()
+    moved = means + (spec["separation"] - 1) * (means - centre)
+    return dict(zip(subs, moved, strict=True))
 
 
 def latent_covariances(spec: dict) -> dict[str, np.ndarray]:

@@ -3,23 +3,30 @@
 Expected values are restated from the product spec and read from the mart, never taken from the
 generator's functions. Events come from `holding_events`: month-on-month moves in the mart, set
 against the oracle's chances. Rows of the first panel month have no known previous state and count
-only in share checks.
+only in share checks. Shares stay flat over the panel except for the product with the uptake trend
+(digital activity, a drift trap), which must rise. What drives adoption is in
+`checks_holding_drivers`.
 """
 
 import numpy as np
 import pandas as pd
 
-from synthetic.check_table import Z_TOL, row, share_row, violations_row
-from synthetic.checks_holding_drivers import check_drivers
+from synthetic.check_table import Z_TOL, range_row, row, share_row, violations_row
 from synthetic.holding_events import (
+    PANEL_MART_COLUMNS,
+    PANEL_ORACLE_COLUMNS,
     before,
     build_panel,
     leave_events,
     oracle_events,
     product_keys,
     sum_row,
+    usage_flag,
 )
 from synthetic.products import PROFILE_ORDER
+
+MART_COLUMNS = PANEL_MART_COLUMNS
+ORACLE_COLUMNS = PANEL_ORACLE_COLUMNS
 
 STATUSES = ("never", "churned", "active")
 # Allowed status moves in a month: rows are the old status, columns the new (order: STATUSES).
@@ -33,6 +40,9 @@ VOLUME_REL_TOL = 0.25
 MIN_OPENINGS, SIZING_MONTHS = 200, 6  # sizing rule for loan targets
 # A count-rise target misses openings in a month an account matures: fine while that is rare.
 MAX_HIDDEN_OPENINGS = 0.02
+# Current/savings dormant share at month 1 by salary transfer: the spec's "≈ 1% with, ≈ 10%
+# without" as ranges (salary-transfer flag → range).
+CASA_DORMANT_RANGES = {True: (0.005, 0.025), False: (0.07, 0.13)}
 
 
 def check_holdings(mart: pd.DataFrame, oracle: pd.DataFrame, truth: dict) -> pd.DataFrame:
@@ -50,10 +60,11 @@ def check_holdings(mart: pd.DataFrame, oracle: pd.DataFrame, truth: dict) -> pd.
         + _check_realised(events, bins=10)
         + _check_realised(leave_events(spec, calib, panel), bins=1)
         + _check_shares(spec, first)
+        + _check_casa_dormant(first)
         + _check_flat(spec, first, last)
+        + _check_trend(spec, first, last)
         + _check_volumes(spec, panel, events)
         + _check_openings(panel, events)
-        + check_drivers(spec, calib, panel, events)
         + _check_onboarding(spec, panel)
     )
     return pd.DataFrame(rows)
@@ -104,12 +115,13 @@ def _check_other_rules(spec: dict, panel: pd.DataFrame) -> list[dict]:
     rows, counted = [], 0
     for key, product in spec["products"].items():
         if product["kind"] == "usage" and "requires" in product:
-            needs, active = product["requires"], panel[f"{key}_active_flag"].to_numpy()
-            woke = active & ~before(panel, f"{key}_active_flag", True).astype(bool)
-            no_need = ~before(panel, f"{needs}_flag", False).astype(bool)
+            flag, needs = usage_flag(spec, key), f"{product['requires']}_flag"
+            active = panel[flag].to_numpy()
+            woke = active & ~before(panel, flag, True).astype(bool)
+            no_need = ~before(panel, needs, False).astype(bool)
             rows += [
-                violations_row(f"{key} active only with {needs}", active & ~panel[f"{needs}_flag"]),
-                violations_row(f"{key} wakes only with {needs} held last month", woke & no_need),
+                violations_row(f"{flag} = 1 only with {needs} = 1", active & ~panel[needs]),
+                violations_row(f"{flag} wakes only with {needs} = 1 last month", woke & no_need),
             ]
         elif product["kind"] in ("static", "holding") and product.get("in_product_count", True):
             counted = counted + panel[f"{key}_flag"].astype(int)
@@ -163,7 +175,7 @@ def _held(spec: dict, df: pd.DataFrame) -> dict[str, tuple[pd.Series, pd.Series]
             out[key] = (df[f"{key}_cnt"] > 0, everyone)
         elif product["kind"] == "usage":
             needs = product.get("requires")
-            out[key] = (df[f"{key}_active_flag"], df[f"{needs}_flag"] if needs else everyone)
+            out[key] = (df[usage_flag(spec, key)], df[f"{needs}_flag"] if needs else everyone)
     return out
 
 
@@ -188,10 +200,25 @@ def _spec_share_row(check: str, stratum: str, expected: float, held: pd.Series) 
     return row(check, stratum, len(held), expected, held.mean(), tolerance)
 
 
+def _check_casa_dormant(first: pd.DataFrame) -> list[dict]:
+    """Current/savings dormant share at month 1, with and without salary transfer, in its range."""
+    rows, holders = [], first[first["casa_flag"]]
+    for salary, (low, high) in CASA_DORMANT_RANGES.items():
+        part = holders.loc[holders["salary_transfer_flag"] == salary, "casa_active_flag"]
+        stratum, dormant = "salary transfer" if salary else "no salary transfer", 1 - part.mean()
+        check = "casa dormant share at month 1"
+        rows.append(range_row(check, stratum, len(part), low, high, dormant))
+    return rows
+
+
 def _check_flat(spec: dict, first: pd.DataFrame, last: pd.DataFrame) -> list[dict]:
-    """Shares stay flat: the last panel month against the first, per product and profile."""
+    """Shares stay flat: the last panel month against the first, per product and profile.
+
+    The product with the uptake trend is left out: `_check_trend` checks that it rises.
+    """
     rows, before, after = [], _held(spec, first), _held(spec, last)
-    for key, name in [(key, name) for key in before for name in PROFILE_ORDER]:
+    trending = spec["seasons"]["drift"]["trend_product"]
+    for key, name in [(key, name) for key in before for name in PROFILE_ORDER if key != trending]:
         a = before[key][0][before[key][1] & (first["profile"] == name)]
         b = after[key][0][after[key][1] & (last["profile"] == name)]
         tolerance = Z_TOL * np.sqrt(a.var(ddof=0) / len(a) + b.var(ddof=0) / len(b))
@@ -200,6 +227,17 @@ def _check_flat(spec: dict, first: pd.DataFrame, last: pd.DataFrame) -> list[dic
             row("share last vs first month", stratum, len(b), a.mean(), b.mean(), tolerance)
         )
     return rows
+
+
+def _check_trend(spec: dict, first: pd.DataFrame, last: pd.DataFrame) -> list[dict]:
+    """The trending product's share rises from the first panel month to the last, by more than
+    Z_TOL standard errors of the difference (pooled over profiles)."""
+    key = spec["seasons"]["drift"]["trend_product"]
+    (held_a, base_a), (held_b, base_b) = _held(spec, first)[key], _held(spec, last)[key]
+    a, b = held_a[base_a], held_b[base_b]
+    rise = b.mean() - a.mean()
+    floor = Z_TOL * np.sqrt(a.var(ddof=0) / len(a) + b.var(ddof=0) / len(b))
+    return [range_row("share rises, last vs first month", key, len(b), floor, 1.0, rise)]
 
 
 def _check_volumes(spec: dict, panel: pd.DataFrame, events: dict[str, dict]) -> list[dict]:
@@ -228,17 +266,18 @@ def _check_volumes(spec: dict, panel: pd.DataFrame, events: dict[str, dict]) -> 
 
 
 def _check_openings(panel: pd.DataFrame, events: dict[str, dict]) -> list[dict]:
-    """Loans have no spec volume. Sizing rule: ≥ 200 openings (count rises) in every 6-month
-    window (n: the fewest; realised 1 when met). And the share of openings a maturity in the same
-    month hides from a count-rise target, by Σ chance: small by design (short of 2%)."""
+    """Loans have no spec volume. Sizing rule at the canonical size: ≥ 200 openings (count rises)
+    in every 6-month window (realised: the fewest; n: all openings). And the share of openings a
+    maturity in the same month hides from a count-rise target, by Σ chance: small by design (short
+    of 2%)."""
     rows = []
     for name in [name for name in events if name.endswith(" open")]:
         e = events[name]
         rises = pd.Series(e["at_risk"] & (e["realised"] == 1))[e["scope"]]
         per_month = rises.groupby(panel["snapshot_month"][e["scope"]]).sum()
         fewest = int(per_month.rolling(SIZING_MONTHS).sum().min())
-        check = f"openings in every {SIZING_MONTHS}-month window ≥ {MIN_OPENINGS}"
-        rows.append(row(check, name, fewest, 1.0, float(fewest >= MIN_OPENINGS), 0))
+        check = f"fewest openings in a {SIZING_MONTHS}-month window"
+        rows.append(range_row(check, name, rises.sum(), MIN_OPENINGS, rises.sum(), fewest))
         hidden = e["at_risk"] & np.isnan(e["realised"])
         share = e["chance"][hidden].sum() / e["chance"][e["at_risk"]].sum()
         check = "share of openings hidden by a maturity"
