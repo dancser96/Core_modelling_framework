@@ -616,8 +616,9 @@ near 145 columns.
   months are usable. The generator assumes no particular observation window; [dataset](dataset.md)
   has an example.
 - **Types:** flags are 0/1 integers (`int`), counts `bigint`, nullable counters `bigint` with
-  nulls, amounts `double` rounded to 0.01, `cc_limit` `decimal(18,2)`, categoricals and statuses
-  strings, `snapshot_month` a date (T18).
+  nulls, amounts `double` rounded to 0.01 (derived averages, deviations and ratios are not
+  rounded), maxima and minima of counts `bigint`, `cc_limit` `decimal(18,2)`, categoricals and
+  statuses strings, `snapshot_month` a date (T18).
 
 ### Physical form
 Parquet partitioned by `snapshot_month` (`snapshot_month=YYYY-MM-01/`), written one month at a time

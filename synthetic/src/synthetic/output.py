@@ -4,10 +4,12 @@
 about one month: `<out>/mart/snapshot_month=YYYY-MM-01/part-0.parquet`, the oracle likewise under
 `<out>/oracle/`, and `<out>/truth.json` last, so a folder without a truth file is an incomplete
 dataset. The month is a partition column, never stored inside the files; Spark infers it as a date
-from the folder name (T18). `read_output` reads a table back in month order with `snapshot_month`
-as `datetime.date` values, as the mart has them in memory; `load_truth` refuses a dataset written
-by another generator version, so stale data fails loud. Flags are int32; other columns keep the
-types pandas gives them until build stage C adds the explicit arrow schema (decimal `cc_limit`).
+from the folder name (T18). The mart is written with the explicit types of `mart.arrow_schema`
+(flags int32, counts int64 with nulls where nullable, `cc_limit` decimal(18, 2)), so every month
+has the same schema whatever its values; the oracle keeps the types pandas gives it. `read_output`
+reads a table back in month order with `snapshot_month` as `datetime.date` values and decimals as
+floats, so it returns the mart as it was in memory (Spark sees the decimal); `load_truth` refuses
+a dataset written by another generator version, so stale data fails loud.
 """
 
 import datetime as dt
@@ -21,6 +23,7 @@ import pyarrow.parquet as pq
 
 from synthetic import __version__
 from synthetic.generate import advance_simulation, finish_simulation, start_simulation
+from synthetic.mart import arrow_schema
 from synthetic.truth import build_truth
 
 TABLES = ("mart", "oracle")
@@ -47,19 +50,24 @@ def write_mart(
     if existing:
         raise FileExistsError(f"{out} already holds {existing}; write into an empty folder")
     sim = start_simulation(preset, n_clients, seed, n_months, n_extra_columns)
+    products = list(sim["spec"]["products"])
     while sim["month"] < sim["last_month"]:
         sim, final = advance_simulation(sim)
-        _write_months(out, final)
-    _write_months(out, finish_simulation(sim))
+        _write_months(out, final, products)
+    _write_months(out, finish_simulation(sim), products)
     truth = build_truth(sim)
     (out / "truth.json").write_text(json.dumps(truth, indent=1))
     return truth
 
 
-def read_output(out_dir: str, table: str, columns: list[str] | None = None) -> pd.DataFrame:
+def read_output(
+    out_dir: str, table: str, columns: list[str] | None = None, client_sample: int | None = None
+) -> pd.DataFrame:
     """One table ("mart" or "oracle") in month order, with `snapshot_month` as dates.
 
     `columns` reads only those (in that order); None reads every column, keys first.
+    `client_sample` n keeps only the clients whose id is a multiple of n, in every month: a fixed
+    sample of about 1/n of the clients, for checks that read every column of a large dataset.
     """
     if table not in TABLES:
         raise ValueError(f"table must be one of {TABLES}, not {table!r}")
@@ -67,11 +75,7 @@ def read_output(out_dir: str, table: str, columns: list[str] | None = None) -> p
     if not folders:
         raise FileNotFoundError(f"no months in {Path(out_dir, table)}")
     stored = None if columns is None else [c for c in columns if c != PARTITION]
-    # No partition inference: the month is added as a date below, not as pyarrow's guess.
-    parts = [
-        pq.read_table(folder / "part-0.parquet", columns=stored, partitioning=None)
-        for folder in folders
-    ]
+    parts = [_read_month(folder / "part-0.parquet", stored, client_sample) for folder in folders]
     frame = pa.concat_tables(parts).to_pandas()
     # Added in pandas, after pyarrow restored the stored dtypes from the pandas metadata.
     months = np.array([_folder_month(folder) for folder in folders], dtype=object)
@@ -91,8 +95,25 @@ def load_truth(out_dir: str) -> dict:
     return truth
 
 
-def _write_months(out: Path, frames: list[tuple[pd.DataFrame, pd.DataFrame]]) -> None:
-    """Write each (mart, oracle) month into its partition folder of each table."""
+def _read_month(path: Path, columns: list[str] | None, client_sample: int | None) -> pa.Table:
+    """One month's file, decimals cast to float64 (pandas would get Python `Decimal` objects),
+    optionally only the clients whose id is a multiple of `client_sample`."""
+    # No partition inference: `read_output` adds the month as a date, not as pyarrow's guess.
+    part = pq.read_table(path, columns=columns, partitioning=None)
+    if client_sample is not None:
+        ids = pq.read_table(path, columns=["client_id"]).column("client_id").to_numpy()
+        part = part.filter(pa.array(ids % client_sample == 0))
+    fields = [
+        pa.field(f.name, pa.float64()) if pa.types.is_decimal(f.type) else f for f in part.schema
+    ]
+    return part.cast(pa.schema(fields, metadata=part.schema.metadata))
+
+
+def _write_months(
+    out: Path, frames: list[tuple[pd.DataFrame, pd.DataFrame]], products: list[str]
+) -> None:
+    """Write each (mart, oracle) month into its partition folder of each table; the mart with
+    its explicit schema (`products`: the spec's product keys, to parse the column names)."""
     for frame_pair in frames:
         for table, frame in zip(TABLES, frame_pair, strict=True):
             months = frame[PARTITION].unique()
@@ -101,6 +122,10 @@ def _write_months(out: Path, frames: list[tuple[pd.DataFrame, pd.DataFrame]]) ->
             folder = out / table / f"{PARTITION}={months[0].isoformat()}"
             folder.mkdir(parents=True)  # an existing folder raises: a month written twice
             stored = pa.Table.from_pandas(frame.drop(columns=PARTITION), preserve_index=False)
+            if table == "mart":
+                schema = arrow_schema(stored.column_names, products)
+                # The pandas metadata stays, so the mart reads back with its in-memory dtypes.
+                stored = stored.cast(schema.with_metadata(stored.schema.metadata))
             pq.write_table(stored, folder / "part-0.parquet")
 
 

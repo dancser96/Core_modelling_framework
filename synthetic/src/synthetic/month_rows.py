@@ -1,8 +1,9 @@
 """The month's rows: what upstream would publish (mart) and the hidden truth beside it (oracle).
 
 Called by the month loop (`generate.advance_simulation`) once a panel month has run. Mart rows hold
-the keys, the client description, day counters, holdings and states, and the current-month
-amounts; oracle rows hold the hidden traits, the chance behind every event, the hidden client
+the keys, the client description, day counters, holdings and states, the current-month amounts and
+the columns derived from each client's history (rollups, recency, ratios: `mart`), in the spec's
+column order; oracle rows hold the hidden traits, the chance behind every event, the hidden client
 attributes (true income, wealth base, remitter and school-fee payer flags, bonus month), the hidden
 chains (revolver state) and the power-law multipliers. Flags become 0/1 integers, the mart's flag
 type.
@@ -12,7 +13,8 @@ import numpy as np
 import pandas as pd
 
 from synthetic.holdings import holding_columns
-from synthetic.population import client_age
+from synthetic.mart import history_columns
+from synthetic.population import client_age, months_on_book
 from synthetic.presets import LATENTS
 
 DESCRIPTION_COLUMNS = [
@@ -61,6 +63,7 @@ def month_rows(
             "relationship_days": month_end - clients["relationship_start"].to_numpy(),
             **mart_holdings,
             **mart_amounts,
+            **history_columns(sim["history"], months_on_book(clients, month), month.astype(int)),
         }
     )
     oracle = pd.DataFrame(

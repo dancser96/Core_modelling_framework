@@ -191,6 +191,26 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   - `CLAUDE.md` §1 rules 3 and 13, the simplicity-review skill and the code-reviewer agent updated
     (D-067); `notebooks/README.md` exception for the synthetic notebook; `dataset.md` example
     marked as an illustration.
+- 2026-10-16, build stages A and B (agents: a builder per stage, independent checks authors from
+  the spec alone, code-reviewer per stage; four agents stopped at an account session limit at
+  midday and were resumed or relaunched):
+  - stage A (`2cdf746`, review fixes `bdf0f16`): month loop split into start/advance/finish, ten
+    random streams, true income and wealth base, hidden client attributes, card activity,
+    current/savings activity and the hidden revolver chain, calendar terms (FX summer, digital
+    drift, bonus trigger), 0/1 integer flags, a month-by-month parquet writer and `truth.json`,
+    fast and slow test suites. Step-1 columns identical to before; steps 1–2 rows pass. Review:
+    flags now fail loud on anything but 0/1; an explicit `rule` column picks the fast-suite rows;
+    calendar terms act only on adoption and wake-up odds (not lapses);
+  - stage B (`6335a3d`): balances, flows with the booking identity (max error 2e-8), subcategories,
+    card tiers and revolvers, loans, deposits, wealth with a market index, FX, logins, seasonality
+    per profile. All 173 step-3 rows pass at 100k; 12 deliberately broken generators each tripped
+    their intended rows. Changes made while integrating: hidden attributes get their own stream
+    (amounts' draws no longer move holdings); `separation` also scales subsegment median incomes
+    (otherwise it had no effect on amounts); revolvers spend less as the card fills up (45% of
+    revolver months sat at the limit, now 0.5%); the app relaunch is × 1.8 (× 1.3 gave PSI 0.07);
+    FX trait loading 0.25 (0.4 put lag-1 on the band's edge). Canonical write ≈ 25 s, ≤ 1.4 GB;
+  - checks for later stages already written from the spec (traps, mart, oracle), with their
+    contracts (truth key layout, AUC definition, tenure convention) fixed in the plan.
 - Files: `docs/components/{test_harness,environment,target_factory}.md`,
   `docs/{UPDATES,architecture,decisions,glossary,roadmap}.md`,
   `docs/context/{lessons,environment}.md`, `docs/guides/setup_{macos,windows_wsl2}.md`,

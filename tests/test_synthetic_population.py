@@ -5,6 +5,7 @@ import pytest
 
 from synthetic.check_suite import run_checks
 from synthetic.generate import generate_mart
+from synthetic.mart import DERIVED_COLUMNS
 
 
 def test_population_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
@@ -36,10 +37,12 @@ def test_same_seed_same_data_other_seed_differs(
 def test_months_do_not_depend_on_later_months(
     unit: tuple[pd.DataFrame, pd.DataFrame, dict],
 ) -> None:
-    """Prefix stability: 20 and 24 months from the same seed agree on months 1–20."""
+    """Prefix stability: 20 and 24 months from the same seed agree on months 1–20, in every mart
+    column (the rollups, recency and ratios included) and every oracle column."""
     mart, oracle, _ = unit
     short_mart, short_oracle, _ = generate_mart("unit", seed=0, n_months=20)
     assert short_mart["snapshot_month"].nunique() == 20
+    assert set(DERIVED_COLUMNS) <= set(short_mart.columns)
     in_short = (mart["snapshot_month"] <= short_mart["snapshot_month"].max()).to_numpy()
     pd.testing.assert_frame_equal(mart[in_short].reset_index(drop=True), short_mart)
     pd.testing.assert_frame_equal(oracle[in_short].reset_index(drop=True), short_oracle)

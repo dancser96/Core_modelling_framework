@@ -13,7 +13,8 @@ from synthetic.output import load_truth, read_output, write_mart
 def test_written_dataset_reads_back_as_generated(
     unit_output: tuple[str, dict], unit: tuple[pd.DataFrame, pd.DataFrame, dict]
 ) -> None:
-    """Mart, oracle and truth read back from disk equal the in-memory ones; flags are int32."""
+    """Mart, oracle and truth read back from disk equal the in-memory ones (the decimal
+    `cc_limit` back as float); flags are int32."""
     out_dir, truth = unit_output
     mart, oracle, memory_truth = unit
     written = read_output(out_dir, "mart")
@@ -22,6 +23,17 @@ def test_written_dataset_reads_back_as_generated(
     assert truth == memory_truth == load_truth(out_dir)
     flags = [c for c in written.columns if c.endswith("_flag")]
     assert flags and (written[flags].dtypes == "int32").all()
+
+
+def test_client_sample_reads_every_month_of_a_fixed_sample(
+    unit_output: tuple[str, dict], unit: tuple[pd.DataFrame, pd.DataFrame, dict]
+) -> None:
+    """`client_sample` 5 reads exactly the rows of the clients whose id is a multiple of 5."""
+    columns = ["client_id", "snapshot_month", "cc_limit"]
+    sample = read_output(unit_output[0], "mart", columns, client_sample=5)
+    mart = unit[0]
+    expected = mart.loc[mart["client_id"] % 5 == 0, columns].reset_index(drop=True)
+    pd.testing.assert_frame_equal(sample, expected)
 
 
 def test_write_refuses_a_folder_holding_a_dataset(unit_output: tuple[str, dict]) -> None:

@@ -21,6 +21,7 @@ from synthetic.amounts import draw_hidden_attributes, start_amounts, step_amount
 from synthetic.hazards import calibrate
 from synthetic.holdings import start_holdings, step_holdings
 from synthetic.latents import draw_latents, latent_means, step_latents
+from synthetic.mart import advance_history, start_history
 from synthetic.month_rows import month_rows
 from synthetic.population import (
     client_age,
@@ -101,6 +102,7 @@ def start_simulation(
         **book,
         "holdings": holdings,
         "amounts": amounts,
+        "history": start_history(n_clients),  # the burn-in fills it
         "market_index": {str(month): 1.0},  # 1 when the book is drawn, then one return a month
         "spec": spec,
         "preset": preset,
@@ -121,7 +123,9 @@ def advance_simulation(sim: dict) -> tuple[dict, list[tuple[pd.DataFrame, pd.Dat
 
     Exits and entries apply to the clients on the books at the start of the month; then one AR(1)
     step of the traits for those who stayed, then holdings move, then the market index and the
-    amounts. Per-client state (holdings, amounts) keeps the stayers and appends the new clients.
+    amounts, then each client's history (for the mart's rollups, recency and ratios) takes the
+    month's amounts. Per-client state (holdings, amounts, history) keeps the stayers and appends
+    the new clients.
     With no look-ahead columns yet, a panel month is final as soon as it has run; burn-in months
     return none.
     """
@@ -154,9 +158,11 @@ def advance_simulation(sim: dict) -> tuple[dict, list[tuple[pd.DataFrame, pd.Dat
     amounts, mart_amounts, oracle_amounts = step_amounts(
         spec, amounts, clients, z, means, holdings, month, market, rngs
     )
+    history = _keep_and_append(sim["history"], stay, start_history(len(new["clients"])))
     advanced |= {
         "holdings": holdings,
         "amounts": amounts,
+        "history": advance_history(history, mart_amounts, month.astype(int)),
         "market_index": {**sim["market_index"], str(month): market},
     }
     if month < sim["first_month"]:

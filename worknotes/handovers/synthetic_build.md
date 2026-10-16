@@ -14,10 +14,44 @@ wins; fix this file. Removed when M1 closes.
 |---|---|---|---|
 | A | Foundations: refactor, 0/1 flags, hidden attributes, new chains, time hooks, writer, slow suite | done (review pending) | see log |
 | B | Amounts, time effects, segment overlap (step 3) | done (review pending); 12/12 mutations caught | see log |
-| C | Mart: names, rollups, null rule, types, prefix stability (step 4) | not started | |
+| C | Mart: names, rollups, null rule, types, prefix stability (step 4) | done (review pending) | see log |
 | D | Traps, drift evidence, dirty switches, extra columns (step 5) | not started | |
 | E | Oracle: window probabilities, metrics, relevance, regression oracle, `truth.json` (step 6) | not started | |
 | F | Output, source mapping, CLI, budgets, notebook, review guide (step 7) | not started | |
+
+## Pending fixes (apply after the Stage C builder reports; files it doesn't own first)
+Stage B review (6335a3d), blocking:
+1. `flows.py:120-123` remittance factor: no `fillna(0.0)`; raise if a remitter's nationality group
+   has no factor; `np.where(remitter, factor × relative^elasticity, 0)`.
+2. `seasons.season_factor`: raise `KeyError` for a measure in no table.
+3. `logins.py:43`: age centre 40 → `LEVELS["logins"]["mobile_share"]["age_centre"]`.
+4. Split `checks_amount_levels.py` (355 lines): keep amount ÷ level rows; move `_check_pooled`,
+   `_check_remittance`, `_casa_season`/`_check_ramp`, `_check_logins` to `checks_amount_mix.py`
+   (`check_amount_mix`), register it, add to the amount tests.
+Suggestions to apply:
+5. `(n, 1)` convention for per-client inputs in `cards`/`variation` docstrings; `step_card` raises
+   unless `np.ndim(repay_share) == np.ndim(last_balance)`.
+6. `cards.draw_limits` → array function `limit_tier(spec, profiles, income)` + ±1 move from
+   `rng.random(shape)` (Stage E reuses it).
+7. Docstrings: hidden attributes come from the `attributes` stream (`amounts.py`, plan §2.2).
+8. `checks_amount_rules`: rows for a card given up this month (`held_before & ~held`): `cc_bal`,
+   `cc_limit`, spend, interest 0; `repayment_cc_vol` = last `cc_bal` ± 0.01.
+9. `tests/test_synthetic_amounts.py` fast test: assert `len(rules) > 0` (families without rules run
+   only in the slow test).
+10. Spec text: mean subcategory shares follow the client's current trait deviations (as persistent
+    as the traits; not stored state); market index is 1 in the month the starting book is drawn;
+    maths §5 spend formula gets the revolver factor `× (1 − u_{t−1})`. Plan §2.3 likewise.
+11. `step_amounts` (55 lines): move mart/oracle dict assembly into a helper.
+12. One `variation.measure_level(spec, measure, profiles, base)` for the five "multiple × base"
+    sites; one counts helper for `np.where(amount > 0, 1 + draw_counts(...), 0)`; one
+    `measures_of_kind(spec, kind)` for the three filters.
+13. `levels.inflow_other_share.private_extra` → its own key `inflow_other_private_extra`.
+14. `generate._keep_and_append`: also check the new arrays' lengths against the new clients.
+15. Shared checks-side helpers for restated spec values (`_expected_medians`,
+    `_expected_latent_means`; `checks_amount_levels._deviation`) in one module, so
+    `checks_population` gets back under ~300 lines.
+16. Names: `balances.py` `months` → `months_on_book`, `last_months` → `months_since_draw`;
+    `cards.py` `rate` → `monthly_interest`.
 
 ## Read first
 1. `CLAUDE.md` §1 (code rules), §4 (ML invariants), §5 (environment traps).

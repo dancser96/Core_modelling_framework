@@ -31,8 +31,6 @@ from synthetic.hazards import (
 )
 from synthetic.population import client_age, months_on_book
 
-STATUS_LEVELS = ["never", "churned", "active"]
-
 
 def start_holdings(
     spec: dict,
@@ -123,17 +121,19 @@ def holding_columns(
 ) -> tuple[dict[str, object], dict[str, np.ndarray]]:
     """Columns of the current state: for the mart, and the hidden chains' flags for the oracle.
 
-    Mart: flags, statuses, account counts, months to maturity, usage flags, product count. Usage
-    chains never count as products; one with `in_mart` False goes to the oracle instead.
+    Mart, in the spec's column order (`_mart_order`): flags, statuses (strings), usage flags,
+    account counts and months to maturity, then the product count. Usage chains never count as
+    products; one with `in_mart` False goes to the oracle instead.
     """
     columns, hidden, product_cnt = {}, {}, 0
-    for key, product in spec["products"].items():
+    for key in _mart_order(spec["products"]):
+        product = spec["products"][key]
         if product["kind"] in ("static", "holding"):
             held = state[f"{key}_held"]
             columns[f"{key}_flag"] = held
             if product.get("status"):
                 status = np.select([held, state[f"{key}_ever"]], ["active", "churned"], "never")
-                columns[f"{key}_status"] = pd.Categorical(status, categories=STATUS_LEVELS)
+                columns[f"{key}_status"] = status.astype(object)
             if product.get("in_product_count", True):
                 product_cnt = product_cnt + held
         elif product["kind"] == "loans":
@@ -151,6 +151,21 @@ def holding_columns(
             target[product.get("flag", f"{key}_active_flag")] = state[f"{key}_active"]
     columns["product_cnt"] = np.asarray(product_cnt, dtype=int)
     return columns, hidden
+
+
+def _mart_order(products: dict) -> list[str]:
+    """Product keys in the mart's column order (test_harness.md, "Columns"): each 0/1 product
+    followed by the usage chains that require it, then the chains that require none, then loans."""
+    chains = {k: p.get("requires") for k, p in products.items() if p["kind"] == "usage"}
+    order = []
+    for key, product in products.items():
+        if product["kind"] in ("static", "holding"):
+            order += [key, *[chain for chain, required in chains.items() if required == key]]
+    order += [chain for chain, required in chains.items() if required is None]
+    order += [key for key, product in products.items() if product["kind"] == "loans"]
+    if sorted(order) != sorted(products):
+        raise ValueError(f"products without a place in the mart: {set(products) ^ set(order)}")
+    return order
 
 
 def _intercepts(product_calib: dict, clients: pd.DataFrame) -> np.ndarray:
