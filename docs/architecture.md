@@ -178,7 +178,8 @@ src/core_modelling/
   __init__.py        version
   __main__.py        CLI entry (run <config>)
   config/            schema, loading (base+local merge), profiles, migrations
-  environment.py     Spark session, compat shim, transport, paths
+  _compat.py         numpy/PySpark compat shim, imported first by __init__.py (T1)
+  environment.py     Spark session, transport, paths, sources
   dataset.py         observation window, eligibility, splits, sampling, collection
   target_factory/    target builders by task (extension point), lineage
   eda/               population/target profile, univariate ranking, key features, pivots

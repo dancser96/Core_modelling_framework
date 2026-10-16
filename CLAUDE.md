@@ -72,10 +72,13 @@ complete or "future-proof" code. When in doubt, write less.
    is an error. The one exception is an output declared incompatible *up front*, e.g. a view a model
    family can't produce according to the compatibility table. It is skipped and shown as "not
    available: reason". That is decided before running, never by catching an error (D-035).
-9. **Comments say why, not what.** Docstrings are one summary line, plus arguments only when not
-   obvious. No commented-out code, no dead code, no TODOs without a row in `docs/UPDATES.md` or
-   `docs/roadmap.md`.
-10. **Type hints on public functions**, kept simple (`pd.DataFrame`, `dict[str, float]`).
+9. **Comments say why, not what.** A module docstring explains what the module is for and how it
+   fits (a short paragraph). A function docstring is one summary line, plus arguments only when
+   not obvious. No commented-out code, no dead code, no TODOs without a row in `docs/UPDATES.md`
+   or `docs/roadmap.md`.
+10. **Every function has type hints and a docstring**: public, private and test functions alike.
+    Hints stay simple (`pd.DataFrame`, `dict[str, float]`). Enforced by ruff (`ANN`, `D1`) and,
+    for private functions, by `tests/test_code_rules.py`.
 11. **Use the library.** Prefer pandas / PySpark / scikit-learn / scipy built-ins over hand-rolled
     versions.
 12. **No new dependency without asking.** It must also be installable inside the bank (see §5).

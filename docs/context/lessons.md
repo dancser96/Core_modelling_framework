@@ -27,6 +27,7 @@ harness, an environment adapter and explicit invariants. Legacy file references 
 | T15 | Stubs hide environment bugs | The smoke test passed while T1–T7 were live | Real local Spark on a synthetic panel for the e2e test |
 | T16 | Fixed chart ranges at low prevalence | Calibration curves drawn on (0, 1) and binned bar charts of tiny rates showed nothing; most chart fixes made inside the bank were range fixes | Axes follow the data (`(0, 1.25 × max)` for rates); show lift vs base rate with counts. Chart rules: `docs/components/reporting.md` |
 | T17 | Explainer incompatibility | SHAP errored for most of the original estimator set and had to be disabled | Decide view × model-family compatibility up front (`docs/components/evaluation.md`); never wrap a view in try/except |
+| T18 | Nanosecond timestamps in parquet | pandas `datetime64[ns]` written by pyarrow is `timestamp[ns]`; Spark 3.4 fails to read it ("Illegal Parquet type"). Found in M1 step 0, outside the crunch | Month columns are dates (first of the month); write any real timestamp with `coerce_timestamps="us"` |
 
 ## Statistical lessons
 

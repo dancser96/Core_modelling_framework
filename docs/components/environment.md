@@ -1,5 +1,5 @@
 # Environment adapter
-**Status:** legacy-only · **Legacy:** `src/_compat.py`, `src/io.py` (`_read`), `src/inference.py` (`_put_file`, `_read_text`, `_fetch_dir`, `_is_hdfs`)
+**Status:** built (partial: compat shim + local Spark session) · **Legacy:** `src/_compat.py`, `src/io.py` (`_read`), `src/inference.py` (`_put_file`, `_read_text`, `_fetch_dir`, `_is_hdfs`)
 **Related:** [`docs/context/environment.md`](../context/environment.md) · [lifecycle](lifecycle.md) (tier paths) ·
 [reporting](reporting.md) (theme) · [test harness](test_harness.md) (synthetic sources) · D-011 · OD-06
 
@@ -31,8 +31,22 @@ checks where it is running; it calls this module, and `conf/local/` decides.
 T1–T5 (`docs/context/lessons.md`).
 
 ## Interface
-*(fill when built)*
+Built so far (M1 step 0, D-057), all private until M2 lists them in the Public API:
+- `core_modelling/_compat.py`: the `np.NaN` alias, applied on package import (T1). Verified
+  2026-10-14: without it, `import pyspark.pandas` fails on the pinned numpy 2.3.5 + PySpark 3.4.3.
+- `environment._get_spark_session() -> SparkSession`: local defaults (`local[*]`, 2 GB driver,
+  8 shuffle partitions, UTC, Arrow on with its silent fallback off, UI off). Settings from
+  `conf/local/` come in M2; until then these defaults must not be used inside the bank.
+- `tests/conftest.py`: the `spark` fixture, one real session per test run (T15).
 
 ## Open questions
+- M2: the session function takes arguments (defaults from `conf/local/`), because notebooks
+  define their Spark session through it, more elaborately than the crunch's bare
+  `SparkSession.builder.getOrCreate()`. Which arguments the bank needs (memory, executors, queue,
+  extra conf…) is listed by the builder when M2 designs it. `conf/local/` also sets the bank's
+  time zone (local default: UTC).
+- M2: `getOrCreate()` silently reuses an existing session: it ignores static settings (master,
+  memory) and overwrites runtime SQL settings. Re-running a notebook's setup cell with different
+  arguments must therefore fail loud (or restart the session), never keep the old one quietly.
 - The bank-side folder layout for the registered/production tiers per entity × domain, and whether
   permissions differ per entity (OD-06).

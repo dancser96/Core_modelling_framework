@@ -1,0 +1,18 @@
+# Dev-only synthetic data package (D-041). Never part of core_modelling; not needed inside the bank.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "synthetic"
+description = "Synthetic retail feature mart with known ground truth, for developing core_modelling."
+requires-python = ">=3.11"
+dynamic = ["version"]
+# Exact pins live in the root requirements.txt.
+dependencies = ["numpy>=2.3,<3", "pandas>=2.2,<3", "pyarrow>=19", "scipy>=1.16,<2"]
+
+[tool.setuptools.dynamic]
+version = { attr = "synthetic.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -23,6 +23,7 @@ Anything worth keeping moves into a config decision or the package.
 
 **Release examples:** the same notebooks, run end to end on the synthetic dataset, outputs included.
 
-Planned notebooks (created as their stages are built): `00_synthetic_data` (dev only),
-`01_target_factory`, `02_eda`, `03_feature_checks`, `04_training`, `05_evaluation`,
-`06_register_promote`, `07_inference`, `08_monitoring`.
+Notebooks: `00_synthetic_data` (exists; dev only and temporary, for checking the synthetic data
+after each build step, see `docs/components/test_harness.md`; not a guided stage notebook). Planned,
+created as their stages are built: `01_target_factory`, `02_eda`, `03_feature_checks`,
+`04_training`, `05_evaluation`, `06_register_promote`, `07_inference`, `08_monitoring`.

@@ -137,7 +137,9 @@ This is answered by a built-in **window ablation**:
   conditions), not just from more rows.
 - **Show month-to-month luck.** Train single-month models on each month of the window and score them
   on the same validation month.
-- Where history allows, repeat on a second validation month; a gain that holds on both is real.
+- No second validation month: it would push the training window further into the past. The choice
+  weighs test and validation performance equally; train performance only shows the overfitting gap,
+  since it is in-sample and weighting it would reward overfitting (D-062).
 - The mechanism (vary one config field, compare on a fixed validation set) is also the bounded-axis
   loop the original roadmap planned for the LLM branch. It is built once in Phase 2 as an
   experiment-sweep function (name to be decided; see [run modes](run_modes.md)); the LLM drives it

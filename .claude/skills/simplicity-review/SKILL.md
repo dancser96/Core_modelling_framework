@@ -29,6 +29,9 @@ author.
       responsibility.
 - [ ] **Names.** Does each name say what it does (`verb_noun`)? Vague names (`process`, `handle`,
       `data2`, `utils`)?
+- [ ] **Types and docstrings.** Does every function (public, private, test) have type hints and a
+      docstring, and does every module open with a docstring that explains what it is for?
+      (`CLAUDE.md` §1 rules 9–10; ruff and `tests/test_code_rules.py` catch most of it)
 - [ ] **One job each.** Any function mixing IO, computation and reporting?
 - [ ] **Duplication vs abstraction.** Copy-paste twice is fine. Abstracting after one use is not.
 - [ ] **Errors.** Any `except Exception` / bare `except` / silent fallback? Errors must be loud

@@ -14,6 +14,9 @@ Whether this glossary is also published to the wider unit is part of the open do
   and segment comparisons. Not a domain.
 - **Source:** an input dataset (table and schema) that a use case reads. A domain has several, and
   different use cases often read different sources.
+- **Feature mart:** a source with one row per unit per month, holding the unit's description,
+  current-month values and backward rollups. What retail use cases read inside the bank, and what
+  the synthetic data mimics (D-056).
 - **Unit:** what one row describes at one point in time (client, account, card, merchant…). Shapes
   say `unit_id`; the client is the usual unit.
 - **Use case:** one modelling problem (e.g. one product's acquisition propensity), defined by one

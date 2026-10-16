@@ -4,6 +4,10 @@
 into WSL. The Mac and the PC then use the same shell commands, and PySpark avoids the
 Windows-native workarounds.
 
+**Status:** deferred. The builder works on the Mac only until large data or heavy testing needs
+the PC. [Switching from the Mac](#switching-from-the-mac) lists everything that doesn't travel
+with git; keep it current whenever something machine-local is added on the Mac.
+
 Time: ~30–45 min once. Commands in `PowerShell` blocks run in Windows; everything else runs in the
 Ubuntu terminal.
 
@@ -99,3 +103,21 @@ pytest                        # 'no tests ran' is expected until the first tests
    `claude plugin install pyright-lsp@claude-plugins-official --scope project`.
 
 Next: `docs/guides/claude_code_workflow.md`.
+
+## Switching from the Mac
+
+Everything committed travels with git. These don't:
+
+1. **This guide's system setup:** Java 11 + `JAVA_HOME`, Python 3.11, `libgomp1` (the Mac's
+   `libomp`), then `pip install -r requirements-dev.txt` (it also installs `synthetic/` and the
+   scipy / plotly pins).
+2. **Claude Code's memory:** copy `~/.claude/projects/<mac-path>/memory/` from the Mac into the
+   folder Claude Code creates for the repo on the PC (`~/.claude/projects/<pc-path>/memory/`). The
+   folder name encodes the repo's absolute path, so it differs per machine. Open a session in the
+   repo once first, so the folder exists.
+3. **Gitignored local files**, if they exist by then: `conf/local/` (copy),
+   `.claude/settings.local.json` (copy), `data/` (regenerate the synthetic data from its seed
+   rather than copying it).
+4. **Verify:** `pytest` green, then run step 0's proof on the PC
+   (`docs/components/test_harness.md`).
+

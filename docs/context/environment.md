@@ -33,6 +33,8 @@ reported back **in words** and re-applied here.
 | xgboost | 3.2.0 | macOS needs `libomp` (Homebrew) |
 | flaml | 2.7.0 | Installed as plain `flaml` on top of the devcontainer |
 | shap | 0.50.0 | |
+| scipy | 1.16.2 | Devcontainer package; pinned early because scikit-learn, LightGBM, XGBoost, CatBoost and SHAP pull it in |
+| plotly | 6.3.1 | Devcontainer package; pinned early because CatBoost pulls it in. Bundles plotly.js 3.1.1 (7.x bundles plotly.js 4) |
 | pydantic | 2.12.5 | v2 API only |
 | pyyaml | 6.0.3 | |
 | matplotlib | 3.10.8 | |
@@ -40,7 +42,8 @@ reported back **in words** and re-applied here.
 Newer devcontainer images may move packages forward. When the user reports new versions, update
 this table and `requirements.txt` in the same change and re-run the tests.
 
-**Also in the standard devcontainer (usable; pin in `requirements.txt` on first use, D-042):**
+**Also in the standard devcontainer (usable; pin in `requirements.txt` on first use, D-042; scipy
+and plotly are already pinned above):**
 
 | Package | Version | Likely use |
 |---|---|---|
@@ -49,6 +52,13 @@ this table and `requirements.txt` in the same change and re-run the tests.
 | seaborn | 0.13.2 | Exploration in notebooks (reports use plotly) |
 | plotly | 6.3.1 | Report charts (D-036) |
 | jinja2 | 3.1.6 | Required by pandas Styler for styled HTML tables |
+
+**Dev-only tools** (`requirements-dev.txt`, never needed inside the bank): pytest, ruff, ipykernel
+and nbformat. plotly renders charts in a notebook only with nbformat; Jupyter installs it inside the
+bank, but `ipykernel` alone doesn't locally (D-063).
+
+A package that other packages pull in must be pinned even before our code uses it: without the
+pins, pip resolved scipy 1.17.1 and plotly 7.1.0 locally (2026-10-14).
 
 **Installed on top, like FLAML:** optuna 5.0.0 (the version `pip install optuna` resolves to inside
 the bank; the predefined-model tuning path, D-037). Its API is unverified here: check

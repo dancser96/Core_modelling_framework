@@ -16,7 +16,7 @@ Status values: `legacy-only` (exists only in legacy) · `designing` · `stub` (i
 | Design baseline (docs rebuilt after three review rounds + Lead DS notes) | built | 2026-10-12; milestone M0 |
 | Environment adapter (Spark session, compat shim, transport, paths, sources) | built | Partial: compat shim + local Spark session (M1 step 0, D-057); transport, paths, sources in M2. Traps T1–T5, T18 |
 | Config spine (single file, profiles, decision, entities, data-definition hash, migrations) | designing | `components/config.md` |
-| Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | designing | M1 in progress: spec settled 2026-10-14 (D-056); step 0 (Spark harness) in review; replaces the stub-based smoke test (T15) |
+| Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | designing | M1 in progress: spec settled 2026-10-14 (D-056); steps 0–2 (Spark harness, population, holdings and states) done (D-065, D-066); steps 3–7 to be built in one go after one question round, with one review at the end; replaces the stub-based smoke test (T15) |
 | Target Factory (targets only, optional) | legacy-only | Renamed from Data Creation (D-029) |
 | Dataset: observation window, client-grouped split, OOT validation, sampling | designing | Big-ticket item (D-030); sampling choice OD-17 |
 | EDA (worth running first; low-prevalence aware) | legacy-only | Major rethink |

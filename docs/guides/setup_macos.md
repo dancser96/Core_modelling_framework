@@ -21,6 +21,8 @@ source ~/.zshrc
 python3.11 --version && java -version     # expect 3.11.x and 11.x
 ```
 If the `temurin@11` cask is unavailable, install Temurin 11 from adoptium.net (macOS aarch64 .pkg).
+Homebrew says `libomp` is keg-only and suggests `LDFLAGS` / `CPPFLAGS`: ignore that. Those are for
+compiling; the LightGBM and XGBoost wheels find it under `/opt/homebrew/opt/libomp` as is.
 
 ## 3. GitHub access (SSH) and clone
 
@@ -46,9 +48,8 @@ pip install -r requirements-dev.txt
 ## 5. Verify the stack
 
 ```bash
-python -c "import numpy as np; np.NaN = np.nan; import flaml, pyspark; print('imports ok')"
-python -c "from pyspark.sql import SparkSession; s = SparkSession.builder.master('local[2]').getOrCreate(); print('spark ok', s.range(3).count())"
-pytest
+python -c "import core_modelling, flaml, lightgbm, xgboost; print('imports ok')"
+pytest        # includes a real local-Spark round trip (tests/test_spark_roundtrip.py)
 ```
 If LightGBM or XGBoost fail to import with an OpenMP error, `brew reinstall libomp`.
 

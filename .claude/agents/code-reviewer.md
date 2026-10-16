@@ -22,6 +22,8 @@ Review for:
 5. **Errors.** Swallowed exceptions, silent fallbacks, vague messages. The only allowed skip is a
    view declared incompatible up front (`CLAUDE.md` §1 rule 8), never a caught error.
 6. **Readability.** Could a competent data scientist follow it in one read? Comments explain why?
+   Every function (public, private, test) has type hints and a docstring, and every module a
+   docstring that explains what it is for (`CLAUDE.md` §1 rules 9–10)?
 7. **Repo rules.** Logic in notebooks, cwd-relative paths, new dependencies, bank identifiers,
    binary-only assumptions in shared shapes.
 8. **Obvious bugs** you notice along the way (off-by-one, wrong write mode, mutable defaults).

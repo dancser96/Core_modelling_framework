@@ -1,6 +1,8 @@
 # Local development only (never required inside the bank).
 -r requirements.txt
 -e .
+-e ./synthetic
 pytest>=8
 ruff>=0.6
 ipykernel>=6
+nbformat>=5  # plotly renders notebook charts only with it; Jupyter installs it, ipykernel alone doesn't

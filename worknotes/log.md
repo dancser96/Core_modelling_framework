@@ -2,6 +2,175 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-10-13 → 2026-10-15 — Synthetic data (M1): design round, spec, steps 0–2
+- 2026-10-13, design round 1 opened (Q76–Q105): the SDS described the feature groups (client
+  description, flows and cash, digital, loans, wealth) and asked for proactive feature suggestions
+  plus a proof plan per build step. Main points of Claude's review of `test_harness.md`:
+  - the output becomes an upstream-style feature mart (current-month values plus backward rollups,
+    one wide table per entity), no longer only a raw monthly panel;
+  - the planted collinear-cluster and eligibility-defining traps would arise organically (rollups,
+    product-specific flows);
+  - new realistic mechanisms (loan top-ups, maturity closures, three-state wealth history) must
+    also be expressed in the oracle, or it stops being the ceiling;
+  - knock-on for Target Factory: the target spec must express counter increases and state
+    transitions, not only thresholds on forward sums;
+  - proof per step: check tables shared by tests and a dev notebook, a prefix-stability test as
+    the no-leak proof, human gates after the population, flows and mart steps.
+- 2026-10-13, round 1 answered, Q106–Q110 opened (defaults accepted unless listed):
+  - holdings as 0/1 flags; "churned" from clients who held the product before the window plus
+    1 → 0 transitions. Acquisition is one target (0 → 1), whether never or churned before, so
+    Target Factory needs no separate state-change rule;
+  - eligibility mostly income thresholds, half-strict (adoption low below the threshold, jumping
+    at it). F9 (consent, KYC) dropped; of F10–F14 only term deposits kept; F15 dropped; the other
+    suggestions accepted (F25, F26 later);
+  - Q78: a rollup is null when its window reaches before relationship start; Q80: about 150
+    columns; Q81: Private 1k, MM = 3 × UM; Q89: add FX; Q90: no top-ups, no opening dates; Q102: a
+    size parameter to drop to 50k (the Mac has 8 GB);
+  - build steps and checks approved, plus a temporary notebook with simplified EDA and
+    aggregations to speed up the SDS's checks;
+  - found: the Mac had no Java runtime and an empty `.venv`, both needed for step 0.
+- 2026-10-14, spec written and step 0 built:
+  - `docs/components/test_harness.md` rewritten as the spec, with the build plan and its statuses
+    pinned at the top: feature mart shape, segment mix (Private 1k with Upper : Lower = 1 : 3,
+    Priority 4k likewise, MM = 3 × UM), client description, income thresholds, products, maths,
+    names, null rule, traps, ground truth, proof per step, temporary notebook;
+  - final answers: Q107 the never / churned / active flag for term deposit and both wealth products
+    only (churned clients re-adopt more often, so the flag carries signal); Q110 the Upper : Lower
+    ratio swapped to 1 : 3; Q106, Q108, Q109 defaults. Q78: the null rule mirrors the retail
+    dataset and is not something the framework enforces;
+  - D-056 (feature mart), D-057 (environment adapter starts in M1); OD-16 narrowed to rates,
+    thresholds and the second entity; glossary "feature mart"; Target Factory's binary rule kinds;
+  - step 0 code: `synthetic/` package skeleton (own editable install), `core_modelling/_compat.py`
+    (shim imported first), `core_modelling/environment.py` (`_get_spark_session`, local defaults,
+    Arrow fallback off), `tests/conftest.py` (real Spark fixture), `tests/test_spark_roundtrip.py`.
+    `pytest`: 2 passed in ~7 s; `ruff` clean;
+  - found on the pinned versions: T1 still live (without the shim, `import pyspark.pandas` and
+    `import flaml` fail); new trap T18 (Spark 3.4 can't read nanosecond timestamps that pandas
+    writes to parquet, so month columns are dates); `libomp` missing on the Mac, so xgboost and
+    `import flaml` failed to load; scipy 1.17.1 and plotly 7.1.0 pulled in transitively;
+  - simplicity review: removed the unused `settings` parameter (comes back with `conf/local/` in M2);
+  - code review (1 blocking, 4 suggestions, all applied): the month is a partition column, so it
+    never went through parquet and the test didn't prove T18 (added a date column inside the file,
+    with a null, and a boolean null); one library call (`builder.config(map=…)`) instead of a
+    loop; why-comments on UTC and UI off; an unverified version claim dropped from the shim
+    docstring; new M2 requirement: `getOrCreate()` silently reuses a kernel's session, so the bank
+    path must not push local settings onto it and must fail loud on a wrong master.
+- 2026-10-14, step 0 follow-ups:
+  - scipy 1.16.2 and plotly 6.3.1 pinned in `requirements.txt` (other packages had pulled in newer
+    versions: scipy via scikit-learn, LightGBM, XGBoost, CatBoost and SHAP; plotly via CatBoost). Verified: `pip check` clean, the
+    ML stack imports, pytest green, report HTML embeds plotly.js 3.1.1 like the bank. plotly 7
+    would bundle plotly.js 4; code written locally on 7 could fail inside the bank. D-042 status
+    noted;
+  - `libomp` installed by the SDS; the shim test imports `flaml` again, as planned;
+  - the SDS works on the Mac only; the WSL2 PC is deferred, with a "Switching from the Mac"
+    checklist in `docs/guides/setup_windows_wsl2.md`; step 0's proof is "green on the Mac";
+  - notebooks will define their Spark session through the adapter with arguments (more than the
+    crunch's bare `getOrCreate()`); an M2 requirement in `environment.md`.
+- 2026-10-14, step 1 built (population), spec extended:
+  - the SDS reviewed the spec ("okay to move forward"); build plan and proof merged into one
+    table; Claude's proposals written in at the SDS's request: product rates and income thresholds
+    (OD-16, confirmed at the step-2 gate), the nationality / employment mix per profile, and a
+    second entity for M3. Regression is supported whatever OD-15 settles (D-060): card spend over
+    the next 3 months, with its true mean and quantiles in the oracle (step 6);
+  - second validation month (SDS question): only the window ablation needs it, to show a gain is
+    not one month's luck; burn-in makes all 24 synthetic months usable, so it fits;
+  - code: `synthetic/src/synthetic/{presets,population,latents,generate,checks}.py`,
+    `tests/test_synthetic_population.py`, `notebooks/00_synthetic_data.ipynb` (dev-only checking
+    notebook). 100k clients generate in ~4 s (peak ~1.5 GB); 107 checks pass; no failing seed in 60;
+  - first check run: one seed tripped a salary-transfer row at 4.5 standard errors. A 1,500-seed
+    sweep showed unbiased draws, so it was chance, but the code review counted ~170 tests (not
+    107) and ~1 failing seed in 40 at 4 standard errors. Tolerance set to 4.5 (family-wise ≈ 0.1%);
+  - code review (3 blocking, 15 suggestions): the notebook failed `ruff check`; the entry-rate
+    check used the wrong denominator; any month without new clients crashed small presets. All
+    fixed, plus: one random stream per mechanism, so later steps never re-draw earlier columns;
+    expected values restated from the spec rather than the generator's functions; a sharper
+    income-vs-wealth check (slope on new clients); spec typos now fail loud; an `n` column in the
+    check table; long check functions split;
+  - simplicity review: the same two long functions and a repeated subsegment → profile mapping.
+- 2026-10-15, step 1 revised after the SDS's review:
+  - general rule: every function (public, private, test) has type hints and a docstring, and every
+    module an explanatory docstring. `CLAUDE.md` §1 rules 9–10, enforced by ruff `ANN` + `D1` and
+    `tests/test_code_rules.py` (ruff skips private functions); simplicity-review and code-reviewer
+    check it too (D-063);
+  - population: UAE and GCC split; more extreme nationality mixes (ARAB = non-UAE, non-GCC Arab,
+    barely wealthier than ASIA; WESTERN peaks in Priority); Retired added (heavy in Private);
+    fewer unemployed in PSB, more in Private; emirate mix per profile, Dubai-heavy, with "Others"
+    at 25% / 7% / 11% (Private / Priority / PSB); hidden-trait correlations within [0, 0.2];
+    turnover per profile (≈ 2.4% to 12% leave a year); residence gap a mix of recent arrivals and
+    settled residents (median ≈ 0.4 years) instead of a mean-2-year exponential;
+  - checks: 150 rows (emirate and turnover per profile, residence gap); 0 failing seeds in 40;
+  - notebook: charts failed with "Mime type rendering requires nbformat"; `nbformat` added to the
+    dev requirements (Jupyter has it inside the bank). Turnover chart per profile, residence-gap
+    histogram;
+  - spec: product rates now from public UAE figures (sources in the spec); no early settlement for
+    loans; month-1 holdings drawn from the same hazards as adoption, so loan holders agree with
+    income; second entity optional (D-064, OD-16 settled);
+  - second validation month dropped: the window choice weighs train, test and validation (D-062);
+    Claude flagged that weighting train rewards overfitting (Q119).
+  - code review of the revision (2 blocking, 11 suggestions; all applied except a design note): the
+    residence-gap check skipped ~95% of residents; the check test ran on the 5k preset, where many
+    Private rows pass with zero hits and the false-failure rate was ~1%, not ~0.1%. Now: the check
+    test runs at 100k (~7 s), new checks for month-to-month persistence of the hidden traits and for
+    turnover read from the mart, no silent skip of empty strata, the zero-entrant test asserts the
+    path ran, `median_income` renamed, one emirate table, `tests/` scanned for docstrings. Each new
+    check was shown to fail on a deliberately broken generator. 154 rows; seeds 0–5 at 100k pass;
+  - design note from the review (Q121): new clients draw ages like the starting book, so the book
+    ages ≈ 1.4 years over the panel.
+- 2026-10-15, step 1 closed and step 2 (holdings and states) built:
+  - SDS answers: Q119 window choice weighs test and validation equally, train only shows the gap;
+    Q120 emirate stays independent of residence and nationality; Q121 new clients 5 years
+    younger; Q122 as few parameters as possible: credit cards with an onboarding wave then ~500
+    adoptions a month, digital wealth ~400, auto loans ~150, traditional wealth and home loans ~30;
+    Q123–Q127 defaults;
+  - design (D-065): per product the share per profile plus adoptions a month (0/1 products) or the
+    term (loans); leaving chances derived (refills of clients who left the bank included); chances
+    logistic in traits, age, descriptors, the half-strict income threshold and churned status;
+    credit card and e-banking have a 3-month onboarding wave, the others build up over tenure from
+    "never held", which is also how the starting book is drawn (exact closed form of the stepped
+    chain), so holdings agree with income, traits and tenure from month 1;
+  - built with agents: a research agent drafted the step 3 questions; an independent agent wrote
+    the step-2 checks from the spec (it hit a session limit at the end; Claude finished and split
+    them); code-reviewer and ml-correctness-auditor ran in parallel;
+  - review and audit findings fixed: digital activity read this month's e-banking state (lapses
+    without a chance, wake-ups in the registration month, an oracle that could see a future
+    registration); loan shares low by Jensen (now calibrated on P(≥ 1)); digital share off and
+    drifting; lapse chance not centred; starting book one month behind; bisection replaced by
+    brentq (fails loud). Loans now set by term (UAE maxima 48 / 60 / 300 months) because event
+    counts gave absurd terms;
+  - audit doc items: the oracle's window probability must freeze the state at the observation
+    month (the naive product scored card AUC 0.71 instead of 0.81), events defined as "any month
+    in the window", leavers' targets null by default (D-066); eligibility-defining state columns
+    and exact identities added to the trap table; Target Factory's rule wording and panel-edge
+    guard updated;
+  - checks: 290 rows pass (rules, oracle vs realised events overall and per chance decile, shares,
+    flat shares, steady-state volumes net of the book's growth, income threshold and exemptions,
+    churned odds, onboarding); 8 deliberately broken generators each caught by the intended rows;
+    pytest 9 passed in ~30 s (2.2 GB); notebook extended with a step-2 section;
+  - flagged for the SDS: personal loans ≈ 680 new a month at the 48-month term (above ~400);
+    traditional wealth at ~30 a month implies holdings that last ≈ 33 years.
+- 2026-10-15, step 2 closed; the rest of M1 in one go:
+  - SDS answers: Q128–Q129 defaults (personal loans ≈ 680 a month and traditional wealth held
+    ≈ 33 years both accepted). Q130–Q139 (step 3 inputs) set aside, their content folded into the
+    next round;
+  - new approach (SDS): no more step-by-step gates. One long question round settles everything
+    the rest of the synthetic data needs (Q140–Q208: process, amounts, current/savings, card,
+    loans and wealth, subcategories, logins, time effects, the mart's columns, traps, oracle,
+    output); then `test_harness.md` and a detailed build plan with instructions for subagents;
+    then steps 3–7 are built in one go, with one thorough review at the end, so the framework
+    itself can start the week of 2026-10-19;
+  - measured for the plan: the canonical preset now generates in 9 s with 31 columns, 1.3 GB in
+    memory (2.1 GB peak); at ~150 columns the mart must be written month by month and the
+    canonical checks must read column subsets.
+- Files: `docs/components/{test_harness,environment,target_factory}.md`,
+  `docs/{UPDATES,architecture,decisions,glossary,roadmap}.md`,
+  `docs/context/{lessons,environment}.md`, `docs/guides/setup_{macos,windows_wsl2}.md`,
+  `requirements.txt`, `requirements-dev.txt`, `synthetic/`, `src/core_modelling/{_compat,environment}.py`,
+  `tests/{conftest,test_spark_roundtrip,test_synthetic_population}.py`,
+  `notebooks/{00_synthetic_data.ipynb,README.md}`, `pyproject.toml` (ruff).
+- Decisions / open decisions: D-056, D-057, D-062–D-066; D-042 status; OD-16 settled.
+- Still open: Q140–Q208 (the question round for steps 3–7); which Spark session arguments the
+  bank needs (M2).
+
 ### 2026-10-14 — Worknotes: sync page and log rules for the LDS
 - 2026-10-14, sync page rules: new SDS rules for `worknotes/sync.md`, recorded in
   `worknotes/README.md` ("Writing `sync.md` for the LDS") and referenced from the doc-sync skill,
@@ -110,78 +279,6 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   `worknotes/chief_ds_meeting/{overview,questions}.md`, `worknotes/README.md`, `worknotes/sync.md`.
 - Decisions / open decisions: D-058–D-061; OD-06–OD-10, OD-13, OD-15 updated; OD-23 opened.
 - Still open: Q111 (confirm once built); the rename (Q118); the meeting itself.
-
-### 2026-10-13 → 2026-10-14 — Synthetic data (M1): design round, spec, step 0 (Spark harness)
-- 2026-10-13, design round 1 opened (Q76–Q105): the SDS described the feature groups (client
-  description, flows and cash, digital, loans, wealth) and asked for proactive feature suggestions
-  plus a proof plan per build step. Main points of Claude's review of `test_harness.md`:
-  - the output becomes an upstream-style feature mart (current-month values plus backward rollups,
-    one wide table per entity), no longer only a raw monthly panel;
-  - the planted collinear-cluster and eligibility-defining traps would arise organically (rollups,
-    product-specific flows);
-  - new realistic mechanisms (loan top-ups, maturity closures, three-state wealth history) must
-    also be expressed in the oracle, or it stops being the ceiling;
-  - knock-on for Target Factory: the target spec must express counter increases and state
-    transitions, not only thresholds on forward sums;
-  - proof per step: check tables shared by tests and a dev notebook, a prefix-stability test as
-    the no-leak proof, human gates after the population, flows and mart steps.
-- 2026-10-13, round 1 answered, Q106–Q110 opened (defaults accepted unless listed):
-  - holdings as 0/1 flags; "churned" from clients who held the product before the window plus
-    1 → 0 transitions. Acquisition is one target (0 → 1), whether never or churned before, so
-    Target Factory needs no separate state-change rule;
-  - eligibility mostly income thresholds, half-strict (adoption low below the threshold, jumping
-    at it). F9 (consent, KYC) dropped; of F10–F14 only term deposits kept; F15 dropped; the other
-    suggestions accepted (F25, F26 later);
-  - Q78: a rollup is null when its window reaches before relationship start; Q80: about 150
-    columns; Q81: Private 1k, MM = 3 × UM; Q89: add FX; Q90: no top-ups, no opening dates; Q102: a
-    size parameter to drop to 50k (the Mac has 8 GB);
-  - build steps and checks approved, plus a temporary notebook with simplified EDA and
-    aggregations to speed up the SDS's checks;
-  - found: the Mac had no Java runtime and an empty `.venv`, both needed for step 0.
-- 2026-10-14, spec written and step 0 built:
-  - `docs/components/test_harness.md` rewritten as the spec, with the build plan and its statuses
-    pinned at the top: feature mart shape, segment mix (Private 1k with Upper : Lower = 1 : 3,
-    Priority 4k likewise, MM = 3 × UM), client description, income thresholds, products, maths,
-    names, null rule, traps, ground truth, proof per step, temporary notebook;
-  - final answers: Q107 the never / churned / active flag for term deposit and both wealth products
-    only (churned clients re-adopt more often, so the flag carries signal); Q110 the Upper : Lower
-    ratio swapped to 1 : 3; Q106, Q108, Q109 defaults. Q78: the null rule mirrors the retail
-    dataset and is not something the framework enforces;
-  - D-056 (feature mart), D-057 (environment adapter starts in M1); OD-16 narrowed to rates,
-    thresholds and the second entity; glossary "feature mart"; Target Factory's binary rule kinds;
-  - step 0 code: `synthetic/` package skeleton (own editable install), `core_modelling/_compat.py`
-    (shim imported first), `core_modelling/environment.py` (`_get_spark_session`, local defaults,
-    Arrow fallback off), `tests/conftest.py` (real Spark fixture), `tests/test_spark_roundtrip.py`.
-    `pytest`: 2 passed in ~7 s; `ruff` clean;
-  - found on the pinned versions: T1 still live (without the shim, `import pyspark.pandas` and
-    `import flaml` fail); new trap T18 (Spark 3.4 can't read nanosecond timestamps that pandas
-    writes to parquet, so month columns are dates); `libomp` missing on the Mac, so xgboost and
-    `import flaml` failed to load; scipy 1.17.1 and plotly 7.1.0 pulled in transitively;
-  - simplicity review: removed the unused `settings` parameter (comes back with `conf/local/` in M2);
-  - code review (1 blocking, 4 suggestions, all applied): the month is a partition column, so it
-    never went through parquet and the test didn't prove T18 (added a date column inside the file,
-    with a null, and a boolean null); one library call (`builder.config(map=…)`) instead of a
-    loop; why-comments on UTC and UI off; an unverified version claim dropped from the shim
-    docstring; new M2 requirement: `getOrCreate()` silently reuses a kernel's session, so the bank
-    path must not push local settings onto it and must fail loud on a wrong master.
-- 2026-10-14, step 0 follow-ups:
-  - scipy 1.16.2 and plotly 6.3.1 pinned in `requirements.txt` (other packages had pulled in newer
-    versions: scipy via scikit-learn, LightGBM, XGBoost, CatBoost and SHAP; plotly via CatBoost). Verified: `pip check` clean, the
-    ML stack imports, pytest green, report HTML embeds plotly.js 3.1.1 like the bank. plotly 7
-    would bundle plotly.js 4; code written locally on 7 could fail inside the bank. D-042 status
-    noted;
-  - `libomp` installed by the SDS; the shim test imports `flaml` again, as planned;
-  - the SDS works on the Mac only; the WSL2 PC is deferred, with a "Switching from the Mac"
-    checklist in `docs/guides/setup_windows_wsl2.md`; step 0's proof is "green on the Mac";
-  - notebooks will define their Spark session through the adapter with arguments (more than the
-    crunch's bare `getOrCreate()`); an M2 requirement in `environment.md`.
-- Files: `docs/components/{test_harness,environment,target_factory}.md`,
-  `docs/{UPDATES,architecture,decisions,glossary,roadmap}.md`,
-  `docs/context/{lessons,environment}.md`, `docs/guides/setup_{macos,windows_wsl2}.md`,
-  `requirements.txt`, `requirements-dev.txt`, `synthetic/`, `src/core_modelling/{_compat,environment}.py`,
-  `tests/{conftest,test_spark_roundtrip}.py`.
-- Decisions / open decisions: D-056, D-057; D-042 status; OD-16 updated.
-- Still open: the SDS's review of step 0; which Spark session arguments the bank needs (M2).
 
 ### 2026-10-12 → 2026-10-13 — Holistic review of the design baseline: findings and outcomes
 - 2026-10-12, findings (Q56–Q65): a cross-component review of the whole uncommitted baseline. The
