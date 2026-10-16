@@ -49,6 +49,7 @@ STRING_COLUMNS = (
     "nationality",
     "employment_status",
     "emirate",
+    "onboarding_channel",
     "preferred_language",
 )
 INTEGER_COLUMNS = ("age", "relationship_days", "residence_days", "days_since_last_login_digital")

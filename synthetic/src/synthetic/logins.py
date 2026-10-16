@@ -23,6 +23,7 @@ from synthetic.variation import draw_counts
 def draw_logins(
     spec: dict,
     profiles: np.ndarray,
+    channel_factor: np.ndarray,
     digital_dev: np.ndarray,
     age: np.ndarray,
     active: np.ndarray,
@@ -36,7 +37,11 @@ def draw_logins(
     """
     cfg = spec["levels"]["logins"]
     mobile_cfg = cfg["mobile_share"]
-    total = np.asarray(cfg["per_month"])[profiles] * np.exp(cfg["digital_loading"] * digital_dev)
+    total = (
+        np.asarray(cfg["per_month"])[profiles]
+        * channel_factor
+        * np.exp(cfg["digital_loading"] * digital_dev)
+    )
     share = expit(
         mobile_cfg["intercept"]
         + mobile_cfg["digital"] * digital_dev
@@ -55,6 +60,7 @@ def login_amounts(
     spec: dict,
     last_days: np.ndarray,
     profiles: np.ndarray,
+    clients: pd.DataFrame,
     holdings: dict[str, np.ndarray],
     dz: np.ndarray,
     age: np.ndarray,
@@ -65,7 +71,10 @@ def login_amounts(
     nullable integer)."""
     active = holdings["digital_active"]
     digital_dev = dz[:, LATENTS.index("digital")]
-    mobile, online = draw_logins(spec, profiles, digital_dev, age, active, month, rng)
+    factor = clients["onboarding_channel"].map(spec["levels"]["logins"]["channel_factor"])
+    mobile, online = draw_logins(
+        spec, profiles, factor.to_numpy(dtype=float), digital_dev, age, active, month, rng
+    )
     days = step_days_since_login(last_days, (mobile + online) > 0, days_in_month(month), rng)
     columns = {
         "login_digital_mobile_cnt": mobile,

@@ -23,6 +23,7 @@ PANEL_MART_COLUMNS = [
     "employment_status",
     "income",
     "salary_transfer_flag",
+    "onboarding_channel",
     "age",
     "relationship_days",
     "casa_flag",

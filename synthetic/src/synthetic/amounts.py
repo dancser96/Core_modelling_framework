@@ -69,14 +69,18 @@ def draw_hidden_attributes(
         clients["employment_status"].map(levels["inflow_other_share"]).to_numpy(dtype=float)
         + levels["inflow_other_private_extra"] * (clients["profile"] == "private").to_numpy()
     )
+    repay_share = rng.uniform(*levels["card"]["repay_share_range"], n)
+    channel = spec["onboarding_channel"]
+    digital = rng.random(n) < profile_values(clients, channel["digital_share"])
     return pd.DataFrame(
         {
+            "onboarding_channel": np.where(digital, channel["levels"][1], channel["levels"][0]),
             "remitter_flag": remitter,
             "bonus_month": bonus_month,
             "bonus_factor": bonus_factor,
             "school_payer_flag": payer,
             "school_fee": np.where(payer, fee, 0.0),
-            "repay_share": rng.uniform(*levels["card"]["repay_share_range"], n),
+            "repay_share": repay_share,
             "other_share": other_share,
         },
         index=clients.index,
@@ -165,7 +169,7 @@ def step_amounts(
     )
     age = client_age(clients, month)
     login_days, logins = login_amounts(
-        spec, state["login_days"], profiles, holdings, dz, age, month, rngs["logins"]
+        spec, state["login_days"], profiles, clients, holdings, dz, age, month, rngs["logins"]
     )
     state = state | balance_state | card_state | {"casa_bal": casa_bal, "login_days": login_days}
     mart, oracle = _month_columns(

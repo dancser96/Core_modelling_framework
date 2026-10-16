@@ -27,6 +27,7 @@ DESCRIPTION_COLUMNS = [
     "income",
     "salary_transfer_flag",
     "emirate",
+    "onboarding_channel",
 ]
 # Oracle columns from the client table: hidden attributes, drawn once per client.
 HIDDEN_CLIENT_COLUMNS = [

@@ -36,6 +36,7 @@ PLAIN = {
     "income": "amount",
     "salary_transfer_flag": "flag",
     "emirate": "category",
+    "onboarding_channel": "category",
     "age": "years",
     "residence_days": "days",
     "relationship_days": "days",

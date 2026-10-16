@@ -33,6 +33,7 @@ MART_COLUMNS = [
     "income",
     "salary_transfer_flag",
     "emirate",
+    "onboarding_channel",
     "age",
     "residence_days",
     "relationship_days",
@@ -78,16 +79,19 @@ def _check_mix(spec: dict, df: pd.DataFrame) -> list[dict]:
 
 
 def _check_profile_mix(spec: dict, df: pd.DataFrame) -> list[dict]:
-    """Nationality, employment and emirate mixes and salary transfers, per profile."""
+    """Nationality, employment and emirate mixes, salary transfers and digital onboarding, per
+    profile (the spec's profile order is the order of `onboarding_channel.digital_share`)."""
     profile = profile_of(spec, df)
     mixes = [
         ("nationality group share", "nationality_group", NATIONALITY_GROUPS, "nationality"),
         ("employment share", "employment_status", EMPLOYMENT, "employment"),
         ("emirate share", "emirate", EMIRATES, "emirate"),
     ]
-    rows = []
-    for name, p in spec["profiles"].items():
+    rows, digital_share = [], spec["onboarding_channel"]["digital_share"]
+    for i, (name, p) in enumerate(spec["profiles"].items()):
         part = df[profile == name]
+        hits = (part["onboarding_channel"] == "digital").sum()
+        rows.append(share_row("digital onboarding share", name, digital_share[i], hits, len(part)))
         for check, column, levels, key in mixes:
             for level, share in zip(levels, p[key], strict=True):
                 hits = (part[column] == level).sum()

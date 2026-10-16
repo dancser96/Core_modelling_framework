@@ -175,6 +175,7 @@ Private 90k, Upper Priority 60k, Lower Priority 40k, UA 30k, A 20k, UM 12k, MM 6
 | `income` | Declared monthly income, static: the hidden true income where declared | Missing not at random (mostly Other, Unemployed and Private), plus a little random missingness |
 | `salary_transfer_flag` | Employed only; the salary credit equals the true income and sits inside inflow | |
 | `emirate` | The 7 emirates plus Others (outside the UAE or unknown); mix per profile | Dubai-heavy; Others 25% / 7% / 11% in Private / Priority / PSB |
+| `onboarding_channel` | `branch` or `digital`, how the client joined; digital for 15 / 30 / 45 / 55% (private → mass) | Digitally onboarded clients are almost all registered for e-banking (+3.0 on its log-odds), more often digitally active (+1.5), log in twice as often, and take cards less often (−1.5): the grouping of the Simpson trap |
 
 **Hidden client attributes** (oracle only), drawn when the client is drawn: the **true income** (step
 1's income before hiding), the **wealth base** (the subsegment's median income × exp(0.3 × the
@@ -279,7 +280,9 @@ the bank count towards the volume.
 | Current/savings activity | — | Active: 91 / 93 / 94 / 96% (≈ 10% dormant without salary transfer, ≈ 1% with it) | Mean active spell 180 months | Dormant spell ≈ 12 months | — |
 | Revolver (hidden) | — | 10 / 20 / 30 / 45% of card holders (≈ 35–40% overall) | Mean spell 24 months | — | — |
 
-Drivers beyond step 2: the card adds the digital trait (0.3, for the reversal trap); the personal
+Drivers beyond step 2: the card adds the digital trait (0.3) and the onboarding channel (digital
+−1.5), e-banking and digital activity the onboarding channel (+3.0, +1.5), all for the reversal
+trap; the personal
 loan has a rare high-rate nationality (+1.5); term deposit and wealth have the bonus trigger; FX
 wake-ups rise in summer; digital wake-ups trend up ([time effects](#time-effects)). Card activity
 loads on activity (0.6); current/savings activity on activity (0.5) and salary transfer (+2.4); the
@@ -589,7 +592,7 @@ About 145 columns, in this order:
 
 | Group | Columns |
 |---|---|
-| Keys and description (13) | `client_id`, `snapshot_month`, `segment`, `subsegment`, `nationality_group`, `nationality`, `employment_status`, `income`, `salary_transfer_flag`, `emirate`, `age`, `residence_days`, `relationship_days` |
+| Keys and description (14) | `client_id`, `snapshot_month`, `segment`, `subsegment`, `nationality_group`, `nationality`, `employment_status`, `income`, `salary_transfer_flag`, `emirate`, `onboarding_channel`, `age`, `residence_days`, `relationship_days` |
 | Holdings and states (20) | `casa_flag`, `casa_active_flag`, `cc_flag`, `cc_active_flag`, `td_flag`, `td_status`, `wealth_digital_flag`, `wealth_digital_status`, `wealth_trad_flag`, `wealth_trad_status`, `ebanking_flag`, `digital_active_flag`, `fx_active_flag`, `loan_{personal,auto,home}_cnt`, `loan_{personal,auto,home}_maturity_months`, `product_cnt` |
 | Current/savings (13) | `casa_bal`; `inflow_casa_vol`, `inflow_casa_{salary,transfers,other}_vol`, `inflow_casa_cnt`; `outflow_casa_vol`, `outflow_casa_{remittance,cash,bills,transfers}_vol`, `outflow_casa_cnt`, `outflow_casa_remittance_cnt` |
 | Card (11) | `cc_limit`, `cc_bal`, `cc_utilisation_ratio`, `spend_cc_vol`, `spend_cc_cnt`, `spend_cc_{travel,retail,online,dining}_vol`, `repayment_cc_vol`, `interest_cc_vol` |
@@ -639,7 +642,7 @@ this table with each trap's evidence.
 |---|---|---|---|---|
 | Credit card | Calibrated leak | `cc_preapproval_score_trap_leak` | `round(500 + 100 · (μ · y + ε))`, `y` = acquisition in the next 3 months (within the panel), `ε ~ N(0, 1)`, `μ = √2 · Φ⁻¹(0.97)`; holders get `ε` only | Univariate AUC ≈ 0.97 for card acquisition in 3 months; beats the oracle; the leakage screen flags it |
 | Credit card | Upstream target | `cc_acquire_next_3_months_flag_trap_upstream_target` | 1 if the card is taken in any of the next 3 months, for non-holders; null for holders and in the last 3 panel months; clients who leave inside the window without taking a card count as 0 (upstream treats leavers as negatives), those who took one before leaving as 1 | The "Target Factory skipped" path and lineage exclusion (T12); Target Factory's own target matches it except for leavers (null there) |
-| Credit card | Simpson's reversal | login columns | Logins per active month rise from Private to Mass, while Mass clients take cards least; the card chance loads on the digital trait (0.3) | Logins vs card acquisition: positive within each subsegment, negative pooled; stratified EDA shows it |
+| Credit card | Simpson's reversal | login columns, `onboarding_channel` | Digitally onboarded clients log in far more (registered, active, × 2 logins) but take cards less (−1.5); within each channel the card chance loads on the digital trait (0.3), as logins do | Logins vs card acquisition: positive within each onboarding channel, negative pooled; stratified EDA shows it. (Grouping by subsegment can't show it: Mass is 94% of the eligible rows) |
 | Credit card | Half-strict income threshold (organic) | `income` | [Income thresholds](#income-thresholds-half-strict-eligibility) | The eligibility step log shows the null-income drop |
 | Credit card | Onboarding wave (organic) | `relationship_days` | Most adoption in the first 3 months | Strongest single driver for new clients |
 | Credit card | Eligibility-defining (organic) | card amounts, `cc_active_flag` | 0 for non-holders | Constant within the eligible population; flagged |

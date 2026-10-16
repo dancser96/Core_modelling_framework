@@ -33,7 +33,7 @@ MART_COLUMNS = [
     "casa_active_flag", "cc_flag", "cc_active_flag", "digital_active_flag", "casa_bal",
     "outflow_casa_vol", "outflow_casa_remittance_vol", "outflow_casa_cash_vol",
     "outflow_casa_bills_vol", "spend_cc_vol", "login_digital_mobile_cnt",
-    "login_digital_online_cnt",
+    "login_digital_online_cnt", "onboarding_channel",
 ]  # fmt: skip
 ORACLE_COLUMNS = ["client_id", "snapshot_month", "remitter_flag", "z_digital"]
 
@@ -115,19 +115,35 @@ def _check_ramp(spec: dict, panel: pd.DataFrame) -> list[dict]:
 
 
 def _check_logins(spec: dict, at_ref: pd.DataFrame) -> list[dict]:
-    """Logins per active month rise from private to mass; mass / private is the ratio of the
-    spec's means × E[exp(0.4 Δz_digital)] of each profile (lognormal: exp(0.4² σ² / 2))."""
+    """Logins per active month of branch-onboarded users rise from private to mass, and mass /
+    private is the ratio of the spec's means × E[exp(0.4 Δz_digital)] of each profile (lognormal:
+    exp(0.4² σ² / 2)); digitally onboarded mass users log in `channel_factor` times as often."""
     cfg = spec["levels"]["logins"]
     users = at_ref[at_ref["digital_active_flag"]]
     logins = users["login_digital_mobile_cnt"] + users["login_digital_online_cnt"]
-    means = logins.groupby(users["profile"]).mean()[list(PROFILE_ORDER)].to_numpy()
+    branch = users["onboarding_channel"] == "branch"
+    means = logins[branch].groupby(users.loc[branch, "profile"]).mean()[list(PROFILE_ORDER)]
+    means = means.to_numpy()
     sd = {p: spec["profiles"][p]["latent_scale"][LATENTS.index("digital")] for p in PROFILE_ORDER}
     trait = np.exp(cfg["digital_loading"] ** 2 / 2 * (sd["mass"] ** 2 - sd["private"] ** 2))
     expected = cfg["per_month"][-1] / cfg["per_month"][0] * trait
     low, high = (1 - LOGIN_RATIO_REL_TOL) * expected, (1 + LOGIN_RATIO_REL_TOL) * expected
     step, ratio = float(np.log(means[1:] / means[:-1]).min()), float(means[-1] / means[0])
-    check = "logins per active month: smallest log step private → mass > 0"
+    mass = users["profile"] == "mass"
+    by_channel = logins[mass].groupby(users.loc[mass, "onboarding_channel"]).mean()
+    factor = cfg["channel_factor"]["digital"] / cfg["channel_factor"]["branch"]
+    check = "logins per active month (branch): smallest log step private → mass > 0"
     return [
-        side_row(check, "all", len(users), 0.0, step),
-        range_row("logins per active month, mass / private", "mass", len(users), low, high, ratio),
+        side_row(check, "branch", int(branch.sum()), 0.0, step),
+        range_row(
+            "logins per active month, mass / private", "branch", int(branch.sum()), low, high, ratio
+        ),
+        range_row(
+            "logins per active month, digital / branch onboarding",
+            "mass",
+            int(mass.sum()),
+            (1 - LOGIN_RATIO_REL_TOL) * factor,
+            (1 + LOGIN_RATIO_REL_TOL) * factor,
+            float(by_channel["digital"] / by_channel["branch"]),
+        ),
     ]

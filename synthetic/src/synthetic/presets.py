@@ -159,6 +159,11 @@ RETAIL = {
     # arriving, the rest had lived here for years (switchers). The same mix applies to existing and
     # new-to-bank clients, since existing clients were new to the bank once.
     "residence_gap": {"recent_share": 0.6, "recent_mean_years": 0.3, "settled_mean_years": 4.0},
+    # How the client joined: digital onboarding is more common lower down (order: PROFILE_ORDER).
+    "onboarding_channel": {
+        "levels": ["branch", "digital"],
+        "digital_share": [0.15, 0.3, 0.45, 0.55],
+    },
     "subsegments": SUBSEGMENTS,
     "countries": COUNTRIES,
     # Turnover falls with wealth; entry minus exit is the same everywhere, so the mix stays flat.

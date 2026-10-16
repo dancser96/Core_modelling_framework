@@ -84,6 +84,7 @@ LEVELS = {
     "logins": {
         "per_month": [7, 10, 13, 16],  # logins a month of an active user
         "digital_loading": 0.4,
+        "channel_factor": {"branch": 1.0, "digital": 2.0},  # digitally onboarded clients log in more
         "mobile_share": {"intercept": 1.5, "digital": 0.5, "age_per_decade": -0.3, "age_centre": 40},
         "gamma_shape": 2.0,
         "dormant_start_days": [30, 720],  # starting book: registered, dormant, logged in before

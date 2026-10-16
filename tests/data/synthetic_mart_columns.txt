@@ -8,6 +8,7 @@ employment_status
 income
 salary_transfer_flag
 emirate
+onboarding_channel
 age
 residence_days
 relationship_days

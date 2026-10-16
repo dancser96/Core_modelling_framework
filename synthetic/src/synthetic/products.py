@@ -49,7 +49,8 @@ PRODUCTS = {
         events_per_100k=500,
         min_income=5_000,
         traits={"credit": 0.6, "activity": 0.3, "digital": 0.3},  # digital: the Simpson's trap
-        effects={"salary_transfer_flag": {True: 0.7}},
+        # Digitally onboarded clients take cards less often (with their many logins: Simpson trap).
+        effects={"salary_transfer_flag": {True: 0.7}, "onboarding_channel": {"digital": -1.5}},
     ),
     "td": dict(
         kind="holding",
@@ -88,6 +89,7 @@ PRODUCTS = {
         events_per_100k=120,
         traits={"digital": 0.6},
         age={"slope_per_decade": -0.2},
+        effects={"onboarding_channel": {"digital": 3.0}},  # joined through the app
     ),
     "loan_personal": dict(
         kind="loans",
@@ -136,6 +138,7 @@ PRODUCTS = {
         requires="ebanking",
         traits={"digital": 0.8},
         age={"slope_per_decade": -0.2},
+        effects={"onboarding_channel": {"digital": 1.5}},
     ),
     "cc_activity": dict(
         kind="usage",
