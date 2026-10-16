@@ -11,6 +11,7 @@ only in share checks. Shares stay flat over the panel except for the product wit
 import numpy as np
 import pandas as pd
 
+from synthetic.check_stats import side_row
 from synthetic.check_table import Z_TOL, range_row, row, share_row, violations_row
 from synthetic.holding_events import (
     PANEL_MART_COLUMNS,
@@ -237,7 +238,7 @@ def _check_trend(spec: dict, first: pd.DataFrame, last: pd.DataFrame) -> list[di
     a, b = held_a[base_a], held_b[base_b]
     rise = b.mean() - a.mean()
     floor = Z_TOL * np.sqrt(a.var(ddof=0) / len(a) + b.var(ddof=0) / len(b))
-    return [range_row("share rises, last vs first month", key, len(b), floor, 1.0, rise)]
+    return [side_row("share rises, last vs first month", key, len(b), floor, rise)]
 
 
 def _check_volumes(spec: dict, panel: pd.DataFrame, events: dict[str, dict]) -> list[dict]:
@@ -277,7 +278,7 @@ def _check_openings(panel: pd.DataFrame, events: dict[str, dict]) -> list[dict]:
         per_month = rises.groupby(panel["snapshot_month"][e["scope"]]).sum()
         fewest = int(per_month.rolling(SIZING_MONTHS).sum().min())
         check = f"fewest openings in a {SIZING_MONTHS}-month window"
-        rows.append(range_row(check, name, rises.sum(), MIN_OPENINGS, rises.sum(), fewest))
+        rows.append(side_row(check, name, rises.sum(), MIN_OPENINGS, fewest))
         hidden = e["at_risk"] & np.isnan(e["realised"])
         share = e["chance"][hidden].sum() / e["chance"][e["at_risk"]].sum()
         check = "share of openings hidden by a maturity"

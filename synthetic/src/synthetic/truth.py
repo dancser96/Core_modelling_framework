@@ -54,6 +54,6 @@ def _json_safe(value: object) -> object:
         return [_json_safe(item) for item in value]
     if isinstance(value, np.generic):
         value = value.item()
-    if isinstance(value, float) and not np.isfinite(value):
-        return None  # e.g. the intercept of a profile without clients
+    if isinstance(value, float) and np.isnan(value):
+        return None  # e.g. the intercept of a profile without clients; ±inf still fails loud
     return value

@@ -22,7 +22,13 @@ import numpy as np
 import pandas as pd
 from scipy.special import expit
 
-from synthetic.hazards import churned_chance, held_at_start, lapse_chance, product_score
+from synthetic.hazards import (
+    churned_chance,
+    held_at_start,
+    lapse_chance,
+    product_score,
+    time_terms,
+)
 from synthetic.population import client_age, months_on_book
 
 STATUS_LEVELS = ["never", "churned", "active"]
@@ -46,7 +52,8 @@ def start_holdings(
         if product["kind"] == "static":
             state[f"{key}_held"] = u < product["share"]
             continue
-        client_score = product_score(spec, key, clients, z, age, month)
+        # Starting states are steady states: no calendar terms (they'd count as permanent history).
+        client_score = product_score(spec, key, clients, z, age)
         log_odds = _intercepts(calib[key], clients) + client_score
         if product["kind"] == "holding":
             held, churned = held_at_start(spec, key, calib[key], log_odds, months)
@@ -91,8 +98,10 @@ def step_holdings(
         if product["kind"] == "static":
             continue
         u = rng.random(n)  # one draw per product and client, in a fixed order
-        client_score = product_score(spec, key, clients, z, age, month)
-        log_odds = _intercepts(calib[key], clients) + client_score
+        client_score = product_score(spec, key, clients, z, age)
+        log_odds = (
+            _intercepts(calib[key], clients) + client_score + time_terms(spec, key, clients, month)
+        )
         if product["kind"] == "holding":
             onboarding = before["onboarding_left"] > 0
             chances[f"{key}_acquire"] = _step_holding(

@@ -21,9 +21,19 @@ Z_TOL = 4.5
 
 
 def row(
-    check: str, stratum: str, n: int, expected: float, realised: float, tolerance: float
+    check: str,
+    stratum: str,
+    n: int,
+    expected: float,
+    realised: float,
+    tolerance: float,
+    rule: bool = False,
 ) -> dict:
-    """One row of the check table; it passes when |realised − expected| ≤ tolerance."""
+    """One row of the check table; it passes when |realised − expected| ≤ tolerance.
+
+    `rule` marks a rule that holds whatever the sample size; the fast suite runs only those rows
+    on the small preset.
+    """
     return dict(
         check=check,
         stratum=stratum,
@@ -32,6 +42,7 @@ def row(
         realised=realised,
         tolerance=tolerance,
         passed=bool(abs(realised - expected) <= tolerance),
+        rule=rule,
     )
 
 
@@ -44,12 +55,14 @@ def share_row(check: str, stratum: str, expected: float, hits: int, n: int) -> d
 def range_row(check: str, stratum: str, n: int, low: float, high: float, realised: float) -> dict:
     """A value that must lie in [low, high]: a spec range, or a floor with the largest possible
     value as `high`."""
+    if high < low:
+        raise ValueError(f"{check} ({stratum}): range [{low}, {high}] is empty")
     return row(check, stratum, n, (low + high) / 2, realised, (high - low) / 2)
 
 
 def violations_row(check: str, bad: pd.Series) -> dict:
     """Share of rows breaking a rule that must always hold."""
-    return row(check, "all", len(bad), 0, float(bad.mean()), 0)
+    return row(check, "all", len(bad), 0, float(bad.mean()), 0, rule=True)
 
 
 def profile_of(spec: dict, df: pd.DataFrame) -> pd.Series:
@@ -58,9 +71,12 @@ def profile_of(spec: dict, df: pd.DataFrame) -> pd.Series:
 
 
 def flags_as_bool(df: pd.DataFrame) -> pd.DataFrame:
-    """A copy with every `*_flag` column that holds only 0/1 as bool.
+    """A copy with every `*_flag` column as bool; raises if one holds anything but 0 and 1.
 
     Pandas masks need bools, and `~` on an integer flag gives −1 or −2, both truthy.
     """
-    flags = [c for c in df.columns if c.endswith("_flag") and df[c].isin([0, 1]).all()]
+    flags = [c for c in df.columns if c.endswith("_flag")]
+    bad = [c for c in flags if not df[c].isin([0, 1]).all()]
+    if bad:
+        raise ValueError(f"flag columns with values other than 0 and 1: {bad}")
     return df.astype(dict.fromkeys(flags, bool))

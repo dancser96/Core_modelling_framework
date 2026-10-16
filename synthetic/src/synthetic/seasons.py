@@ -3,10 +3,10 @@
 Values live in `levels.SEASONS`; the bonus trigger lives in `products.HOLDING_RULES`. This part
 shifts products' log-odds scores (test_harness.md maths §3, `time_k,p(t)` and `after_bonus`): FX
 wake-ups rise in summer, digital wake-ups trend up from the first panel month (a drift trap), and
-a bonus raises term-deposit and wealth adoption odds in the months after it. `hazards.product_score`
-adds them when it is given a month; calibration leaves them out, so shares wobble slightly with
-the season. Build stage B adds the seasonal factors on amounts, school fees and bonuses due, and
-the login drift.
+a bonus raises term-deposit and wealth adoption odds in the months after it. `hazards.time_terms`
+adds them to monthly adoption and wake-up log-odds only: lapses, the starting book and the
+calibration leave them out, so shares wobble slightly with the season. Build stage B adds the
+seasonal factors on amounts, school fees and bonuses due, and the login drift.
 """
 
 import numpy as np

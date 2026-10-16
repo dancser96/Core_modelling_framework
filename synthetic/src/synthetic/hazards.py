@@ -27,13 +27,8 @@ def product_score(
     clients: pd.DataFrame,
     z: np.ndarray,
     age: np.ndarray,
-    month: np.datetime64 | None = None,
 ) -> np.ndarray:
-    """A product's log-odds score per client, before the profile intercept.
-
-    With a month it adds the time terms (seasonal wake-ups, the uptake trend, the bonus trigger);
-    calibration calls it without one (test_harness.md maths §3).
-    """
+    """A product's log-odds score per client, before the profile intercept and the time terms."""
     product, rules = spec["products"][key], spec["holding_rules"]
     loadings = np.array([product.get("traits", {}).get(name, 0.0) for name in LATENTS])
     out = z @ loadings
@@ -47,9 +42,17 @@ def product_score(
     if "min_income" in product:
         below = below_threshold(rules, clients, product["min_income"])
         out = out + np.log(rules["below_threshold_odds"]) * below
-    if month is not None:
-        out = out + wake_shift(spec, key, clients, month) + after_bonus(spec, key, clients, month)
     return out
+
+
+def time_terms(spec: dict, key: str, clients: pd.DataFrame, month: np.datetime64) -> np.ndarray:
+    """Calendar terms on a product's adoption or wake-up log-odds (maths §3).
+
+    Seasonal wake-ups, the uptake trend and the bonus trigger. Lapses, the starting book and the
+    calibration leave them out: they move who adopts or wakes up in a month, not how long spells
+    last.
+    """
+    return wake_shift(spec, key, clients, month) + after_bonus(spec, key, clients, month)
 
 
 def below_threshold(rules: dict, clients: pd.DataFrame, min_income: float) -> np.ndarray:

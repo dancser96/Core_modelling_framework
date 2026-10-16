@@ -214,6 +214,8 @@ def _keep_and_append(state: dict, stay: np.ndarray, new: dict) -> dict:
     """Per-client state arrays of the clients who stayed, followed by the new clients' arrays."""
     if state.keys() != new.keys():
         raise ValueError(f"state keys differ: {sorted(state.keys() ^ new.keys())}")
+    if {len(v) for v in state.values()} - {len(stay)} or len({len(v) for v in new.values()}) > 1:
+        raise ValueError("state arrays must line up with the clients")
     return {key: np.concatenate([values[stay], new[key]]) for key, values in state.items()}
 
 
@@ -272,6 +274,15 @@ def _month_rows(sim: dict, chances: dict[str, np.ndarray]) -> tuple[pd.DataFrame
 
 
 def _with_int_flags(df: pd.DataFrame) -> pd.DataFrame:
-    """Booleans as 0/1 int32, the mart's flag type (test_harness.md, types)."""
-    flags = [column for column, dtype in df.dtypes.items() if dtype == np.dtype(bool)]
+    """`*_flag` columns as 0/1 int32, the mart's flag type (test_harness.md, types).
+
+    Selected by name, as the checks read them; a boolean column with another name, or a flag that
+    isn't boolean, is a naming error and fails loud.
+    """
+    flags = [c for c in df.columns if c.endswith("_flag")]
+    bools = [c for c, dtype in df.dtypes.items() if dtype == np.dtype(bool)]
+    if set(flags) != set(bools):
+        raise ValueError(
+            f"flags must be boolean and booleans named *_flag: {set(flags) ^ set(bools)}"
+        )
     return df.astype(dict.fromkeys(flags, "int32"))

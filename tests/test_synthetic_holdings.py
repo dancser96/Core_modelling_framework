@@ -10,7 +10,7 @@ from synthetic.output import read_output
 def test_holdings_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
     """On the unit preset, every rule that must always hold (tolerance 0) passes."""
     checks = run_checks(unit_output[0], ["holdings"])["holdings"]
-    rules = checks[checks["tolerance"] == 0]
+    rules = checks[checks["rule"]]
     assert len(rules) and rules["passed"].all(), rules[~rules["passed"]].to_string()
 
 

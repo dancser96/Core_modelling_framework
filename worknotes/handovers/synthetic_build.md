@@ -392,6 +392,17 @@ def simulate_card_spend(spec, sim: dict, month, rng, n_paths: int = 200) -> dict
   {1, 3, 6}, relevance (w = 3; rank correlation per month on a seeded 20% client sample, median
   over months; η for categoricals), traps, drift, market index, dirty record. `write_mart` computes
   metrics after writing every month, reading back only the columns needed (≈ 50).
+- **`truth` key layout** (the contract the checks read; keys are strings):
+  - `truth["columns"]`: list of `{name, type, kind, mechanism}` for every mart column;
+  - `truth["traps"]`: list of trap records, each with `column` (null for organic traps without one),
+    `product`, `target`, `kind`, `parameters`, `expected`;
+  - `truth["dirty"]`: the dirty-switch record (only when on);
+  - `truth["market_index"]`: `"YYYY-MM"` → index value (Stage B);
+  - `truth["oracle"]["targets"][target]["w1" | "w3" | "w6"]`: `{auc, auc_by_segment, events_per_month,
+    expected_positives_6m, low_confidence}`;
+  - `truth["oracle"]["relevance"][target]`: list of `{column, score}` sorted by score, most relevant
+    first (w = 3).
+  The checks authors may propose refinements; agree them here before Stage E.
 
 ### Stage F — output, CLI, notebook, review guide (spec "Physical form", "Presets and budgets")
 - `__main__.py`: argparse (`--preset`, `--n-clients`, `--seed`, `--n-months`, `--out`, `--dirty`,
