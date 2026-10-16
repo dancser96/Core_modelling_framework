@@ -51,7 +51,7 @@ def draw_income(
     income before hiding; it exists for every client.
     """
     cfg = spec["income"]
-    median = clients["subsegment"].map(lambda s: spec["subsegments"][s]["median_income"]).to_numpy()
+    median = subsegment_medians(spec, clients)
     emp = clients["employment_status"]
     log_income = (
         np.log(median * emp.map(cfg["employment_multiplier"]).to_numpy())
@@ -73,6 +73,24 @@ def draw_income(
         },
         index=clients.index,
     )
+
+
+def subsegment_medians(spec: dict, clients: pd.DataFrame) -> np.ndarray:
+    """Each client's subsegment median income at the spec's `separation`.
+
+    On the log scale the medians sit at centre + separation × (log median − centre), the centre
+    being their share-weighted mean, so subsegments overlap more as `separation` falls. At 1 they
+    are the spec's medians exactly.
+    """
+    subs = spec["subsegments"]
+    medians = {name: float(s["median_income"]) for name, s in subs.items()}
+    if spec["separation"] != 1:
+        logs = np.log(np.array(list(medians.values())))
+        shares = np.array([s["share"] for s in subs.values()])
+        centre = shares @ logs / shares.sum()
+        moved = np.exp(centre + spec["separation"] * (logs - centre))
+        medians = dict(zip(medians, moved, strict=True))
+    return clients["subsegment"].map(medians).to_numpy(dtype=float)
 
 
 def _draw_descriptors(spec: dict, subsegment: np.ndarray, rng: np.random.Generator) -> pd.DataFrame:

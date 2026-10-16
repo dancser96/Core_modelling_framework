@@ -184,7 +184,7 @@ def _check_income(spec: dict, df: pd.DataFrame) -> list[dict]:
     sd = np.hypot(cfg["wealth_loading"], cfg["sigma"])
     employed = df[(df["employment_status"] == "Employed") & df["income"].notna()]
     for sub, part in employed.groupby("subsegment"):
-        expected = np.log(spec["subsegments"][sub]["median_income"])
+        expected = np.log(_expected_medians(spec)[sub])
         tolerance = Z_TOL * 1.2533 * sd / np.sqrt(len(part))
         realised = np.log(part["income"].median())
         rows.append(
@@ -204,7 +204,7 @@ def _check_income_wealth(spec: dict, mart: pd.DataFrame, oracle: pd.DataFrame) -
         (first_rows["snapshot_month"] > mart["snapshot_month"].min()) & first_rows["income"].notna()
     ].merge(oracle[["client_id", "snapshot_month", "z_wealth"]], on=["client_id", "snapshot_month"])
     cfg = spec["income"]
-    median = new["subsegment"].map(lambda s: spec["subsegments"][s]["median_income"])
+    median = new["subsegment"].map(_expected_medians(spec))
     residual = np.log(
         new["income"] / (median * new["employment_status"].map(cfg["employment_multiplier"]))
     )
@@ -240,6 +240,16 @@ def _check_latents(spec: dict, df: pd.DataFrame, oracle: pd.DataFrame) -> list[d
         rows.append(row("latent mean (max z-score)", name, n, 0, mean_z.max(), Z_TOL))
         rows.append(row("latent covariance (max z-score)", name, n, 0, cov_z.max(), Z_TOL))
     return rows
+
+
+def _expected_medians(spec: dict) -> dict[str, float]:
+    """Restated from the spec: subsegment median incomes, moved on the log scale like the trait
+    means, centre + separation × (log median − centre), with a share-weighted centre."""
+    subs = spec["subsegments"]
+    logs = np.log([s["median_income"] for s in subs.values()])
+    shares = np.array([s["share"] for s in subs.values()])
+    centre = shares @ logs / shares.sum()
+    return dict(zip(subs, np.exp(centre + spec["separation"] * (logs - centre)), strict=True))
 
 
 def _expected_latent_means(spec: dict, df: pd.DataFrame) -> np.ndarray:

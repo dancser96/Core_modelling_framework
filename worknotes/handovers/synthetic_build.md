@@ -13,7 +13,7 @@ wins; fix this file. Removed when M1 closes.
 | Stage | Builds (test_harness step) | Status | Commit |
 |---|---|---|---|
 | A | Foundations: refactor, 0/1 flags, hidden attributes, new chains, time hooks, writer, slow suite | done (review pending) | see log |
-| B | Amounts, time effects, segment overlap (step 3) | not started | |
+| B | Amounts, time effects, segment overlap (step 3) | done (review pending); 12/12 mutations caught | see log |
 | C | Mart: names, rollups, null rule, types, prefix stability (step 4) | not started | |
 | D | Traps, drift evidence, dirty switches, extra columns (step 5) | not started | |
 | E | Oracle: window probabilities, metrics, relevance, regression oracle, `truth.json` (step 6) | not started | |
@@ -154,6 +154,7 @@ helper `_keep_and_append(state: dict, stay: np.ndarray, new: dict) -> dict` for 
 | leaks | leak columns (look-ahead) |
 | extras | extra columns |
 | regression | the regression oracle's paths |
+| attributes | hidden client attributes (remitter, bonus, school fees, repayment share), so amounts' draws never move holdings |
 
 ### 2.5 Output, types, reading back
 - `<out>/mart/snapshot_month=YYYY-MM-01/part-0.parquet`, `<out>/oracle/…` likewise,
@@ -323,7 +324,8 @@ def rollup_name(base: str, first: int, last: int, agg: str) -> str
 def recency_name(base: str) -> str
 def ratio_name(base: str) -> str
 def trap_name(name: str, kind: str) -> str
-def parse_column(name: str, products: list[str]) -> dict      # raises ValueError if it doesn't parse
+def parse_column(name: str, products: list[str]) -> dict      # raises ValueError if it doesn't parse;
+#   `products` = list(spec["products"]) incl. chain keys; must also accept description, trap and extra names
 # mart.py
 ROLLUPS: list[tuple[str, tuple[str, ...], tuple[str, ...]]]   # (base, windows, aggs), from the spec
 RECENCY: list[str];  RATIOS: list[str]
@@ -334,9 +336,12 @@ def recency_columns(last_nonzero, values, month_index) -> tuple[dict, dict]
 def ratio_columns(history, months_on_book) -> dict[str, np.ndarray]
 def arrow_schema(columns: list[str]) -> pa.Schema
 ```
-Details: rollup null iff `months_on_book < window length`; utilisation's rollups average non-null
+Details: rollup null iff `months_on_book < window length` (`months_on_book` = 1 in the join month,
+so a `_0_2_` rollup is non-null from the 3rd month on the book — the checks use exactly this); utilisation's rollups average non-null
 months (null if none); `std` is the sample standard deviation (ddof 1, as Spark's `stddev`); `nz`
-counts non-zero, non-null months; ratio null if the 3–5 average is 0 or tenure < 6; recency counts
+counts non-zero, non-null months; ratio null if the 3–5 average is 0 or tenure < 6; nullable
+counters (maturity months, recency, days since login, `nz` rollups) and the upstream target are
+`Int64` in memory, statuses may be `category`; recency counts
 back from the current month (0 = active now), null if no non-zero month since the later of
 relationship start and the start of the simulation. Column order as the spec's table; a committed
 snapshot `tests/data/synthetic_mart_columns.txt` (one name per line).
@@ -402,7 +407,18 @@ def simulate_card_spend(spec, sim: dict, month, rng, n_paths: int = 200) -> dict
     expected_positives_6m, low_confidence}`;
   - `truth["oracle"]["relevance"][target]`: list of `{column, score}` sorted by score, most relevant
     first (w = 3).
-  The checks authors may propose refinements; agree them here before Stage E.
+  - required top-level keys: `generator_version, versions, seed, preset, n_clients, n_months,
+    first_month, spec, calibration, turnover, market_index, columns, traps, drift, null_rule,
+    oracle` (+ `dirty` when on);
+  - **AUC definition** (the checks recompute it and must match within 1e-9): Mann–Whitney AUC (ties
+    count ½) of `window_probability` against the realised target over every mart row where both
+    are non-null, all months pooled; `auc_by_segment` the same within each `segment`, null where a
+    class is empty.
+- **Relevance for categoricals:** η is biased upward with many levels (≈ √((k−1)/n)); use a
+  held-out η (level means fitted on one half of the clients, scored on the other), or the null
+  control `preferred_language_trap_null_control` can leave the bottom 10%.
+- **Regression oracle observation months** for the checks: panel months 2, 3, 9, 14, 15, 21 (2 and
+  14 are Novembers, so a December inside the window is tested).
 
 ### Stage F — output, CLI, notebook, review guide (spec "Physical form", "Presets and budgets")
 - `__main__.py`: argparse (`--preset`, `--n-clients`, `--seed`, `--n-months`, `--out`, `--dirty`,
@@ -563,7 +579,7 @@ null controls in the bottom 10% for every target.
 | seasons | summer dip removed → July/June rows; school fees in October → September jump; relaunch factor 1.0 → drift row |
 | mart | rollup window shifted by a month → Spark recompute; null rule ignored → null rows |
 | traps | leak μ halved → leak AUC; upstream counts leavers as null → leaver rule; process-leak chance 0.5 → 0.8 share |
-| oracle | window probability without frozen churned status → status-product deciles; regression paths without seasonality → December coverage |
+| oracle | window probability without frozen churned status → status-product deciles (churned stratum first); regression paths without seasonality → the summer and November-observation rows |
 
 Run mutations at 30–50k clients where the canonical size is too slow; record each in the log.
 
@@ -606,5 +622,7 @@ Run mutations at 30–50k clients where the canonical size is too slow; record e
   (it trends) and accept the season.
 - The starting book has no history before the simulation starts: recency is null until a first
   non-zero month inside the simulation.
-- Memory: the canonical oracle has ~65 columns; read subsets.
+- Memory: the canonical oracle has ~65 columns; read subsets. `checks_mart` reads every mart
+  column: run it on the unit output, and at canonical size on a client sample (filter rows when
+  reading, e.g. `client_id % 5 == 0`), never on the whole mart.
 - Test functions need docstrings and type hints too (`tests/test_code_rules.py`).

@@ -6,26 +6,29 @@ The month loop is three functions every driver shares: `start_simulation` draws 
 `finish_simulation` returns what is still buffered at the end. `generate_mart` collects the months
 in memory, `output.write_mart` writes each to disk as it comes. Each month: clients leave and new
 clients join (rates per profile, higher for the lower segments), the hidden traits take one AR(1)
-step, holdings and usage states move with each client's chances (time terms included), and the
-month's rows come out twice: mart rows (what upstream would publish) and oracle rows (hidden truth:
-traits, hidden attributes and the chance behind every event, never features). Burn-in months run
-but come out nowhere. Each mechanism draws from its own random stream (`STREAMS`), so a later
-build step never changes the columns of an earlier one.
+step, holdings and usage states move with each client's chances (time terms included), the amounts
+follow from the holdings at the month's end (with the shared market index), and the month's rows
+come out twice (`month_rows`): mart rows (what upstream would publish) and oracle rows (hidden
+truth: traits, hidden attributes and the chance behind every event, never features). Burn-in
+months run but come out nowhere. Each mechanism draws from its own random stream (`STREAMS`), so a
+later build step never changes the columns of an earlier one.
 """
 
 import numpy as np
 import pandas as pd
 
-from synthetic.amounts import draw_hidden_attributes
+from synthetic.amounts import draw_hidden_attributes, start_amounts, step_amounts, step_market
 from synthetic.hazards import calibrate
-from synthetic.holdings import holding_columns, start_holdings, step_holdings
+from synthetic.holdings import start_holdings, step_holdings
 from synthetic.latents import draw_latents, latent_means, step_latents
+from synthetic.month_rows import month_rows
 from synthetic.population import (
     client_age,
     draw_clients,
     draw_income,
     draw_subsegments,
     months_on_book,
+    subsegment_medians,
 )
 from synthetic.presets import LATENTS, PRESETS
 from synthetic.truth import build_truth
@@ -42,19 +45,9 @@ STREAMS = (
     "leaks",
     "extras",
     "regression",
+    "attributes",  # hidden client attributes, so amounts' draws never move holdings
 )
 WEALTH = LATENTS.index("wealth")
-DESCRIPTION_COLUMNS = [
-    "segment",
-    "subsegment",
-    "nationality_group",
-    "nationality",
-    "employment_status",
-    "income",
-    "salary_transfer_flag",
-    "emirate",
-]
-HIDDEN_CLIENT_COLUMNS = ["true_income", "wealth_base"]  # oracle columns from the client table
 
 
 def generate_mart(
@@ -82,7 +75,8 @@ def generate_mart(
 def start_simulation(
     preset: str, n_clients: int | None, seed: int, n_months: int | None, n_extra_columns: int
 ) -> dict:
-    """The simulation before its first month: the starting book, calibrated, with its holdings.
+    """The simulation before its first month: the starting book, calibrated, with its holdings
+    and amounts.
 
     The starting book is drawn one month before the burn-in starts; `n_clients` and `n_months`
     default to the preset's.
@@ -100,9 +94,14 @@ def start_simulation(
     clients, z = book["clients"], book["z"]
     calib = calibrate(spec, clients, z, client_age(clients, month), months_on_book(clients, month))
     holdings = start_holdings(spec, clients, z, month, calib, rngs["holdings"], new_to_bank=False)
+    amounts = start_amounts(
+        spec, clients, z, book["means"], holdings, month, rngs, new_to_bank=False
+    )
     return {
         **book,
         "holdings": holdings,
+        "amounts": amounts,
+        "market_index": {str(month): 1.0},  # 1 when the book is drawn, then one return a month
         "spec": spec,
         "preset": preset,
         "seed": seed,
@@ -121,8 +120,10 @@ def advance_simulation(sim: dict) -> tuple[dict, list[tuple[pd.DataFrame, pd.Dat
     """Run one month; return the new simulation and the (mart, oracle) months now final.
 
     Exits and entries apply to the clients on the books at the start of the month; then one AR(1)
-    step of the traits for those who stayed, then holdings move. With no look-ahead columns yet, a
-    panel month is final as soon as it has run; burn-in months return none.
+    step of the traits for those who stayed, then holdings move, then the market index and the
+    amounts. Per-client state (holdings, amounts) keeps the stayers and appends the new clients.
+    With no look-ahead columns yet, a panel month is final as soon as it has run; burn-in months
+    return none.
     """
     spec, rngs, calib, month = sim["spec"], sim["rngs"], sim["calibration"], sim["month"] + 1
     clients = sim["clients"]
@@ -131,6 +132,9 @@ def advance_simulation(sim: dict) -> tuple[dict, list[tuple[pd.DataFrame, pd.Dat
     z = step_latents(spec, kept, sim["z"][stay], sim["means"][stay], rngs["latents"])
     new_holdings = start_holdings(
         spec, new["clients"], new["z"], month, calib, rngs["holdings"], new_to_bank=True
+    )
+    new_amounts = start_amounts(
+        spec, new["clients"], new["z"], new["means"], new_holdings, month, rngs, new_to_bank=True
     )
     # An empty batch is left out: concatenating it can change column dtypes.
     batch = [kept, new["clients"]] if len(new["clients"]) else [kept]
@@ -142,15 +146,24 @@ def advance_simulation(sim: dict) -> tuple[dict, list[tuple[pd.DataFrame, pd.Dat
         z=np.vstack([z, new["z"]]),
         next_id=new["next_id"],
     )
+    clients, z, means = advanced["clients"], advanced["z"], advanced["means"]
     holdings = _keep_and_append(sim["holdings"], stay, new_holdings)
-    advanced["holdings"], chances = step_holdings(
-        spec, holdings, advanced["clients"], advanced["z"], month, calib, rngs["holdings"]
+    holdings, chances = step_holdings(spec, holdings, clients, z, month, calib, rngs["holdings"])
+    market = step_market(spec, list(sim["market_index"].values())[-1], rngs["amounts"])
+    amounts = _keep_and_append(sim["amounts"], stay, new_amounts)
+    amounts, mart_amounts, oracle_amounts = step_amounts(
+        spec, amounts, clients, z, means, holdings, month, market, rngs
     )
+    advanced |= {
+        "holdings": holdings,
+        "amounts": amounts,
+        "market_index": {**sim["market_index"], str(month): market},
+    }
     if month < sim["first_month"]:
         return advanced, []
-    records = _turnover_records(spec, clients, stay, new["clients"], month)
+    records = _turnover_records(spec, sim["clients"], stay, new["clients"], month)
     advanced["turnover"] = sim["turnover"] + records
-    return advanced, [_month_rows(advanced, chances)]
+    return advanced, [month_rows(advanced, chances, mart_amounts, oracle_amounts)]
 
 
 def finish_simulation(sim: dict) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
@@ -179,12 +192,12 @@ def _new_clients(
     wealth_dev = (z[:, WEALTH] - means[:, WEALTH]) / wealth_sd.to_numpy()
     income = draw_income(spec, clients, wealth_dev, rngs["population"])
     clients = pd.concat([clients, income], axis=1)
-    median = clients["subsegment"].map(lambda s: spec["subsegments"][s]["median_income"])
-    wealth_base = median.to_numpy() * np.exp(spec["income"]["wealth_loading"] * wealth_dev)
+    median = subsegment_medians(spec, clients)
+    wealth_base = median * np.exp(spec["income"]["wealth_loading"] * wealth_dev)
     clients = clients.assign(wealth_base=wealth_base)
     age = client_age(clients, month)
     clients = pd.concat(
-        [clients, draw_hidden_attributes(spec, clients, age, rngs["amounts"])], axis=1
+        [clients, draw_hidden_attributes(spec, clients, age, rngs["attributes"])], axis=1
     )
     n = len(clients)
     clients.insert(0, "client_id", np.arange(first_id, first_id + n))
@@ -240,49 +253,3 @@ def _turnover_records(
         }
         for name in spec["profiles"]
     ]
-
-
-def _month_rows(sim: dict, chances: dict[str, np.ndarray]) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """The mart rows and oracle rows of the month; day counters are as of the month's last day."""
-    clients, month = sim["clients"], sim["month"]
-    month_end = (month + 1).astype("datetime64[D]").astype(int) - 1
-    keys = {
-        "client_id": clients["client_id"].to_numpy(),
-        "snapshot_month": [month.astype("datetime64[D]").item()] * len(clients),
-    }
-    mart_holdings, hidden_holdings = holding_columns(sim["spec"], sim["holdings"])
-    mart = pd.DataFrame(
-        {
-            **keys,
-            **{col: clients[col].to_numpy() for col in DESCRIPTION_COLUMNS},
-            "age": client_age(clients, month),
-            "residence_days": (month_end - clients["residence_start"]).astype("Int64").array,
-            "relationship_days": month_end - clients["relationship_start"].to_numpy(),
-            **mart_holdings,
-        }
-    )
-    oracle = pd.DataFrame(
-        {
-            **keys,
-            **{f"z_{n}": sim["z"][:, i] for i, n in enumerate(LATENTS)},
-            **{f"p_{event}": chance for event, chance in chances.items()},
-            **{col: clients[col].to_numpy() for col in HIDDEN_CLIENT_COLUMNS},
-            **hidden_holdings,
-        }
-    )
-    return _with_int_flags(mart), _with_int_flags(oracle)
-
-
-def _with_int_flags(df: pd.DataFrame) -> pd.DataFrame:
-    """`*_flag` columns as 0/1 int32, the mart's flag type (test_harness.md, types).
-
-    Selected by name, as the checks read them; a boolean column with another name, or a flag that
-    isn't boolean, is a naming error and fails loud.
-    """
-    flags = [c for c in df.columns if c.endswith("_flag")]
-    bools = [c for c, dtype in df.dtypes.items() if dtype == np.dtype(bool)]
-    if set(flags) != set(bools):
-        raise ValueError(
-            f"flags must be boolean and booleans named *_flag: {set(flags) ^ set(bools)}"
-        )
-    return df.astype(dict.fromkeys(flags, "int32"))

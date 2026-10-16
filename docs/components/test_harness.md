@@ -312,8 +312,9 @@ balances with the wealth base. Values live in `synthetic/src/synthetic/levels.py
 All amounts are AED, rounded to 0.01; counts are whole numbers.
 
 ### Levels
-Median multiple of the base, per profile, for a holder in an active, non-seasonal month, after the
-new-client ramp:
+Median multiple of the base, per profile, in a non-seasonal month after the new-client ramp, for a
+client at its own trait means (holders and active users are selected on the same traits their
+amounts load on, so their realised medians sit a little higher):
 
 | Measure | Base | Private | Priority | Affluent | Mass | Tail index |
 |---|---|---|---|---|---|---|
@@ -337,7 +338,7 @@ thinner tail through their link to the balance (elasticity 0.3).
   Target: lag-1 correlation of log balances ≥ 0.9.
 - **Flows** (non-salary inflow, spending outflow, card spend, FX): a persistent client effect (sd
   0.4), AR(1) noise (ρ 0.3, stationary sd 0.35), one trait's deviation (activity 0.2 for account
-  flows, activity 0.3 for card spend, cross-border 0.4 for FX) and the client's current/savings
+  flows, activity 0.3 for card spend, cross-border 0.25 for FX) and the client's current/savings
   deviation × 0.3. Target: lag-1 correlation of log flows in consecutive active months 0.6–0.8.
 - **Counts** are overdispersed: 1 + Poisson(mean × G), G ~ Gamma(shape 2, scale 1/2) per client and
   month, in active months; 0 otherwise. Means: outflow 12, card spend 10 (× exp(0.3 × activity
@@ -383,9 +384,10 @@ perfectly collinear with their totals; they add up to the total exactly.
   share goes to the other three. The share × 1.2 for ASIA and AFRICA, × 0.5 for WESTERN, × 0.8 for
   OTHER, and × (income / subsegment median)^−0.3, so it falls as income rises.
 - **Cash** × exp(−0.4 × digital deviation − 0.2 × wealth deviation).
-- **Card travel** happens only in travel months (chance per month 0.5 / 0.4 / 0.3 / 0.1, doubled in
-  July–August, capped at 0.95, × exp(0.5 × cross-border deviation)); otherwise travel spend is 0 and
-  its share goes to the others. Travel × exp(0.4 × cross-border deviation), online × exp(0.4 ×
+- **Card travel** happens only in travel months, with chance min(0.95, base × 2 in July–August ×
+  exp(0.5 × cross-border deviation)), base 0.5 / 0.4 / 0.3 / 0.1; otherwise travel spend is 0 and its
+  share goes to the others. The summer factor of the time-effects table multiplies the travel amount
+  itself, so total spend rises with it. Travel × exp(0.4 × cross-border deviation), online × exp(0.4 ×
   digital deviation).
 
 ### Credit card
@@ -400,7 +402,8 @@ perfectly collinear with their totals; they add up to the total exactly.
   - transactor: repays last month's balance in full; `M` = this month's spend;
   - revolver: repays its share of last month's balance; interest = 3% of what it carried;
     `M` = carried + interest + spend;
-  - spend is the wanted spend, capped at limit − carried − interest (≥ 0); 0 in a dormant month;
+  - spend is the wanted spend, for a revolver × (1 − last month's utilisation) (it spends less as
+    the card fills up), capped at limit − carried − interest (≥ 0); 0 in a dormant month;
   - a card given up this month repays its whole balance and ends at 0.
 - **Utilisation** = `M` / limit, null without a card. Interest above 0 reveals a revolver.
 
@@ -418,7 +421,8 @@ perfectly collinear with their totals; they add up to the total exactly.
 
 ### FX and logins
 - **FX** is a separate activity: currency conversion, foreign transfers and travel money; remittances
-  stay in account outflow. Volume and count only in active months.
+  stay in account outflow. Volume and count only in active months; its summer factor applies in
+  July–August (not tied to the card's travel months).
 - **Logins** (digital activity): logins a month for an active user 7 / 10 / 13 / 16 (private →
   mass) × exp(0.4 × digital deviation); the mobile share is σ(1.5 + 0.5 × digital deviation −
   0.3 × (age − 40) / 10); mobile and online counts are each overdispersed, and an active month has
@@ -448,14 +452,15 @@ so they weigh most on Affluent (especially A) budgets.
 - **Ramadan** stays out (round 1, Q94).
 - **Drift** (monitoring trap): digital wake-up log-odds + log(1.2) per year from the first panel
   month (a gradual uptake trend); an app relaunch at panel month 16 (2026-01) multiplies mobile
-  logins by 1.3. Login columns then show PSI > 0.25 against earlier months.
+  logins by 1.8 (set so the PSI clears 0.25: 1.3 gave 0.07, 1.6 gave 0.23). Login columns then
+  show PSI > 0.25 against earlier months.
 
 ### Segment overlap
 Subsegments overlap in amounts but their medians are ordered: about 25% of MM clients hold more
 current/savings than the UM median (target range 20–30%, set by the current/savings client effect),
 and Private is far apart from everyone else (fewer than 5% of Upper Priority clients above the Lower
 Private median). The `separation` knob scales the distances between subsegment trait means
-(default 1); at 0.5 the pooled rank correlation of balance with card spend falls towards the
+and, on the log scale, between subsegment median incomes (default 1); at 0.5 the pooled rank correlation of balance with card spend falls towards the
 within-subsegment one.
 
 ---
@@ -630,7 +635,7 @@ this table with each trap's evidence.
 | Product | Trap | Column | Construction | Expected behaviour |
 |---|---|---|---|---|
 | Credit card | Calibrated leak | `cc_preapproval_score_trap_leak` | `round(500 + 100 · (μ · y + ε))`, `y` = acquisition in the next 3 months (within the panel), `ε ~ N(0, 1)`, `μ = √2 · Φ⁻¹(0.97)`; holders get `ε` only | Univariate AUC ≈ 0.97 for card acquisition in 3 months; beats the oracle; the leakage screen flags it |
-| Credit card | Upstream target | `cc_acquire_next_3_months_flag_trap_upstream_target` | 1 if the card is taken in any of the next 3 months, for non-holders; null for holders and in the last 3 panel months; clients who leave inside the window count as 0 (upstream treats leavers as negatives) | The "Target Factory skipped" path and lineage exclusion (T12); Target Factory's own target matches it except for leavers (null there) |
+| Credit card | Upstream target | `cc_acquire_next_3_months_flag_trap_upstream_target` | 1 if the card is taken in any of the next 3 months, for non-holders; null for holders and in the last 3 panel months; clients who leave inside the window without taking a card count as 0 (upstream treats leavers as negatives), those who took one before leaving as 1 | The "Target Factory skipped" path and lineage exclusion (T12); Target Factory's own target matches it except for leavers (null there) |
 | Credit card | Simpson's reversal | login columns | Logins per active month rise from Private to Mass, while Mass clients take cards least; the card chance loads on the digital trait (0.3) | Logins vs card acquisition: positive within each subsegment, negative pooled; stratified EDA shows it |
 | Credit card | Half-strict income threshold (organic) | `income` | [Income thresholds](#income-thresholds-half-strict-eligibility) | The eligibility step log shows the null-income drop |
 | Credit card | Onboarding wave (organic) | `relationship_days` | Most adoption in the first 3 months | Strongest single driver for new clients |
@@ -645,7 +650,7 @@ this table with each trap's evidence.
 | Any | Quality | `paper_statement_flag_trap_near_constant` (99.9% zeros), `legacy_risk_grade_trap_all_null` (all null) | | Flagged by the quality checks |
 | Any | Drift (monitoring) | login columns | [Time effects](#time-effects) | PSI > 0.25 after panel month 16, ≈ 0 before |
 | Any | Collinearity (organic) | rollups and identities | Rollups of one measure over `0_2` and `0_5`; `<product>_status == "active"` ⇔ `<product>_flag`; `product_cnt` = product flags + loan counts > 0; inflow − outflow = change in `casa_bal`; subcategories sum to their total | Correlation views and VIF flag the clusters (infinite for the identities) |
-| Any | Dirty switches, off by default | — | Duplicate client-months; a month with the digital columns null (outage); income × 12 from one month on (unit change); a few `casa_bal` typos × 1,000 | Contract checks fail loud; operational monitoring flags them (tests on the `unit` preset only) |
+| Any | Dirty switches, off by default | — | Duplicate client-months; a month with the login columns null (outage: both counts and days since last login); income × 12 from one month on (unit change); a few `casa_bal` typos × 1,000 | Contract checks fail loud; operational monitoring flags them (tests on the `unit` preset only) |
 | Any | Extra columns, off by default | `extra_{nnnn}_trap_weak` / `_trap_noise` | 10% weak (a trait plus noise, rank correlation 0.1–0.3), the rest pure noise | Scale tests; weak ones rank above noise |
 
 Later (not in M1): a column shifted one month forward (as-of misalignment) and an interaction-only

@@ -24,7 +24,7 @@ LEVELS = {
         "inflow_casa":        dict(kind="flow",  base="income", multiples=[1.5, 1.3, 1.15, 1.05], trait="activity",    loading=0.2),
         "outflow_casa":       dict(kind="flow",  base="income", spend_share=0.85,                 trait="activity",    loading=0.2),
         "spend_cc":           dict(kind="flow",  base="income", multiples=[0.4, 0.3, 0.3, 0.35],  trait="activity",    loading=0.3),
-        "fx_vol":             dict(kind="flow",  base="income", multiples=[1.0, 0.6, 0.4, 0.3],   trait="crossborder", loading=0.4),
+        "fx_vol":             dict(kind="flow",  base="income", multiples=[1.0, 0.6, 0.4, 0.3],   trait="crossborder", loading=0.25),
     },
     "stock_noise": {"rho": 0.8, "sd": 0.25},  # monthly AR(1) noise of log balances
     "flow_noise": {"rho": 0.3, "sd": 0.35, "effect_sd": 0.4},
@@ -112,7 +112,7 @@ SEASONS = {
         "trend_product": "digital",
         "wake_odds_per_year": 1.2,  # from the first panel month
         "app_relaunch_month": "2026-01",
-        "mobile_login_factor": 1.3,
+        "mobile_login_factor": 1.8,  # PSI of mobile logins ≈ 0.37 after it (1.3 gave 0.07, 1.6 0.23)
     },
 }
 # fmt: on

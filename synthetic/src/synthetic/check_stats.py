@@ -131,6 +131,11 @@ def side_row(
     return {**row(check, stratum, n, bound, realised, np.nan), "passed": bool(holds)}
 
 
+def rank_corr(x: pd.Series, y: pd.Series) -> float:
+    """Spearman rank correlation (average ranks for ties)."""
+    return float(x.rank().corr(y.rank()))
+
+
 def hill_estimate(values: np.ndarray, top_share: float) -> tuple[float, int]:
     """The Hill estimate of the tail index from the largest `top_share` of positive values, and the
     number k of values it uses: k / Σ log(x_(i) / x_(k+1)) over the k largest."""

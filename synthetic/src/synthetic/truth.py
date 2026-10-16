@@ -2,7 +2,8 @@
 
 `build_truth` collects what the generator knows and the mart doesn't show: seed, preset, size, the
 generator and library versions (the seed-to-data mapping depends on them), the spec, the
-calibrated intercepts and leaving chances, and turnover per month and profile. Values are made
+calibrated intercepts and leaving chances, turnover per month and profile, and the market index
+behind wealth balances per simulated month. Values are made
 JSON-safe (numpy numbers as Python numbers, tuples as lists, dict keys as strings, NaN as null)
 and round-tripped through JSON, so the truth in memory is exactly what `output.load_truth` reads
 back. Keys become `str(key)`: the spec's `{True: 0.7}` reads back as `{"True": 0.7}`, so readers
@@ -38,6 +39,7 @@ def build_truth(sim: dict) -> dict:
         "spec": sim["spec"],
         "calibration": sim["calibration"],
         "turnover": sim["turnover"],
+        "market_index": sim["market_index"],  # "YYYY-MM" → the shared wealth index
     }
     # The round trip also copies the spec, so editing the truth never changes the preset.
     return json.loads(json.dumps(_json_safe(truth), allow_nan=False))

@@ -5,27 +5,37 @@ canonical-size dataset is checked from column subsets of the written parquet, ne
 `run_checks` is what the tests and the checking notebook call. Each build step adds its families.
 """
 
+from types import ModuleType
+
 import pandas as pd
 
-from synthetic import checks_holding_drivers, checks_holdings, checks_population
+from synthetic import (
+    checks_amount_levels,
+    checks_amount_rules,
+    checks_holding_drivers,
+    checks_holdings,
+    checks_population,
+    checks_seasons,
+)
 from synthetic.output import load_truth, read_output
 
+
+def _family(module: ModuleType, check: str) -> dict:
+    """A family's check function and the columns its module declares."""
+    return dict(
+        check=getattr(module, check),
+        mart_columns=module.MART_COLUMNS,
+        oracle_columns=module.ORACLE_COLUMNS,
+    )
+
+
 CHECK_FAMILIES = {
-    "population": dict(
-        check=checks_population.check_population,
-        mart_columns=checks_population.MART_COLUMNS,
-        oracle_columns=checks_population.ORACLE_COLUMNS,
-    ),
-    "holdings": dict(
-        check=checks_holdings.check_holdings,
-        mart_columns=checks_holdings.MART_COLUMNS,
-        oracle_columns=checks_holdings.ORACLE_COLUMNS,
-    ),
-    "holding_drivers": dict(
-        check=checks_holding_drivers.check_holding_drivers,
-        mart_columns=checks_holding_drivers.MART_COLUMNS,
-        oracle_columns=checks_holding_drivers.ORACLE_COLUMNS,
-    ),
+    "population": _family(checks_population, "check_population"),
+    "holdings": _family(checks_holdings, "check_holdings"),
+    "holding_drivers": _family(checks_holding_drivers, "check_holding_drivers"),
+    "amount_rules": _family(checks_amount_rules, "check_amount_rules"),
+    "amount_levels": _family(checks_amount_levels, "check_amount_levels"),
+    "seasons": _family(checks_seasons, "check_seasons"),
 }
 
 
