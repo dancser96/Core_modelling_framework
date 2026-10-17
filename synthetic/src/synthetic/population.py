@@ -206,6 +206,11 @@ def months_on_book(clients: pd.DataFrame, month: np.datetime64) -> np.ndarray:
     return month.astype(int) - days.astype("datetime64[M]").astype(int) + 1
 
 
+def profile_codes(clients: pd.DataFrame) -> np.ndarray:
+    """Each client's profile as its position in PROFILE_ORDER (the spec's per-profile lists)."""
+    return clients["profile"].map({p: i for i, p in enumerate(PROFILE_ORDER)}).to_numpy()
+
+
 def profile_values(clients: pd.DataFrame, values: list[float]) -> np.ndarray:
     """Each client's entry of a per-profile list of the spec (order: PROFILE_ORDER)."""
     lookup = dict(zip(PROFILE_ORDER, values, strict=True))

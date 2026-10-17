@@ -15,8 +15,8 @@ wins; fix this file. Removed when M1 closes.
 | A | Foundations: refactor, 0/1 flags, hidden attributes, new chains, time hooks, writer, slow suite | done (review pending) | see log |
 | B | Amounts, time effects, segment overlap (step 3) | done (review pending); 12/12 mutations caught | see log |
 | C | Mart: names, rollups, null rule, types, prefix stability (step 4) | done (review pending) | see log |
-| D | Traps, drift evidence, dirty switches, extra columns (step 5) | not started | |
-| E | Oracle: window probabilities, metrics, relevance, regression oracle, `truth.json` (step 6) | not started | |
+| D | Traps, drift evidence, dirty switches, extra columns (step 5) | done (f8c0fd0; Simpson regrouped by onboarding channel eb4fa2c); review pending | see log |
+| E | Oracle: window probabilities, metrics, relevance, regression oracle, `truth.json` (step 6) | done (review pending) | see log |
 | F | Output, source mapping, CLI, budgets, notebook, review guide (step 7) | not started | |
 
 ## Pending fixes
@@ -391,7 +391,12 @@ def simulate_card_spend(spec, sim: dict, month, rng, n_paths: int = 200) -> dict
   schedule at `t`] × [no maturity at `s`] from `<loan>_remaining_1..4` at `t`; chains: wake chance,
   the steady share `w/(w + lapse)` at `t+1` if the required product was gained at `t`. Null where
   the target is null (not eligible, leaves before `t+w`, past the panel). Then `1 − ∏(1 − p̃_s)`.
-- Oracle columns added: `score_<product>` for every non-static product, `<loan>_remaining_1..4`.
+- Oracle columns added: `score_<product>` for every non-static product = the log-odds of adoption,
+  opening or wake-up without the intercept and the state terms, **calendar terms included**
+  (`product_score + time_terms`, exactly what `step_holdings` adds to the intercept);
+  `lapse_<chain>` for every usage chain = its monthly lapse chance before compounding (needed for
+  the steady share of a fresh registrant at `t+1`); `<loan>_remaining_1..4` (months left per slot
+  at the end of the month, 0 = empty).
 - **Regression oracle:** for card holders at `t`, simulate months `t+1..t+3` × 200 paths from the
   true state (traits AR step with each client's chol factor, card holding/onboarding/re-adoption,
   card activity, revolver, current/savings noise for `D`, spend noise, travel months and shares,

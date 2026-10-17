@@ -60,16 +60,26 @@ def draw_latents(
 def step_latents(
     spec: dict, clients: pd.DataFrame, z: np.ndarray, means: np.ndarray, rng: np.random.Generator
 ) -> np.ndarray:
-    """One month of AR(1); the stationary distribution stays exactly N(mean, Σ_profile)."""
+    """One month of AR(1); the stationary distribution stays exactly N(mean, Σ_profile).
+
+    `z` may carry a paths axis, (clients, paths, traits), with `means` as (clients, 1, traits):
+    the regression oracle's simulated paths.
+    """
     rho = spec["latent_rho"]
-    return means + rho * (z - means) + np.sqrt(1 - rho**2) * _correlated_noise(spec, clients, rng)
+    noise = _correlated_noise(spec, clients, rng, z.shape)
+    return means + rho * (z - means) + np.sqrt(1 - rho**2) * noise
 
 
-def _correlated_noise(spec: dict, clients: pd.DataFrame, rng: np.random.Generator) -> np.ndarray:
-    """Standard normal noise per client, correlated with its profile's covariance."""
+def _correlated_noise(
+    spec: dict, clients: pd.DataFrame, rng: np.random.Generator, shape: tuple | None = None
+) -> np.ndarray:
+    """Standard normal noise per client (and path), correlated with its profile's covariance.
+
+    `shape` is (clients, traits) by default, or (clients, paths, traits).
+    """
     names = list(spec["profiles"])
     # Cholesky fails loud if a profile's correlation matrix is not positive definite.
     chol = np.stack([np.linalg.cholesky(c) for c in latent_covariances(spec).values()])
     codes = clients["profile"].map({name: i for i, name in enumerate(names)}).to_numpy()
-    eps = rng.standard_normal((len(clients), len(LATENTS)))
-    return np.einsum("nij,nj->ni", chol[codes], eps)
+    eps = rng.standard_normal((len(clients), len(LATENTS)) if shape is None else shape)
+    return np.einsum("nij,n...j->n...i", chol[codes], eps)

@@ -28,21 +28,31 @@ def product_score(
     z: np.ndarray,
     age: np.ndarray,
 ) -> np.ndarray:
-    """A product's log-odds score per client, before the profile intercept and the time terms."""
+    """A product's log-odds score per client, before the profile intercept and the time terms.
+
+    `z` is (clients, traits), or (clients, paths, traits) for the regression oracle's paths: the
+    client terms then broadcast over the paths (`per_client`).
+    """
     product, rules = spec["products"][key], spec["holding_rules"]
     loadings = np.array([product.get("traits", {}).get(name, 0.0) for name in LATENTS])
     out = z @ loadings
     age_cfg = product.get("age", {})
     if "slope_per_decade" in age_cfg:
-        out = out + age_cfg["slope_per_decade"] * (age - 40) / 10
+        out = out + per_client(age_cfg["slope_per_decade"] * (age - 40) / 10, z)
     if "peak" in age_cfg:
-        out = out - age_cfg["curvature"] * ((age - age_cfg["peak"]) / 10) ** 2
+        out = out - per_client(age_cfg["curvature"] * ((age - age_cfg["peak"]) / 10) ** 2, z)
     for column, effect in product.get("effects", {}).items():
-        out = out + clients[column].map(effect).fillna(0.0).to_numpy()
+        out = out + per_client(clients[column].map(effect).fillna(0.0).to_numpy(), z)
     if "min_income" in product:
         below = below_threshold(rules, clients, product["min_income"])
-        out = out + np.log(rules["below_threshold_odds"]) * below
+        out = out + per_client(np.log(rules["below_threshold_odds"]) * below, z)
     return out
+
+
+def per_client(values: np.ndarray, z: np.ndarray) -> np.ndarray:
+    """Per-client `values` (clients,) shaped to broadcast against `z`'s path axes: unchanged for
+    (clients, traits), a (clients, 1) column for (clients, paths, traits)."""
+    return np.reshape(values, (len(values),) + (1,) * (np.ndim(z) - 2))
 
 
 def time_terms(spec: dict, key: str, clients: pd.DataFrame, month: np.datetime64) -> np.ndarray:

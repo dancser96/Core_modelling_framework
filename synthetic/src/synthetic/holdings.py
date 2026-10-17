@@ -13,9 +13,12 @@ from the client's history since relationship start (`hazards.held_at_start`, Bin
 loans), usage at its steady state. New clients start without products (usage at its steady state)
 and live the same history. Every month `step_holdings` moves all products from the state at the end
 of the previous month, with the month's time terms in the scores, and returns the chance behind
-every event, for the oracle. Usage chains that require a product are at risk only while it is held
-(card activity and the revolver state need a card, current/savings activity the static account).
-`holding_columns` turns the state into mart columns, plus the hidden chains for the oracle.
+every event and the state-free scores and lapse chances, for the oracle (its window
+probabilities). The same step moves the regression oracle's simulated paths (`regression`), with
+the state as (clients, paths) arrays. Usage chains that require a product are at risk only while
+it is held (card activity and the revolver state need a card, current/savings activity the static
+account). `holding_columns` turns the state into mart columns, plus the hidden state (chains, loan
+slots) for the oracle.
 """
 
 import numpy as np
@@ -26,6 +29,7 @@ from synthetic.hazards import (
     churned_chance,
     held_at_start,
     lapse_chance,
+    per_client,
     product_score,
     time_terms,
 )
@@ -81,27 +85,31 @@ def step_holdings(
     month: np.datetime64,
     calib: dict,
     rng: np.random.Generator,
-) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict[str, np.ndarray]]:
     """One month of adoptions, losses, openings, maturities, wake-ups and lapses.
 
     Every product moves from `before`, the state at the end of the previous month. Returns the new
-    state and the chance of each mart-visible event per client (null where not at risk), which the
-    oracle records.
+    state, the chance of each mart-visible event per client (null where not at risk), and the
+    oracle's state-free terms (D-068): `score_<key>`, the log-odds without the intercept and the
+    state terms (churned odds, onboarding), calendar terms included, and `lapse_<key>`, a usage
+    chain's lapse chance before the required product's leaving chance compounds it. With `z` as
+    (clients, paths, traits) and the state as (clients, paths) arrays, it moves simulated paths
+    (the regression oracle; 0/1 products and usage chains only, `onboarding_left` stays per client).
     """
-    n, age = len(clients), client_age(clients, month)
+    age = client_age(clients, month)
     before = state  # arrays are replaced below, never changed in place, so this stays as it was
     state = dict(state, onboarding_left=np.maximum(state["onboarding_left"] - 1, 0))
-    chances = {}
+    chances, scores = {}, {}
     for key, product in spec["products"].items():
         if product["kind"] == "static":
             continue
-        u = rng.random(n)  # one draw per product and client, in a fixed order
+        u = rng.random(z.shape[:-1])  # one draw per product and client (and path), fixed order
         client_score = product_score(spec, key, clients, z, age)
-        log_odds = (
-            _intercepts(calib[key], clients) + client_score + time_terms(spec, key, clients, month)
-        )
+        time = per_client(time_terms(spec, key, clients, month), z)
+        log_odds = per_client(_intercepts(calib[key], clients), z) + client_score + time
+        scores[f"score_{key}"] = client_score + time
         if product["kind"] == "holding":
-            onboarding = before["onboarding_left"] > 0
+            onboarding = per_client(before["onboarding_left"] > 0, z)
             chances[f"{key}_acquire"] = _step_holding(
                 spec, key, before, state, log_odds, onboarding, u, calib
             )
@@ -109,21 +117,23 @@ def step_holdings(
             chances[f"{key}_open"] = _step_loans(product, key, before, state, log_odds, u)
         else:
             lapse = lapse_chance(spec, key, client_score, calib[key]["score_mean"])
+            scores[f"lapse_{key}"] = lapse
             activate, lapse = _step_usage(
                 spec, key, before, state, expit(log_odds), lapse, u, calib
             )
             chances[f"{key}_activate"], chances[f"{key}_lapse"] = activate, lapse
-    return state, chances
+    return state, chances, scores
 
 
 def holding_columns(
     spec: dict, state: dict[str, np.ndarray]
 ) -> tuple[dict[str, object], dict[str, np.ndarray]]:
-    """Columns of the current state: for the mart, and the hidden chains' flags for the oracle.
+    """Columns of the current state: for the mart, and the hidden state for the oracle.
 
     Mart, in the spec's column order (`_mart_order`): flags, statuses (strings), usage flags,
     account counts and months to maturity, then the product count. Usage chains never count as
-    products; one with `in_mart` False goes to the oracle instead.
+    products; one with `in_mart` False goes to the oracle instead, as do each loan slot's months
+    to maturity (`<loan>_remaining_<slot>`).
     """
     columns, hidden, product_cnt = {}, {}, 0
     for key in _mart_order(spec["products"]):
@@ -146,6 +156,10 @@ def holding_columns(
                 pd.Series(nearest).where(count > 0).astype("Int64").array
             )
             product_cnt = product_cnt + (count > 0)
+            # Each slot's months to maturity, for the oracle's window probabilities (0 = empty).
+            hidden |= {
+                f"{key}_remaining_{i + 1}": remaining[:, i] for i in range(remaining.shape[1])
+            }
         else:
             target = columns if product.get("in_mart", True) else hidden
             target[product.get("flag", f"{key}_active_flag")] = state[f"{key}_active"]

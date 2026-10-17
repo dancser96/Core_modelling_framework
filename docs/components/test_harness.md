@@ -55,7 +55,8 @@ so the notebook stays small. It is committed with its outputs (synthetic data on
 `notebooks/README.md`). The guided EDA notebook replaces it once EDA exists.
 
 Framework tests later assert against the ground truth: screens flag every trap, the top oracle
-drivers rank near the top, null controls rank near the bottom, and no model beats the oracle AUC.
+drivers rank near the top, null controls rank in the bottom fifth (many columns are unrelated to
+any one target and tie with them at noise level), and no model beats the oracle AUC.
 
 ## Purpose
 Real data never leaves the bank, so everything outside it runs on synthetic data with **known ground
@@ -669,8 +670,9 @@ feature.
     (`p_<product>_acquire`, `p_<loan>_open`, `p_<chain>_activate` / `_lapse`; null where the client
     was not at risk). Row `t` holds the chance of the move into month `t`, which the month-`t`
     features already show; never join it to an observation at `t`;
-  - `score_<product>`: each product's log-odds without the intercept and the state terms (§3), the
-    input for window probabilities;
+  - `score_<product>`: each product's log-odds of adoption, opening or wake-up without the
+    intercept and the state terms, calendar terms included (§3), the input for window
+    probabilities; `lapse_<chain>`: each usage chain's monthly lapse chance;
   - each loan slot's months to maturity (`<loan>_remaining_1..4`, 0 = empty);
   - hidden attributes: `true_income`, `wealth_base`, `remitter_flag`, `school_payer_flag`,
     `bonus_month` (0 = none), `revolver_flag`, the power-law multipliers `pareto_<stock>`;
@@ -679,8 +681,11 @@ feature.
   keyed to the observation month so no consumer shifts rows: for an observation at `t`,
   `1 − ∏(1 − p̃_s)` over `s = t+1 … t+w`, where `p̃_s` is the chance the client would face with its
   state frozen at `t` (never / churned as at `t`, onboarding by tenure, loan slots and maturities as
-  scheduled at `t` — a maturity in month `s` hides an opening —, the required product held), on the
-  realised trait path, from the intercepts in `truth.json` and `score_<product>` at `s`. Multiplying
+  scheduled at `t` — a maturity in month `s` hides an opening —; for a chain, the required
+  product's leaving chance compounded month by month, and the steady share `w / (w + lapse)` at
+  `t+1` when the required product was adopted at `t`, read from the oracle's `p_<product>_acquire`),
+  on the realised trait path, from the intercepts in `truth.json` and `score_<product>` at `s`. With
+  `w = 1` it equals the recorded chance at `t+1` (tested to 1e-12). Multiplying
   the recorded rows instead conditions on the outcome and understates positives (card acquisition
   AUC 0.71 instead of 0.81). Null where the target is: not eligible at `t`, or the client leaves
   before `t+w`, or the window runs past the panel. The oracle conditions on the realised trait path,
@@ -710,10 +715,13 @@ feature.
     `count` / `rollup` / `categorical` / `trap` / `noise`), generating mechanism;
   - the spec (population, products, levels, seasons), calibrated intercepts and leaving chances,
     turnover per month and profile, the market index path;
-  - per standard target and window: oracle AUC pooled and per segment, events per month,
-    expected positives in a 6-month window and a low-confidence flag;
-  - per standard target: the **relevance ranking**, every column's rank correlation (η for
-    categoricals) with the true window probability (`w` = 3), the median over observation months;
+  - per standard target and window: oracle AUC pooled and per segment (Mann–Whitney over every row
+    where target and probability are set, all months pooled), realised events per month, expected
+    positives in 6 months (6 × the mean monthly sum of window probabilities) and a low-confidence
+    flag (fewer than 200);
+  - per standard target: the **relevance ranking**, every column's |rank correlation| (held-out η
+    for categoricals) with the true window probability (`w` = 3) among eligible rows, the median
+    over observation months, on the clients whose id is divisible by 5 (a fixed 20%);
   - the trap summary, drift, dirty switches when on, the null rule.
 
 **The oracle AUC is the ceiling.** A model or univariate screen that beats it is almost certainly

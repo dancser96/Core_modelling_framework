@@ -18,8 +18,10 @@ from synthetic import (
     checks_holding_drivers,
     checks_holdings,
     checks_mart,
+    checks_oracle,
     checks_population,
     checks_seasons,
+    checks_traps,
 )
 from synthetic.output import load_truth, read_output
 
@@ -42,6 +44,8 @@ CHECK_FAMILIES = {
     "amount_mix": _family(checks_amount_mix, "check_amount_mix"),
     "seasons": _family(checks_seasons, "check_seasons"),
     "mart": _family(checks_mart, "check_mart"),
+    "traps": _family(checks_traps, "check_traps"),
+    "oracle": _family(checks_oracle, "check_oracle"),
 }
 
 

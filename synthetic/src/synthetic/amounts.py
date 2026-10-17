@@ -23,9 +23,8 @@ from synthetic.balances import loan_keys, start_balances, step_balances
 from synthetic.cards import card_amounts, start_card
 from synthetic.flows import account_flows, fx_amounts
 from synthetic.logins import login_amounts, start_days_since_login
-from synthetic.population import client_age, profile_values
+from synthetic.population import client_age, profile_codes, profile_values
 from synthetic.presets import LATENTS
-from synthetic.products import PROFILE_ORDER
 from synthetic.variation import (
     draw_effects,
     draw_multipliers,
@@ -114,7 +113,7 @@ def start_amounts(
         "flow_noise": start_noise(rng, n, np.full(n_flows, flow["sd"])),
         "stock_pareto": draw_multipliers(rng, n, np.array([measures[k]["tail"] for k in stocks])),
     }
-    profiles, dz = _profile_codes(clients), z - means
+    profiles, dz = profile_codes(clients), z - means
     log_parts = log_variation(spec, measure_offsets(spec), state, dz, profiles)
     state |= start_balances(spec, clients, profiles, log_parts, holdings, month, new_to_bank, rng)
     state |= start_card(spec, clients, profiles, dz, holdings, rngs["cards"])
@@ -147,7 +146,7 @@ def step_amounts(
     """
     levels, rng = spec["levels"], rngs["amounts"]
     state = _step_noises(spec, state, rng)
-    profiles, dz = _profile_codes(clients), z - means
+    profiles, dz = profile_codes(clients), z - means
     log_parts = log_variation(spec, measure_offsets(spec), state, dz, profiles)
     count_tilt = np.exp(levels["counts"]["activity_loading"] * dz[:, LATENTS.index("activity")])
     balance_state, balances = step_balances(
@@ -207,8 +206,3 @@ def _month_columns(
     stocks = measures_of_kind(spec, "stock")
     oracle = {f"pareto_{name.removesuffix('_bal')}": pareto[:, j] for j, name in enumerate(stocks)}
     return mart, oracle
-
-
-def _profile_codes(clients: pd.DataFrame) -> np.ndarray:
-    """Each client's profile as its position in PROFILE_ORDER."""
-    return clients["profile"].map({p: i for i, p in enumerate(PROFILE_ORDER)}).to_numpy()

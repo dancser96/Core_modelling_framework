@@ -3,8 +3,11 @@
 `write_mart` drives the month loop (`generate`) and writes each month as it comes, so memory holds
 about one month: `<out>/mart/snapshot_month=YYYY-MM-01/part-0.parquet`, the oracle likewise under
 `<out>/oracle/`, and `<out>/truth.json` last, so a folder without a truth file is an incomplete
-dataset. The month is a partition column, never stored inside the files; Spark infers it as a date
-from the folder name (T18). The mart is written with the explicit types of `mart.arrow_schema`
+dataset. The truth's oracle part (metrics and relevance rankings) is computed once every month is
+on disk and the simulation's state is gone, from the columns it needs read back (one target's at
+a time, `oracle.target_columns`, then a 20% client sample for the rankings). The month is a
+partition column, never stored inside the files; Spark infers it as a date from the folder name
+(T18). The mart is written with the explicit types of `mart.arrow_schema`
 (flags int32, counts int64 with nulls where nullable, `cc_limit` decimal(18, 2)), so every month
 has the same schema whatever its values; the oracle keeps the types pandas gives it. `read_output`
 reads a table back in month order with `snapshot_month` as `datetime.date` values and decimals as
@@ -25,7 +28,9 @@ from synthetic import __version__
 from synthetic.dirty import dirty_panel
 from synthetic.generate import advance_simulation, finish_simulation, start_simulation
 from synthetic.mart import arrow_schema
-from synthetic.truth import build_truth
+from synthetic.oracle import BINARY_TARGETS, METRIC_ORACLE_COLUMNS, target_columns, target_metrics
+from synthetic.relevance import SAMPLE_EVERY, relevance_rankings
+from synthetic.truth import build_truth, complete_truth, with_oracle
 
 TABLES = ("mart", "oracle")
 PARTITION = "snapshot_month"
@@ -44,28 +49,64 @@ def write_mart(
 
     `out_dir` must not hold a dataset already: months left over from another run would mix in.
     With `dirty` on, the defects are planted in the whole panel (`dirty.dirty_panel`), so every
-    month is held until the end (small presets).
+    month is held until the end (small presets) and the oracle part comes from the clean panel.
     """
     out = Path(out_dir)
     existing = [name for name in (*TABLES, "truth.json") if (out / name).exists()]
     if existing:
         raise FileExistsError(f"{out} already holds {existing}; write into an empty folder")
     sim = start_simulation(preset, n_clients, seed, n_months, n_extra_columns)
-    products = list(sim["spec"]["products"])
-    held = []
-    while sim["month"] < sim["last_month"]:
-        sim, final = advance_simulation(sim)
-        if dirty:
-            held += final
-        else:
-            _write_months(out, final, products)
-    final = held + finish_simulation(sim)
     if dirty:
-        sim, final = dirty_panel(sim, final)
-    _write_months(out, final, products)
-    truth = build_truth(sim)
+        truth = _write_dirty(out, sim)
+    else:
+        truth = _write_clean(out, sim)
+        del sim  # the starting book's state; the oracle part reads the written months instead
+        truth = _with_written_oracle(out_dir, truth)
     (out / "truth.json").write_text(json.dumps(truth, indent=1))
     return truth
+
+
+def _write_clean(out: Path, sim: dict) -> dict:
+    """Run the month loop, writing each month as it becomes final; the truth without its oracle
+    part (the simulation's state is freed on return)."""
+    products = list(sim["spec"]["products"])
+    columns = None
+    while sim["month"] < sim["last_month"]:
+        sim, final = advance_simulation(sim)
+        _write_months(out, final, products)
+        columns = columns or [list(mart.columns) for mart, _ in final][:1]
+    final = finish_simulation(sim)
+    _write_months(out, final, products)
+    columns = columns or [list(mart.columns) for mart, _ in final][:1]
+    return build_truth(sim, columns[0])
+
+
+def _write_dirty(out: Path, sim: dict) -> dict:
+    """Run the month loop holding every month, plant the defects and write the panel; the full
+    truth, its oracle part from the clean panel."""
+    frames = []
+    while sim["month"] < sim["last_month"]:
+        sim, final = advance_simulation(sim)
+        frames += final
+    frames += finish_simulation(sim)
+    sim, planted = dirty_panel(sim, frames)
+    _write_months(out, planted, list(sim["spec"]["products"]))
+    clean = [pd.concat([pair[i] for pair in frames], ignore_index=True) for i in (0, 1)]
+    return complete_truth(sim, *clean)
+
+
+def _with_written_oracle(out_dir: str, truth: dict) -> dict:
+    """The truth with its oracle part, from the written months: each target's metrics from the
+    columns it needs, then the relevance rankings from every column of the 20% client sample."""
+    metrics = {}
+    for target in BINARY_TARGETS:  # one target's columns at a time bounds the memory
+        mart_columns, oracle_columns = target_columns(target)
+        mart = read_output(out_dir, "mart", mart_columns)
+        oracle = read_output(out_dir, "oracle", oracle_columns)
+        metrics[target] = target_metrics(mart, oracle, truth, target)
+    mart = read_output(out_dir, "mart", client_sample=SAMPLE_EVERY)
+    oracle = read_output(out_dir, "oracle", METRIC_ORACLE_COLUMNS, SAMPLE_EVERY)
+    return with_oracle(truth, metrics, relevance_rankings(mart, oracle, truth))
 
 
 def read_output(

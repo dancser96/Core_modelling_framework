@@ -1,12 +1,13 @@
-"""Synthetic data, build step 5: the off-by-default switches (dirty data, extra columns) and the
-trap list in truth. The planted traps' behaviour is checked by `checks_traps` (wired with the
-oracle in build step 6)."""
+"""Synthetic data, build step 5: the planted traps (`checks_traps`, which needs the oracle's
+window probabilities), the off-by-default switches (dirty data, extra columns) and the trap list in
+truth."""
 
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
+from synthetic.check_suite import run_checks
 from synthetic.checks_trap_columns import OUTAGE_COLUMNS, check_dirty, check_extra_columns
 from synthetic.generate import generate_mart
 from synthetic.output import read_output, write_mart
@@ -14,6 +15,21 @@ from synthetic.trap_spec import TRAPS
 from synthetic.traps import trap_summary
 
 DEFECT_COLUMNS = ["income", "casa_bal", *OUTAGE_COLUMNS]
+
+
+def test_trap_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
+    """On the unit preset, every rule row of the trap family passes."""
+    checks = run_checks(unit_output[0], ["traps"])["traps"]
+    rules = checks[checks["rule"]]
+    assert len(rules) > 0, "the trap family has no rule rows"
+    assert rules["passed"].all(), rules[~rules["passed"]].to_string()
+
+
+@pytest.mark.slow
+def test_trap_checks_pass_on_canonical(canonical_output: tuple[str, dict, dict]) -> None:
+    """Every row of the trap family passes at the canonical size."""
+    checks = run_checks(canonical_output[0], ["traps"])["traps"]
+    assert checks["passed"].all(), checks[~checks["passed"]].to_string()
 
 
 @pytest.fixture(scope="module")
