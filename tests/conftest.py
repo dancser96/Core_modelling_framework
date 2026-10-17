@@ -23,15 +23,6 @@ from core_modelling.environment import _get_spark_session
 from synthetic.generate import generate_mart
 from synthetic.output import load_truth, write_mart
 
-# Runs one family's checks (`check_suite.run_checks`) and pickles its table: out_dir, family,
-# client sample (0 for none), pickle path.
-CHECK_FAMILY = """
-import sys
-from synthetic.check_suite import run_checks
-out_dir, family, sample, path = sys.argv[1:]
-run_checks(out_dir, [family], int(sample) or None)[family].to_pickle(path)
-"""
-
 
 @pytest.fixture(scope="session")
 def spark() -> Iterator[SparkSession]:
@@ -81,14 +72,14 @@ def canonical_checks(
     canonical_output: tuple[str, dict, dict], tmp_path_factory: pytest.TempPathFactory
 ) -> Callable[..., pd.DataFrame]:
     """A function giving one family's check table on the canonical dataset, run in a separate
-    process; `client_sample` n checks only the clients whose id is a multiple of n."""
+    process the way `check_suite.write_checks` runs it (the mart family on its client sample)."""
     folder = tmp_path_factory.mktemp("canonical_checks")
 
-    def check_family(family: str, client_sample: int | None = None) -> pd.DataFrame:
+    def check_family(family: str) -> pd.DataFrame:
         """The family's check table, from a separate process."""
-        path = Path(folder, f"{family}.pkl")
-        arguments = [canonical_output[0], family, str(client_sample or 0), str(path)]
-        subprocess.run([sys.executable, "-c", CHECK_FAMILY, *arguments], check=True)
-        return pd.read_pickle(path)
+        path = Path(folder, f"{family}.parquet")
+        command = [sys.executable, "-m", "synthetic.check_suite", canonical_output[0], family]
+        subprocess.run([*command, str(path)], check=True)
+        return pd.read_parquet(path)
 
     return check_family

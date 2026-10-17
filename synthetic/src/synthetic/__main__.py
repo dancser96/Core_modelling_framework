@@ -3,13 +3,16 @@
     python -m synthetic --preset canonical --n-clients 50000 --seed 0 \\
         --out data/01_raw/synthetic_canonical
 
-It prints the size of what it wrote and how long it took. The output folder must not hold a
-dataset already; `conf/local/sources.yml` then points the logical source at `<out>/mart`.
+It prints the size of what it wrote and how long it took; `--checks` also runs every check family
+(each in its own process) and saves the tables in `<out>/checks/`, which the checking notebook
+reads. The output folder must not hold a dataset already; `conf/local/sources.yml` then points the
+logical source at `<out>/mart`.
 """
 
 import argparse
 import time
 
+from synthetic.check_suite import read_checks, write_checks
 from synthetic.output import read_output, write_mart
 from synthetic.presets import PRESETS
 
@@ -26,6 +29,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--out", required=True, help="an empty or new folder")
     parser.add_argument("--dirty", action="store_true", help="plant the dirty-data defects")
     parser.add_argument("--extra-columns", type=int, default=0, help="extra weak or noise columns")
+    parser.add_argument("--checks", action="store_true", help="run and save every check family")
     return parser.parse_args(argv)
 
 
@@ -49,6 +53,10 @@ def main(argv: list[str] | None = None) -> None:
         f"{keys['snapshot_month'].nunique()} months in {seconds:.0f} s "
         f"(preset {args.preset}, {truth['n_clients']:,} clients, seed {args.seed})"
     )
+    if args.checks:
+        write_checks(args.out)
+        for family, table in read_checks(args.out).items():
+            print(f"checks {family}: {int(table['passed'].sum())} of {len(table)} rows pass")
 
 
 if __name__ == "__main__":

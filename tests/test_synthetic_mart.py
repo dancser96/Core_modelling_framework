@@ -26,7 +26,7 @@ def test_mart_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
 @pytest.mark.slow
 def test_mart_checks_pass_on_canonical(canonical_checks: Callable[..., pd.DataFrame]) -> None:
     """Every row passes at the canonical size, on a fifth of the clients (every column is read)."""
-    checks = canonical_checks("mart", client_sample=5)
+    checks = canonical_checks("mart")
     assert checks["passed"].all(), checks[~checks["passed"]].to_string()
 
 
