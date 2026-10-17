@@ -1,15 +1,19 @@
 """Shared fixtures: one real local Spark session (never a stub, T15) and the synthetic datasets.
 
-The unit preset is generated in memory once and written to disk once; the canonical dataset is
-written once per session by a separate process, for the slow tests (`pytest -m slow`), which read
-only the columns each check family declares.
+The unit preset is generated in memory once and written to disk once. The canonical dataset is
+written once per session by a separate process (`python -m synthetic`), for the slow tests
+(`pytest -m slow`). Each slow test checks one family of it in a separate process too: a family's
+working set at the canonical size reaches several GB (the panel is sorted, joined and turned into
+bools, copies of the columns read), so the test run itself stays small and every family's memory
+goes back to the system when it ends.
 """
 
-import resource
+import os
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -18,6 +22,15 @@ from pyspark.sql import SparkSession
 from core_modelling.environment import _get_spark_session
 from synthetic.generate import generate_mart
 from synthetic.output import load_truth, write_mart
+
+# Runs one family's checks (`check_suite.run_checks`) and pickles its table: out_dir, family,
+# client sample (0 for none), pickle path.
+CHECK_FAMILY = """
+import sys
+from synthetic.check_suite import run_checks
+out_dir, family, sample, path = sys.argv[1:]
+run_checks(out_dir, [family], int(sample) or None)[family].to_pickle(path)
+"""
 
 
 @pytest.fixture(scope="session")
@@ -49,15 +62,33 @@ def canonical_output(tmp_path_factory: pytest.TempPathFactory) -> tuple[str, dic
     and peak memory (`timing`: seconds, peak_bytes) be measured on their own.
     """
     out_dir = str(tmp_path_factory.mktemp("canonical_output"))
-    code = (
-        "from synthetic.output import write_mart; "
-        f"write_mart({out_dir!r}, preset='canonical', seed=0)"
-    )
+    command = [sys.executable, "-m", "synthetic", "--preset", "canonical", "--seed", "0"]
     start = time.perf_counter()
-    subprocess.run([sys.executable, "-c", code], check=True)
+    process = subprocess.Popen([*command, "--out", out_dir])
+    # wait4 gives this child's own peak, whatever other processes the test run started.
+    _, status, usage = os.wait4(process.pid, 0)
     seconds = time.perf_counter() - start
-    # The largest finished child process of the test run: the generator, by far. ru_maxrss is in
-    # bytes on macOS and in KiB on Linux.
-    peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-    peak_bytes = peak if sys.platform == "darwin" else peak * 1024
+    process.returncode = os.waitstatus_to_exitcode(status)  # reaped here, not by Popen
+    if process.returncode != 0:
+        raise subprocess.CalledProcessError(process.returncode, process.args)
+    # ru_maxrss is in bytes on macOS and in KiB on Linux.
+    peak_bytes = usage.ru_maxrss if sys.platform == "darwin" else usage.ru_maxrss * 1024
     return out_dir, load_truth(out_dir), {"seconds": seconds, "peak_bytes": peak_bytes}
+
+
+@pytest.fixture(scope="session")
+def canonical_checks(
+    canonical_output: tuple[str, dict, dict], tmp_path_factory: pytest.TempPathFactory
+) -> Callable[..., pd.DataFrame]:
+    """A function giving one family's check table on the canonical dataset, run in a separate
+    process; `client_sample` n checks only the clients whose id is a multiple of n."""
+    folder = tmp_path_factory.mktemp("canonical_checks")
+
+    def check_family(family: str, client_sample: int | None = None) -> pd.DataFrame:
+        """The family's check table, from a separate process."""
+        path = Path(folder, f"{family}.pkl")
+        arguments = [canonical_output[0], family, str(client_sample or 0), str(path)]
+        subprocess.run([sys.executable, "-c", CHECK_FAMILY, *arguments], check=True)
+        return pd.read_pickle(path)
+
+    return check_family

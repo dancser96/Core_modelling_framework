@@ -2,6 +2,7 @@
 window probabilities), the off-by-default switches (dirty data, extra columns) and the trap list in
 truth."""
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
@@ -26,9 +27,9 @@ def test_trap_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
 
 
 @pytest.mark.slow
-def test_trap_checks_pass_on_canonical(canonical_output: tuple[str, dict, dict]) -> None:
+def test_trap_checks_pass_on_canonical(canonical_checks: Callable[..., pd.DataFrame]) -> None:
     """Every row of the trap family passes at the canonical size."""
-    checks = run_checks(canonical_output[0], ["traps"])["traps"]
+    checks = canonical_checks("traps")
     assert checks["passed"].all(), checks[~checks["passed"]].to_string()
 
 

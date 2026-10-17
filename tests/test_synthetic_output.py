@@ -1,6 +1,9 @@
-"""Synthetic data on disk: what is written reads back as generated, and stale data fails loud."""
+"""Synthetic data on disk: what is written reads back as generated, stale data fails loud, the
+command line writes a dataset, and the canonical dataset fits its time and memory budget."""
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -49,3 +52,24 @@ def test_load_truth_refuses_another_generator_version(
     (tmp_path / "truth.json").write_text(json.dumps(stale))
     with pytest.raises(ValueError, match="generate it again"):
         load_truth(str(tmp_path))
+
+
+def test_command_line_writes_a_dataset(tmp_path: Path) -> None:
+    """`python -m synthetic` writes a dataset of the size asked for and prints its rows."""
+    out_dir = str(tmp_path / "unit_3_months")
+    args = ["--preset", "unit", "--n-months", "3", "--seed", "0", "--out", out_dir]
+    run = subprocess.run(
+        [sys.executable, "-m", "synthetic", *args], check=True, capture_output=True, text=True
+    )
+    keys = read_output(out_dir, "mart", ["client_id", "snapshot_month"])
+    assert keys["snapshot_month"].nunique() == load_truth(out_dir)["n_months"] == 3
+    assert f"{len(keys):,} rows" in run.stdout
+
+
+@pytest.mark.slow
+def test_canonical_fits_its_budget(canonical_output: tuple[str, dict, dict]) -> None:
+    """The canonical dataset is written in at most 10 minutes with at most 3 GB of peak memory
+    (test_harness.md, "Presets and budgets")."""
+    timing = canonical_output[2]
+    assert timing["seconds"] <= 600, timing
+    assert timing["peak_bytes"] <= 3 * 1024**3, timing

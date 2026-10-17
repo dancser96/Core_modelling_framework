@@ -1,5 +1,7 @@
 """Synthetic data, build step 1: population, client description, day counters, latent traits."""
 
+from collections.abc import Callable
+
 import pandas as pd
 import pytest
 
@@ -19,9 +21,9 @@ def test_population_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
 
 
 @pytest.mark.slow
-def test_population_checks_pass_on_canonical(canonical_output: tuple[str, dict, dict]) -> None:
+def test_population_checks_pass_on_canonical(canonical_checks: Callable[..., pd.DataFrame]) -> None:
     """Every row of the step-1 check table passes at the canonical size."""
-    checks = run_checks(canonical_output[0], ["population"])["population"]
+    checks = canonical_checks("population")
     assert checks["passed"].all(), checks[~checks["passed"]].to_string()
 
 

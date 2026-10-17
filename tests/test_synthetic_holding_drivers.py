@@ -1,5 +1,8 @@
 """Synthetic data, build step 2: what drives adoption (income threshold, churned status)."""
 
+from collections.abc import Callable
+
+import pandas as pd
 import pytest
 
 from synthetic.check_suite import run_checks
@@ -15,7 +18,9 @@ def test_holding_driver_checks_run_on_unit(unit_output: tuple[str, dict]) -> Non
 
 
 @pytest.mark.slow
-def test_holding_driver_checks_pass_on_canonical(canonical_output: tuple[str, dict, dict]) -> None:
+def test_holding_driver_checks_pass_on_canonical(
+    canonical_checks: Callable[..., pd.DataFrame],
+) -> None:
     """Every row of the drivers' check table passes at the canonical size."""
-    checks = run_checks(canonical_output[0], ["holding_drivers"])["holding_drivers"]
+    checks = canonical_checks("holding_drivers")
     assert checks["passed"].all(), checks[~checks["passed"]].to_string()

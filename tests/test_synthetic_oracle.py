@@ -1,6 +1,8 @@
 """Synthetic data, build step 6: the oracle (window probabilities, regression oracle, metrics,
 relevance) and `truth.json`."""
 
+from collections.abc import Callable
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -22,9 +24,9 @@ def test_oracle_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
 
 
 @pytest.mark.slow
-def test_oracle_checks_pass_on_canonical(canonical_output: tuple[str, dict, dict]) -> None:
+def test_oracle_checks_pass_on_canonical(canonical_checks: Callable[..., pd.DataFrame]) -> None:
     """Every row of the oracle family passes at the canonical size."""
-    checks = run_checks(canonical_output[0], ["oracle"])["oracle"]
+    checks = canonical_checks("oracle")
     assert checks["passed"].all(), checks[~checks["passed"]].to_string()
 
 

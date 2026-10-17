@@ -1,5 +1,8 @@
 """Synthetic data, build step 2: holdings, statuses, loan accounts and usage states."""
 
+from collections.abc import Callable
+
+import pandas as pd
 import pytest
 
 from synthetic.check_suite import run_checks
@@ -15,9 +18,9 @@ def test_holdings_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
 
 
 @pytest.mark.slow
-def test_holdings_checks_pass_on_canonical(canonical_output: tuple[str, dict, dict]) -> None:
+def test_holdings_checks_pass_on_canonical(canonical_checks: Callable[..., pd.DataFrame]) -> None:
     """Every row of the step-2 check table passes at the canonical size."""
-    checks = run_checks(canonical_output[0], ["holdings"])["holdings"]
+    checks = canonical_checks("holdings")
     assert checks["passed"].all(), checks[~checks["passed"]].to_string()
 
 

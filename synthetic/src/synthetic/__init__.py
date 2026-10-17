@@ -6,4 +6,4 @@ tests and demos check the framework against. `generate.generate_mart` builds it,
 the spec, `checks_<step>` prove each build step. Spec: docs/components/test_harness.md.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
