@@ -143,44 +143,23 @@ def advance_simulation(sim: dict) -> tuple[dict, list[tuple[pd.DataFrame, pd.Dat
     look-ahead buffer (`month_rows.buffer_month`); burn-in months return none.
     """
     spec, rngs, calib, month = sim["spec"], sim["rngs"], sim["calibration"], sim["month"] + 1
-    clients = sim["clients"]
-    stay, new = _turn_over(spec, clients, month, rngs, sim["next_id"])
-    kept = clients[stay]
+    stay, new = _turn_over(spec, sim["clients"], month, rngs, sim["next_id"])
+    kept = sim["clients"][stay]
     z = step_latents(spec, kept, sim["z"][stay], sim["means"][stay], rngs["latents"])
-    new_holdings = start_holdings(
-        spec, new["clients"], new["z"], month, calib, rngs["holdings"], new_to_bank=True
-    )
-    new_amounts = start_amounts(
-        spec, new["clients"], new["z"], new["means"], new_holdings, month, rngs, new_to_bank=True
-    )
-    # An empty batch is left out: concatenating it can change column dtypes.
-    batch = [kept, new["clients"]] if len(new["clients"]) else [kept]
-    advanced = dict(
-        sim,
-        month=month,
-        clients=pd.concat(batch, ignore_index=True),
-        means=np.vstack([sim["means"][stay], new["means"]]),
-        z=np.vstack([z, new["z"]]),
-        next_id=new["next_id"],
-    )
+    advanced = _join_month(sim, month, stay, new, z)
     clients, z, means = advanced["clients"], advanced["z"], advanced["means"]
-    n_new = len(new["clients"])
-    holdings = _keep_and_append(sim["holdings"], stay, new_holdings, n_new)
     holdings, chances, scores = step_holdings(
-        spec, holdings, clients, z, month, calib, rngs["holdings"]
+        spec, advanced["holdings"], clients, z, month, calib, rngs["holdings"]
     )
     market = step_market(spec, list(sim["market_index"].values())[-1], rngs["amounts"])
-    amounts = _keep_and_append(sim["amounts"], stay, new_amounts, n_new)
     amounts, mart_amounts, oracle_amounts = step_amounts(
-        spec, amounts, clients, z, means, holdings, month, market, rngs
+        spec, advanced["amounts"], clients, z, means, holdings, month, market, rngs
     )
-    history = _keep_and_append(sim["history"], stay, start_history(n_new), n_new)
     advanced |= {
         "holdings": holdings,
         "amounts": amounts,
-        "history": advance_history(history, mart_amounts, month.astype(int)),
+        "history": advance_history(advanced["history"], mart_amounts, month.astype(int)),
         "market_index": {**sim["market_index"], str(month): market},
-        "trap_state": _keep_and_append(sim["trap_state"], stay, new["trap_state"], n_new),
     }
     if month < sim["first_month"]:
         return advanced, []
@@ -188,6 +167,36 @@ def advance_simulation(sim: dict) -> tuple[dict, list[tuple[pd.DataFrame, pd.Dat
     advanced["turnover"] = sim["turnover"] + records
     regression = simulate_card_spend(spec, advanced, month, rngs["regression"])
     return buffer_month(advanced, chances, mart_amounts, scores | oracle_amounts | regression)
+
+
+def _join_month(
+    sim: dict, month: np.datetime64, stay: np.ndarray, new: dict, z: np.ndarray
+) -> dict:
+    """The simulation at the start of `month`: the new clients' holdings and amounts started, and
+    every per-client state (clients, traits, holdings, amounts, history, trap state) of the
+    stayers followed by the new clients'; `z` is the stayers' traits after their AR(1) step."""
+    spec, rngs, calib, n_new = sim["spec"], sim["rngs"], sim["calibration"], len(new["clients"])
+    new_holdings = start_holdings(
+        spec, new["clients"], new["z"], month, calib, rngs["holdings"], new_to_bank=True
+    )
+    new_amounts = start_amounts(
+        spec, new["clients"], new["z"], new["means"], new_holdings, month, rngs, new_to_bank=True
+    )
+    # An empty batch is left out: concatenating it can change column dtypes.
+    kept = sim["clients"][stay]
+    batch = [kept, new["clients"]] if n_new else [kept]
+    return dict(
+        sim,
+        month=month,
+        clients=pd.concat(batch, ignore_index=True),
+        means=np.vstack([sim["means"][stay], new["means"]]),
+        z=np.vstack([z, new["z"]]),
+        next_id=new["next_id"],
+        holdings=_keep_and_append(sim["holdings"], stay, new_holdings, n_new),
+        amounts=_keep_and_append(sim["amounts"], stay, new_amounts, n_new),
+        history=_keep_and_append(sim["history"], stay, start_history(n_new), n_new),
+        trap_state=_keep_and_append(sim["trap_state"], stay, new["trap_state"], n_new),
+    )
 
 
 def finish_simulation(sim: dict) -> list[tuple[pd.DataFrame, pd.DataFrame]]:

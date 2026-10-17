@@ -12,12 +12,12 @@ wins; fix this file. Removed when M1 closes.
 ## State
 | Stage | Builds (test_harness step) | Status | Commit |
 |---|---|---|---|
-| A | Foundations: refactor, 0/1 flags, hidden attributes, new chains, time hooks, writer, slow suite | done (review pending) | see log |
-| B | Amounts, time effects, segment overlap (step 3) | done (review pending); 12/12 mutations caught | see log |
-| C | Mart: names, rollups, null rule, types, prefix stability (step 4) | done (review pending) | see log |
-| D | Traps, drift evidence, dirty switches, extra columns (step 5) | done (f8c0fd0; Simpson regrouped by onboarding channel eb4fa2c); review pending | see log |
-| E | Oracle: window probabilities, metrics, relevance, regression oracle, `truth.json` (step 6) | done (review pending) | see log |
-| F | Output, source mapping, CLI, budgets, notebook, review guide (step 7) | not started | |
+| A | Foundations: refactor, 0/1 flags, hidden attributes, new chains, time hooks, writer, slow suite | done | see log |
+| B | Amounts, time effects, segment overlap (step 3) | done | see log |
+| C | Mart: names, rollups, null rule, types, prefix stability (step 4) | done | see log |
+| D | Traps, drift evidence, dirty switches, extra columns (step 5) | done (Simpson regrouped by onboarding channel, eb4fa2c) | see log |
+| E | Oracle: window probabilities, metrics, relevance, regression oracle, `truth.json` (step 6) | done | 2f61135 |
+| F | Output, source mapping, CLI, budgets, notebook, review guide (step 7) | done; final reviews applied; awaiting the SDS review | bbde9af, e5abb2e |
 
 ## Pending fixes
 Stage B review fixes applied (2026-10-16).

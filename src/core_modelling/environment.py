@@ -7,6 +7,8 @@ it creates the local Spark session the tests use and reads a logical source thro
 (docs/components/environment.md).
 """
 
+import re
+
 import yaml
 from pyspark.sql import DataFrame, SparkSession
 
@@ -49,9 +51,16 @@ def _load_sources(path: str) -> dict:
 
 
 def _read_source(spark: SparkSession, source: dict) -> DataFrame:
-    """One source of the mapping as a Spark DataFrame: parquet by `path`, or a table by `table`."""
+    """One source of the mapping as a Spark DataFrame: parquet by `path` (absolute or a URI), or a
+    table by `table`."""
     if source["format"] == "parquet":
-        return spark.read.parquet(source["path"])
+        path = source["path"]
+        # A relative path would resolve against the working directory (T5).
+        if not (path.startswith("/") or re.match(r"[A-Za-z][A-Za-z0-9+.-]*://", path)):
+            raise ValueError(
+                f"parquet path {path!r} must be absolute or a URI (scheme://...), not relative"
+            )
+        return spark.read.parquet(path)
     if source["format"] == "table":
         return spark.table(source["table"])
     raise ValueError(f"unknown source format {source['format']!r}: expected parquet or table")

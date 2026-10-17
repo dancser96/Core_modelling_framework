@@ -4,12 +4,14 @@
         --out data/01_raw/synthetic_canonical
 
 It prints the size of what it wrote and how long it took; `--checks` also runs every check family
-(each in its own process) and saves the tables in `<out>/checks/`, which the checking notebook
-reads. The output folder must not hold a dataset already; `conf/local/sources.yml` then points the
-logical source at `<out>/mart`.
+(each in its own process), saves the tables in `<out>/checks/`, which the checking notebook reads,
+prints each family's pass count and exits with status 1 if any row fails. The output folder must
+not hold a dataset already; `conf/local/sources.yml` then points the logical source at
+`<out>/mart`.
 """
 
 import argparse
+import sys
 import time
 
 from synthetic.check_suite import read_checks, write_checks
@@ -34,7 +36,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Write the dataset the arguments describe and print its rows, columns, months and time."""
+    """Write the dataset the arguments describe and print its rows, columns, months and time;
+    with `--checks`, exit with status 1 if a check row fails."""
     args = parse_args(argv)
     start = time.perf_counter()
     truth = write_mart(
@@ -53,10 +56,14 @@ def main(argv: list[str] | None = None) -> None:
         f"{keys['snapshot_month'].nunique()} months in {seconds:.0f} s "
         f"(preset {args.preset}, {truth['n_clients']:,} clients, seed {args.seed})"
     )
-    if args.checks:
-        write_checks(args.out)
-        for family, table in read_checks(args.out).items():
-            print(f"checks {family}: {int(table['passed'].sum())} of {len(table)} rows pass")
+    if not args.checks:
+        return
+    write_checks(args.out)
+    tables = read_checks(args.out)
+    for family, table in tables.items():
+        print(f"checks {family}: {int(table['passed'].sum())} of {len(table)} rows pass")
+    if not all(table["passed"].all() for table in tables.values()):
+        sys.exit(1)
 
 
 if __name__ == "__main__":

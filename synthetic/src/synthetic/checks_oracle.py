@@ -71,9 +71,10 @@ RELEVANCE_BOTTOM = 0.20
 #   truth["columns"]: [{name, type, kind, mechanism}], one per mart column, kind in SCHEMA_KINDS;
 #   truth["traps"]: [{column, product, target, kind, parameters, expected}], column null if none;
 #   truth["oracle"]["targets"][target][f"w{w}"]: {auc, auc_by_segment: {segment: auc},
-#     events_per_month, expected_positives_6m, low_confidence} for each binary target and w in
-#     WINDOWS; `auc` is the Mann–Whitney AUC (ties count one half) of window_probability against the
-#     realised target over every mart row where both are non-null, all months together;
+#     events_per_month, expected_positives_6m (events, from w = 1), expected_positive_rows_6m,
+#     low_confidence} for each binary target and w in WINDOWS; `auc` is the Mann–Whitney AUC
+#     (ties count one half) of window_probability against the realised target over every mart
+#     row where both are non-null, all months together;
 #     `auc_by_segment` the same within each `segment` (null where a class is empty);
 #   truth["oracle"]["relevance"][target]: [{column, score}] per binary target, most relevant first.
 REQUIRED_TRUTH_KEYS = (
@@ -82,7 +83,8 @@ REQUIRED_TRUTH_KEYS = (
     *("null_rule", "oracle"),
 )
 METRIC_KEYS = (
-    *("auc", "auc_by_segment", "events_per_month", "expected_positives_6m", "low_confidence"),
+    *("auc", "auc_by_segment", "events_per_month", "expected_positives_6m"),
+    *("expected_positive_rows_6m", "low_confidence"),
 )
 SCHEMA_FIELDS = ("name", "type", "kind", "mechanism")
 SCHEMA_KINDS = (
@@ -255,8 +257,9 @@ def _check_regression(mart: pd.DataFrame, oracle: pd.DataFrame, months: list) ->
 
 def _coverage_rows(stratum: str, realised: np.ndarray, pred: dict[str, np.ndarray]) -> list[dict]:
     """One observation month: P(realised < q10) and P(realised ≤ q90) one-sided (safe with the zero
-    spend atom), P(realised ≤ q50) where q50 > 0 (a zero median is the atom, not a median of the
-    continuous part), and the ratio of means."""
+    spend atom), P(realised < q10) where q10 > 0 two-sided (no atom below a positive q10),
+    P(realised ≤ q50) where q50 > 0 (a zero median is the atom, not a median of the continuous
+    part), and the ratio of means."""
     n, name = len(realised), REGRESSION_TARGET
     low, high = _expected_coverage(0.1), _expected_coverage(0.9)
     low_bound = low + Z_TOL * np.sqrt(low * (1 - low) / n)
@@ -265,9 +268,12 @@ def _coverage_rows(stratum: str, realised: np.ndarray, pred: dict[str, np.ndarra
     within_high = float(np.mean(realised <= pred["q90"]))
     positive = pred["q50"] > 0
     hits = int(np.sum(realised[positive] <= pred["q50"][positive]))
+    low_positive = pred["q10"] > 0
+    below = int(np.sum(realised[low_positive] < pred["q10"][low_positive]))
     ratio = f"{name}: realised / predicted mean"
     return [
         side_row(f"{name}: P(realised < q10)", stratum, n, low_bound, below_low, above=False),
+        share_row(f"{name}: P(realised < q10), q10 > 0", stratum, low, below, low_positive.sum()),
         share_row(f"{name}: P(realised ≤ q50), q50 > 0", stratum, 0.5, hits, positive.sum()),
         side_row(f"{name}: P(realised ≤ q90)", stratum, n, high_bound, within_high),
         mean_ratio_row(ratio, stratum, realised, pred["mean"], 1.0, paired=True),

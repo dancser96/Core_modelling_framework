@@ -3,10 +3,11 @@
 Traps sit on two products, credit-card acquisition and personal-loan opening, so a test of either
 target meets every kind (D-069); a few traps concern no product (null controls, quality, drift,
 dirty data, extra columns). A planted trap adds a column ending in `_trap_<kind>`; an organic
-trap arises from realistic mechanics elsewhere and names the real columns that show it. `traps`
-and `dirty` build the planted ones from `TRAPS`; `truth.json` copies the list as the trap summary,
-and the checking notebook shows it. The table in docs/components/test_harness.md ("Trap summary")
-explains each one.
+trap arises from realistic mechanics elsewhere and names the real columns that show it. The
+Simpson's trap names the spec parameters behind it as dotted paths into the spec
+(`products.cc.traits.digital`), not copies of their numbers. `traps` and `dirty` build the planted
+ones from `TRAPS`; `truth.json` copies the list as the trap summary, and the checking notebook shows
+it. The table in docs/components/test_harness.md ("Trap summary") explains each one.
 """
 
 # fmt: off
@@ -22,9 +23,10 @@ TRAPS = [
          expected="equals Target Factory's own target except leavers (0 here, null there)"),
     dict(kind="simpson", planted=False, product="cc", target="cc_acquire",
          column="login_digital_mobile_cnt",
-         parameters={"grouping": "onboarding_channel", "card_digital_loading": 0.3,
-                     "channel_effects": {"cc": -1.5, "ebanking": 3.0, "digital": 1.5},
-                     "card_channel_effect": "products.cc.effects", "login_channel_factor": "levels.logins.channel_factor"},
+         parameters={"grouping": "onboarding_channel",
+                     "card_digital_loading": "products.cc.traits.digital",
+                     "channel_effects": "products.{cc,ebanking,digital}.effects.onboarding_channel",
+                     "login_channel_factor": "levels.logins.channel_factor"},
          expected="logins vs card acquisition: positive within each onboarding channel, negative pooled"),
     dict(kind="null_income_eligibility", planted=False, product="cc", target="cc_acquire",
          column="income", parameters={"min_income": 5_000, "below_threshold_odds": 0.2},

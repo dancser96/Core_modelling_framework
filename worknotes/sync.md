@@ -49,9 +49,9 @@ page is written: `worknotes/README.md`.
   traditional wealth, three loan types, e-banking, FX and digital activity. Each product is set by
   its share per profile and one rate; the chance behind every event is recorded as hidden truth.
   An audit fixed how the "true probability" of a target must be computed (D-066). Step 2 is
-  closed; the rest (amounts, the mart's columns, traps, oracle, the written dataset) is now fully
-  specified and being built in one go, with one SDS review at the end; a summary for you follows
-  that review. — look at:
+  closed; the rest (amounts, the mart's columns, traps, oracle, the written dataset) has been built
+  in one go (2026-10-17) and passes all 1,197 independent check rows; the SDS reviews it first, a
+  summary for you follows that review. — look at:
   `docs/components/test_harness.md` (product rates, maths §3), `notebooks/00_synthetic_data.ipynb`
 - **Window ablation without a second validation month** (D-062): the window is chosen on test and
   validation equally; train only shows the overfitting gap. — look at: `docs/components/dataset.md`

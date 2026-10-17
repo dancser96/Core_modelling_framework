@@ -1,18 +1,20 @@
 """Relevance rankings: how strongly each mart column tracks the true window probability of a
 standard target (test_harness.md, "Ground truth and oracle"; truth.json `oracle.relevance`).
 
-For every binary standard target, every mart column but the keys gets a score: its rank
-correlation with the true window probability (`oracle.window_probability`, w = 3) over the target's
-eligible rows of one month, the median over the observation months, as an absolute value. The
-numeric columns are ranked once per month over the sampled rows and correlated with the
-probability's ranks over each target's eligible rows by matrix products (a column is ranked among
-its non-null rows, and correlated over those). A categorical column gets a held-out correlation
-ratio instead, since the plain η grows with the number of levels: level means of the probability's
-ranks fitted on one half of the clients, scored against the other half (median over months; it
-can fall a little below 0 when the levels carry nothing). Columns with no score in any month
-(constant or null among the eligible rows) are left out. Rankings run on a fixed 20% client sample
-(client ids divisible by 5, as `output.read_output(client_sample=5)` reads them) and the halves
-are seeded by the dataset's seed, so the in-memory and the written truth agree.
+For every binary standard target, every mart column but the keys gets a score: the Pearson
+correlation of its month-wide ranks with the ranks of the true window probability
+(`oracle.window_probability`, w = 3) over the target's eligible rows of one month, the median over
+the observation months, as an absolute value. The numeric columns are ranked once per month over
+all the sampled rows (not over the eligible rows, so this is not quite Spearman's correlation on
+them) and correlated with the probability's ranks over each target's eligible rows by matrix
+products (a column is ranked among its non-null rows, and correlated over those). A categorical
+column gets a held-out correlation ratio instead, since the plain η grows with the number of
+levels: level means of the probability's ranks fitted on one half of the clients, scored against
+the other half (median over months; it can fall a little below 0 when the levels carry nothing).
+Columns with no score in any month (constant or null among the eligible rows) are left out.
+Rankings run on a fixed 20% client sample (client ids divisible by 5, as
+`output.read_output(client_sample=5)` reads them) and the halves are seeded by the dataset's seed,
+so the in-memory and the written truth agree.
 """
 
 import numpy as np

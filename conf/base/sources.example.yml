@@ -1,8 +1,10 @@
 # Logical source -> physical data. Copy to conf/local/sources.yml (gitignored) and fill in the
 # physical side there: an absolute path on a laptop, a table name inside the bank.
-#   format: parquet  ->  path: a folder of month-partitioned parquet (snapshot_month=YYYY-MM-01/)
+#   format: parquet  ->  path: a folder of month-partitioned parquet (snapshot_month=YYYY-MM-01/),
+#                            absolute or a URI (hdfs://...); a relative path is refused
 #   format: table    ->  table: a database.table name
-# The example points at the synthetic dataset written by `python -m synthetic` (test_harness.md).
+# The example points at the synthetic dataset written by `python -m synthetic` (test_harness.md):
+# replace the placeholder with the absolute path of your checkout.
 retail_mart:
   format: parquet
-  path: data/01_raw/synthetic_canonical/mart
+  path: /ABSOLUTE/PATH/TO/data/01_raw/synthetic_canonical/mart

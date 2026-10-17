@@ -32,7 +32,8 @@ def test_mapped_source_reads_the_written_mart(
 
 
 def test_source_mapping_fails_loud(spark: SparkSession, tmp_path: Path) -> None:
-    """A missing mapping file, a source without a format and an unknown format all raise."""
+    """A missing mapping file, a source without a format, an unknown format and a relative
+    parquet path all raise."""
     with pytest.raises(FileNotFoundError):
         _load_sources(str(tmp_path / "missing.yml"))
     mapping = tmp_path / "sources.yml"
@@ -41,3 +42,5 @@ def test_source_mapping_fails_loud(spark: SparkSession, tmp_path: Path) -> None:
         _load_sources(str(mapping))
     with pytest.raises(ValueError, match="unknown source format"):
         _read_source(spark, {"format": "csv", "path": "somewhere"})
+    with pytest.raises(ValueError, match="must be absolute or a URI"):
+        _read_source(spark, {"format": "parquet", "path": "data/01_raw/synthetic_canonical/mart"})

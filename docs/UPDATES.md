@@ -16,7 +16,7 @@ Status values: `legacy-only` (exists only in legacy) · `designing` · `stub` (i
 | Design baseline (docs rebuilt after three review rounds + Lead DS notes) | built | 2026-10-12; milestone M0 |
 | Environment adapter (Spark session, compat shim, transport, paths, sources) | built | Partial: compat shim + local Spark session (M1 step 0, D-057); transport, paths, sources in M2. Traps T1–T5, T18 |
 | Config spine (single file, profiles, decision, entities, data-definition hash, migrations) | designing | `components/config.md` |
-| Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | designing | M1 in progress: spec settled 2026-10-14 (D-056); steps 0–2 (Spark harness, population, holdings and states) done (D-065, D-066); spec for steps 3–7 completed (D-068, D-069) and built in one go from `worknotes/handovers/synthetic_build.md`, with one SDS review at the end (D-067); replaces the stub-based smoke test (T15) |
+| Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | built | M1: steps 0–7 built (2026-10-17): feature mart (145 columns), traps on two products, oracle and `truth.json`, CLI, source mapping; 1,197 independent check rows pass at 100k; awaiting the SDS's review (`synthetic/REVIEW.md`). D-056, D-064–D-069 |
 | Target Factory (targets only, optional) | legacy-only | Renamed from Data Creation (D-029) |
 | Dataset: observation window, client-grouped split, OOT validation, sampling | designing | Big-ticket item (D-030); sampling choice OD-17 |
 | EDA (worth running first; low-prevalence aware) | legacy-only | Major rethink |
@@ -40,6 +40,8 @@ together with the topics for the Chief DS design meeting (week of 2026-10-12).
 
 ## Log (major changes only, newest first)
 
+- 2026-10-17 — Synthetic data generator built (steps 3–7 in one go, stages A–F with independent
+  checks and reviews); canonical dataset in `data/01_raw/`; review guide `synthetic/REVIEW.md`.
 - 2026-10-16 — Code size rules relaxed: functions ≤ ~50 lines, steps ≤ ~300–400 changed lines,
   larger agreed builds ship with a review guide (D-067). Synthetic data spec completed (D-068,
   D-069); steps 3–7 built in one go.

@@ -31,12 +31,16 @@ checks where it is running; it calls this module, and `conf/local/` decides.
 T1–T5 (`docs/context/lessons.md`).
 
 ## Interface
-Built so far (M1 step 0, D-057), all private until M2 lists them in the Public API:
+Built so far (M1 steps 0 and 7, D-057), all private until M2 lists them in the Public API:
 - `core_modelling/_compat.py`: the `np.NaN` alias, applied on package import (T1). Verified
   2026-10-14: without it, `import pyspark.pandas` fails on the pinned numpy 2.3.5 + PySpark 3.4.3.
 - `environment._get_spark_session() -> SparkSession`: local defaults (`local[*]`, 2 GB driver,
   8 shuffle partitions, UTC, Arrow on with its silent fallback off, UI off). Settings from
   `conf/local/` come in M2; until then these defaults must not be used inside the bank.
+- `environment._load_sources(path) -> dict` and `_read_source(spark, source) -> DataFrame`: a
+  logical source → parquet path (absolute or a URI) or table, from a YAML mapping
+  (`conf/base/sources.example.yml`; the real one in `conf/local/`). Minimal, for the synthetic
+  dataset (M1 step 7); M2 redesigns them with the config spine.
 - `tests/conftest.py`: the `spark` fixture, one real session per test run (T15).
 
 ## Open questions

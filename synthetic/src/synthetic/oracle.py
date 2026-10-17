@@ -14,10 +14,11 @@ the churned odds of a status product, onboarding by tenure, loan slots and matur
 at t (a maturity in month s hides an opening), and for a chain the steady active share in t+1 if
 the required product was gained at t; a chain whose required product can be given up also needs it
 kept, month by month (its leaving chance), as the generator's own chances do. The probability of
-any event is built month by month from the chance of none before. `oracle_metrics` gives
-truth.json the AUC of the window probability against the realised target for every binary target
-and window, events and sizing. Rows sit on a clients × months grid (`month_grid`), so mart rows may
-come in any order; the oracle's rows are matched to them by key.
+any event is built month by month from the chance of none before; it is an approximation that
+slightly under-predicts (`_any_event`). `oracle_metrics` gives truth.json the AUC of the window
+probability against the realised target for every binary target and window, events and sizing
+(on expected events, not positive rows). Rows sit on a clients × months grid (`month_grid`), so
+mart rows may come in any order; the oracle's rows are matched to them by key.
 """
 
 import numpy as np
@@ -105,14 +106,17 @@ def window_probability(
 ) -> pd.Series:
     """The true chance of the binary `target`'s event within `w` months of each row's month (the
     module docstring), aligned with `mart`; null exactly where the realised target is."""
+    _check_spec(truth)
     grid = month_grid(mart)
     return _window_probability(mart, oracle, oracle_rows(oracle, grid), grid, truth, target, w)
 
 
 def oracle_metrics(mart: pd.DataFrame, oracle: pd.DataFrame, truth: dict) -> dict:
     """Per binary target and window (`w1`, `w3`, `w6`): the oracle's AUC pooled and per segment,
-    realised events per observation month, expected positives in 6 observation months and the
-    low-confidence flag (fewer than 200 of them).
+    realised positive rows per observation month, expected events in 6 observation months
+    (`expected_positives_6m`: 6 × the mean monthly Σ of the w = 1 probability, the same for every
+    w), expected positive rows in 6 observation months (`expected_positive_rows_6m`: a w-month
+    window sees one event in up to w rows) and the low-confidence flag (fewer than 200 events).
 
     AUC: Mann–Whitney (ties count one half) of the window probability against the realised target
     over every row where both are set, all months pooled; null where a class is empty.
@@ -122,6 +126,7 @@ def oracle_metrics(mart: pd.DataFrame, oracle: pd.DataFrame, truth: dict) -> dic
 
 def target_metrics(mart: pd.DataFrame, oracle: pd.DataFrame, truth: dict, target: str) -> dict:
     """One binary target's metrics (`oracle_metrics`) per window: `w1`, `w3`, `w6`."""
+    _check_spec(truth)
     grid = month_grid(mart)
     rows_of = oracle_rows(oracle, grid)
     segment = mart["segment"].to_numpy()
@@ -131,7 +136,11 @@ def target_metrics(mart: pd.DataFrame, oracle: pd.DataFrame, truth: dict, target
         chance = _window_probability(mart, oracle, rows_of, grid, truth, target, w).to_numpy()
         both = ~np.isnan(realised) & ~np.isnan(chance)
         out[f"w{w}"] = _metrics(realised, chance, both, segment, grid["month"])
-    return out
+    # Sizing counts events: one month ahead a positive row is one event (two loan openings in the
+    # same month count once), while a w-month window sees each event in up to w rows.
+    events = out["w1"]["expected_positive_rows_6m"]
+    sizing = {"expected_positives_6m": events, "low_confidence": bool(events < SIZING_EVENTS)}
+    return {window: {**metrics, **sizing} for window, metrics in out.items()}
 
 
 def auc(scores: np.ndarray, labels: np.ndarray) -> float:
@@ -152,11 +161,12 @@ def _metrics(
     segment: np.ndarray,
     month: np.ndarray,
 ) -> dict:
-    """One target and window's metrics (`oracle_metrics`)."""
+    """One target and window's metrics (`oracle_metrics`) but the sizing on events, which
+    `target_metrics` adds from the w = 1 window."""
     months = np.unique(month[both])
     events = np.bincount(month[both], weights=realised[both])[months]
     expected = np.bincount(month[both], weights=chance[both])[months]
-    positives = SIZING_MONTHS * expected.mean() if len(months) else 0.0
+    positive_rows = SIZING_MONTHS * expected.mean() if len(months) else 0.0
     return {
         "auc": auc(chance[both], realised[both]),
         "auc_by_segment": {
@@ -164,8 +174,7 @@ def _metrics(
             for s in np.unique(segment[both])
         },
         "events_per_month": float(events.mean()) if len(months) else 0.0,
-        "expected_positives_6m": float(positives),
-        "low_confidence": bool(positives < SIZING_EVENTS),
+        "expected_positive_rows_6m": float(positive_rows),
     }
 
 
@@ -202,8 +211,11 @@ def _window_probability(
     rows = np.flatnonzero(_eligible(mart, spec) & stays(grid, w))
     profiles = {name: s["profile"] for name, s in truth["spec"]["subsegments"].items()}
     intercepts = mart["subsegment"].map(profiles).map(truth["calibration"][key]["intercept"])
+    intercepts = as_float(intercepts)[rows]
+    if np.isnan(intercepts).any():
+        raise ValueError(f"{target}: rows whose subsegment or profile has no calibrated intercept")
     scores = ahead(grid, _column(oracle, rows_of, f"score_{key}"), range(1, w + 1))[rows]
-    log_odds = as_float(intercepts)[rows, None] + scores
+    log_odds = intercepts[:, None] + scores
     if spec["kind"] == "acquire":
         chance, keep = _acquire_chances(mart, truth, key, rows, log_odds), 1.0
     elif spec["kind"] == "open":
@@ -274,12 +286,32 @@ def _activate_chances(
 def _any_event(chance: np.ndarray, keep: float) -> np.ndarray:
     """The chance of an event in some month of the window: an event in month s needs none
     before, the month's chance, and the required product kept (`keep`, 1 where nothing can be
-    lost; losing it ends the window without an event). With `keep` 1 this is 1 − Π(1 − chance)."""
+    lost). With `keep` 1 this is 1 − Π(1 − chance).
+
+    An approximation: losing and re-adopting the required product inside the window is ignored
+    (the loss ends the window), as are hidden openings refilling a full set of 4 loan slots. Both
+    make the oracle slightly under-predict, little for w ≤ 6.
+    """
     no_event, hit = np.ones(len(chance)), np.zeros(len(chance))
     for s in range(chance.shape[1]):
         hit = hit + no_event * chance[:, s] * keep
         no_event = no_event * (1 - chance[:, s]) * keep
     return hit
+
+
+def _check_spec(truth: dict) -> None:
+    """Raise unless truth's products (keys, kinds, required products) and loan slots are this
+    module's `PRODUCTS` and `HOLDING_RULES`."""
+    # The targets, their eligibility and SLOTS come from the code's spec, the chances from
+    # truth's: a dataset from another spec would be priced with the wrong targets.
+    spec = truth["spec"]
+    shapes = [
+        {key: (p["kind"], p.get("requires")) for key, p in products.items()}
+        for products in (spec["products"], PRODUCTS)
+    ]
+    slots = spec["holding_rules"]["max_loan_accounts"], HOLDING_RULES["max_loan_accounts"]
+    if shapes[0] != shapes[1] or slots[0] != slots[1]:
+        raise ValueError("truth's products or loan slots differ from the oracle's targets' spec")
 
 
 def _eligible(mart: pd.DataFrame, spec: dict) -> np.ndarray:

@@ -29,10 +29,15 @@ from synthetic.oracle import oracle_metrics
 from synthetic.relevance import relevance_rankings
 from synthetic.traps import RISK_GRADE, UPSTREAM
 
-# Mechanism (module) behind each kind of current-month value, by product or by measure.
-PRODUCT_MECHANISMS = {"casa": "balances", "cc": "cards", "fx": "flows", "digital": "logins"}
+# Mechanism (module) behind each current-month value that isn't a holding, by product or by
+# measure; an unknown product or measure raises.
+PRODUCT_MECHANISMS = {"casa": "balances", "cc": "cards", "fx": "flows", "td": "balances",
+                      "wealth_digital": "balances", "wealth_trad": "balances",
+                      "loan_personal": "balances", "loan_auto": "balances",
+                      "loan_home": "balances"}  # fmt: skip
 MEASURE_MECHANISMS = {"inflow": "flows", "outflow": "flows", "spend": "cards", "repayment": "cards",
-                      "interest": "cards", "instalment": "balances", "login": "logins"}  # fmt: skip
+                      "interest": "cards", "instalment": "balances", "login": "logins",
+                      "application": "traps"}  # fmt: skip
 HOLDING_KINDS = ("flag", "active_flag", "status", "cnt", "maturity_months")
 STOCK_KINDS = ("bal", "limit", "utilisation_ratio")
 
@@ -103,6 +108,9 @@ def _kind_and_mechanism(parts: dict) -> tuple[str, str]:
         return kind, {"id": "generate", "time": "generate", "holding": "holdings"}.get(
             kind, "population"
         )
+    if group == "recency" and parts["unit"] == "days":
+        # Days since the last login move day by day with the logins; the mart doesn't derive them.
+        return "count", MEASURE_MECHANISMS[parts["of"]["measure"]]
     if group in ("rollup", "recency", "ratio"):
         return "rollup", "mart"
     if group == "trap":
@@ -111,10 +119,10 @@ def _kind_and_mechanism(parts: dict) -> tuple[str, str]:
         return "holding", "holdings"
     if group == "state":
         kind = "stock" if parts["kind"] in STOCK_KINDS else "flow"
-        mechanism = PRODUCT_MECHANISMS.get(parts["product"], "balances")
+        mechanism = PRODUCT_MECHANISMS[parts["product"]]
         return kind, "flows" if parts["product"] == "casa" and kind == "flow" else mechanism
     kind = "flow" if parts["kind"] == "vol" else "count"
-    return kind, MEASURE_MECHANISMS.get(parts["measure"], "traps")
+    return kind, MEASURE_MECHANISMS[parts["measure"]]
 
 
 def _drift(spec: dict, columns: list[str]) -> dict:

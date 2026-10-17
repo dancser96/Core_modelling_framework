@@ -1,5 +1,5 @@
 # Synthetic data and test harness
-**Status:** designing — spec settled 2026-10-14 (D-056), completed 2026-10-16 (D-068, D-069); steps 0–2 done; steps 3–7 built in one go, with one review by the SDS at the end (D-067) · **Legacy:** `tests/smoke_test.py` (stub-based — do not copy its stubs)
+**Status:** built — steps 0–7 done (2026-10-17); awaiting the SDS's one review, guided by `synthetic/REVIEW.md` (D-067) · **Legacy:** `tests/smoke_test.py` (stub-based — do not copy its stubs)
 **Related:** [dataset](dataset.md) (time model) · [target factory](target_factory.md) · [EDA](eda.md) ·
 [feature checks](feature_checks.md) · [environment](environment.md) · [config](config.md) · `tests/README.md` ·
 `synthetic/REVIEW.md` (review guide, from step 7) · D-014, D-041, D-056, D-057, D-062, D-064–D-069 · OD-15, OD-17
@@ -18,11 +18,11 @@ it, is `worknotes/handovers/synthetic_build.md` (removed when M1 closes).
 | 0 | `synthetic` package skeleton, compat shim, local Spark session, parquet round trip | Dates, integers, doubles, strings, booleans and nulls survive pandas → parquet (month-partitioned) → Spark → pandas; `flaml` imports after `core_modelling` (T1); green on the Mac (the PC only when the SDS switches, `docs/guides/setup_windows_wsl2.md`) | done |
 | 1 | Population, client description, day counters, entry and exit, latent traits; the checking notebook | Same seed → identical data, other seed → different; mix within CI (subsegment; nationality group, employment, emirate and salary transfer per profile; top country); day counters grow by exactly the days in the month; relationship ≤ residence ≤ age; residence nulls; income missingness and medians; residence gap; latent stationarity and month-to-month persistence per profile; income slope on the wealth trait (new clients); entry and exit rates per profile, read from the mart; no crash with months without new clients | done |
 | 2 | Holdings and states: current/savings, credit card, loans, term deposit, wealth, e-banking, FX and digital activity | Rules that always hold (statuses and their transitions, account counts and maturities, no early settlement, digital only with e-banking, product count); realised events match the oracle's chances, overall and per chance decile, and the oracle sets a chance exactly where the mart shows a client at risk; shares per profile near the spec and flat over the panel; steady-state event volumes near the spec; the income-threshold jump and exemptions; churned vs never; the onboarding wave | done |
-| 3 | Amounts: balances, flows, card and loan mechanics, subcategories, logins; time effects; segment overlap | Exact zeros for non-holders and dormant clients; subcategories add up exactly; net flow equals the balance change; card and loan rules; medians per profile at the spec's multiples; lag-1 correlations in their bands; Hill tail index within ±30%; seasonality per profile; overlap of MM and UM; pooled vs within-subsegment rank correlations | not started |
-| 4 | Feature mart: rollups, names, history, null rule, types, month-partitioned parquet written month by month | An independent Spark recompute matches every rollup (T8); every name parses with the grammar; column-list snapshot; **prefix stability**: 20 and 24 months from the same seed give identical months 1–20, except the declared leak columns; the null rule; types (0/1 flags, the decimal column) | not started |
-| 5 | Traps on two products, drift, dirty-data switches, extra columns; the trap summary | Every trap meets its expected behaviour in the trap summary | not started |
-| 6 | Oracle file and `truth.json`: window probabilities on demand, oracle AUCs, relevance ranking, the regression oracle | Oracle probabilities match realised events per decile for every standard target; the leaks beat the oracle; regression quantiles cover realised values as stated; `truth.json` schema | not started |
-| 7 | Canonical dataset, source mapping, CLI, budgets, the checking notebook with outputs, the review guide | The canonical mart read through the source mapping: 24 partitions, row count, column list; runtime and memory within budget; stale-data guard | not started |
+| 3 | Amounts: balances, flows, card and loan mechanics, subcategories, logins; time effects; segment overlap | Exact zeros for non-holders and dormant clients; subcategories add up exactly; net flow equals the balance change; card and loan rules; medians per profile at the spec's multiples; lag-1 correlations in their bands; Hill tail index within ±30%; seasonality per profile; overlap of MM and UM; pooled vs within-subsegment rank correlations | in review |
+| 4 | Feature mart: rollups, names, history, null rule, types, month-partitioned parquet written month by month | An independent Spark recompute matches every rollup (T8); every name parses with the grammar; column-list snapshot; **prefix stability**: 20 and 24 months from the same seed give identical months 1–20, except the declared leak columns; the null rule; types (0/1 flags, the decimal column) | in review |
+| 5 | Traps on two products, drift, dirty-data switches, extra columns; the trap summary | Every trap meets its expected behaviour in the trap summary | in review |
+| 6 | Oracle file and `truth.json`: window probabilities on demand, oracle AUCs, relevance ranking, the regression oracle | Oracle probabilities match realised events per decile for every standard target; the leaks beat the oracle; regression quantiles cover realised values as stated; `truth.json` schema | in review |
+| 7 | Canonical dataset, source mapping, CLI, budgets, the checking notebook with outputs, the review guide | The canonical mart read through the source mapping: 24 partitions, row count, column list; runtime and memory within budget; stale-data guard | in review |
 
 **Checks as data.** Each step adds a `check_*` function that returns a table: check, stratum, `n`,
 expected, realised, tolerance, passed. `pytest` asserts every row passes; the checking notebook shows
@@ -48,7 +48,7 @@ inputs, the oracle's hidden columns), never taken from the generator's own funct
   `check_table.py`; realised targets over forward windows are computed by the checks' own code.
 
 **Checking notebook** (`notebooks/00_synthetic_data.ipynb`, dev only, temporary): reads the written
-canonical dataset, shows every check table and a simplified EDA per area (population, holdings,
+canonical dataset and its saved check tables (`--checks`), shows every check table and a simplified EDA per area (population, holdings,
 amounts, time effects, segments, mart columns, traps, oracle), plus a few client trajectories and
 the hidden traits. Inline pandas and plotly only, no function definitions; charts plot aggregates,
 so the notebook stays small. It is committed with its outputs (synthetic data only; an exception to
@@ -657,7 +657,7 @@ this table with each trap's evidence.
 | Any | Quality | `paper_statement_flag_trap_near_constant` (99.9% zeros), `legacy_risk_grade_trap_all_null` (all null) | | Flagged by the quality checks |
 | Any | Drift (monitoring) | login columns | [Time effects](#time-effects) | PSI > 0.25 after panel month 16, ≈ 0 before |
 | Any | Collinearity (organic) | rollups and identities | Rollups of one measure over `0_2` and `0_5`; `<product>_status == "active"` ⇔ `<product>_flag`; `product_cnt` = product flags + loan counts > 0; inflow − outflow = change in `casa_bal`; subcategories sum to their total | Correlation views and VIF flag the clusters (infinite for the identities) |
-| Any | Dirty switches, off by default | — | Duplicate client-months; a month with the login columns null (outage: both counts and days since last login); income × 12 from one month on (unit change); a few `casa_bal` typos × 1,000 | Contract checks fail loud; operational monitoring flags them (tests on the `unit` preset only) |
+| Any | Dirty switches, off by default | — | Duplicate client-months; a month with the login columns null (outage: both counts and days since last login); income × 12 from one month on (unit change); a few `casa_bal` typos × 1,000; rollups stay clean (an upstream mart would roll up its own bad values) | Contract checks fail loud; operational monitoring flags them (tests on the `unit` preset only) |
 | Any | Extra columns, off by default | `extra_{nnnn}_trap_weak` / `_trap_noise` | 10% weak (a trait plus noise, rank correlation 0.1–0.3), the rest pure noise | Scale tests; weak ones rank above noise |
 
 Later (not in M1): a column shifted one month forward (as-of misalignment) and an interaction-only
@@ -685,7 +685,8 @@ feature.
   product's leaving chance compounded month by month, and the steady share `w / (w + lapse)` at
   `t+1` when the required product was adopted at `t`, read from the oracle's `p_<product>_acquire`),
   on the realised trait path, from the intercepts in `truth.json` and `score_<product>` at `s`. With
-  `w = 1` it equals the recorded chance at `t+1` (tested to 1e-12). Multiplying
+  `w = 1` it equals the recorded chance at `t+1` (for loans, when no account matures at `t+1`;
+  tested to 1e-12). Multiplying
   the recorded rows instead conditions on the outcome and understates positives (card acquisition
   AUC 0.71 instead of 0.81). Null where the target is: not eligible at `t`, or the client leaves
   before `t+w`, or the window runs past the panel. The oracle conditions on the realised trait path,
@@ -717,8 +718,9 @@ feature.
     turnover per month and profile, the market index path;
   - per standard target and window: oracle AUC pooled and per segment (Mann–Whitney over every row
     where target and probability are set, all months pooled), realised events per month, expected
-    positives in 6 months (6 × the mean monthly sum of window probabilities) and a low-confidence
-    flag (fewer than 200);
+    events in 6 observation months (6 × the mean monthly sum of the one-month window probability:
+    events, not positive rows, which repeat across up to `w` months) beside the positive rows, and
+    a low-confidence flag (fewer than 200 events);
   - per standard target: the **relevance ranking**, every column's |rank correlation| (held-out η
     for categoricals) with the true window probability (`w` = 3) among eligible rows, the median
     over observation months, on the clients whose id is divisible by 5 (a fixed 20%);
@@ -748,7 +750,7 @@ def run_checks(out_dir: str, families: list[str] | None = None) -> dict[str, pd.
 def check_population / check_holdings / check_amounts / check_mart / check_traps / check_oracle
 ```
 ```bash
-python -m synthetic --preset canonical --n-clients 50000 --seed 0 --out data/01_raw/synthetic_canonical
+python -m synthetic --preset canonical --seed 0 --out data/01_raw/synthetic_canonical --checks
 ```
 
 ## Presets and budgets
@@ -757,7 +759,10 @@ python -m synthetic --preset canonical --n-clients 50000 --seed 0 --out data/01_
 | `unit` | ~5k × 24 (≈ 120k rows) | Unit tests and the end-to-end test |
 | `canonical` | 100k × 24 (≈ 2.5M rows); `n_clients=50_000` if memory runs short | The shared development dataset, in `data/01_raw/synthetic_canonical/` |
 
-Budgets, measured in step 7: `canonical` in ≤ 10 min with peak memory ≤ ~3 GB; `unit` in ≤ 20 s.
+Budgets: `canonical` in ≤ 10 min with peak memory ≤ ~3 GB; `unit` in ≤ 20 s. Measured (2026-10-17,
+Mac, 8 GB): `canonical` ≈ 340–355 s and 1.8 GB peak RSS (≈ 3.2 GB including compressed memory),
+`unit` ≈ 18 s. One check family needs several GB at 100k, so `--checks` and the slow tests run each
+family in its own process.
 `synthetic.__version__` goes up whenever the output changes; `load_truth` refuses a dataset written
 by another version, so a stale `data/01_raw/` fails loud.
 

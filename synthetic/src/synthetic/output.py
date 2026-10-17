@@ -12,7 +12,8 @@ partition column, never stored inside the files; Spark infers it as a date from 
 has the same schema whatever its values; the oracle keeps the types pandas gives it. `read_output`
 reads a table back in month order with `snapshot_month` as `datetime.date` values and decimals as
 floats, so it returns the mart as it was in memory (Spark sees the decimal); `load_truth` refuses
-a dataset written by another generator version, so stale data fails loud.
+a dataset written by another generator version or another numpy or scipy minor version (the
+seed-to-data mapping depends on them), so stale data fails loud.
 """
 
 import datetime as dt
@@ -23,12 +24,14 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import scipy
 
 from synthetic import __version__
 from synthetic.dirty import dirty_panel
 from synthetic.generate import advance_simulation, finish_simulation, start_simulation
 from synthetic.mart import arrow_schema
 from synthetic.oracle import BINARY_TARGETS, METRIC_ORACLE_COLUMNS, target_columns, target_metrics
+from synthetic.presets import PRESETS
 from synthetic.relevance import SAMPLE_EVERY, relevance_rankings
 from synthetic.truth import build_truth, complete_truth, with_oracle
 
@@ -49,12 +52,15 @@ def write_mart(
 
     `out_dir` must not hold a dataset already: months left over from another run would mix in.
     With `dirty` on, the defects are planted in the whole panel (`dirty.dirty_panel`), so every
-    month is held until the end (small presets) and the oracle part comes from the clean panel.
+    month is held until the end, so it is refused above the unit preset's size (clients ×
+    months); the oracle part comes from the clean panel.
     """
     out = Path(out_dir)
     existing = [name for name in (*TABLES, "truth.json") if (out / name).exists()]
     if existing:
         raise FileExistsError(f"{out} already holds {existing}; write into an empty folder")
+    if dirty:
+        _check_dirty_size(preset, n_clients, n_months)
     sim = start_simulation(preset, n_clients, seed, n_months, n_extra_columns)
     if dirty:
         truth = _write_dirty(out, sim)
@@ -66,6 +72,19 @@ def write_mart(
     return truth
 
 
+def _check_dirty_size(preset: str, n_clients: int | None, n_months: int | None) -> None:
+    """Raise if a dirty dataset would be larger than the unit preset (clients × months): dirty
+    data holds the whole panel in memory."""
+    size, unit = PRESETS[preset], PRESETS["unit"]
+    clients = size["n_clients"] if n_clients is None else n_clients
+    months = size["n_months"] if n_months is None else n_months
+    if clients * months > unit["n_clients"] * unit["n_months"]:
+        raise ValueError(
+            f"dirty data holds the whole panel in memory: {clients:,} clients × {months} months "
+            f"is larger than the unit preset ({unit['n_clients']:,} × {unit['n_months']})"
+        )
+
+
 def _write_clean(out: Path, sim: dict) -> dict:
     """Run the month loop, writing each month as it becomes final; the truth without its oracle
     part (the simulation's state is freed on return)."""
@@ -74,11 +93,15 @@ def _write_clean(out: Path, sim: dict) -> dict:
     while sim["month"] < sim["last_month"]:
         sim, final = advance_simulation(sim)
         _write_months(out, final, products)
-        columns = columns or [list(mart.columns) for mart, _ in final][:1]
+        if columns is None and final:
+            columns = list(final[0][0].columns)
     final = finish_simulation(sim)
     _write_months(out, final, products)
-    columns = columns or [list(mart.columns) for mart, _ in final][:1]
-    return build_truth(sim, columns[0])
+    if columns is None and final:
+        columns = list(final[0][0].columns)
+    if columns is None:
+        raise ValueError("the simulation wrote no panel month")
+    return build_truth(sim, columns)
 
 
 def _write_dirty(out: Path, sim: dict) -> dict:
@@ -134,14 +157,27 @@ def read_output(
 
 
 def load_truth(out_dir: str) -> dict:
-    """The dataset's truth.json; raises if another generator version wrote it (stale data)."""
+    """The dataset's truth.json; raises if another generator version, or another numpy or scipy
+    major.minor version, wrote it (stale data: the seed-to-data mapping depends on them)."""
     truth = json.loads(Path(out_dir, "truth.json").read_text())
     if truth["generator_version"] != __version__:
         raise ValueError(
             f"{out_dir} was written by synthetic {truth['generator_version']}, this is "
             f"{__version__}: generate it again"
         )
+    for name, installed in (("numpy", np.__version__), ("scipy", scipy.__version__)):
+        written = truth["versions"][name]
+        if _major_minor(written) != _major_minor(installed):
+            raise ValueError(
+                f"{out_dir} was written with {name} {written}, this is {installed}: the "
+                "seed-to-data mapping may differ, generate it again"
+            )
     return truth
+
+
+def _major_minor(version: str) -> str:
+    """A version's major.minor part (`2.3.5` → `2.3`)."""
+    return ".".join(version.split(".")[:2])
 
 
 def _read_month(path: Path, columns: list[str] | None, client_sample: int | None) -> pa.Table:

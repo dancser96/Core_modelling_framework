@@ -54,6 +54,30 @@ def test_load_truth_refuses_another_generator_version(
         load_truth(str(tmp_path))
 
 
+@pytest.mark.parametrize("library", ["numpy", "scipy"])
+def test_load_truth_refuses_another_library_minor_version(
+    unit_output: tuple[str, dict], tmp_path: Path, library: str
+) -> None:
+    """The seed-to-data mapping depends on numpy and scipy: data written under another major.minor
+    version is stale; another patch version is not."""
+    truth = unit_output[1]
+    major, minor, *_ = truth["versions"][library].split(".")
+    path = tmp_path / "truth.json"
+    other_minor = {**truth["versions"], library: f"{major}.{int(minor) + 1}.0"}
+    path.write_text(json.dumps(dict(truth, versions=other_minor)))
+    with pytest.raises(ValueError, match="generate it again"):
+        load_truth(str(tmp_path))
+    other_patch = {**truth["versions"], library: f"{major}.{minor}.999"}
+    path.write_text(json.dumps(dict(truth, versions=other_patch)))
+    assert load_truth(str(tmp_path))["versions"] == other_patch
+
+
+def test_dirty_refuses_a_panel_larger_than_unit(tmp_path: Path) -> None:
+    """Dirty data holds the whole panel in memory, so a larger size raises before generating."""
+    with pytest.raises(ValueError, match="whole panel in memory"):
+        write_mart(str(tmp_path), preset="unit", n_months=25, dirty=True)
+
+
 def test_command_line_writes_a_dataset(tmp_path: Path) -> None:
     """`python -m synthetic` writes a dataset of the size asked for and prints its rows."""
     out_dir = str(tmp_path / "unit_3_months")

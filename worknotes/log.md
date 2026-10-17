@@ -2,7 +2,7 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
-### 2026-10-13 → 2026-10-16 — Synthetic data (M1): design round, spec, steps 0–2, one-go plan
+### 2026-10-13 → 2026-10-17 — Synthetic data (M1): design round, spec, steps 0–7
 - 2026-10-13, design round 1 opened (Q76–Q105): the SDS described the feature groups (client
   description, flows and cash, digital, loans, wealth) and asked for proactive feature suggestions
   plus a proof plan per build step. Main points of Claude's review of `test_harness.md`:
@@ -211,6 +211,30 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
     FX trait loading 0.25 (0.4 put lag-1 on the band's edge). Canonical write ≈ 25 s, ≤ 1.4 GB;
   - checks for later stages already written from the spec (traps, mart, oracle), with their
     contracts (truth key layout, AUC definition, tenure convention) fixed in the plan.
+- 2026-10-16 → 2026-10-17, stages C–F (the account session limit stopped agents four more times;
+  each was resumed; from then on one agent ran at a time):
+  - stage C (`c9ded4f`): name grammar, history buffer, rollups, recency and ratios with the null
+    rule, explicit parquet schema; Spark recomputes every derived column; prefix stability holds;
+  - stage B review fixes (`b1cce83`): fail-loud fallbacks, spec constants out of mechanism code,
+    shared helpers; generated data byte-identical;
+  - stage D (`f8c0fd0`): look-ahead leak columns, null controls, quality, dirty switches, extra
+    columns. Simpson's reversal could not appear by subsegment (Mass is 94% of eligible rows);
+    regrouped by a new `onboarding_channel` descriptor (`eb4fa2c`): within +0.12 / +0.13, pooled
+    −0.17;
+  - stage E (`2f61135`): window probabilities with the state frozen at t (equal to the recorded
+    chance at w = 1), oracle AUCs 0.71–0.92 for 12 standard targets, relevance rankings, a Monte
+    Carlo oracle for next-3-month card spend; null controls checked in the bottom fifth;
+  - stage F (`bbde9af`, `e5abb2e`): CLI with `--checks`, source mapping through two private
+    adapter functions, budgets (≈ 345 s, 1.8 GB RSS at 100k), check families in separate
+    processes (one family needs several GB), the checking notebook with outputs;
+  - canonical dataset in `data/01_raw/synthetic_canonical/` (100k, 2.5M rows, 145 columns): all
+    1,197 check rows pass (after the final round);
+  - final code review (0 blocking, 12 suggestions) and ML-correctness audit (safe; boosting every
+    mart column on top of the oracle never beat it): fixes applied in one round, incl. sizing
+    `truth.json`'s low-confidence flag on events rather than positive rows; four audit suggestions
+    left for the SDS (behaviour-driven exits, a moderate leak, the shifted-column trap, dirty
+    rollups) in `synthetic/REVIEW.md` §6;
+  - memory note: other apps held most of the Mac's 8 GB (TextEdit 3.7 GB); runs were 5–10× slower.
 - Files: `docs/components/{test_harness,environment,target_factory}.md`,
   `docs/{UPDATES,architecture,decisions,glossary,roadmap}.md`,
   `docs/context/{lessons,environment}.md`, `docs/guides/setup_{macos,windows_wsl2}.md`,
@@ -218,7 +242,8 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   `tests/{conftest,test_spark_roundtrip,test_synthetic_population}.py`,
   `notebooks/{00_synthetic_data.ipynb,README.md}`, `pyproject.toml` (ruff).
 - Decisions / open decisions: D-056, D-057, D-062–D-069; D-042 status; OD-16 settled.
-- Still open: building stages A–F; which Spark session arguments the
+- Still open: the SDS's review of the synthetic data (`synthetic/REVIEW.md`), then the LDS
+  summary; which Spark session arguments the
   bank needs (M2).
 
 ### 2026-10-14 — Worknotes: sync page and log rules for the LDS

@@ -90,16 +90,21 @@ def write_checks(out_dir: str, families: list[str] | None = None) -> Path:
 
 
 def read_checks(out_dir: str) -> dict[str, pd.DataFrame]:
-    """The check tables saved by `write_checks`, by family, in `CHECK_FAMILIES` order."""
+    """The check tables saved by `write_checks`, every family in `CHECK_FAMILIES` order; raises
+    if a family's table is missing."""
     folder = Path(out_dir, "checks")
-    return {
-        f: pd.read_parquet(folder / f"{f}.parquet")
-        for f in CHECK_FAMILIES
-        if (folder / f"{f}.parquet").exists()
-    }
+    missing = [f for f in CHECK_FAMILIES if not (folder / f"{f}.parquet").exists()]
+    if missing:
+        raise FileNotFoundError(f"{folder} has no check table for {missing}: run write_checks")
+    return {f: pd.read_parquet(folder / f"{f}.parquet") for f in CHECK_FAMILIES}
 
 
-if __name__ == "__main__":  # one family in this process: out_dir, family, output path
-    out_dir, family, path = sys.argv[1:]
+def _write_family_table(out_dir: str, family: str, path: str) -> None:
+    """Run one family on the dataset in `out_dir` (the mart family on its client sample) and save
+    its table at `path`."""
     table = run_checks(out_dir, [family], CLIENT_SAMPLES.get(family))[family]
     table.astype({"expected": float, "realised": float, "tolerance": float}).to_parquet(path)
+
+
+if __name__ == "__main__":  # one family in this process (`write_checks`)
+    _write_family_table(*sys.argv[1:])
