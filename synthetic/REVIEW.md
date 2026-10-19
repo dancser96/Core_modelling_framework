@@ -55,11 +55,11 @@ pytest -m slow         # canonical size, each check family in its own process, â
 Every table in the notebook states which columns it shows and which statistic.
 
 ### 3.2 The spec (`docs/components/test_harness.md`)
-Read the first four sections: Summary, How it works, Code map and Interface. Read the details only
-where the notebook raised a question.
+Read Level 1 (the summary) and Level 2 (how it fits together), about a fifth of the doc. Read
+Level 3 only where the notebook raised a question.
 
 ### 3.3 The code
-Follow the spec's Code map:
+Follow the spec's code map (Level 3):
 1. `generate.py`;
 2. `mechanisms/holdings.py`;
 3. `mechanisms/amounts.py` and what it calls;

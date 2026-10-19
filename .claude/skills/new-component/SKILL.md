@@ -14,13 +14,16 @@ any code exists. A new component is a **major step** (`CLAUDE.md` §1 workflow s
 0. **Start wide.** Use `brainstorming` (research + critique) and run `holistic-review`. A new
    component changes its neighbours.
 1. **Doc first.** Create or complete `docs/components/<name>.md` from the template in
-   `docs/components/README.md`. It reads top-down, the overview before any detail:
+   `docs/components/README.md`. It reads top-down in three levels, the overview before any detail,
+   with no flowcharts or ASCII diagrams:
    - Status and **Related** lines (link both ways)
-   - Summary, then How it works (the flow in steps)
-   - Code map (planned folders, modules and main functions; the call flow)
-   - Interface (planned function signatures)
-   - Requirements (numbered, testable) and design constraints
-   - One section per area, then Open questions (cross-cutting ones as OD rows in `docs/roadmap.md`)
+   - Level 1, the summary: about 4% of the doc, the key things
+   - Level 2, how it fits together: with Level 1 about 20% of the doc; the main relationships, how
+     one run flows, the function structure in brief, how it is checked
+   - Level 3, the details: requirements (numbered, testable) and design constraints, one section
+     per area, the code map (planned modules and main functions; the call flow), the interface
+     (planned function signatures)
+   - Open questions (cross-cutting ones as OD rows in `docs/roadmap.md`)
 
    **Stop and get user approval.**
 2. **Config section.** Add the section to the config schema with `schema_version` handling (new

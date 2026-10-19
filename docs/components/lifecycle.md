@@ -9,16 +9,15 @@ recorded transitions, and a clear view of what is registered and what is in prod
 
 ## Tiers and steps
 
-```
-LOCAL        experiments; cheap, disposable
-  │ register   gates (what "registered" means: OD-09)
-REGISTERED   immutable, content-hashed, versioned per model key
-  │ promote    choose the version for production; the approved PR is the sign-off;
-  │            builds a verified bundle (model, frozen config, card, drift reference, checksums,
-  │            framework version)
-  │ deploy     the change-request process copies the bundle to production paths and records it
-PRODUCTION   one version per model key in Phase 2 (OD-07)
-```
+Three tiers in order, each with the step(s) that move a model on to the next:
+
+1. **LOCAL**: experiments; cheap, disposable.
+   - `register`: gates (what "registered" means: OD-09).
+2. **REGISTERED**: immutable, content-hashed, versioned per model key.
+   - `promote`: choose the version for production; the approved PR is the sign-off. Builds a
+     verified bundle (model, frozen config, card, drift reference, checksums, framework version).
+   - `deploy`: the change-request process copies the bundle to production paths and records it.
+3. **PRODUCTION**: one version per model key in Phase 2 (OD-07).
 
 - **A DS session never writes to production.** Production changes go through change requests (CR),
   which need pre-agreed windows and platform and security approval. `deploy` is the framework command

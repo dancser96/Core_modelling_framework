@@ -13,16 +13,14 @@ and what it aims for: `docs/context/project.md`. Terms: `docs/glossary.md`.
 
 ## 1. Framework vs use case
 
-```
-framework (versioned library, pinned per use case)    use case (one modelling problem)
-───────────────────────────────────────────────       ─────────────────────────────────────
-src/core_modelling/   plain functions                  one config file (the whole definition,
-guided notebooks      interface + learning               per-entity instances inside)
-CLI + Python API      automated / production runs      extension functions, only at named
-                                                         points (mostly Target Factory)
-                                                       its own copies of the guided notebooks
-                                                         to explore in
-```
+- **Framework** (versioned library, pinned per use case):
+  - `src/core_modelling/`: plain functions;
+  - guided notebooks: interface + learning;
+  - CLI + Python API: automated / production runs.
+- **Use case** (one modelling problem):
+  - one config file: the whole definition, per-entity instances inside;
+  - extension functions, only at named points (mostly Target Factory);
+  - its own copies of the guided notebooks, to explore in.
 
 There is no service layer (D-024). Each use case pins the framework version it runs with, upgrades
 at its own pace, and scores its models with that version (D-047). Many versions therefore write to
@@ -78,11 +76,10 @@ data-definition hash. Hands-off profiles run them automatically (D-031).
 
 ## 4. Time model and splits
 
-```
-months  …─[backward windows ≤ 6m]─┤ observation window t1 … tk ├─ target windows ─┤ v ├─ … ─┤ inference ├
-train + test   all eligible unit-months in t1 … tk, split by client (train | test)
-validation     the OOT month v ≥ tk + w, so its target window never overlaps a training target window
-```
+Train and test are all eligible unit-months in the observation window `t1 … tk`, split by client.
+Validation is the OOT month `v ≥ tk + w`, so its target window never overlaps a training target
+window. Inference months come after `v`. The full timeline, period by period, is owned by
+[dataset](components/dataset.md#time-model).
 
 Features are as-of each observation month; targets look forward `(1, w)`. Validation is a single
 month for panel tasks (series tasks will need rolling validation). Checks that use labels see
@@ -173,27 +170,25 @@ synthetic dataset. See [environment](components/environment.md) and
 
 ## 11. Proposed package layout (to confirm as components get built)
 
-```
-src/core_modelling/
-  __init__.py        version
-  __main__.py        CLI entry (run <config>)
-  config/            schema, loading (base+local merge), profiles, migrations
-  _compat.py         numpy/PySpark compat shim, imported first by __init__.py (T1)
-  environment.py     Spark session, transport, paths, sources
-  dataset.py         observation window, eligibility, splits, sampling, collection
-  target_factory/    target builders by task (extension point), lineage
-  eda/               population/target profile, univariate ranking, key features, pivots
-  feature_checks/    check steps, stability, lineage guard
-  ledger.py          feature ledger: create, append, resolve the final feature list
-  training/          model interface, AutoML path (FLAML), predefined path (Optuna),
-                     automated selection, categorical encoding, calibration
-  evaluation/        metrics by task, stratified metrics, baselines, view slots, comparison
-  lifecycle/         register, promote, deploy, registry records
-  inference/         scoring, batch outputs, manifests
-  monitoring/        health, drift, outcome joins, impact vs baselines
-  reporting/         HTML writer, plotly charts, styled tables, model card, themes
-synthetic/           dev-only synthetic data package (top level; not part of core_modelling)
-```
+- `src/core_modelling/`
+  - `__init__.py`: version
+  - `__main__.py`: CLI entry (`run <config>`)
+  - `config/`: schema, loading (base+local merge), profiles, migrations
+  - `_compat.py`: numpy/PySpark compat shim, imported first by `__init__.py` (T1)
+  - `environment.py`: Spark session, transport, paths, sources
+  - `dataset.py`: observation window, eligibility, splits, sampling, collection
+  - `target_factory/`: target builders by task (extension point), lineage
+  - `eda/`: population/target profile, univariate ranking, key features, pivots
+  - `feature_checks/`: check steps, stability, lineage guard
+  - `ledger.py`: feature ledger (create, append, resolve the final feature list)
+  - `training/`: model interface, AutoML path (FLAML), predefined path (Optuna), automated
+    selection, categorical encoding, calibration
+  - `evaluation/`: metrics by task, stratified metrics, baselines, view slots, comparison
+  - `lifecycle/`: register, promote, deploy, registry records
+  - `inference/`: scoring, batch outputs, manifests
+  - `monitoring/`: health, drift, outcome joins, impact vs baselines
+  - `reporting/`: HTML writer, plotly charts, styled tables, model card, themes
+- `synthetic/`: dev-only synthetic data package (top level; not part of `core_modelling`)
 
 A folder becomes a single module file when it only needs one. Don't create empty sub-packages ahead
 of need.

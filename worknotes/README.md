@@ -35,7 +35,7 @@ are **never loaded at session start**; they are read only when asked (`CLAUDE.md
 **Writing `log.md`.** Verbose and log-like, newest first. Updates on the same topic from the same
 or neighbouring days share one entry: the title carries the date range, each update keeps its date
 as a sub-bullet, and the entry sits where its latest update falls.
-- Commit and push the notes with the work they describe.
+- The notes go into the same commit as the work they describe (commits only when the SDS asks).
 
 ## `sync.md` template
 

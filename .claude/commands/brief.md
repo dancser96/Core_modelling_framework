@@ -8,8 +8,8 @@ Prepare a briefing for the daily Lead DS sync. Build it from the repo's markdown
 memory, so it works in a fresh chat.
 
 1. Read `worknotes/sync.md` and the top of `worknotes/log.md` (create them from the templates in
-   `worknotes/README.md` if missing). Then read `docs/UPDATES.md` and the Open decisions table in
-   `docs/roadmap.md`.
+   `worknotes/README.md` if missing). Then read `docs/UPDATES.md` and the Open decisions tables in
+   `docs/roadmap.md` (short-term first).
 2. Catch up. If `git log` shows commits that the log doesn't cover (a turn that forgot to log), add
    entries for them from the commit messages and diffs. Mention uncommitted work (`git status`).
 3. Reply with, for the period "$ARGUMENTS" (default: since the last briefing):

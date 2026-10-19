@@ -108,11 +108,17 @@ time, using subagents as much as possible:
 
    **Never tunnel:** no component, and no legacy port, is extended in isolation. Outcomes go to
    `docs/decisions.md` with sources; there is no research folder.
-1. Propose a plan: files to touch, function names + signatures, what is deliberately left out. Wait
-   for approval.
-2. Implement in small steps. Run `pytest` and `ruff check .` after each.
-3. Before calling it done, run the **code-reviewer** subagent on the diff, plus the specialised
-   subagents in §10 when their trigger applies. Fix or explicitly justify every finding.
+1. Propose a plan in two tiers (D-072):
+   - **major steps**, each ending in the SDS's review;
+   - **minor steps** inside them, each ending in the review skills and subagents of step 3.
+
+   Per step: the files to touch, the function names and signatures, and what is deliberately left
+   out. Wait for approval.
+2. Implement minor step by minor step. Run `pytest` and `ruff check .` after each, then step 3's
+   reviews. Stop for the SDS at the end of each major step.
+3. Run the **code-reviewer** subagent on each minor step's diff, plus the specialised subagents in
+   §10 when their trigger applies (and `simplicity-review` on code). Fix or explicitly justify every
+   finding.
 4. Update docs per §8, including `worknotes/sync.md` and `worknotes/log.md`. Report: what changed, why, what to review
    first, open risks.
 
@@ -277,7 +283,7 @@ Each fact has **one owner doc**; every other doc links to it instead of repeatin
 | `docs/glossary.md` | Vocabulary | committed | Naming anything; unfamiliar term |
 | `docs/architecture.md` | Target design, stage map, package layout, Public API | committed | Structural work |
 | `docs/decisions.md` | Decision log (D-nnn) | committed | Before designing |
-| `docs/components/<c>.md` | One component or versioned artifact, top-down: summary, how it works, code map, interface, then the details and open questions | committed | Working on it |
+| `docs/components/<c>.md` | One component or versioned artifact, in three levels: summary (≈ 4%), how it fits together (with the summary ≈ 20%), details; template in `docs/components/README.md` | committed | Working on it |
 | `docs/context/lessons.md` | Traps (T-nn) and lessons | committed | Before related code |
 | `docs/context/environment.md` | Versions and bank behaviour | committed | IO / dependencies |
 | `docs/guides/*.md` | How-tos: setup, Claude Code workflow, skills & agents | committed | As needed |
@@ -295,7 +301,7 @@ Each fact has **one owner doc**; every other doc links to it instead of repeatin
 | An artifact format changes (card, manifest, scores, ledger, registry, monitoring tables) | The owning component doc + the §2 procedure; run compat-guardian |
 | A public function is added or changed | `docs/architecture.md` → Public API |
 | A decision is made (pattern, dependency, lifecycle, naming) | New row in `docs/decisions.md` (mark rows it supersedes); `docs/architecture.md` if structure changes |
-| A question is opened, answered or parked | `docs/roadmap.md` → Open decisions (add, update or delete the OD row); component-only questions go in that doc's Open questions |
+| A question is opened, answered or parked | `docs/roadmap.md` → Open decisions (add, update or delete the OD row, in the short-term or medium-term table); component-only questions go in that doc's Open questions |
 | Work item started / finished / blocked | `docs/UPDATES.md` status table (dated log line if major); milestone/backlog in `docs/roadmap.md` |
 | A new term, or a term changes meaning | `docs/glossary.md` first, then use it consistently |
 | A new bug class, trap or chart-design lesson | `docs/context/lessons.md` (next T-number); chart rules in `docs/components/reporting.md` |
@@ -325,7 +331,8 @@ copies of a decision: those go to `worknotes/log.md`, `docs/decisions.md` or the
 file).
 
 **Style.** Verdict first, concise, integrated: edit text in place, don't append "update" sections.
-Flag anything unverified. No people's names (roles only) and no bank identifiers, including in
+Flag anything unverified. No flowcharts or ASCII diagrams: they don't wrap on small screens. Use a
+numbered list for a flow, nested bullets for a tree and a narrow table for a mapping (D-072). No people's names (roles only) and no bank identifiers, including in
 `worknotes/`. Run the **doc-sync** skill at the end of every task.
 
 ---
@@ -337,6 +344,8 @@ Flag anything unverified. No people's names (roles only) and no bank identifiers
   sets direction. Refer to people by role only.
 - **Ask first** before: a new dependency, a public API or schema change, a large refactor, deleting
   anything, or anything that touches the lifecycle tiers.
+- **Git.** Commit only when the SDS asks, even locally, and always with a message. Commits go
+  straight to main (no branches); push only when asked (D-072).
 - **Consult well.**
   - Ask numbered questions (continue the numbering across rounds), each with your proposed default.
   - For genuine choices, lay out the options with when-to-use guidance and a recommendation.

@@ -11,12 +11,16 @@ Phase 2 big-ticket item (D-030). This doc owns its downstream effects.
 
 ## Time model
 
-```
-months  …─[backward windows ≤ 6m]─┤ observation window t1 … tk ├─ target windows ─┤ v ├─ … ─┤ inference ├
-train + test   every eligible unit-month in t1 … tk, split by client
-validation     the OOT month v ≥ tk + w: its target window (v+1 … v+w) starts after the last
-               training target window ends (tk + w)
-```
+The periods, earliest to latest:
+
+1. **Backward windows** (≤ 6 months): the history features look back over, reaching before `t1`.
+2. **Observation window `t1 … tk`**: train + test, every eligible unit-month in it, split by
+   client.
+3. **Target windows**: the forward months the window's targets look into; the last one ends at
+   `tk + w`.
+4. **Validation month `v ≥ tk + w`** (OOT): its target window (`v+1 … v+w`) starts after the last
+   training target window ends (`tk + w`).
+5. **Inference**: later months, after `v`.
 
 - Features are as-of each observation month; targets look forward `(1, w)` (§4.1).
 - Backward windows default to ≤ 6 months, because some sources won't have more than 24 months of

@@ -1,217 +1,271 @@
 # Synthetic data and test harness
-**Status:** built (steps 0–7, 2026-10-17); the SDS's review round 1 applied (2026-10-19: role
-folders, slimmer `truth.json`, two new traps, exit rates, steady-state tenure; then a code review
-and an ML-correctness audit); awaiting the SDS's OK, guided by
-`synthetic/REVIEW.md` (D-067, D-070) · **Legacy:** `tests/smoke_test.py` (stub-based — do not copy
-its stubs)
+**Status:** tested (built 2026-10-17; the SDS's review applied and approved, 2026-10-19); with the
+LDS for review, guided by `synthetic/REVIEW.md` (D-067, D-070) · **Legacy:** `tests/smoke_test.py`
+(stub-based — do not copy its stubs)
 **Related:** [dataset](dataset.md) (time model) · [target factory](target_factory.md) ·
 [EDA](eda.md) · [feature checks](feature_checks.md) · [environment](environment.md) ·
 [config](config.md) · `tests/README.md` · `synthetic/REVIEW.md` (review guide) · D-014, D-041,
 D-056, D-057, D-062, D-064–D-070 · OD-15, OD-17
 
-## Summary
-Real data never leaves the bank, so everything outside it runs on synthetic data with **known
-ground truth**, read through **real** local PySpark (stubs hid every environment bug in the crunch,
-T15). The `synthetic/` package plays the upstream data owner. It writes the kind of **feature mart**
-retail use cases read inside the bank, so every stage meets realistic shapes: nulls, collinear
-rollups, wide tables, rare levels, heavy tails, seasonality, drift. Beside it, it writes what no
-model could know: the hidden traits and the true chance behind every event (the **oracle**), and
-`truth.json`.
+Read it in three levels:
+- **Level 1** (a two-minute read) gives the essentials.
+- **Level 2** (about ten minutes) explains how the parts connect.
+- **Level 3** is the reference for every number and rule. Its sections follow Level 2's order.
 
-- **Output:** one wide table, one row per client per month: 100k clients × 24 months ≈ 2.5M rows,
-  147 columns, in `data/01_raw/synthetic_canonical/`. It is read by every stage, notebook and demo
-  exactly as real data will be (`conf/local/` maps the logical source to it).
-- **What it is for:**
-  - It drives development: EDA, Feature Checks, leakage screens, models and monitoring are judged on
-    it, not just run on it.
-  - Its traps (leaks, a shifted column, an upstream target, null controls, rare levels, Simpson's
-    reversal, drift, dirty data) must be caught.
-  - Its oracle AUC per standard target is the ceiling no sound model beats.
-- **How it is trusted:** 8 check families, written from this spec, compare the data with what the
-  spec says; they never call the mechanisms that make the data. Every row must pass at 100k. A
-  checking notebook (`notebooks/00_synthetic_data.ipynb`) shows the same tables and a simplified
-  EDA.
-- **Size and speed:** about 6 minutes on the 8 GB Mac, within a 3 GB memory budget; a 5k preset
-  for the tests.
+## Level 1: Summary
+**What it is.** Real data never leaves the bank, so everything outside it runs on synthetic data
+with **known ground truth**. The dev-only `synthetic/` package plays the bank's upstream data owner.
+Every stage, test, notebook and demo reads its output through real local PySpark, exactly as it
+will read real data. Stubs hid every environment bug in the crunch (T15).
 
-## How it works
-**One month at a time.** The generator is a loop over months, vectorised over clients
-(`generate.py`). It starts from a book of clients drawn 13 months before the panel (12 burn-in
-months fill the histories) and calibrates every product on it. Each month then runs these steps:
+**What it writes** to `data/01_raw/synthetic_canonical/`, in about 6 minutes on the 8 GB Mac:
+- **The feature mart:** 100k clients × 24 months (≈ 2.5M rows), 147 columns, one row per client per
+  month. It holds:
+  - the client description;
+  - holdings and balances, flows and logins;
+  - 3- and 6-month rollups;
+  - trap columns.
 
-```
- spec/ (plain data)                                     each month t
- ─────────────────                                      ────────────
- presets  population, profiles      ─┐   1  clients leave and join         clients
- products holdings and their rates  ─┤   2  hidden traits take an AR(1) step clients
- amounts  levels, seasons           ─┼─► 3  holdings move: adopt, open,      holdings
- traps    the trap list             ─┘      lose, wake up, lapse
-                                         4  amounts follow the holdings      amounts → accounts,
-                                                                             cards, logins
-                                         5  rollups, recency, ratios         mart
-                                         6  mart row + oracle row            generate.month_rows
-                                         7  look-ahead trap columns once     traps.finalize_lookahead
-                                            t+1..t+3 exist; write month t    output.write_mart
-```
+  It holds no targets: Target Factory builds them, so that stage gets tested too.
+- **The oracle:** the hidden truth beside the mart. It holds each client's hidden traits and the
+  true chance behind every event.
+- **`truth.json`:** the seed, the spec, the calibration and, per standard target, the oracle's AUC.
 
-- **Chances drive everything.** Every holding and usage move has a monthly chance per client,
-  σ(intercept + score). The score holds the client's hidden traits, age, descriptors, the income
-  threshold and calendar effects. Every amount is a median multiple of a hidden base (true income
-  for flows, a wealth base for balances), times persistent and monthly random parts.
-- **Two tables per month.** The **mart** row is what upstream would publish. The **oracle** row is
-  the hidden truth: traits, the chance behind every event, the state-free scores that window
-  probabilities are priced from, hidden attributes, and the regression oracle.
-- **Deterministic from a seed.** One random stream per mechanism, spawned from the seed: a new
-  stream never changes another stream's columns; within a stream, a new draw moves every later
-  one. Draws are fixed-size per client, never sized by an outcome. A month never depends on later
-  months, except the declared look-ahead trap columns.
+**The book.** A UAE-style retail book in 4 profiles: Private 1%, Priority 4%, Affluent 9% and Mass
+86% of clients.
+- **Five hidden traits** per client drive everything: wealth, activity, digital, credit appetite and
+  cross-border. They decide what each client holds, adopts, uses and drops, and how large its
+  amounts are.
+- **Products:** current/savings, credit card, term deposit, digital and traditional wealth,
+  e-banking, and personal, auto and home loans.
+- **Usage:** FX, digital, card and current/savings activity, plus a hidden revolver state.
+- **Realistic behaviour:** holdings and usage are sticky; amounts are heavy-tailed; there is
+  seasonality and drift; about 8–12% of clients leave each year and as many join.
 
-**What comes out** (`<out>/`):
-- `mart/snapshot_month=YYYY-MM-01/part-0.parquet`: the feature mart, written month by month with
-  explicit types.
-- `oracle/…`: the same keys and partitions, hidden columns only; never mapped as a source.
-- `truth.json`: what can't be recomputed from the two tables: seed, versions, the spec (with the
-  trap list), calibration, the market index, the column schema, and the oracle's AUC and sizing per
-  standard target.
-- `checks/<family>.parquet`: the saved check tables (with `--checks`).
+**What it is for.**
+- **Traps the framework must catch**, on credit card acquisition and personal-loan opening: two
+  leaks, a target built upstream, a process leak, a column shifted a month ahead, null controls, a
+  rare level, an inverted U, a Simpson's reversal and drift. Dirty data is available on demand.
+- **A ceiling:** for each of 12 standard targets, the oracle's AUC (about 0.7–0.95) is what a
+  perfect model would reach. A model that beats it is leaking.
 
-**How it is checked.** Each family (`checks/<family>.py`) returns a table with one row per check:
-check, stratum, n, expected, realised, tolerance, passed, rule. Expected values are restated from
-this spec and read from the mart; where the spec defines a value through hidden inputs, they come
-from the oracle's columns. The checks call exactly two generator functions, both under test:
-`mechanisms.mart.parse_column` (the mart family checks that every name parses) and
-`truth.oracle.window_probability` (the ceiling). They never call the mechanisms that produce the
-data, so a generator bug can't pass its own check. Every check was shown to fail on a deliberately
-broken generator.
-- **Tolerances:** 4.5 standard errors, a family-wise false-failure rate of about 0.1%.
-  - Standard errors are analytical where the statistic has one, on one row per client:
-    binomial shares, Fisher z, Hanley–McNeil AUCs, α/√k for the Hill estimator.
-  - A spec range is checked as a range.
-  - A rule that must always hold has tolerance 0.
-- **Two suites:**
-  - `pytest` (≈ 3 min) runs the rule rows on the 5k preset, plus prefix stability, the Spark
-    recompute of every rollup, the written types and the off-by-default switches (dirty data,
-    extra columns; `checks/switches.py`, not a family).
-  - `pytest -m slow` writes the canonical dataset and runs every row of every family at 100k, each
-    family in its own process (one needs several GB).
-- **Checking notebook:** reads the written canonical dataset and its saved check tables.
-  - It shows every table plus a simplified EDA per area: population, holdings, amounts, time
-    effects, segments, mart columns, traps, oracle, client trajectories.
-  - It is committed with its outputs (synthetic data only; an exception in
-    `notebooks/README.md`).
-  - The guided EDA notebook replaces it once EDA exists.
+**How it is trusted.** 8 check families compare 1,263 statistics with this spec, and all pass at
+100k. The checks are written from the spec and never call the code that makes the data. The checking
+notebook `notebooks/00_synthetic_data.ipynb` shows them.
 
-Framework tests later assert against the ground truth: screens flag every trap, null controls carry
-no signal, and no model beats the oracle AUC.
+**Run it:** `python -m synthetic --preset canonical --out data/01_raw/synthetic_canonical --checks`.
+A 5k-client `unit` preset serves the tests.
 
-## Code map
-`synthetic/` is a separate editable package (`synthetic/pyproject.toml`, D-041), dev-only and never
-part of `core_modelling`. Folders split by role: rules and numbers without logic, the functions
-that simulate, the hidden truth, and the checks.
+## Level 2: How it fits together
 
-```
-synthetic/src/synthetic/
-├── __main__.py      CLI: python -m synthetic … → output.write_mart, then checks.suite.write_checks
-├── generate.py      THE MONTH LOOP: generate_mart (in memory) → start_simulation,
-│                    advance_simulation, finish_simulation; month_rows (mart + oracle rows),
-│                    buffer_month (waits for the look-ahead columns)
-├── output.py        write_mart (drives the loop, writes month by month, then the truth),
-│                    read_output (columns, client sample), load_truth (stale-data guard)
-├── spec/            RULES AND NUMBERS, NO LOGIC
-│   ├── presets.py     subsegments, profiles, mixes, income → RETAIL (the one spec dict), PRESETS;
-│   │                  the spec's only functions: two small dict builders (_sub, _profile)
-│   ├── products.py    PRODUCTS (shares, volumes, drivers), HOLDING_RULES
-│   ├── amounts.py     LEVELS (multiples, variation, card, loans, logins), SEASONS (time effects)
-│   └── traps.py       TRAPS: the trap summary
-├── mechanisms/      THE FUNCTIONS THAT SIMULATE
-│   ├── clients.py     draw_clients, draw_income, draw_hidden_attributes; latent_means,
-│   │                  draw_latents, step_latents (hidden traits)
-│   ├── holdings.py    product_score, time_terms, calibrate (intercepts), start_holdings,
-│   │                  step_holdings (every move + its chance), holding_columns
-│   ├── seasons.py     calendar effects: wake_shift, after_bonus, season_factor, travel_chance,
-│   │                  school_fee_due, bonus_due, login_drift
-│   ├── variation.py   random parts of amounts: client effects, AR(1) noise, Pareto multipliers,
-│   │                  measure_offsets (exact medians), counts, Dirichlet shares, split_amount
-│   ├── accounts.py    balances (current/savings, deposit, wealth, loans) and the flows through
-│   │                  the account (inflow, spending, booking), FX
-│   ├── cards.py       limit tiers, wanted spend, step_card (revolver / transactor)
-│   ├── logins.py      mobile and online logins, days since the last login
-│   ├── amounts.py     start_amounts, step_market, step_amounts: noise steps; balances; the card;
-│   │                  current/savings flows (book the card repayment, loan instalments); FX; logins
-│   ├── mart.py        name grammar (parse_column), history → rollups / recency / ratios,
-│   │                  arrow_schema (written types)
-│   └── traps.py       trap columns, finalize_lookahead (look-ahead columns), extra columns,
-│                      apply_dirty and dirty_panel (dirty data)
-├── truth/           THE HIDDEN TRUTH
-│   ├── oracle.py      STANDARD_TARGETS, realised_target, window_probability, oracle_metrics
-│   ├── regression.py  simulate_card_spend: Monte Carlo of next-3-month card spend
-│   └── truth_file.py  build_truth, column_schema, with_oracle → truth.json
-└── checks/          WRITTEN FROM THIS SPEC, NEVER CALLING THE MECHANISMS
-    ├── suite.py       CHECK_FAMILIES, run_checks, write_checks (a process per family), read_checks
-    ├── table.py       row helpers (share, rule, range, one-sided, events against Σp: sum_row,
-    │                  named offenders: offenders_row) and estimators (Hill, AUC, PSI)
-    ├── events.py      the checks' own reading: month-on-month events (build_panel, built on to_panel),
-    │                  forward-window targets, spec values restated
-    ├── switches.py    check_dirty, check_extra_columns: the off-by-default switches, not a family
-    └── population.py · holdings.py · amount_rules.py · amount_levels.py · seasons.py ·
-        mart.py · traps.py · oracle.py      one family each: check_<family>(mart, oracle, truth)
-```
+### Who the clients are
+- **Segments:** 9 subsegments in 4 profiles, ordered by wealth:
+  - Private: Upper, Lower;
+  - Priority: Upper, Lower;
+  - Affluent: UA, A;
+  - Mass: UM, MM, LM.
 
-Inside one month (`advance_simulation`):
-1. `_turn_over` picks the leavers and draws the joiners (`clients.*`, `traps.start_trap_state`).
-2. `clients.step_latents` moves the hidden traits.
-3. `_join_month` starts the joiners' holdings and amounts.
-4. `holdings.step_holdings` moves every product and returns the chances and scores.
-5. `amounts.step_market`, then `amounts.step_amounts`: the noise steps; the balances
-   (current/savings, deposit, wealth, loans); the card; the current/savings flows, which book the
-   card repayment and the loan instalments; FX; logins.
-6. `mart.advance_history` updates each client's history.
-7. On panel months only:
-   1. `regression.simulate_card_spend`;
-   2. `buffer_month`, which calls `traps.trap_columns`, `traps.extra_columns` and `month_rows`;
-   3. `traps.finalize_lookahead`, once the look-ahead months exist.
+  A profile sets its subsegments' mixes (nationality, employment, emirate), turnover and trait
+  spread. Segments never change.
+- **Income and age:**
+  - Median declared income runs from AED 3k a month (LM) to 150k (Upper Private).
+  - Mean age runs from 31 to 54.
+  - A client's true income is its subsegment's median, times an employment multiplier, higher
+    with its wealth trait, with noise.
+  - Declared income is the true income where declared. It is missing more often for the
+    Unemployed, Retired and Other, and for Private clients: not at random.
+- **Hidden traits:**
+  - Each subsegment has its own trait means: the wealthier subsegments sit higher on wealth,
+    activity and cross-border.
+  - Credit appetite is highest in Affluent and upper Mass, and lowest in Private.
+  - Nationality shifts the traits:
+    - Asian, African and Western expatriates are more cross-border, UAE nationals much less;
+    - Western clients are more digital;
+    - UAE and GCC clients have more credit appetite.
+  - Employment shifts them too:
+    - Retired clients are wealthier but less active, less digital and less keen on credit;
+    - the Unemployed are less active and less keen on credit.
+  - Traits drift slowly, so a client's behaviour changes gradually rather than jumping.
+- **Turnover:** 0.7% (Private) to 1.1% (Mass) of clients leave each month, at random. Entries run
+  0.2 points higher. The book is in its steady state, so shares, ages and tenure stay flat over the
+  panel.
 
-**Reading the code for review:** `generate.py` (the loop) → `mechanisms/holdings.py` (chances) →
-`mechanisms/amounts.py` and what it calls → `mechanisms/mart.py` → `mechanisms/traps.py` →
-`truth/oracle.py` (the ceiling) → one check family (e.g. `checks/holdings.py`).
+### Who holds which product, and who picks one up
+Every move has a monthly chance per client: adopting, opening, losing, waking up or lapsing. The
+chance has two parts:
+- **A profile intercept**, calibrated so each profile holds its spec share. It sets *how many*
+  hold the product.
+- **The client's score**, from traits, age, descriptors, the income threshold and calendar
+  effects. It sets *who* holds it within a profile.
 
-## Interface
-```python
-from synthetic.generate import generate_mart
-from synthetic.output import write_mart, read_output, load_truth
-from synthetic.truth.oracle import STANDARD_TARGETS, realised_target, window_probability
-from synthetic.checks.suite import run_checks, write_checks, read_checks
-from synthetic.mechanisms.traps import trap_summary
-
-generate_mart(preset="unit", n_clients=None, seed=0, n_months=None, dirty=False,
-              n_extra_columns=0) -> (mart, oracle, truth)     # in memory, small presets
-write_mart(out_dir, preset="canonical", ...) -> truth           # month by month to disk
-read_output(out_dir, table, columns=None, client_sample=None) -> pd.DataFrame
-load_truth(out_dir) -> dict          # fails loud if another generator, numpy or scipy version wrote it
-window_probability(mart, oracle, truth, target, w) -> pd.Series   # the true chance, keyed to t
-realised_target(mart, target, w) -> pd.Series
-run_checks(out_dir, families=None, client_sample=None) -> {family: table}
-```
-```bash
-python -m synthetic --preset canonical --seed 0 --out data/01_raw/synthetic_canonical --checks
-#   --n-clients 50000 (half the memory) · --n-months · --dirty · --extra-columns N
-```
-The folder must be new or empty. With `--checks`, every family runs in its own process, the tables
-are saved in `<out>/checks/`, and the CLI exits with status 1 if any row fails. To read the dataset
-through the environment adapter, copy `conf/base/sources.example.yml` to `conf/local/sources.yml`
-with the absolute path.
-
-| Preset | Clients × months | Use |
+| Product | Held by (Private → Mass) | Likelier to pick it up, within a profile |
 |---|---|---|
-| `unit` | ~5k × 24 (≈ 125k rows) | Unit tests and the end-to-end test |
-| `canonical` | 100k × 24 (≈ 2.5M rows); `--n-clients 50000` if memory runs short (a few statistical rows then need 100k) | The shared development dataset |
+| Credit card | 85 / 80 / 65 / 30% | Credit appetite, activity, the digital trait; salary transfer; income ≥ AED 5k. Less likely if onboarded digitally. Most take it in their first 3 months |
+| E-banking | 80 / 90 / 90 / 75% | The digital trait, younger clients; almost every digitally onboarded client. Mostly in the first 3 months |
+| Term deposit | 40 / 30 / 15 / 4% | Wealth, older and less digital clients; in the 2 months after a bonus |
+| Digital wealth | 10 / 20 / 12 / 2% | Digital and wealthy clients, younger ones; after a bonus. Holdings last about 10 months |
+| Traditional wealth | 60 / 35 / 10 / 1% | Wealth, older, less digital and Retired clients; after a bonus. Held for decades |
+| Personal loan | 5 / 10 / 20 / 20% | Credit appetite, less wealth; salary transfer; ages around the mid-30s; one rare nationality; income ≥ AED 5k |
+| Auto loan | 3 / 8 / 12 / 6% | Credit appetite and wealth; ages around the mid-30s; income ≥ AED 5k |
+| Home loan | 15 / 20 / 10 / 2% | Wealth; ages around 42; UAE, GCC and Western nationals; income ≥ AED 15k |
+| FX activity | 60 / 45 / 30 / 12% active | The cross-border trait (so mostly expatriates); more wake-ups in summer |
+| Digital activity | 80% of e-banking clients | The digital trait, younger and digitally onboarded clients; trending up |
+| Card activity | 75–85% of card holders | The activity trait |
+| Current/savings activity | 91–96% | Activity; salary-transfer clients rarely go dormant |
+| Revolver (hidden) | 10 / 20 / 30 / 45% of card holders | Credit appetite, less wealth |
 
-**Budgets:** `canonical` ≤ 10 min and ≤ 3 GB peak; `unit` ≤ 20 s. Measured on the 8 GB Mac
-(2026-10-19): `canonical` 337–355 s, within the 3 GB budget (the slow budget test passed); `unit`
-≈ 19 s. More than half the time goes to the regression oracle's simulated paths.
-`synthetic.__version__` goes up whenever the output changes, so a stale `data/01_raw/` fails loud.
+What ties the products together:
+- **Sticky.** Holdings last years: a card about 6 years, a term deposit 2.7 years, traditional
+  wealth about 33. Active spells last 2–15 years on average. Most client-months see no change, so
+  events are rare.
+- **Shared traits make products correlate.** Wealthy clients hold deposits, wealth and home loans
+  together. Credit-hungry clients hold cards, personal loans and revolving balances. Digital
+  clients register, log in and buy digital wealth.
+- **Half-strict income thresholds.** Below a card's or loan's minimum income, the odds of adopting
+  are a fifth. Clients with no declared income count as above the threshold if they are Private,
+  Priority, Retired or Other. A plain `income >= X` filter in Spark drops them silently: a trap.
+- **History matters.** Clients who held a term deposit or a wealth product before re-adopt at twice
+  the odds, so `never / churned / active` status carries signal.
+- **Built up over tenure.** Products other than the card and e-banking build up over each client's
+  tenure. Month 1's holdings already agree with each client's tenure, income and traits.
+- **Loans close only at maturity**, so a loan's closing is known in advance and is not a useful
+  target.
 
-## Requirements and design constraints
+### How amounts follow the holdings
+- **One formula for every amount.** It is the profile's median multiple of a hidden base. Flows
+  (inflow, card spend, FX) scale with the true income, balances with a wealth base. The multiple
+  is then scaled by:
+  - a persistent client effect;
+  - monthly noise;
+  - the client's trait deviations;
+  - for balances, a persistent power-law multiplier.
+
+  Private sits far above everyone else; neighbouring subsegments overlap (about 25% of MM clients
+  hold more than the UM median). A retired Private client has small flows but large balances.
+- **Balances persist** (month-to-month correlation ≥ 0.9). Flows vary more (0.6–0.8).
+- **Non-holders and dormant months** have exactly 0.
+- **Current/savings account:**
+  - The balance comes first, and inflow − outflow equals its change exactly.
+  - A salary-transfer client's salary is its true income.
+  - Clients who bank their salary elsewhere have smaller flows.
+  - Card repayments and loan instalments leave the account as outflow.
+- **Card:**
+  - The limit comes from income in product tiers.
+  - Revolvers carry a balance and pay interest; transactors repay in full.
+  - Utilisation is the balance over the limit.
+- **Loans, deposits and wealth:**
+  - Loans repay as annuities.
+  - A term deposit is fixed through each 12-month term.
+  - Wealth balances move with one shared market index.
+- **Mixes by profile:**
+  - Private clients spend more on travel and move money by transfer.
+  - Mass clients spend more on retail, cash and remittances.
+  - Only remitters remit, and no UAE or GCC national does.
+- **Time effects:**
+  - Travel spend and FX rise in July–August, while balances dip.
+  - Spending rises in December.
+  - School fees fall in September, January and April.
+  - Bonuses in January–April raise deposit and wealth adoption.
+  - Two drifts: digital wake-ups trend up, and an app relaunch in 2026-01 multiplies mobile logins
+    by 1.8.
+
+### What the mart holds
+- **147 columns in groups:**
+  - keys and the client description (14);
+  - holdings and states (20);
+  - current/savings (13), card (11), and loans, deposit and wealth (9);
+  - FX and digital (5);
+  - rollups over the last 3 and 6 months (56);
+  - recency (5) and ratios (4);
+  - trap columns (10).
+- **Names follow one grammar**, so a name says what the column is: `spend_cc_travel_vol`,
+  `casa_bal_0_5_months_avg`, `months_since_last_spend_cc`.
+- **Nulls appear only where retail data has them.** Examples: missing income, utilisation without
+  a card, and a rollup whose window reaches before the client joined. Non-holders get exact zeros.
+- **Collinear by construction**, as real marts are. A measure's 3- and 6-month rollups move
+  together, and identities hold exactly. For example, subcategories sum to their total, and inflow
+  − outflow equals the balance change.
+
+### Traps and the oracle
+- **Where the traps sit.** Traps sit on two products, so a test of either target meets every kind:
+  credit card acquisition and personal-loan opening. A few concern no product.
+- **Trap columns** (`trap_column` true) exist only to test the framework, and their names end in
+  `_trap_<kind>`:
+  - the two leaks;
+  - the target built upstream;
+  - the process leak;
+  - the shifted column;
+  - the null controls and the quality columns.
+- **Traps in real columns** keep their real names, since the framework meets them under those names
+  in real data:
+  - age's inverted U;
+  - a rare nationality;
+  - the income threshold;
+  - the Simpson's reversal: logins against card uptake, by onboarding channel;
+  - the login drift.
+- **The oracle prices the truth.** For an observation at month `t` and a target window of `w`
+  months, the window probability is the client's true chance of the event. It comes from the
+  recorded scores, with the client's state frozen at `t`.
+- **The ceiling.** The oracle's AUC is the ceiling for that target and window: a model that beats
+  it there is almost certainly leaking. Each leak beats the oracle on the window it was built for:
+  - card acquisition (`w` = 3): 0.97 and 0.88 against 0.84;
+  - personal-loan opening next month: 0.90 and 0.95 against 0.77.
+
+  The null controls score about 0.5 on every target.
+- **A regression ceiling too.** The oracle also gives the true mean and quantiles of each card
+  holder's next-3-month card spend, for regression (OD-15).
+
+### How a month runs, and where the code is
+The generator is a loop over months, vectorised over clients. It starts 13 months before the panel:
+12 burn-in months fill the 6-month histories and settle the book. Each month:
+1. Clients leave and join.
+2. Hidden traits take a small random step.
+3. Holdings move (adopt, open, lose, wake up, lapse), and every chance is recorded.
+4. Amounts follow the holdings: balances, the card, current/savings flows, FX and logins.
+5. Rollups, recency and ratios are updated from each client's 6-month history.
+6. Each client gets a mart row and an oracle row.
+7. The look-ahead trap columns are filled once the next 3 months exist; then the month is written.
+
+The run is deterministic from a seed:
+- Each mechanism has its own random stream, so adding a mechanism leaves the others' columns
+  unchanged.
+- A month never depends on later months, except the declared look-ahead trap columns.
+
+The code lives under `synthetic/src/synthetic/`, in four folders by role:
+- **`spec/`** holds the rules as plain data: population, products, amounts and traps.
+- **`mechanisms/`** holds the functions that simulate:
+  - `holdings.step_holdings` moves every product;
+  - `amounts.step_amounts` sets every amount;
+  - `mart` builds names and rollups;
+  - `traps` builds the trap columns.
+- **`truth/`** holds the oracle (`window_probability`, the standard targets), the regression oracle
+  and `truth.json`.
+- **`checks/`** holds the 8 check families.
+
+At the top level:
+- `generate.py` runs the month loop;
+- `output.py` writes and reads the dataset;
+- `__main__.py` is the command line.
+
+### How it is checked
+- **Eight families**, one table each: population, holdings, amount rules, amount levels, seasons,
+  mart, traps and oracle. Each row compares a statistic with what this spec says.
+- **Tolerance:** 4.5 standard errors, so a correct generator fails a family about once in a
+  thousand runs. A rule that must always hold has tolerance 0.
+- **Independent of the generator.** The checks never call the code that makes the data, so a
+  generator bug can't pass its own check. Every check was shown to fail on a deliberately broken
+  generator.
+- **Two test suites:**
+  - `pytest` (about 3 minutes) runs the rule rows on the 5k preset;
+  - `pytest -m slow` regenerates the 100k dataset and runs every row.
+- **The checking notebook** shows the tables, plus a simple EDA per area.
+
+## Level 3: Details
+
+Every number and rule, in Level 2's order: the requirements, then the clients, products,
+amounts, mart, traps and oracle, then the code, the checks, the interface and the maths.
+
+### Requirements and design constraints
 1. **An upstream-style feature mart**, one wide table per entity: one row per client per month, from
    the client's first month until exit, with the client description, current-month values and
    backward rollups. **No targets**: Target Factory builds them from the current-month columns, so
@@ -250,11 +304,9 @@ Design constraints:
   Cut in round 1: the relevance rankings (recomputable from the oracle) and the `separation` knob
   (no effect at its only value). Kept by the SDS's choice: the regression oracle.
 
----
+### Population and client description
 
-## Population and client description
-
-### Segment mix
+#### Segment mix
 Shares are fixed; client counts scale with `n_clients`. `segment` has 3 levels; `subsegment` has 9,
 ordered by wealth. Both are fixed for all months. The Private and Priority Upper/Lower split is a
 mock-up. Private is sized at 1k for significance; the smallest stratum (Upper Private, 250) still
@@ -266,7 +318,7 @@ exercises minimum support per stratum (D-050).
 | Priority | Upper / Lower | 1% / 3% | 1,000 / 3,000 |
 | PSB | UA / A / UM / MM / LM | 4.3% / 4.3% / 20.5% / 61.6% / 4.3% | 4,300 / 4,300 / 20,500 / 61,600 / 4,300 |
 
-### Mix by profile
+#### Mix by profile
 Subsegments share their mixes, turnover and trait spread through four profiles. The values live in
 `spec/presets.py`; they are ballpark, close to public UAE figures without copying any bank's book.
 ARAB means Arab nationalities outside the UAE and GCC, only slightly wealthier than ASIA; WESTERN
@@ -305,7 +357,7 @@ Upper Priority 60k, Lower Priority 40k, UA 30k, A 20k, UM 12k, MM 6k, LM 3k (Sel
 Retired × 0.5). Income is missing for 2% of Employed, 10% of Self-employed, 80% of Unemployed, 60%
 of Retired and 85% of Other clients, and for 30% more of Private clients.
 
-### Client description
+#### Client description
 | Field | Generation | Notes |
 |---|---|---|
 | `age` | The age at joining from a truncated normal per subsegment (18–85, mean: the book's mean age less the profile's mean tenure), plus the tenure for the starting book; whole years, changes in the birth month | PSB youngest, Private oldest |
@@ -328,7 +380,7 @@ of Retired and 85% of Other clients, and for 30% more of Private clients.
   repayment share;
 - the persistent effects and power-law multipliers of each amount ([amounts](#amounts)).
 
-### Income thresholds (half-strict eligibility)
+#### Income thresholds (half-strict eligibility)
 Credit cards and the three loans have a minimum income ([rates](#product-rates)).
 - Below it, the odds of adopting are a fifth of those above; at the threshold they jump.
 - Clients without a declared income count as above if they are Private or Priority, Retired or
@@ -338,7 +390,7 @@ A plain `income >= X` eligibility filter therefore drops the exempt clients sile
 treats a comparison with null as not true. It is a realistic trap that the eligibility step log
 must make visible.
 
-## Products and holdings
+### Products and holdings
 | Product | Kind | Generated | Derived / target |
 |---|---|---|---|
 | Current/savings (CASA) | Near-universal account + active/dormant chain | Monthly average balance; inflow and outflow by subcategory, with counts | Reactivation |
@@ -389,7 +441,7 @@ Also derived: the number of products held.
 - **Hidden traits** (`D = 5`): wealth, transactional activity, digital, credit appetite,
   cross-border. They shift by subsegment, nationality group and employment.
 
-### Product rates
+#### Product rates
 From public UAE ballparks (D-064), mostly surveys and partly dated. Exact levels matter much less
 than the dynamics and correlations. The ballparks:
 - about 53 credit cards per 100 adults;
@@ -452,15 +504,13 @@ chances as later adoption, the income threshold included (maths §3).
 **Second entity** (optional, M3; likely not needed): a smaller PSB-like subsidiary is another spec
 dict, generated and written separately, to test that entities are never merged (D-034). Not built.
 
----
-
-## Amounts
+### Amounts
 Every amount is a **median multiple of a hidden base per profile**: flows scale with the true
 income, balances with the wealth base. Values live in `spec/amounts.py`; the formulas are in
 [maths §4–§6](#4-amounts-lognormal-body-power-law-tail). All amounts are AED, rounded to 0.01;
 counts are whole numbers.
 
-### Levels
+#### Levels
 Median multiple of the base, per profile, in a non-seasonal month after the new-client ramp. The
 median holds for a client at its own trait means. Holders and active users are selected on the
 same traits their amounts load on, so their realised medians sit a little higher.
@@ -480,7 +530,7 @@ Clients without salary transfer bank their salary elsewhere: their current/savin
 outflow are × 0.4 and their balance × 0.6. A lower tail index is a heavier tail; flows inherit a
 thinner tail through their link to the balance (elasticity 0.3).
 
-### Persistence and variation
+#### Persistence and variation
 - **Stocks** (current/savings, term deposit, wealth) combine four parts:
   - a persistent client effect (sd 0.7 for current/savings, 0.5 for the others);
   - monthly AR(1) noise (ρ 0.8, stationary sd 0.25);
@@ -504,7 +554,7 @@ thinner tail through their link to the balance (elasticity 0.3).
 - **New clients** ramp up: current/savings balance × 0.5 in their first month, × 0.75 in the second,
   full from the third.
 
-### Current/savings account
+#### Current/savings account
 - **Balance first.** The monthly average balance follows its own path, with the summer dip.
   Inflow = salary + transfers + other; outflow = remittance + cash + bills + transfers.
 - **Salary** = true income for salary-transfer clients, every month, plus the bonus in the bonus
@@ -524,7 +574,7 @@ thinner tail through their link to the balance (elasticity 0.3).
   balance stays frozen at its last value. On reactivation the balance returns to its path, booked
   as a transfer.
 
-### Subcategories
+#### Subcategories
 Each client's mean shares are the profile's base shares, tilted by its current trait deviations and
 descriptors, then renormalised. Monthly shares vary around them (Dirichlet, concentration 50), so
 subcategories aren't perfectly collinear with their totals; they add up to the total exactly.
@@ -551,7 +601,7 @@ subcategories aren't perfectly collinear with their totals; they add up to the t
 - **Share tilts:** travel × exp(0.4 × cross-border deviation), online × exp(0.4 × digital
   deviation).
 
-### Credit card
+#### Credit card
 - **Limit:** set when the card is taken, from a few product tiers.
   - Tiers: AED 5k, 10k, 20k, 35k, 50k, 75k, 100k, 150k, 250k, 500k.
   - The limit is the largest tier at or below the limit multiple × true income (at least the
@@ -570,7 +620,7 @@ subcategories aren't perfectly collinear with their totals; they add up to the t
   - a card given up this month repays its whole balance and ends at 0.
 - **Utilisation** = `M` / limit, null without a card. Interest above 0 reveals a revolver.
 
-### Loans, term deposit, wealth
+#### Loans, term deposit, wealth
 - **Loans:** an annuity per account, summed per loan type.
   - Principal at opening = multiple × true income × exp(N(0, 0.3²)): personal 8, auto 5, home 60
     (the UAE cap for personal loans is 20×).
@@ -585,7 +635,7 @@ subcategories aren't perfectly collinear with their totals; they add up to the t
     drawn and is recorded in the truth.
   - Digital and traditional wealth have their own client effects and noise. 0 when not held.
 
-### FX and logins
+#### FX and logins
 - **FX** is a separate activity: currency conversion, foreign transfers and travel money;
   remittances stay in account outflow. Volume and count only in active months; its summer factor
   applies in July–August.
@@ -600,7 +650,7 @@ subcategories aren't perfectly collinear with their totals; they add up to the t
   login; dormant months add the days in the month; null if the client never logged in.
   Starting-book clients registered but dormant are taken to have logged in 30–720 days before.
 
-### Time effects
+#### Time effects
 Seasonality differs by profile: Mass clients travel little, and school fees vary less than income,
 so they weigh most on Affluent budgets.
 
@@ -625,18 +675,16 @@ so they weigh most on Affluent budgets.
   - An app relaunch at panel month 16 (2026-01) multiplies mobile logins by 1.8. The factor is set
     so the PSI clears 0.25 (1.3 gave 0.07).
 
-### Segment overlap
+#### Segment overlap
 Subsegments overlap in amounts, but their medians are ordered.
 - About 25% of MM clients hold more current/savings than the UM median. The target range is
   20–30%, set by the current/savings client effect.
 - Private is far apart from everyone else: fewer than 5% of Upper Priority clients sit above the
   Lower Private median.
 
----
+### Feature mart
 
-## Feature mart
-
-### Names
+#### Names
 All names are lowercase and come from one grammar (`mechanisms/mart.py`):
 - **Product state:** `{product}_{kind}`, kind ∈ `flag`, `active_flag`, `status`, `cnt`,
   `maturity_months`, `bal`, `limit`, `utilisation_ratio`, `vol` — e.g. `cc_flag`,
@@ -653,7 +701,7 @@ All names are lowercase and come from one grammar (`mechanisms/mart.py`):
 - **Trap columns** end in `_trap_{kind}` (D-069); extra columns are `extra_{nnnn}_trap_weak` /
   `extra_{nnnn}_trap_noise`.
 
-### Columns
+#### Columns
 147 columns, in this order:
 
 | Group | Columns |
@@ -671,7 +719,7 @@ All names are lowercase and come from one grammar (`mechanisms/mart.py`):
 | Ratios (4) | `casa_bal`, `inflow_casa_vol`, `spend_cc_vol`, `login_digital_mobile_cnt` (`_0_2_vs_3_5_months_ratio`) |
 | Trap columns (10) | [trap summary](#trap-summary): five look-ahead columns, then the null controls and quality columns |
 
-### Null rule, history and types
+#### Null rule, history and types
 - **Nulls only where the retail data has them:**
   - missing income;
   - residence for nationals and non-residents;
@@ -699,14 +747,14 @@ All names are lowercase and come from one grammar (`mechanisms/mart.py`):
   - `cc_limit` is `decimal(18,2)`;
   - categoricals and statuses are strings; `snapshot_month` is a date (T18).
 
-### Physical form
+#### Physical form
 Parquet partitioned by `snapshot_month` (`snapshot_month=YYYY-MM-01/`), written one month at a
 time by pyarrow into `<out>/mart/` and `<out>/oracle/`, with `<out>/truth.json` beside them.
 `conf/local/` maps the logical source to `<out>/mart/` (an example lives in `conf/base/`);
 `truth.json` and the oracle are never mapped. The canonical dataset lives in
 `data/01_raw/synthetic_canonical/`.
 
-## Trap summary
+### Trap summary
 Traps sit on **two products**, so a test of either target meets every kind (D-069): credit card
 acquisition (`cc_flag` 0 → 1) and personal-loan opening (`loan_personal_cnt` rises). A few concern
 no product. There are two sorts:
@@ -745,7 +793,7 @@ each trap's evidence.
 
 Later (not in M1): an interaction-only feature.
 
-## Ground truth and oracle
+### Ground truth and oracle
 - **Oracle file** (`oracle/`, parquet, same keys and partitions as the mart). Per client and month:
   - the hidden traits `z_*`;
   - the chance applied to every event that month, given the state at the end of the previous month
@@ -831,13 +879,186 @@ The card leaks (built for `w = 3`) beat it at `w = 3`; at `w = 1` the moderate o
 and at `w = 6` neither beats it. The loan leaks (process leak, shifted column) beat it at `w = 1`
 only (measured on 30k clients, 2026-10-19).
 
----
+### Code map
+`synthetic/` is a separate editable package (`synthetic/pyproject.toml`, D-041). It is dev-only and
+never part of `core_modelling`. Under `synthetic/src/synthetic/`, folders split by role: rules and
+numbers without logic, the functions that simulate, the hidden truth, and the checks.
 
-## The maths
+**Top level**
+- `__main__.py`: the CLI. `python -m synthetic …` runs `output.write_mart`, then
+  `checks.suite.write_checks`.
+- `generate.py`: the month loop.
+  - `generate_mart` runs it in memory: `start_simulation`, `advance_simulation`,
+    `finish_simulation`.
+  - `month_rows` builds the mart and oracle rows.
+  - `buffer_month` holds a month until its look-ahead columns exist.
+- `output.py`: `write_mart` drives the loop, writes month by month, then writes the truth.
+  `read_output` reads columns or a client sample; `load_truth` is the stale-data guard.
+
+**`spec/`: rules and numbers, no logic**
+- `presets.py`: subsegments, profiles, mixes, income → `RETAIL` (the one spec dict) and `PRESETS`.
+  Its only functions are two small dict builders (`_sub`, `_profile`).
+- `products.py`: `PRODUCTS` (shares, volumes, drivers) and `HOLDING_RULES`.
+- `amounts.py`: `LEVELS` (multiples, variation, card, loans, logins) and `SEASONS` (time effects).
+- `traps.py`: `TRAPS`, the trap summary.
+
+**`mechanisms/`: the functions that simulate**
+- `clients.py`: `draw_clients`, `draw_income`, `draw_hidden_attributes`; the hidden traits
+  (`latent_means`, `draw_latents`, `step_latents`).
+- `holdings.py`:
+  - `product_score`, `time_terms`, `calibrate` (the intercepts);
+  - `start_holdings`, and `step_holdings` (every move and its chance);
+  - `holding_columns`.
+- `seasons.py`: calendar effects: `wake_shift`, `after_bonus`, `season_factor`, `travel_chance`,
+  `school_fee_due`, `bonus_due`, `login_drift`.
+- `variation.py`: the random parts of amounts:
+  - client effects, AR(1) noise and Pareto multipliers;
+  - `measure_offsets` (exact medians);
+  - counts, Dirichlet shares and `split_amount`.
+- `accounts.py`: balances (current/savings, deposit, wealth, loans), the flows through the account
+  (inflow, spending, booking), and FX.
+- `cards.py`: limit tiers, wanted spend, `step_card` (revolver or transactor).
+- `logins.py`: mobile and online logins, days since the last login.
+- `amounts.py`: `start_amounts`, `step_market` and `step_amounts`, which runs, in order:
+  - the noise steps;
+  - the balances;
+  - the card;
+  - the current/savings flows, which book the card repayment and the loan instalments;
+  - FX;
+  - logins.
+- `mart.py`: the name grammar (`parse_column`); history → rollups, recency and ratios;
+  `arrow_schema` (the written types).
+- `traps.py`:
+  - the trap columns, and `finalize_lookahead` for the look-ahead ones;
+  - the extra columns;
+  - `apply_dirty` and `dirty_panel` (dirty data).
+
+**`truth/`: the hidden truth**
+- `oracle.py`: `STANDARD_TARGETS`, `realised_target`, `window_probability`, `oracle_metrics`.
+- `regression.py`: `simulate_card_spend`, a Monte Carlo of next-3-month card spend.
+- `truth_file.py`: `build_truth`, `column_schema`, `with_oracle` → `truth.json`.
+
+**`checks/`: written from this spec, never calling the mechanisms**
+- `suite.py`: `CHECK_FAMILIES`, `run_checks`, `write_checks` (a process per family),
+  `read_checks`.
+- `table.py`:
+  - row helpers: share, rule, range, one-sided, events against Σp (`sum_row`), named offenders
+    (`offenders_row`);
+  - estimators: Hill, AUC, PSI.
+- `events.py`: the checks' own reading of the data:
+  - month-on-month events (`build_panel`, built on `to_panel`);
+  - forward-window targets;
+  - spec values restated.
+- `switches.py`: `check_dirty` and `check_extra_columns`, for the off-by-default switches (not a
+  family).
+- One module per family, each with `check_<family>(mart, oracle, truth)`: `population.py`,
+  `holdings.py`, `amount_rules.py`, `amount_levels.py`, `seasons.py`, `mart.py`, `traps.py`,
+  `oracle.py`.
+
+**Inside one month** (`advance_simulation`):
+1. `_turn_over` picks the leavers and draws the joiners (`clients.*`, `traps.start_trap_state`).
+2. `clients.step_latents` moves the hidden traits.
+3. `_join_month` starts the joiners' holdings and amounts.
+4. `holdings.step_holdings` moves every product and returns the chances and scores.
+5. `amounts.step_market` runs, then `amounts.step_amounts`.
+6. `mart.advance_history` updates each client's history.
+7. On panel months only:
+   1. `regression.simulate_card_spend`;
+   2. `buffer_month`, which calls `traps.trap_columns`, `traps.extra_columns` and `month_rows`;
+   3. `traps.finalize_lookahead`, once the look-ahead months exist.
+
+**Reading the code for review**, in order:
+1. `generate.py` (the loop);
+2. `mechanisms/holdings.py` (the chances);
+3. `mechanisms/amounts.py` and what it calls;
+4. `mechanisms/mart.py`;
+5. `mechanisms/traps.py`;
+6. `truth/oracle.py` (the ceiling);
+7. one check family, e.g. `checks/holdings.py`.
+
+### Outputs and checks
+**What comes out** (`<out>/`):
+- `mart/snapshot_month=YYYY-MM-01/part-0.parquet`: the feature mart, written month by month with
+  explicit types.
+- `oracle/…`: the same keys and partitions, hidden columns only. It is never mapped as a source.
+- `truth.json`: what can't be recomputed from the two tables ([ground truth](#ground-truth-and-oracle)).
+- `checks/<family>.parquet`: the saved check tables (with `--checks`).
+
+**How it is checked.**
+- **One table per family.** Each family (`checks/<family>.py`) returns a table with one row per
+  check. Its columns are check, stratum, n, expected, realised, tolerance, passed and rule.
+- **Where expected values come from.** They are restated from this spec and read from the mart.
+  Where the spec defines a value through hidden inputs, the inputs come from the oracle's columns.
+- **Two generator functions, both under test.** The checks call only:
+  - `mechanisms.mart.parse_column`: the mart family checks that every name parses;
+  - `truth.oracle.window_probability`: the ceiling.
+
+  They never call the mechanisms that produce the data, so a generator bug can't pass its own
+  check. Every check was shown to fail on a deliberately broken generator.
+- **Tolerances:** 4.5 standard errors, a family-wise false-failure rate of about 0.1%.
+  - Standard errors are analytical where the statistic has one, on one row per client. Examples:
+    binomial shares, Fisher z, Hanley–McNeil AUCs, α/√k for the Hill estimator.
+  - A spec range is checked as a range.
+  - A rule that must always hold has tolerance 0.
+- **Two suites:**
+  - `pytest` (≈ 3 min) runs the rule rows on the 5k preset. It also runs prefix stability, the
+    Spark recompute of every rollup, the written types and the off-by-default switches: dirty
+    data and extra columns, in `checks/switches.py`, which is not a family.
+  - `pytest -m slow` writes the canonical dataset and runs every row of every family at 100k.
+    Each family runs in its own process, because one needs several GB.
+- **The checking notebook** reads the written canonical dataset and its saved check tables.
+  - It shows every table, plus a simplified EDA per area: population, holdings, amounts, time
+    effects, segments, mart columns, traps, oracle and client trajectories.
+  - It is committed with its outputs. That is allowed because it holds synthetic data only (an
+    exception in `notebooks/README.md`).
+  - The guided EDA notebook replaces it once EDA exists.
+
+Framework tests will later assert against the ground truth:
+- screens flag every trap;
+- null controls carry no signal;
+- no model beats the oracle AUC.
+
+### Interface
+```python
+from synthetic.generate import generate_mart
+from synthetic.output import write_mart, read_output, load_truth
+from synthetic.truth.oracle import STANDARD_TARGETS, realised_target, window_probability
+from synthetic.checks.suite import run_checks, write_checks, read_checks
+from synthetic.mechanisms.traps import trap_summary
+
+generate_mart(preset="unit", n_clients=None, seed=0, n_months=None, dirty=False,
+              n_extra_columns=0) -> (mart, oracle, truth)     # in memory, small presets
+write_mart(out_dir, preset="canonical", ...) -> truth           # month by month to disk
+read_output(out_dir, table, columns=None, client_sample=None) -> pd.DataFrame
+load_truth(out_dir) -> dict          # fails loud if another generator, numpy or scipy version wrote it
+window_probability(mart, oracle, truth, target, w) -> pd.Series   # the true chance, keyed to t
+realised_target(mart, target, w) -> pd.Series
+run_checks(out_dir, families=None, client_sample=None) -> {family: table}
+```
+```bash
+python -m synthetic --preset canonical --seed 0 --out data/01_raw/synthetic_canonical --checks
+#   --n-clients 50000 (half the memory) · --n-months · --dirty · --extra-columns N
+```
+The folder must be new or empty. With `--checks`, every family runs in its own process, the tables
+are saved in `<out>/checks/`, and the CLI exits with status 1 if any row fails. To read the dataset
+through the environment adapter, copy `conf/base/sources.example.yml` to `conf/local/sources.yml`
+with the absolute path.
+
+| Preset | Clients × months | Use |
+|---|---|---|
+| `unit` | ~5k × 24 (≈ 125k rows) | Unit tests and the end-to-end test |
+| `canonical` | 100k × 24 (≈ 2.5M rows); `--n-clients 50000` if memory runs short (a few statistical rows then need 100k) | The shared development dataset |
+
+**Budgets:** `canonical` ≤ 10 min and ≤ 3 GB peak; `unit` ≤ 20 s. Measured on the 8 GB Mac
+(2026-10-19): `canonical` 337–355 s, within the 3 GB budget (the slow budget test passed); `unit`
+≈ 19 s. More than half the time goes to the regression oracle's simulated paths.
+`synthetic.__version__` goes up whenever the output changes, so a stale `data/01_raw/` fails loud.
+
+### The maths
 Notation: client `i`, month `t`, subsegment `s`, profile `p`, product `k`, latent dimension
 `d = 1..5`. `σ(x)` is the logistic function.
 
-### 1. Latent traits
+#### 1. Latent traits
 ```
 z_i ~ N(μ_s + shift(nationality_group, employment), Σ_p),   Σ_p = D_p R_p D_p,   L_p = chol(Σ_p)
 ```
@@ -845,7 +1066,7 @@ Each subsegment has its own mean; scales and the **correlation matrix `R`** are 
 with every correlation between traits kept within [0, 0.2] (the wealthy profiles decouple wealth
 from credit appetite).
 
-### 2. Persistence over time (stationary AR(1))
+#### 2. Persistence over time (stationary AR(1))
 ```
 z_i,t = m_i + ρ (z_i,t−1 − m_i) + sqrt(1 − ρ²) · L_p ε_i,t,     ε ~ N(0, I)
 ```
@@ -864,7 +1085,7 @@ exact. Segments never change. `Δz_i,d,t = z_i,d,t − m_i,d` is the trait devia
   They put traits, holdings and amounts in steady state and provide the history that month 1's
   rollups need.
 
-### 3. Holdings and accounts
+#### 3. Holdings and accounts
 Every product has one monthly chance per client, on the log-odds scale:
 ```
 logit p_i,k,t = α_k,p + score_i,k,t + log(2) · churned_i,k
@@ -903,7 +1124,7 @@ score_i,k,t   = Σ_d β_k,d · z_i,d,t + age_k(age_i,t) + effects_k(descriptors_
 - **Sizing rule**, recorded in the ground truth: every standard target keeps ≳ 200 events in a
   6-month window at the canonical size, or is flagged as low-confidence.
 
-### 4. Amounts: lognormal body, power-law tail
+#### 4. Amounts: lognormal body, power-law tail
 For a holder in an active month:
 - `m` is the level multiple;
 - `base` is the true income or the wealth base;
@@ -929,7 +1150,7 @@ flow     F_i,k,t = m_k,p · income_i · adj_i · season_k,p(t) · exp(N_i,k,t + 
   - `W` is persistent, so balances don't jump.
 - **Non-holders and dormant months:** exactly 0.
 
-### 5. Counts, subcategories, card balance
+#### 5. Counts, subcategories, card balance
 ```
 count     = active · (1 + Poisson(μ_k · exp(0.3 Δz_activity) · G)),   G ~ Gamma(2, 1/2)
 shares_t  ~ Dirichlet(50 · s̄_i),   s̄_i = base_p ⊙ tilts_i / Σ;   sub-amount = round(total · share)
@@ -941,7 +1162,7 @@ loan      instalment = P r / (1 − (1 + r)^−n),   outstanding after j instalm
 ```
 Sub-amounts are rounded first and the total is their sum, so subcategories add up exactly.
 
-### 6. Seasonality and drift
+#### 6. Seasonality and drift
 Seasonal factors are per measure and profile ([time effects](#time-effects)): multiplicative on
 amounts, additive on log-odds for wake-ups. Drift is the digital uptake trend and the app
 relaunch; their parameters are in the spec (`seasons.drift`).

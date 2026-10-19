@@ -23,9 +23,10 @@ committed `worknotes/` add a sync page for you and the Lead DS, a verbose log an
    or anything you call a significant redesign or extension: "brainstorm this first". Claude
    researches best practice, critiques the ideas (yours and its own) and runs `holistic-review`
    across all components before planning. Answer its numbered questions by number.
-3. **Plan first.** Ask for a plan (files, function names/signatures, what is left out). In the CLI,
-   `Shift+Tab` cycles into plan mode. Approve or trim it; cutting scope here is the cheapest
-   anti-slop step.
+3. **Plan first.** Ask for a plan in major steps (each ends in your review) and minor steps (each
+   ends in Claude's review skills and subagents): files, function names/signatures, what is left
+   out. In the CLI, `Shift+Tab` cycles into plan mode. Approve or trim it; cutting scope here is
+   the cheapest anti-slop step.
 4. **Small steps.** One logical change per step. Review every diff line by line before accepting.
 5. **Checks.** `pytest`, `ruff check .`, then "run the code-reviewer subagent on this diff". Add
    `silent-failure-hunter` / `ml-correctness-auditor` / `compat-guardian` when their triggers apply
@@ -33,7 +34,8 @@ committed `worknotes/` add a sync page for you and the Lead DS, a verbose log an
 6. **Docs.** "Run doc-sync": component doc, UPDATES, decisions, roadmap open decisions, glossary, and
    the `worknotes/` sync page and log. Occasionally, `/revise-claude-md` captures session learnings
    into `CLAUDE.md` or the right doc.
-7. **Commit and push** (one branch per task; merge when happy). The next machine picks up from git.
+7. **Commit and push when you ask.** Claude commits only on request, always with a message,
+   straight to main; it pushes only when asked. The next machine picks up from git.
 
 ## Continuity between chats, days and machines
 

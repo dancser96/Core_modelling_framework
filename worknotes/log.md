@@ -2,6 +2,35 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-10-19 — Working rules and doc structure (D-072)
+- The SDS's feedback for the whole project:
+  - a plan for building a section has major steps (the SDS reviews) made of minor steps (Claude's
+    review skills and subagents run);
+  - commits only when the SDS asks, even locally, always with a message;
+  - the open decisions split into short-term and medium-term tables;
+  - no flowcharts: they don't work on smaller screens;
+  - docs in three depth levels, following the 80-20 rule. Level 1 is ≈ 4% of the doc and gives
+    ≈ 64% of the information. Level 2 covers the main relationships, e.g. who is likely to pick up
+    which product, and with Level 1 is ≈ 20% of the doc for ≈ 80%. Level 3 holds every detail.
+- Done:
+  - `test_harness.md` restructured into Level 1 (summary, 3.2% of the words), Level 2 (how it fits
+    together; 18.6% with Level 1) and Level 3 (the details, in Level 2's order). Level 2 is new:
+    who the clients are, a table of who holds and who picks up each product, how amounts follow,
+    the mart, traps and the oracle, the month loop and the code in brief, the checks. The month
+    flowchart became a numbered list and the code-map tree nested bullets;
+  - the component template, the new-component skill, `CLAUDE.md` §1 workflow, §8 (doc map,
+    style, open-decision trigger) and §9 (git), the workflow guide and the worknotes README;
+  - the other diagrams (architecture: framework vs use case, the time model, the package layout;
+    lifecycle tiers; the dataset time model) replaced with lists. Architecture's time model now
+    links to dataset's, its owner;
+  - open decisions split: short-term OD-01, 02, 05–11, 13, 15, 18, 23; medium-term OD-04, 12, 14,
+    17, 19–22. CDS-agenda rows with a later build need (release path, inventory, long-term feature
+    sources, eventual task scope) sit in medium-term.
+- Found: `worknotes/chief_ds_meeting/questions.md` lists OD-04 (Nexus distribution) as settled in
+  session 1, but its roadmap row is still open. The CDS meeting outcomes still need converting into
+  D-rows.
+- Nothing committed (new rule).
+
 ### 2026-10-19 — Synthetic data (M1): the SDS's review round 1, approved
 - 2026-10-19, approved: the SDS gave their OK on the round. `synthetic/REVIEW.md` now describes
   only the current state (what it is, how to regenerate, the review order, targets, settled

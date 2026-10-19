@@ -2,7 +2,7 @@
 _Written: 2026-10-16 · branch: main · last commit before the build: see `git log` (the spec and this
 plan are committed together)_
 
-> **Superseded layout (2026-10-19, D-070):** the modules below were moved into `spec/`, `mechanisms/`, `truth/` and `checks/` and partly merged; relevance rankings and `separation` were cut. The current map is `docs/components/test_harness.md` → Code map. This plan is history and goes when M1 closes.
+> **Superseded layout (2026-10-19, D-070):** the modules below were moved into `spec/`, `mechanisms/`, `truth/` and `checks/` and partly merged; relevance rankings and `separation` were cut. The current map is `docs/components/test_harness.md` → Level 3 → Code map. This plan is history and goes when M1 closes.
 
 
 ## Goal

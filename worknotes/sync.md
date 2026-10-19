@@ -1,15 +1,15 @@
 # Sync page
 _For the SDS and the LDS · last updated: 2026-10-19 · last sync: 2026-10-13 (2026-10-14: CDS prep only)_
 
-**New decisions since the last sync:** D-056–D-071 (`docs/decisions.md`)
+**New decisions since the last sync:** D-056–D-072 (`docs/decisions.md`)
 
 Detail behind each item: `worknotes/log.md`. Open decisions (OD-nn): `docs/roadmap.md`. How this
 page is written: `worknotes/README.md`.
 
 ## For the LDS: to review (most important first, then newest)
 - [ ] **Synthetic data generator (M1)** — `synthetic/REVIEW.md`, then
-      `notebooks/00_synthetic_data.ipynb` and `docs/components/test_harness.md` (first four
-      sections) — feedback wanted: is the book realistic enough to develop against, and are the
+      `notebooks/00_synthetic_data.ipynb` and `docs/components/test_harness.md` (Levels 1
+      and 2) — feedback wanted: is the book realistic enough to develop against, and are the
       traps the ones the framework must catch? The SDS approved it on 10-19. In short:
       - 100k clients × 24 months, written as a 147-column feature mart that Spark reads like the
         real one;
@@ -65,9 +65,19 @@ page is written: `worknotes/README.md`.
   `synthetic/REVIEW.md`
 - **Window ablation without a second validation month** (D-062): the window is chosen on test and
   validation equally; train only shows the overfitting gap. — look at: `docs/components/dataset.md`
-- **Working rule: parallel by default** (D-071): Claude splits work into independent pieces run by
-  subagents, with long jobs in the background, and integrates and verifies the results itself. —
-  look at: `CLAUDE.md` §1 workflow
+- **Working rules** (D-071, D-072):
+  - Claude works in parallel by default: subagents take the independent pieces, long jobs run in
+    the background, and Claude integrates and verifies the results.
+  - Build plans have major steps, each ending in the SDS's review, made of minor steps, each ending
+    in Claude's review skills.
+  - Commits happen only when the SDS asks.
+  - Docs have no flowcharts, since they break on small screens.
+  - Component docs read in three levels: a summary (≈ 4% of the doc), how it fits together (with
+    the summary ≈ 20%), then the details. `test_harness.md` is the first one written this way.
+
+  — look at: `CLAUDE.md` §1 workflow, `docs/components/README.md`
+- **Open decisions split** into short-term (needed to finish M1 or build M2) and medium-term (M3
+  on, or parked). — look at: `docs/roadmap.md` → Open decisions
 - **Code rules** (D-063, D-067): every function has type hints and a docstring, checked
   automatically; functions up to ~50 lines and steps up to ~300–400 changed lines, with a review
   guide for larger agreed builds.
@@ -76,6 +86,8 @@ page is written: `worknotes/README.md`.
 - The CDS meeting outcomes (2026-10-15), then where the synthetic data generator stands.
 
 ## Last 7 days
+- 10-19 — **Working rules and doc structure**: plans in major/minor steps, commits only on
+  request, three-level docs without flowcharts, open decisions split by horizon — D-072
 - 10-17–19 — **Synthetic data generator (M1)**: built, reviewed by the SDS, approved; ready for
   the LDS — `synthetic/REVIEW.md`
 - 10-14 — **CDS meeting material**: three rounds with the SDS, then a review with the LDS that added

@@ -19,36 +19,57 @@ stage, and the order to read the docs in: [`docs/README.md`](../README.md). Stat
 Use the **new-component** skill. When to create a new doc at all: `CLAUDE.md` §8. A new, renamed or
 deleted component doc also updates the stage map in `docs/README.md`.
 
-Every component doc reads **top-down**: a reader first gets the whole picture (summary, how it works,
-code map), then dives into the segments. History stays out: it belongs in `docs/UPDATES.md` and
-`docs/decisions.md`. `test_harness.md` is the worked example.
+Every component doc reads **top-down in three levels**, so a reader can stop early and still know
+most of it (D-072):
+- **Level 1: Summary**, about 4% of the doc. It gives the key things, roughly two thirds of what
+  there is to know.
+- **Level 2: How it fits together.** With Level 1, about 20% of the doc and 80% of what there is
+  to know. It covers the main relationships and connections:
+  - what drives what, and how the parts depend on each other;
+  - how one run flows;
+  - the function structure in brief;
+  - how it is checked.
+- **Level 3: Details**, the rest. Every number, rule and requirement, the full code map, the
+  interface and the maths, in Level 2's order.
+
+**No flowcharts or ASCII diagrams**, because they don't wrap on small screens. Use a numbered list
+for a flow, nested bullets for a tree and a narrow table for a mapping. History stays out: it
+belongs in `docs/UPDATES.md` and `docs/decisions.md`. `test_harness.md` is the worked example.
 
 ```markdown
 # <Component>
 **Status:** designing | stub | built | tested · **Legacy:** <files or "none">
 **Related:** <links to the docs this depends on and that depend on it> · D-nnn · OD-nn
 
-## Summary
-A few lines a newcomer reads first: what it does, why it is a standalone unit, what goes in and
-what comes out, who uses it.
+Read it in three levels: Level 1 gives the essentials, Level 2 how the parts connect, Level 3
+every detail.
 
-## How it works
-One page: the flow in steps (a small diagram helps), what it writes, how it is checked.
+## Level 1: Summary
+About 4% of the doc. What it does and why it is a standalone unit, what goes in and what comes
+out, who uses it, the key numbers, how to run it.
 
-## Code map
-The folder tree with each module's one job and main functions, the call flow of one run, and a
-reading order for review. For a design: the planned layout.
+## Level 2: How it fits together
+With Level 1, about 20% of the doc. One ### per area:
+- the main relationships (what drives what, how the parts depend on each other);
+- how one run flows (a numbered list);
+- the function structure in brief (folders, main functions);
+- how it is checked.
 
-## Interface
-Public functions, CLI and config section (signatures; fill in when built).
-
-## Requirements and design constraints
+## Level 3: Details
+### Requirements and design constraints
 Numbered, testable requirements; invariants (CLAUDE.md §4), task-agnostic shapes, simplicity notes.
 
-## <One section per area>
-The details, in the order the summary introduces them.
+### <One section per area, in Level 2's order>
+The details: every number and rule.
 
-## Lessons from the crunch
+### Code map
+Each module's one job and main functions (nested bullets, not a tree drawing), the call flow of
+one run, and a reading order for review. For a design: the planned layout.
+
+### Interface
+Public functions, CLI and config section (signatures; fill in when built).
+
+### Lessons from the crunch
 Links to docs/context/lessons.md entries (T#).
 
 ## Open questions
