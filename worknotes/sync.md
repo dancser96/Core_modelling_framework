@@ -7,6 +7,19 @@ Detail behind each item: `worknotes/log.md`. Open decisions (OD-nn): `docs/roadm
 page is written: `worknotes/README.md`.
 
 ## For the LDS: to review (most important first, then newest)
+- [ ] **Synthetic data generator (M1)** — `synthetic/REVIEW.md`, then
+      `notebooks/00_synthetic_data.ipynb` and `docs/components/test_harness.md` (first four
+      sections) — feedback wanted: is the book realistic enough to develop against, and are the
+      traps the ones the framework must catch? The SDS approved it on 10-19. In short:
+      - 100k clients × 24 months, written as a 147-column feature mart that Spark reads like the
+        real one;
+      - a steady-state book: 8–12% of clients leave a year and as many join, while shares, ages
+        and tenure stay flat;
+      - 12 standard targets, each with a known ceiling (the oracle: AUC 0.70–0.95);
+      - traps the framework must catch: two leaks, an upstream target, a process leak, a column
+        shifted a month ahead, a Simpson effect, drift and a rare level;
+      - 1,263 independent check rows, all passing; the code is in role folders (rules, functions,
+        truth, checks).
 - [ ] **Synthetic data spec** — `docs/components/test_harness.md` — feedback wanted: is the
       synthetic retail book realistic enough to develop against? Especially the mixes per
       profile and the product rates taken from public UAE figures (D-064).
@@ -44,16 +57,12 @@ page is written: `worknotes/README.md`.
 | Human feature decisions (OD-10) | Resolving a flag after training would force an identical retrain | Grouped lists, one note per group; only a `keep` that resolves a flag needs one | SDS |
 
 ## Since the last sync
-- **Synthetic data: population and holdings exist.** Steps 0–2 built: Spark harness, the client
-  population (24 months, 100k clients) and their products: credit card, term deposit, digital and
-  traditional wealth, three loan types, e-banking, FX and digital activity. Each product is set by
-  its share per profile and one rate; the chance behind every event is recorded as hidden truth.
-  An audit fixed how the "true probability" of a target must be computed (D-066). Step 2 is
-  closed; the rest (amounts, the mart's columns, traps, oracle, the written dataset) was built in
-  one go (2026-10-17). The SDS's first review (2026-10-19) reorganised the code into role folders,
-  cut what did little, added two traps and rewrote the spec top-down (D-070); every independent
-  check row passes again. A summary for you follows the SDS's OK. — look at:
-  `docs/components/test_harness.md` (product rates, maths §3), `notebooks/00_synthetic_data.ipynb`
+- **Synthetic data generator done and approved by the SDS** (M1; D-064–D-071). Population,
+  holdings, amounts, the feature mart, traps, oracle and CLI were built in one go (10-17). The SDS's
+  review (10-19) reorganised the code into role folders, cut what did little (`truth.json`
+  234 → 55 KB), added a moderate leak and a shifted column, raised exits and made the book a steady
+  state. It is now on your review list. Still open in M1: the second task type (OD-15). — look at:
+  `synthetic/REVIEW.md`
 - **Window ablation without a second validation month** (D-062): the window is chosen on test and
   validation equally; train only shows the overfitting gap. — look at: `docs/components/dataset.md`
 - **Working rule: parallel by default** (D-071): Claude splits work into independent pieces run by
@@ -67,12 +76,14 @@ page is written: `worknotes/README.md`.
 - The CDS meeting outcomes (2026-10-15), then where the synthetic data generator stands.
 
 ## Last 7 days
+- 10-17–19 — **Synthetic data generator (M1)**: built, reviewed by the SDS, approved; ready for
+  the LDS — `synthetic/REVIEW.md`
 - 10-14 — **CDS meeting material**: three rounds with the SDS, then a review with the LDS that added
   our joint proposals (OD-02, OD-04, OD-15, OD-21) and split off a blank-slate lifecycle session —
   `worknotes/chief_ds_meeting/`
 - 10-14 — **Follow-ups to the 10-13 sync**: feature decisions, lifecycle depth, regression shapes,
   targets — D-058–D-061
-- 10-13–15 — **Synthetic data (M1)**: feature-mart spec settled, local Spark harness running,
+- 10-13–15 — **Synthetic data (M1) design**: feature-mart spec settled, local Spark harness running,
   population and holdings built — D-056, D-057, D-062–D-066, `docs/components/test_harness.md`
 - 10-13 — **LDS sync**: Phase 2 scope reopened (FLAML only / binary only, OD-15); the registry and
   deployment need an owner (OD-23); MLflow for the registry rather than monitoring (OD-13)

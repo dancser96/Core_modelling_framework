@@ -2,7 +2,12 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
-### 2026-10-19 — Synthetic data (M1): the SDS's review round 1
+### 2026-10-19 — Synthetic data (M1): the SDS's review round 1, approved
+- 2026-10-19, approved: the SDS gave their OK on the round. `synthetic/REVIEW.md` now describes
+  only the current state (what it is, how to regenerate, the review order, targets, settled
+  choices, limitations). The LDS summary is on the sync page's review list. M1's generator is done;
+  OD-15 (second task type) is still open, so the handover `handovers/synthetic_build.md` stays
+  until M1 closes. Committed and pushed as "Synthetic Data build".
 - The SDS reviewed the finished generator (notebook, spec, code) and asked for:
   - the code in role subfolders: rules as plain data, functions, checks;
   - merged tied modules, measuring code amount against effect;

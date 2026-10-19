@@ -37,7 +37,7 @@ These are proposed wordings; confirm them together with the depth table (OD-01).
 | # | Milestone | Content | Status |
 |---|---|---|---|
 | M0 | Design baseline | Docs rebuilt from three review rounds and the Lead DS notes | Done 2026-10-12 |
-| M1 | Synthetic data + local Spark harness | `synthetic/` package (~100k × 24 months, sticky holdings and usage, traps, ground truth); generated dataset in `data/01_raw/`; Spark fixtures; generator validation tests; the second task type chosen (OD-15, D-050) | Next |
+| M1 | Synthetic data + local Spark harness | `synthetic/` package (~100k × 24 months, sticky holdings and usage, traps, ground truth); generated dataset in `data/01_raw/`; Spark fixtures; generator validation tests; the second task type chosen (OD-15, D-050) | Generator done 2026-10-19 (with the LDS for review); OD-15 open |
 | M2 | Walking skeleton | Every stage thin, end to end, on synthetic data, binary task: config spine → environment adapter → dataset → Target Factory → EDA → Feature Checks → ledger → Training (AutoML) → Evaluation → reporting → register / promote / deploy → Inference → Monitoring; CLI / API; guided notebooks | — |
 | M3 | Deepening round 1 | Priorities to agree at the time. Candidates: EDA usefulness, observation window and sampling, predefined path + Optuna + trade-off chart, compatibility table, stratified reporting | — |
 | M4 | Deepening round 2 (and 3 if needed) | Remaining depth targets (OD-01); second task type end to end; monitoring layers 1–2 deep; registry tables; window ablation | — |
