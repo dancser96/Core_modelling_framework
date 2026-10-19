@@ -61,8 +61,10 @@ page is written: `worknotes/README.md`.
   holdings, amounts, the feature mart, traps, oracle and CLI were built in one go (10-17). The SDS's
   review (10-19) reorganised the code into role folders, cut what did little (`truth.json`
   234 → 55 KB), added a moderate leak and a shifted column, raised exits and made the book a steady
-  state. It is now on your review list. Still open in M1: the second task type (OD-15). — look at:
-  `synthetic/REVIEW.md`
+  state. The notebook is now a visual tour, with the checks in an appendix. It shows a leakage
+  screen, the gains a perfect model would reach, heavy tails, collinear clusters and the regression
+  oracle's band. It is now on your review list. Still open in M1: the second task type (OD-15). —
+  look at: `synthetic/REVIEW.md`
 - **Window ablation without a second validation month** (D-062): the window is chosen on test and
   validation equally; train only shows the overfitting gap. — look at: `docs/components/dataset.md`
 - **Working rules** (D-071, D-072):

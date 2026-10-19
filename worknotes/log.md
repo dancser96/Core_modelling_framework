@@ -2,6 +2,42 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-10-19 — Synthetic data notebook: a visual tour
+- The SDS chose 5 of 9 proposed charts:
+  - the leakage screen preview (2);
+  - the gains curve of perfect knowledge (4);
+  - heavy tails on log–log axes (5);
+  - collinear clusters (7);
+  - the regression fan (9).
+
+  They asked for the notebook to become a visual entry, with the checks less prominent.
+- Done:
+  - sections 1–8 follow Level 2 of the spec: the book, holdings, amounts, time, the mart, traps,
+    the ceiling, client stories;
+  - the appendix A1–A7 holds every check table and the tables behind the charts;
+  - the first cell prints the check status (1,263 of 1,263 rows pass);
+  - population and spend-mix tables became charts; a joiner's rollups show how windows fill;
+  - the notebook loads the 20% sample once, instead of six partial reads, and runs in about 20 s.
+- Results:
+  - **Leakage screen:** the oracle's AUC is 0.842 for card acquisition (w = 3); trap columns 1.00,
+    0.97 and 0.87; the best real column (income) 0.68. For personal-loan opening next month, the
+    oracle's AUC is 0.763; the shifted column scores 0.94 and applications 0.90.
+  - **Gains:** in the top 10% of non-holders, the oracle catches 54% of card acquirers, income
+    25%, a salary-transfer-and-income rule 16%, and the leak 89%.
+  - **Regression:** realised spend falls inside the oracle's 10–90% band in 67–95% of the months,
+    per client.
+- Found: the first tail chart (per profile, 20% sample) showed slopes of −1.2 to −2.0 against the
+  spec's −2. Per subsegment on every client, the Hill estimate is ≈ 2.0 and the slope beyond 3× the
+  median is −1.8 to −1.95. Mixing subsegments' medians within a profile flattens the visible range,
+  so the chart is now per subsegment on the full month. Traditional wealth has too few holders per
+  subsegment for a clean tail and was dropped from the chart.
+- Code review of the notebook found 5 blocking issues and 7 suggestions, all fixed:
+  - the leakage bars were ordered by kind, not strength;
+  - each screen showed the other target's traps below the line;
+  - two full copies of the mart;
+  - limit-tier shares came from declared-income card holders only;
+  - smaller items: chart wording against the spec, the regression rows cut short, axis labels.
+
 ### 2026-10-19 — Working rules and doc structure (D-072)
 - The SDS's feedback for the whole project:
   - a plan for building a section has major steps (the SDS reviews) made of minor steps (Claude's

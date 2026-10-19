@@ -38,21 +38,24 @@ pytest -m slow         # canonical size, each check family in its own process, �
   generator version, so a stale `data/01_raw/` fails loudly.
 
 ## 3. The review, in order
-### 3.1 The checking notebook (`notebooks/00_synthetic_data.ipynb`, committed with outputs)
+### 3.1 The notebook (`notebooks/00_synthetic_data.ipynb`, committed with outputs)
+A visual tour first (sections 1–8, following Level 2 of the spec), then an appendix with the check
+tables and the tables behind each chart. Its first cell prints the check status: 1,263 of 1,263
+rows pass in 8 families.
+
 | Section | What right looks like |
 |---|---|
-| 1 Check tables | 8 families, 1,263 rows, `failed` 0 everywhere |
-| 2 Population | Mass ≈ 87%, Private ≈ 1%; ages rise with wealth; digital onboarding 15% (Private) → 55% (Mass); exits ≈ 0.7–1.1% a month and flat over the panel, entries 0.2 points above |
-| 3 Holdings | Shares near the spec and flat (digital activity drifts up by design); holding shares by declared income jump at 5,000 AED (card, personal and auto loans) and at 15,000 AED (home loan) |
-| 4 Amounts | Medians ordered by subsegment, Private far above; card limits fall in tier bands that rise with income; the booking identity is exact (0.0000); revolvers mostly at 0.3–0.9 utilisation; outflow and card-spend mixes more extreme for Private than for Mass; remittances near 0 for UAE/GCC clients |
-| 5 Time effects | Travel spend up in July–August, least for Mass; balances dip in summer; bills spike in September, January and April; mobile logins jump at 2026-01 |
-| 6 Segments, Simpson | ≈ 25% of MM above the UM median; the card chance rises with logins within each onboarding channel and falls when pooled |
-| 7 Mart columns | Kinds and null shares follow the null rule; `<NA>` is a true null (`Int64` in pandas, `int64` with nulls in parquet) |
-| 8 Traps | The trap summary with `trap_column`; the leak, upstream, shifted, rare-level, Simpson, null-control and drift rows pass |
-| 9 Oracle | AUCs as in §4; calibration points on the diagonal; the regression coverage rows pass; no single column gets near the oracle on an activation target |
-| 10 Trajectories | Balances persist month to month, card spend varies, hidden traits drift slowly |
+| 1 The book | Mass ≈ 86–87%, Private ≈ 1%; Asian expatriates dominate Mass, UAE nationals lead Private; ages and incomes rise with wealth; exits ≈ 0.7–1.1% a month and flat over the panel, entries 0.2 points above |
+| 2 Holdings | Shares near the spec and flat (digital activity drifts up by design); holding shares by declared income jump at 5,000 AED (card, personal and auto loans) and at 15,000 AED (home loan) |
+| 3 Amounts | Tails on the log–log chart straight far out and parallel to the dotted slope −2 (every subsegment); UM and MM overlap; card limits fall in tier bands that rise with income; revolvers mostly at 0.3–0.9 utilisation; outflow and card-spend mixes more extreme for Private than for Mass |
+| 4 Time | Travel spend up in July–August, least for Mass; balances dip in summer; bills spike in September, January and April; mobile logins jump at 2026-01 |
+| 5 The mart | Nulls only in the null rule's columns; a joiner's rollups start once their window fits; clear blocks near 1 in the correlation heatmap |
+| 6 Traps | Real columns below the oracle line, the trap columns above it, null controls at 0.5; Simpson: the card chance rises with logins within each onboarding channel and falls when pooled |
+| 7 The ceiling | The oracle's gains curve above every real ranking and below the leak's; calibration points on the diagonal; realised spend mostly inside the oracle's band |
+| 8 Client stories | Balances persist month to month, card spend varies, hidden traits drift slowly |
+| Appendix A1–A7 | `failed` 0 in every family; the booking identity exact (0.0000); `<NA>` a true null (`Int64` in pandas, `int64` with nulls in parquet); oracle AUCs as in §4; no single column near the oracle on an activation target |
 
-Every table in the notebook states which columns it shows and which statistic.
+Every table in the appendix states which columns it shows and which statistic.
 
 ### 3.2 The spec (`docs/components/test_harness.md`)
 Read Level 1 (the summary) and Level 2 (how it fits together), about a fifth of the doc. Read

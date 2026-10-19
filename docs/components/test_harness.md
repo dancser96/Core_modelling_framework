@@ -50,8 +50,9 @@ will read real data. Stubs hid every environment bug in the crunch (T15).
   perfect model would reach. A model that beats it is leaking.
 
 **How it is trusted.** 8 check families compare 1,263 statistics with this spec, and all pass at
-100k. The checks are written from the spec and never call the code that makes the data. The checking
-notebook `notebooks/00_synthetic_data.ipynb` shows them.
+100k. The checks are written from the spec and never call the code that makes the data. The notebook
+`notebooks/00_synthetic_data.ipynb` gives a visual tour of the data, with the checks in an
+appendix.
 
 **Run it:** `python -m synthetic --preset canonical --out data/01_raw/synthetic_canonical --checks`.
 A 5k-client `unit` preset serves the tests.
@@ -258,7 +259,7 @@ At the top level:
 - **Two test suites:**
   - `pytest` (about 3 minutes) runs the rule rows on the 5k preset;
   - `pytest -m slow` regenerates the 100k dataset and runs every row.
-- **The checking notebook** shows the tables, plus a simple EDA per area.
+- **The notebook** gives a visual tour of each area, with the check tables in an appendix.
 
 ## Level 3: Details
 
@@ -1006,9 +1007,10 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
     data and extra columns, in `checks/switches.py`, which is not a family.
   - `pytest -m slow` writes the canonical dataset and runs every row of every family at 100k.
     Each family runs in its own process, because one needs several GB.
-- **The checking notebook** reads the written canonical dataset and its saved check tables.
-  - It shows every table, plus a simplified EDA per area: population, holdings, amounts, time
-    effects, segments, mart columns, traps, oracle and client trajectories.
+- **The notebook** reads the written canonical dataset and its saved check tables.
+  - It opens with a visual tour in Level 2's order: the book, holdings, amounts, time, the mart,
+    traps, the ceiling (leakage screen, gains, calibration, regression band) and client stories.
+  - An appendix holds the check tables and the tables behind each chart.
   - It is committed with its outputs. That is allowed because it holds synthetic data only (an
     exception in `notebooks/README.md`).
   - The guided EDA notebook replaces it once EDA exists.
