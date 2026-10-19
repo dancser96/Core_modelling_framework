@@ -1,0 +1,113 @@
+"""Trap spec of the synthetic retail book: every trap, as plain data.
+
+Traps sit on two products, credit-card acquisition and personal-loan opening, so a test of either
+target meets every kind (D-069); a few traps concern no product (null controls, quality, drift,
+dirty data, extra columns). `trap_column` tells the two sorts apart:
+- True: a trap column, added only to test the framework; its name ends in `_trap_<kind>`;
+- False: the trap sits in real columns: an ordinary column (or several, or none in particular)
+  whose realistic behaviour is the trap. These keep their real names: the framework meets the
+  same columns under the same names in the real mart, and some carry two traps.
+The Simpson's trap names the spec parameters behind it as dotted paths into the spec
+(`products.cc.traits.digital`), not copies of their numbers. `mechanisms.traps` builds the trap
+columns and the dirty data from `TRAPS`; `truth.json` carries the list in its spec, and the
+checking notebook shows it. The table in docs/components/test_harness.md ("Trap summary") explains
+each one.
+"""
+
+# fmt: off
+TRAPS = [
+    # --- Credit card: acquisition (`cc_flag` 0 → 1 within 3 months) ---
+    dict(kind="leak", trap_column=True, product="cc", target="cc_acquire",
+         column="cc_preapproval_score_trap_leak",
+         parameters={"auc": 0.97, "w": 3, "centre": 500, "scale": 100},
+         expected="univariate AUC ≈ 0.97 for card acquisition in 3 months; beats the oracle"),
+    dict(kind="leak", trap_column=True, product="cc", target="cc_acquire",
+         column="cc_campaign_response_score_trap_leak",
+         parameters={"auc": 0.875, "w": 3, "centre": 50, "scale": 10},
+         expected="univariate AUC ≈ 0.875 for card acquisition in 3 months: just above the oracle, far above any real column"),
+    dict(kind="upstream_target", trap_column=True, product="cc", target="cc_acquire",
+         column="cc_acquire_next_3_months_flag_trap_upstream_target",
+         parameters={"w": 3, "leavers_without_card": 0},
+         expected="equals Target Factory's own target except leavers (0 here, null there)"),
+    dict(kind="simpson", trap_column=False, product="cc", target="cc_acquire",
+         column="login_digital_mobile_cnt",
+         parameters={"grouping": "onboarding_channel",
+                     "card_digital_loading": "products.cc.traits.digital",
+                     "channel_effects": "products.{cc,ebanking,digital}.effects.onboarding_channel",
+                     "login_channel_factor": "levels.logins.channel_factor"},
+         expected="logins vs card acquisition: positive within each onboarding channel, negative pooled"),
+    dict(kind="null_income_eligibility", trap_column=False, product="cc", target="cc_acquire",
+         column="income", parameters={"min_income": 5_000, "below_threshold_odds": 0.2},
+         expected="a plain income filter silently drops exempt clients without income"),
+    dict(kind="onboarding", trap_column=False, product="cc", target="cc_acquire",
+         column="relationship_days", parameters={"months": 3},
+         expected="most adoption in the first 3 months: the strongest driver for new clients"),
+    dict(kind="eligibility_defining", trap_column=False, product="cc", target="cc_acquire",
+         column="spend_cc_vol", parameters={"also": ["cc_bal", "cc_limit", "cc_active_flag"]},
+         expected="constant (0) within non-holders, the eligible population"),
+    dict(kind="decimal_type", trap_column=False, product="cc", target=None,
+         column="cc_limit", parameters={"type": "decimal(18,2)"},
+         expected="Spark reads a decimal; pandas gets Python objects unless it casts"),
+    # --- Personal loan: opening (`loan_personal_cnt` rises within the window) ---
+    dict(kind="process_leak", trap_column=True, product="loan_personal", target="loan_personal_open",
+         column="application_loan_personal_cnt_trap_process_leak",
+         parameters={"precede_chance": 0.8, "declined_share": 0.3},
+         expected="beats the oracle for openings in the next month"),
+    dict(kind="shifted", trap_column=True, product="loan_personal", target="loan_personal_open",
+         column="loan_personal_bal_trap_shifted", parameters={"months": 1},
+         expected="holds next month's loan_personal_bal (an as-of misalignment): beats the oracle for openings next month; null where the client has no next month (it leaves, or the panel's last month)"),
+    dict(kind="rare_level", trap_column=False, product="loan_personal", target="loan_personal_open",
+         column="nationality", parameters={"level": "Ghana", "log_odds": 1.5},
+         expected="stands out in event rate by level; unstable in cross-validation"),
+    dict(kind="inverted_u", trap_column=False, product="loan_personal", target="loan_personal_open",
+         column="age", parameters={"peak": 35},
+         expected="rank correlation ≈ 0, mutual information high"),
+    dict(kind="hidden_openings", trap_column=False, product="loan_personal", target="loan_personal_open",
+         column="loan_personal_maturity_months", parameters={},
+         expected="predictive only under a 'count at the end' rule"),
+    dict(kind="eligibility_defining", trap_column=False, product="loan_personal", target="loan_personal_open",
+         column="loan_personal_maturity_months", parameters={"eligibility": "first loan"},
+         expected="all null within the eligible population"),
+    # --- Any product ---
+    dict(kind="null_control", trap_column=True, product=None, target=None,
+         column="insurance_premium_vol_trap_null_control",
+         parameters={"distribution": "lognormal", "median": 400, "sigma": 1.0, "persistent": True},
+         expected="univariate AUC ≈ 0.5 for every target; ranked last"),
+    dict(kind="null_control", trap_column=True, product=None, target=None,
+         column="branch_visit_cnt_trap_null_control",
+         parameters={"distribution": "zero_inflated_poisson", "zero_share": 0.7, "mean": 1.5},
+         expected="univariate AUC ≈ 0.5 for every target; ranked last"),
+    dict(kind="null_control", trap_column=True, product=None, target=None,
+         column="preferred_language_trap_null_control",
+         parameters={"distribution": "zipf", "exponent": 1.2, "persistent": True,
+                     "levels": ["english", "arabic", "hindi", "urdu", "tagalog", "malayalam",
+                                "tamil", "bengali", "french", "russian"]},
+         expected="no level stands out for any target; ranked last"),
+    dict(kind="near_constant", trap_column=True, product=None, target=None,
+         column="paper_statement_flag_trap_near_constant",
+         parameters={"share_zero": 0.999, "persistent": True},
+         expected="flagged by the quality checks"),
+    dict(kind="all_null", trap_column=True, product=None, target=None,
+         column="legacy_risk_grade_trap_all_null", parameters={"type": "string"},
+         expected="flagged by the quality checks"),
+    dict(kind="drift", trap_column=False, product=None, target=None,
+         column="login_digital_mobile_cnt",
+         parameters={"from": "seasons.drift"},
+         expected="PSI > 0.25 after the app relaunch, ≈ 0 before"),
+    dict(kind="collinearity", trap_column=False, product=None, target=None, column=None,
+         parameters={"identities": ["<product>_status == 'active' ⇔ <product>_flag",
+                                    "product_cnt = product flags + loan counts > 0",
+                                    "inflow − outflow = change in casa_bal",
+                                    "subcategories sum to their total"]},
+         expected="correlation views and VIF flag the clusters (infinite for the identities)"),
+    dict(kind="dirty", trap_column=False, product=None, target=None, column=None,
+         parameters={"duplicate_share": 0.001, "outage_columns": ["login_digital_mobile_cnt",
+                     "login_digital_online_cnt", "days_since_last_login_digital"],
+                     "outage_month": "2025-06", "unit_change_month": "2026-03",
+                     "unit_change_factor": 12, "typos": 20, "typo_factor": 1_000},
+         expected="off by default; contract checks fail loud, operational monitoring flags them"),
+    dict(kind="extra", trap_column=True, product=None, target=None, column=None,
+         parameters={"weak_share": 0.1, "weak_rank_corr": [0.1, 0.3]},
+         expected="off by default; scale tests; weak columns rank above noise"),
+]
+# fmt: on

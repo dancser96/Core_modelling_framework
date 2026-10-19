@@ -2,6 +2,54 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-10-19 — Synthetic data (M1): the SDS's review round 1
+- The SDS reviewed the finished generator (notebook, spec, code) and asked for:
+  - the code in role subfolders: rules as plain data, functions, checks;
+  - merged tied modules, measuring code amount against effect;
+  - a smaller `truth.json`, a top-down spec with a function summary (and the same for every
+    future component doc);
+  - higher exit rates with smaller gaps between profiles;
+  - notebook fixes: tables saying what their values are, an income chart, proof that `<NA>` is a
+    null, single-column AUCs for activation targets;
+  - an explanation of "unplanted" traps.
+
+  Open points: exits stay random; the moderate leak and the shifted column are built; dirty
+  rollups are stated, not built; loan rates and login levels accepted.
+- Debatable cuts went to the SDS with numbers. The regression oracle (57% of generation time) is
+  kept; the relevance rankings (half of `truth.json`) and the `separation` knob (no effect at 1.0)
+  are cut; traps in real columns keep their names, labelled `trap_column` false.
+- Done:
+  - 46 modules → 32 in `spec/`, `mechanisms/`, `truth/`, `checks/`; mart and oracle bit-identical
+    before the behaviour changes;
+  - `truth.json` 234 → 55 KB (only what can't be recomputed; sizing once per target); 10 check
+    families → 8;
+  - exits 0.7 / 0.8 / 0.9 / 1.1% a month, with traditional wealth at 42 adoptions a month to keep
+    its holding length;
+  - the moderate leak (AUC 0.877 vs oracle 0.842) and the shifted personal-loan balance (0.945 vs
+    0.766);
+  - version 0.4.0, canonical regenerated (337 s, after the review fixes below), all 1,263 check
+    rows pass;
+  - the notebook rebuilt: labelled tables, exits from the mart, holdings by income with
+    thresholds, card limit vs income, null proof, single-column AUCs;
+  - `test_harness.md` rewritten top-down with a code map; component template and `CLAUDE.md` §1
+    rule 5 updated (D-070).
+- Found on the way: a notebook exit-rate table read high for small profiles. Months without
+  leavers dropped out of the mean, and the 20% sample ran high; the table now counts zero months
+  and reads every client.
+- Reviews of the round. Code review: no blocker; fixed the doc claims, merge leftovers and
+  duplicated rows. ML-correctness audit: safe, with three should-fix items:
+  - **The starting book's tenure** (a Beta share of adult life) wasn't the turnover's steady
+    state, so with the higher exits the shares of products built up over tenure drifted down
+    (traditional wealth, Private: 0.60 → 0.49 by month 24; one check passed by 0.001). A first fix
+    (tenure truncated to adult life) still let tenure grow and Mass shares rise. Now tenure is
+    exponential at the entry rate and clients join younger than the book's mean age by its mean
+    tenure: age and tenure are jointly stationary, with 9 parameters fewer. Shares are checked at
+    the last month too.
+  - **Leaks beat the oracle on their own window only**; documented.
+  - **The sizing is now recomputed by the checks.**
+- The SDS asked for parallel work with subagents as much as possible from now on: `CLAUDE.md` §1
+  workflow, D-071.
+
 ### 2026-10-13 → 2026-10-17 — Synthetic data (M1): design round, spec, steps 0–7
 - 2026-10-13, design round 1 opened (Q76–Q105): the SDS described the feature groups (client
   description, flows and cash, digital, loans, wealth) and asked for proactive feature suggestions

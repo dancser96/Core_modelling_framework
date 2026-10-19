@@ -61,8 +61,10 @@ complete or "future-proof" code. When in doubt, write less.
    `promote_model`). Only standard abbreviations (`df`, `cfg`, `auc`, `oot`, `psi`). No `utils.py` /
    `helpers.py` dumping grounds — a module is named for its one concept. Terms follow
    `docs/glossary.md`.
-5. **Files by responsibility.** One module ≈ one concept, roughly ≤ 300 lines. If you can't name the
-   module in two words, it is doing too much.
+5. **Files by responsibility.** One module ≈ one concept, roughly ≤ 300 lines, but functions tied
+   together stay in one module even past that. If you can't name the module in two words, it is
+   doing too much. A package with more than a handful of modules splits them into role subfolders
+   (rules as plain data, functions, checks), never dozens side by side (D-070).
 6. **No abstraction before a second real use.** The exception is §3 "shapes must be task-agnostic":
    config and data *shapes* stay general, *implementations* stay concrete.
 7. **Extension points are plain dicts** mapping names to functions
@@ -87,6 +89,16 @@ complete or "future-proof" code. When in doubt, write less.
     guide that says what to read, in which order, and what "right" looks like (D-067).
 
 **Workflow for any non-trivial task**
+
+**Parallel by default** (D-071): split the work into independent pieces and run them at the same
+time, using subagents as much as possible:
+- delegate research, reviews and audits, and independent code, test or doc pieces, to subagents;
+- run long jobs (data generation, slow tests) in the background meanwhile;
+- give each subagent a complete brief (goal, files, constraints, what to report), since it starts
+  with no context, and give parallel agents disjoint files;
+- integrate and verify every result yourself;
+- keep on the main thread only what needs the whole picture or must happen in order;
+- run at most one memory-heavy job at a time (the dev machine's memory is the limit).
 
 0. **Major steps start wide.** A major step is a new component, config section, public function or
    dependency, or anything the user calls a significant redesign or extension. Before the plan:
@@ -265,7 +277,7 @@ Each fact has **one owner doc**; every other doc links to it instead of repeatin
 | `docs/glossary.md` | Vocabulary | committed | Naming anything; unfamiliar term |
 | `docs/architecture.md` | Target design, stage map, package layout, Public API | committed | Structural work |
 | `docs/decisions.md` | Decision log (D-nnn) | committed | Before designing |
-| `docs/components/<c>.md` | One component or versioned artifact: purpose, requirements, interface, open questions | committed | Working on it |
+| `docs/components/<c>.md` | One component or versioned artifact, top-down: summary, how it works, code map, interface, then the details and open questions | committed | Working on it |
 | `docs/context/lessons.md` | Traps (T-nn) and lessons | committed | Before related code |
 | `docs/context/environment.md` | Versions and bank behaviour | committed | IO / dependencies |
 | `docs/guides/*.md` | How-tos: setup, Claude Code workflow, skills & agents | committed | As needed |
@@ -375,7 +387,7 @@ ruff check . && ruff format <changed files>  # lint; format only files you touch
 ```
 CLAUDE.md                  this file (always loaded)
 src/core_modelling/        the package (currently a skeleton)
-synthetic/                 planned: dev-only synthetic data package (not part of core_modelling)
+synthetic/                 dev-only synthetic data package: spec/, mechanisms/, truth/, checks/ (not core_modelling)
 conf/base/                 committed configs and examples
 conf/local/                gitignored: environment-specific paths/tables/theme (bank side)
 data/                      gitignored: Kedro-style layered data folders (see data/README.md)

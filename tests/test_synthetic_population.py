@@ -1,16 +1,16 @@
-"""Synthetic data, build step 1: population, client description, day counters, latent traits."""
+"""Synthetic data: population, client description, day counters, latent traits."""
 
 from collections.abc import Callable
 
 import pandas as pd
 import pytest
 
-from synthetic.check_suite import run_checks
+from synthetic.checks.suite import run_checks
 from synthetic.generate import generate_mart
-from synthetic.mart import DERIVED_COLUMNS
-from synthetic.traps import APPLICATION, LEAK, UPSTREAM
+from synthetic.mechanisms.mart import DERIVED_COLUMNS
+from synthetic.mechanisms.traps import APPLICATION, CAMPAIGN, LEAK, SHIFTED, UPSTREAM
 
-LOOKAHEAD_COLUMNS = [LEAK, UPSTREAM, APPLICATION]  # read up to 3 months ahead
+LOOKAHEAD_COLUMNS = [LEAK, CAMPAIGN, UPSTREAM, APPLICATION, SHIFTED]  # read up to 3 months ahead
 
 
 def test_population_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
@@ -22,7 +22,7 @@ def test_population_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
 
 @pytest.mark.slow
 def test_population_checks_pass_on_canonical(canonical_checks: Callable[..., pd.DataFrame]) -> None:
-    """Every row of the step-1 check table passes at the canonical size."""
+    """Every row of the population check table passes at the canonical size."""
     checks = canonical_checks("population")
     assert checks["passed"].all(), checks[~checks["passed"]].to_string()
 
@@ -43,7 +43,7 @@ def test_months_do_not_depend_on_later_months(
     unit: tuple[pd.DataFrame, pd.DataFrame, dict],
 ) -> None:
     """Prefix stability: 20 and 24 months from the same seed agree on months 1–20, in every mart
-    column (the rollups, recency and ratios included) and every oracle column, except the three
+    column (the rollups, recency and ratios included) and every oracle column, except the
     look-ahead trap columns in months 18–20, whose windows the shorter panel truncates."""
     mart, oracle, _ = unit
     short_mart, short_oracle, _ = generate_mart("unit", seed=0, n_months=20)
@@ -70,8 +70,9 @@ def test_mart_holds_no_hidden_truth(unit: tuple[pd.DataFrame, pd.DataFrame, dict
 
 
 def test_small_population_survives_months_without_new_clients() -> None:
-    """200 clients see many months with no new client; every draw must handle empty batches."""
-    mart, _, truth = generate_mart("unit", n_clients=200, seed=0)
-    entries_per_month = pd.DataFrame(truth["turnover"]).groupby("month")["entries"].sum()
-    assert (entries_per_month == 0).any()  # the empty-batch path really ran
+    """50 clients see many months with no new client; every draw must handle empty batches."""
+    mart, _, _ = generate_mart("unit", n_clients=50, seed=0)
+    months = sorted(mart["snapshot_month"].unique())
+    joined = set(mart.drop_duplicates("client_id")["snapshot_month"])  # each client's first month
+    assert set(months[1:]) - joined  # a month without new clients: the empty-batch path ran
     assert mart["snapshot_month"].nunique() == 24

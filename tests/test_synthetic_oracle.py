@@ -1,5 +1,4 @@
-"""Synthetic data, build step 6: the oracle (window probabilities, regression oracle, metrics,
-relevance) and `truth.json`."""
+"""Synthetic data: the oracle (window probabilities, regression oracle, metrics), truth.json."""
 
 from collections.abc import Callable
 
@@ -7,10 +6,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from synthetic.check_suite import run_checks
-from synthetic.oracle import BINARY_TARGETS, STANDARD_TARGETS, window_probability
-from synthetic.regression import COLUMNS as REGRESSION_COLUMNS
-from synthetic.target_windows import values_at
+from synthetic.checks.events import values_at
+from synthetic.checks.suite import run_checks
+from synthetic.truth.oracle import BINARY_TARGETS, STANDARD_TARGETS, window_probability
+from synthetic.truth.regression import COLUMNS as REGRESSION_COLUMNS
 
 KEYS = ["client_id", "snapshot_month"]
 

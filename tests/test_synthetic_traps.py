@@ -1,6 +1,5 @@
-"""Synthetic data, build step 5: the planted traps (`checks_traps`, which needs the oracle's
-window probabilities), the off-by-default switches (dirty data, extra columns) and the trap list in
-truth."""
+"""Synthetic data: the traps (`checks.traps`, which needs the oracle's window probabilities), the
+off-by-default switches (dirty data, extra columns) and the trap list in truth."""
 
 from collections.abc import Callable
 from pathlib import Path
@@ -8,12 +7,12 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from synthetic.check_suite import run_checks
-from synthetic.checks_trap_columns import OUTAGE_COLUMNS, check_dirty, check_extra_columns
+from synthetic.checks.suite import run_checks
+from synthetic.checks.switches import OUTAGE_COLUMNS, check_dirty, check_extra_columns
 from synthetic.generate import generate_mart
+from synthetic.mechanisms.traps import trap_summary
 from synthetic.output import read_output, write_mart
-from synthetic.trap_spec import TRAPS
-from synthetic.traps import trap_summary
+from synthetic.spec.traps import TRAPS
 
 DEFECT_COLUMNS = ["income", "casa_bal", *OUTAGE_COLUMNS]
 
@@ -86,8 +85,11 @@ def test_extra_columns_are_weak_or_noise(unit: tuple[pd.DataFrame, pd.DataFrame,
 
 
 def test_truth_lists_every_trap(unit: tuple[pd.DataFrame, pd.DataFrame, dict]) -> None:
-    """`truth["traps"]` holds the spec's trap list; the summary table has one row per trap."""
-    traps = unit[2]["traps"]
+    """Truth's spec holds the trap list; the summary table has one row per trap, and the trap
+    columns are exactly the mart's columns with a `_trap_` suffix."""
+    traps = unit[2]["spec"]["traps"]
     assert [t["kind"] for t in traps] == [t["kind"] for t in TRAPS]
     summary = trap_summary(unit[2]["spec"])
     assert len(summary) == len(TRAPS) and summary["column"].tolist() == [t["column"] for t in TRAPS]
+    listed = {t["column"] for t in TRAPS if t["trap_column"] and t["column"]}
+    assert listed == {c for c in unit[0].columns if "_trap_" in c}

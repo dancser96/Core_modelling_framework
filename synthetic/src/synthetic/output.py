@@ -3,17 +3,18 @@
 `write_mart` drives the month loop (`generate`) and writes each month as it comes, so memory holds
 about one month: `<out>/mart/snapshot_month=YYYY-MM-01/part-0.parquet`, the oracle likewise under
 `<out>/oracle/`, and `<out>/truth.json` last, so a folder without a truth file is an incomplete
-dataset. The truth's oracle part (metrics and relevance rankings) is computed once every month is
-on disk and the simulation's state is gone, from the columns it needs read back (one target's at
-a time, `oracle.target_columns`, then a 20% client sample for the rankings). The month is a
-partition column, never stored inside the files; Spark infers it as a date from the folder name
-(T18). The mart is written with the explicit types of `mart.arrow_schema`
-(flags int32, counts int64 with nulls where nullable, `cc_limit` decimal(18, 2)), so every month
-has the same schema whatever its values; the oracle keeps the types pandas gives it. `read_output`
-reads a table back in month order with `snapshot_month` as `datetime.date` values and decimals as
-floats, so it returns the mart as it was in memory (Spark sees the decimal); `load_truth` refuses
-a dataset written by another generator version or another numpy or scipy minor version (the
-seed-to-data mapping depends on them), so stale data fails loud.
+dataset. The truth's oracle part (the oracle's metrics) is computed once every month is on disk
+and the simulation's state is gone, from the columns it needs read back (one target's at a time,
+`oracle.target_columns`).
+
+The month is a partition column, never stored inside the files; Spark infers it as a date from the
+folder name (T18). The mart is written with the explicit types of `mart.arrow_schema` (flags int32,
+counts int64 with nulls where nullable, `cc_limit` decimal(18, 2)), so every month has the same
+schema whatever its values; the oracle keeps the types pandas gives it. `read_output` reads a table
+back in month order with `snapshot_month` as `datetime.date` values and decimals as floats, so it
+returns the mart as it was in memory (Spark sees the decimal). `load_truth` refuses a dataset
+written by another generator version or another numpy or scipy minor version (the seed-to-data
+mapping depends on them), so stale data fails loud.
 """
 
 import datetime as dt
@@ -27,13 +28,12 @@ import pyarrow.parquet as pq
 import scipy
 
 from synthetic import __version__
-from synthetic.dirty import dirty_panel
 from synthetic.generate import advance_simulation, finish_simulation, start_simulation
-from synthetic.mart import arrow_schema
-from synthetic.oracle import BINARY_TARGETS, METRIC_ORACLE_COLUMNS, target_columns, target_metrics
-from synthetic.presets import PRESETS
-from synthetic.relevance import SAMPLE_EVERY, relevance_rankings
-from synthetic.truth import build_truth, complete_truth, with_oracle
+from synthetic.mechanisms.mart import arrow_schema
+from synthetic.mechanisms.traps import dirty_panel
+from synthetic.spec.presets import PRESETS
+from synthetic.truth.oracle import BINARY_TARGETS, target_columns, target_metrics
+from synthetic.truth.truth_file import build_truth, complete_truth, with_oracle
 
 TABLES = ("mart", "oracle")
 PARTITION = "snapshot_month"
@@ -51,7 +51,7 @@ def write_mart(
     """Generate month by month, write the partitioned mart, oracle and truth.json; return truth.
 
     `out_dir` must not hold a dataset already: months left over from another run would mix in.
-    With `dirty` on, the defects are planted in the whole panel (`dirty.dirty_panel`), so every
+    With `dirty` on, the defects are planted in the whole panel (`traps.dirty_panel`), so every
     month is held until the end, so it is refused above the unit preset's size (clients ×
     months); the oracle part comes from the clean panel.
     """
@@ -120,16 +120,14 @@ def _write_dirty(out: Path, sim: dict) -> dict:
 
 def _with_written_oracle(out_dir: str, truth: dict) -> dict:
     """The truth with its oracle part, from the written months: each target's metrics from the
-    columns it needs, then the relevance rankings from every column of the 20% client sample."""
+    columns it needs, one target at a time to bound the memory."""
     metrics = {}
-    for target in BINARY_TARGETS:  # one target's columns at a time bounds the memory
+    for target in BINARY_TARGETS:
         mart_columns, oracle_columns = target_columns(target)
         mart = read_output(out_dir, "mart", mart_columns)
         oracle = read_output(out_dir, "oracle", oracle_columns)
         metrics[target] = target_metrics(mart, oracle, truth, target)
-    mart = read_output(out_dir, "mart", client_sample=SAMPLE_EVERY)
-    oracle = read_output(out_dir, "oracle", METRIC_ORACLE_COLUMNS, SAMPLE_EVERY)
-    return with_oracle(truth, metrics, relevance_rankings(mart, oracle, truth))
+    return with_oracle(truth, metrics)
 
 
 def read_output(

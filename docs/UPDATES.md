@@ -16,7 +16,7 @@ Status values: `legacy-only` (exists only in legacy) · `designing` · `stub` (i
 | Design baseline (docs rebuilt after three review rounds + Lead DS notes) | built | 2026-10-12; milestone M0 |
 | Environment adapter (Spark session, compat shim, transport, paths, sources) | built | Partial: compat shim + local Spark session (M1 step 0, D-057); transport, paths, sources in M2. Traps T1–T5, T18 |
 | Config spine (single file, profiles, decision, entities, data-definition hash, migrations) | designing | `components/config.md` |
-| Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | built | M1: steps 0–7 built (2026-10-17): feature mart (145 columns), traps on two products, oracle and `truth.json`, CLI, source mapping; 1,197 independent check rows pass at 100k; awaiting the SDS's review (`synthetic/REVIEW.md`). D-056, D-064–D-069 |
+| Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | built | M1: steps 0–7 built (2026-10-17); the SDS's review round 1 applied (2026-10-19): role folders, slimmer `truth.json`, two new traps, exit rates, top-down spec with a code map. Feature mart (147 columns), traps on two products, oracle and `truth.json`, CLI, source mapping; every independent check row passes at 100k; awaiting the SDS's OK (`synthetic/REVIEW.md`). D-056, D-064–D-070 |
 | Target Factory (targets only, optional) | legacy-only | Renamed from Data Creation (D-029) |
 | Dataset: observation window, client-grouped split, OOT validation, sampling | designing | Big-ticket item (D-030); sampling choice OD-17 |
 | EDA (worth running first; low-prevalence aware) | legacy-only | Major rethink |
@@ -40,6 +40,12 @@ together with the topics for the Chief DS design meeting (week of 2026-10-12).
 
 ## Log (major changes only, newest first)
 
+- 2026-10-19 — Synthetic data, the SDS's review round 1 applied (D-070): code in role folders
+  (`spec/`, `mechanisms/`, `truth/`, `checks/`; 46 modules → 32), relevance rankings and the
+  `separation` knob cut, `truth.json` 234 → 55 KB, a moderate leak and a shifted column added,
+  exits 0.7–1.1% a month, the starting book's tenure from the turnover's steady state;
+  `test_harness.md` rewritten top-down with a code map, and the component-doc template with it.
+  Work runs in parallel with subagents by default (D-071).
 - 2026-10-17 — Synthetic data generator built (steps 3–7 in one go, stages A–F with independent
   checks and reviews); canonical dataset in `data/01_raw/`; review guide `synthetic/REVIEW.md`.
 - 2026-10-16 — Code size rules relaxed: functions ≤ ~50 lines, steps ≤ ~300–400 changed lines,

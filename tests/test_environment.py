@@ -7,7 +7,7 @@ import yaml
 from pyspark.sql import SparkSession
 
 from core_modelling.environment import _load_sources, _read_source
-from synthetic.checks_mart import snapshot_columns
+from synthetic.checks.mart import snapshot_columns
 from synthetic.output import read_output
 
 

@@ -72,13 +72,13 @@ def canonical_checks(
     canonical_output: tuple[str, dict, dict], tmp_path_factory: pytest.TempPathFactory
 ) -> Callable[..., pd.DataFrame]:
     """A function giving one family's check table on the canonical dataset, run in a separate
-    process the way `check_suite.write_checks` runs it (the mart family on its client sample)."""
+    process the way `checks.suite.write_checks` runs it (the mart family on its client sample)."""
     folder = tmp_path_factory.mktemp("canonical_checks")
 
     def check_family(family: str) -> pd.DataFrame:
         """The family's check table, from a separate process."""
         path = Path(folder, f"{family}.parquet")
-        command = [sys.executable, "-m", "synthetic.check_suite", canonical_output[0], family]
+        command = [sys.executable, "-m", "synthetic.checks.suite", canonical_output[0], family]
         subprocess.run([*command, str(path)], check=True)
         return pd.read_parquet(path)
 

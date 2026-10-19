@@ -60,7 +60,9 @@ resume on either machine.
 ## Context and usage
 
 - `/clear` between unrelated tasks; `/compact` in long sessions, or `/handover` + a fresh chat when
-  the context is bloated. Subagents keep reviews out of the main context.
+  the context is bloated. Subagents keep reviews out of the main context, and work runs in
+  parallel by default: subagents for independent pieces, long jobs in the background
+  (`CLAUDE.md` §1 workflow, D-071).
 - Opus-heavy sessions use up plan limits quickly. Keep tasks small, and use `/model` to drop to a
   lighter model for mechanical work (renames, doc edits). The subagents default to the session model
   (`model: inherit`); set them to `sonnet` in `.claude/agents/*.md` if usage becomes the bottleneck.

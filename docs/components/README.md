@@ -19,25 +19,37 @@ stage, and the order to read the docs in: [`docs/README.md`](../README.md). Stat
 Use the **new-component** skill. When to create a new doc at all: `CLAUDE.md` §8. A new, renamed or
 deleted component doc also updates the stage map in `docs/README.md`.
 
+Every component doc reads **top-down**: a reader first gets the whole picture (summary, how it works,
+code map), then dives into the segments. History stays out: it belongs in `docs/UPDATES.md` and
+`docs/decisions.md`. `test_harness.md` is the worked example.
+
 ```markdown
 # <Component>
 **Status:** designing | stub | built | tested · **Legacy:** <files or "none">
 **Related:** <links to the docs this depends on and that depend on it> · D-nnn · OD-nn
 
-## Purpose
-One paragraph: what it does and why it is a standalone unit.
+## Summary
+A few lines a newcomer reads first: what it does, why it is a standalone unit, what goes in and
+what comes out, who uses it.
 
-## Phase 2 requirements
-Numbered, testable statements.
+## How it works
+One page: the flow in steps (a small diagram helps), what it writes, how it is checked.
 
-## Design constraints
-Invariants (CLAUDE.md §4), task-agnostic shapes, simplicity notes.
+## Code map
+The folder tree with each module's one job and main functions, the call flow of one run, and a
+reading order for review. For a design: the planned layout.
+
+## Interface
+Public functions, CLI and config section (signatures; fill in when built).
+
+## Requirements and design constraints
+Numbered, testable requirements; invariants (CLAUDE.md §4), task-agnostic shapes, simplicity notes.
+
+## <One section per area>
+The details, in the order the summary introduces them.
 
 ## Lessons from the crunch
 Links to docs/context/lessons.md entries (T#).
-
-## Interface
-Public functions and config section (fill in when built).
 
 ## Open questions
 Component-only questions here; cross-cutting ones as OD rows in docs/roadmap.md.

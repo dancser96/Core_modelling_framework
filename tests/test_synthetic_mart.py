@@ -1,4 +1,4 @@
-"""Synthetic data, build step 4: the feature mart (names, column order, null rule, written types),
+"""Synthetic data: the feature mart (names, column order, null rule, written types),
 with every rollup, recency and ratio recomputed independently by Spark window functions."""
 
 from collections.abc import Callable
@@ -8,10 +8,10 @@ import pytest
 from pyspark.sql import Column, SparkSession, Window, WindowSpec
 from pyspark.sql import functions as F
 
-from synthetic.check_suite import run_checks
-from synthetic.checks_mart import snapshot_columns
-from synthetic.names import parse_column
-from synthetic.presets import PRESETS
+from synthetic.checks.mart import snapshot_columns
+from synthetic.checks.suite import run_checks
+from synthetic.mechanisms.mart import parse_column
+from synthetic.spec.presets import PRESETS
 
 TOLERANCE = 1e-6
 
@@ -67,9 +67,11 @@ def test_spark_reads_the_written_types(spark: SparkSession, unit_output: tuple[s
     ]
     assert {types[c] for c in counters} == {"bigint"}
     assert (types["casa_bal_0_5_months_std"], types["td_status"]) == ("double", "string")
-    # Leak, upstream target, process leak, the 3 null controls, near-constant flag, all-null.
+    # Two leaks, upstream target, process leak, shifted balance, the 3 null controls,
+    # near-constant flag, all-null.
     traps = [types[c] for c in snapshot_columns() if "_trap_" in c]
-    assert traps == ["bigint", "bigint", "bigint", "double", "bigint", "string", "int", "string"]
+    expected = ["bigint"] * 4 + ["double", "double", "bigint", "string", "int", "string"]
+    assert traps == expected
 
 
 def _months(first: int, last: int) -> WindowSpec:

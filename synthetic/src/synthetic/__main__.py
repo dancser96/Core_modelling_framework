@@ -14,9 +14,9 @@ import argparse
 import sys
 import time
 
-from synthetic.check_suite import read_checks, write_checks
+from synthetic.checks.suite import read_checks, write_checks
 from synthetic.output import read_output, write_mart
-from synthetic.presets import PRESETS
+from synthetic.spec.presets import PRESETS
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

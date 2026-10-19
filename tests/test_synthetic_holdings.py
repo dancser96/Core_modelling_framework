@@ -1,12 +1,12 @@
-"""Synthetic data, build step 2: holdings, statuses, loan accounts and usage states."""
+"""Synthetic data: holdings, drivers, statuses, loan accounts and usage states."""
 
 from collections.abc import Callable
 
 import pandas as pd
 import pytest
 
-from synthetic.check_suite import run_checks
-from synthetic.checks_holdings import MART_COLUMNS, ORACLE_COLUMNS, check_holdings
+from synthetic.checks.holdings import MART_COLUMNS, ORACLE_COLUMNS, check_holdings
+from synthetic.checks.suite import run_checks
 from synthetic.output import read_output
 
 
@@ -19,15 +19,15 @@ def test_holdings_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
 
 @pytest.mark.slow
 def test_holdings_checks_pass_on_canonical(canonical_checks: Callable[..., pd.DataFrame]) -> None:
-    """Every row of the step-2 check table passes at the canonical size."""
+    """Every row of the holdings check table passes at the canonical size."""
     checks = canonical_checks("holdings")
     assert checks["passed"].all(), checks[~checks["passed"]].to_string()
 
 
 def test_misaligned_oracle_fails_loud(unit_output: tuple[str, dict]) -> None:
-    """The checks read mart and oracle side by side, so rows out of line must raise."""
+    """Mart and oracle rows are matched by key: tables with different client-months raise."""
     out_dir, truth = unit_output
     mart = read_output(out_dir, "mart", MART_COLUMNS)
-    shuffled = read_output(out_dir, "oracle", ORACLE_COLUMNS).iloc[::-1].reset_index(drop=True)
+    short = read_output(out_dir, "oracle", ORACLE_COLUMNS).iloc[:-1]  # one client-month missing
     with pytest.raises(ValueError, match="line up"):
-        check_holdings(mart, shuffled, truth)
+        check_holdings(mart, short, truth)

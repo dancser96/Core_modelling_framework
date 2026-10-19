@@ -93,7 +93,7 @@ def test_command_line_writes_a_dataset(tmp_path: Path) -> None:
 @pytest.mark.slow
 def test_canonical_fits_its_budget(canonical_output: tuple[str, dict, dict]) -> None:
     """The canonical dataset is written in at most 10 minutes with at most 3 GB of peak memory
-    (test_harness.md, "Presets and budgets")."""
+    (test_harness.md, Interface → Budgets)."""
     timing = canonical_output[2]
     assert timing["seconds"] <= 600, timing
     assert timing["peak_bytes"] <= 3 * 1024**3, timing

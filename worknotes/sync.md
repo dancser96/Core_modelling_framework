@@ -1,7 +1,7 @@
 # Sync page
-_For the SDS and the LDS · last updated: 2026-10-16 · last sync: 2026-10-13 (2026-10-14: CDS prep only)_
+_For the SDS and the LDS · last updated: 2026-10-19 · last sync: 2026-10-13 (2026-10-14: CDS prep only)_
 
-**New decisions since the last sync:** D-056–D-069 (`docs/decisions.md`)
+**New decisions since the last sync:** D-056–D-071 (`docs/decisions.md`)
 
 Detail behind each item: `worknotes/log.md`. Open decisions (OD-nn): `docs/roadmap.md`. How this
 page is written: `worknotes/README.md`.
@@ -49,12 +49,16 @@ page is written: `worknotes/README.md`.
   traditional wealth, three loan types, e-banking, FX and digital activity. Each product is set by
   its share per profile and one rate; the chance behind every event is recorded as hidden truth.
   An audit fixed how the "true probability" of a target must be computed (D-066). Step 2 is
-  closed; the rest (amounts, the mart's columns, traps, oracle, the written dataset) has been built
-  in one go (2026-10-17) and passes all 1,197 independent check rows; the SDS reviews it first, a
-  summary for you follows that review. — look at:
+  closed; the rest (amounts, the mart's columns, traps, oracle, the written dataset) was built in
+  one go (2026-10-17). The SDS's first review (2026-10-19) reorganised the code into role folders,
+  cut what did little, added two traps and rewrote the spec top-down (D-070); every independent
+  check row passes again. A summary for you follows the SDS's OK. — look at:
   `docs/components/test_harness.md` (product rates, maths §3), `notebooks/00_synthetic_data.ipynb`
 - **Window ablation without a second validation month** (D-062): the window is chosen on test and
   validation equally; train only shows the overfitting gap. — look at: `docs/components/dataset.md`
+- **Working rule: parallel by default** (D-071): Claude splits work into independent pieces run by
+  subagents, with long jobs in the background, and integrates and verifies the results itself. —
+  look at: `CLAUDE.md` §1 workflow
 - **Code rules** (D-063, D-067): every function has type hints and a docstring, checked
   automatically; functions up to ~50 lines and steps up to ~300–400 changed lines, with a review
   guide for larger agreed builds.

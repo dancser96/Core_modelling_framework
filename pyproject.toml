@@ -47,8 +47,6 @@ select = ["E", "F", "I", "B", "ANN", "D1"]
 
 [tool.ruff.lint.per-file-ignores]
 # Aligned data tables are easier to review than wrapped ones.
-"synthetic/src/synthetic/presets.py" = ["E501"]
-"synthetic/src/synthetic/levels.py" = ["E501"]
-"synthetic/src/synthetic/trap_spec.py" = ["E501"]
+"synthetic/src/synthetic/spec/*.py" = ["E501"]
 # Notebooks open with a guide cell instead of a module docstring.
 "*.ipynb" = ["D100"]
