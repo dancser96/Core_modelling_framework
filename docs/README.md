@@ -50,7 +50,7 @@ listed alongside.
 | [environment](components/environment.md) | Spark, transport, paths, source resolution | Every stage |
 | [run_modes](components/run_modes.md) | CLI, Python API, guided notebooks, experiment sweeps | Every stage |
 | [test_harness](components/test_harness.md) | Synthetic data and the local-Spark test harness (dev only) | Every stage, outside the bank |
-| [llm_assist](components/llm_assist.md) | The later LLM-assisted modelling branch | Drives the stages through config + sweeps |
+| [llm_assist](components/llm_assist.md) | The later LLM-assisted modelling branch (Phase 3) | Drives the stages through config + sweeps |
 
 The doc index with the template for new component docs: [components/README.md](components/README.md).
 Status values come from [UPDATES.md](UPDATES.md), which wins if the two disagree.

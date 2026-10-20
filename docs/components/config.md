@@ -1,7 +1,8 @@
 # Config spine
 **Status:** designing · **Legacy:** `configs/_schema.py`, `configs/_TEMPLATE.yaml`
 **Related:** [dataset](dataset.md) (time model) · [feature ledger](feature_ledger.md) · [lifecycle](lifecycle.md) ·
-[run modes](run_modes.md) · [environment](environment.md) · D-023, D-032, D-034, D-043, D-047, D-050, D-052 · OD-05, OD-10
+[run modes](run_modes.md) · [environment](environment.md) · D-023, D-032, D-034, D-043, D-047, D-050,
+D-052, D-058, D-075, D-076, D-077 · OD-05, OD-10, OD-11, OD-24, OD-25, OD-26
 
 ## Purpose
 The whole definition of a use case, validated at load. It is the framework's most important contract
@@ -12,14 +13,15 @@ with its users and the thing a new framework version must never break when a use
 - profiles fill sensible defaults, so a first run needs only a handful of fields.
 
 ## Shape (illustrative, not final)
-One file per use case is the goal, not a hard rule; split it only if it bloats (D-043).
+One file per use case is the goal, not a hard rule; split it only if it bloats (D-043). It is
+written in YAML for now; whether use cases write Python files instead is OD-24.
 
 ```yaml
 schema_version: 1
 task: binary                        # dispatch key; panel tasks first
 use_case: product_x_acquisition
 domain: retail
-profile: standard                   # quick | standard | thorough: defaults for every stage
+profile: standard                   # defaults for every stage; to become an automation level (D-077)
 decision: {type: top_n, n: 10000}   # how scores will be used → metric, gates, report emphasis
 
 entities:                           # only where this use case applies; data never merged
@@ -47,9 +49,18 @@ populations.
 1. Every config has `schema_version` and `task`. Unbuilt tasks are defined but fail with a clear "not
    implemented".
 2. Load = `conf/base` → `conf/local` merge → Pydantic v2 validation → **frozen config** saved with every
-   artifact (resolved values, including profile defaults).
+   artifact (resolved values, including profile defaults). The frozen config is plain data whatever
+   the authoring format (OD-24), is never edited afterwards (decisions taken later: OD-10), and
+   carries a **housekeeping block**:
+   - the framework version and a version card of the key libraries;
+   - when the run was made;
+   - the run's identities (`run_id`, config and data-definition hashes, code version; EDA and
+     Feature Checks have no `run_id` yet). The config hash excludes this block, so it doesn't
+     depend on itself.
 3. **Profiles** (`quick` / `standard` / `thorough`) set defaults for every stage; explicit fields
-   override (D-023).
+   override (D-023). They are to become **automation levels**, from fully autonomous to fully manual:
+   the same checks at every level, differing in what is decided by rule and what by a person
+   (D-077, OD-25).
 4. **Business decision** (e.g. `top_n`, `threshold`, `ranking`, `probability`; other tasks add their
    own). It derives:
    - the optimisation metric;
@@ -59,20 +70,22 @@ populations.
    It can be overridden, and metric names are validated against the engine's names (T9) (D-032).
 5. **Entities and domain:** a use case lists the entities it applies to (often one) and overrides only
    what differs per entity. Sources differ by domain and often by use case. Nothing runs or compares
-   across entities by default (D-034).
+   across entities by default (D-034). A use case may read several sources per entity (e.g. the
+   feature store and a mart, joined on unit and month); the shape allows it from v1, so adding the
+   feature store later breaks no config (D-075, OD-26).
 6. **Stepwise sections:** eligibility and feature-check steps are ordered and named, and each produces
    a log entry (rows/cols in → out, reason).
 7. **Features:** candidates are explicit lists or patterns. Human decisions go both ways: `exclude`
    and `keep` (despite a flag or against automated pruning), as grouped lists with one note per group
-   (whether a note is required: OD-10). Automated decisions are *not* written into the config as
-   outcomes: the config holds the rules that make them (ordered, named steps, like eligibility), and
+   (whether a note is required, and whether they live here or in the decision audit log: OD-10).
+   Automated decisions are *not* written into the config as outcomes: the config holds the rules that make them (ordered, named steps, like eligibility), and
    their outcomes live in the feature ledger and the frozen config (D-058).
 8. **Time:** observation window, target window, validation month and inference month. Validated at
    load:
    - window order;
    - `v ≥ tk + w` (no overlapping target windows);
    - backward windows fit the available history (default ≤ 6 months).
-9. **Data-definition hash:** computed from entity, source, eligibility, target, time and candidates.
+9. **Data-definition hash:** computed from entity, sources, eligibility, target, time and candidates.
    It keys the EDA and Feature Checks artifacts that training requires (D-031). It assumes a source
    month never changes after loading (`CLAUDE.md` §4.10).
 10. **Model key** (entity, domain, use case, split) is derived from the config; split = `all` in
@@ -86,6 +99,44 @@ populations.
     validation errors say how to fix the problem.
 15. **Migrations:** small functions `migrate_vN_to_vN+1(dict) -> dict`, applied automatically with a
     deprecation warning.
+
+## Decision audit log (direction, OD-10)
+Direction from the CDS, not settled: the config is the starting point and never changes, and every
+decision taken downstream, automated or human, is recorded in an audit log next to the run. How it
+is built and saved is OD-10. The SDS's idea is to save each run's **pathway**: the chain of decision
+points it passed and what was chosen at each, the way a path through a neural network lights up.
+The feature ledger is already that pathway for features.
+
+**Draft inventory of decision points.** "Rule" = decided by a rule in the config, "person" = a
+human decision, "level" = either, depending on the automation level (D-077, OD-25).
+
+| Stage | Decision point | By |
+|---|---|---|
+| Target Factory | Target spec: rule, window, leavers | Person (config) |
+| Target Factory | Null targets at the panel edge; refusing a degenerate target | Rule |
+| Dataset | Eligibility steps; client split; sampling and row budget | Rule |
+| EDA | Key features | Rule (top-N) + person (listed) |
+| Feature Checks | Lineage exclusions; one flag per check step | Rule |
+| Feature Checks | Exclude / keep, resolving flags | Person |
+| Feature Checks | Feature sign-off before register (D-076) | Person, always |
+| Training | Modelling path, budgets, calibration, refit | Level |
+| Training | Automated selection drops; search result (family, hyperparameters) | Rule |
+| Training | Point picked on the trade-off chart | Level |
+| Evaluation | Gates passed or failed | Rule |
+| register / promote | Register a version; choose the production version (approved PR) | Person |
+| deploy | Run by the change-request process | Person (CR) |
+| Inference | Which version scores (production by default, or a pin) | Level |
+| Monitoring | Flags; "retrain recommended" | Rule |
+| Monitoring | Retrain, retire, roll back | Person |
+| Any | Move the use case to another automation level | Person |
+
+**To settle in OD-10:**
+- what one record holds (decision point, options, choice, rule or person, evidence, time);
+- how it enters reproducibility: a run = frozen config + the decisions it used, and the run's hash
+  covers both;
+- whether human feature decisions stay in the config (D-043) or move to the log;
+- how records are keyed: EDA and Feature Checks run before any `run_id` exists (as in OD-11);
+- kept simple: append-only records in a table, not a graph engine.
 
 ## Design constraints
 - No bank identifiers; physical names only in `conf/local/`.
@@ -105,8 +156,10 @@ time checks.
 ## Open questions
 - Exact section layout and field names (settled while building the walking skeleton).
 - How a use-case extension function is referenced, and where its code lives (OD-05).
-- The config lifecycle from Target Factory to promotion: persisting human decisions without
-  multiple config versions, including the flag case (OD-10).
+- The config format: YAML or Python files (OD-24).
+- The decision audit log: the config never changes, and decisions taken downstream are recorded
+  (OD-10, section above).
+- Automation levels: which levels, and what each decides by rule (OD-25).
 - Profile defaults per stage (set as each stage is built).
 - Identities, to specify when the config is built (M2):
   - the config hash covers the frozen config, including `conf/local/` values (paths, tables), so

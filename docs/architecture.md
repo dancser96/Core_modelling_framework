@@ -25,8 +25,9 @@ and what it aims for: `docs/context/project.md`. Terms: `docs/glossary.md`.
 There is no service layer (D-024). Each use case pins the framework version it runs with, upgrades
 at its own pace, and scores its models with that version (D-047). Many versions therefore write to
 the same shared tables at once, so a new version must not break use cases or those tables
-(`CLAUDE.md` §2). Still open: where use cases live and how users get the notebooks (OD-02), and the
-distribution channel and release path (OD-04).
+(`CLAUDE.md` §2). The package ships in the base image through Nexus, so the image a use case starts
+on pins its version (D-074). Still open: where use cases live (OD-02) and the release mechanics
+(OD-04).
 
 ## 2. Stages
 
@@ -35,7 +36,7 @@ them in order (D-028).
 
 | Stage | Consumes | Produces | Doc |
 |---|---|---|---|
-| **target_factory** (optional) | Source table(s) | Targets + target lineage (saved, or passed on in memory); labels for scored months, for monitoring | [target_factory](components/target_factory.md) |
+| **target_factory** (optional) | Source table(s) or the feature store | Targets + target lineage (saved, or passed on in memory); labels for scored months, for monitoring | [target_factory](components/target_factory.md) |
 | **eda** | Data definition (entity, source, eligibility, target, time, candidates) | EDA report; ledger columns (univariate ranking, key features) | [eda](components/eda.md) |
 | **feature_checks** | Same + EDA ledger | Check log, flags, proposed decisions, ledger columns, report | [feature_checks](components/feature_checks.md) |
 | **training** | Resolved features + train split | Local-tier run: model bundle, selection in the ledger, training metadata, drift reference; optionally a refit linked to it (D-052) | [training](components/training.md) |
@@ -44,7 +45,7 @@ them in order (D-028).
 | **promote** | Registered version + approved PR | Promotion record + verified deployment bundle | [lifecycle](components/lifecycle.md) |
 | **deploy** | Bundle, run by the change-request process | Production copy + production record | [lifecycle](components/lifecycle.md) |
 | **inference** | Production (or pinned registered) model + a month | Batch-scoped scores + manifest | [inference](components/inference.md) |
-| **monitoring** | Scores, inputs, drift reference, matured labels, baselines | Monitoring tables + report | [monitoring](components/monitoring.md) |
+| **monitoring** | Scores, inputs, drift reference, matured labels, baselines | Monitoring tables + report, fed to the data observability framework (D-075) | [monitoring](components/monitoring.md) |
 
 **Cross-cutting pieces:**
 - [config](components/config.md)
@@ -56,22 +57,30 @@ them in order (D-028).
 - [synthetic data](components/test_harness.md) (dev only)
 
 **Due-diligence gate (§4.13):** training requires EDA and Feature Checks artifacts for the same
-data-definition hash. Hands-off profiles run them automatically (D-031).
+data-definition hash. Hands-off profiles run them automatically (D-031). A person signs off the
+feature list before any model is registered, at every automation level (D-076).
+
+**Integrations (first release, D-075):** the feature store upstream (alone or with other sources,
+OD-26) and the data observability framework downstream (OD-13), both thin.
 
 ## 3. Config
 
-- **One YAML file per use case** (the goal, D-043), validated by Pydantic v2. It carries
+- **One file per use case** (the goal, D-043), validated by Pydantic v2. YAML for now; Python
+  files are under study (OD-24). It carries
   `schema_version`, `task`, `profile` and `decision`. Shared sections (entities, data, time,
   features) plus one section per stage. Details: [config](components/config.md).
 - **`conf/base/`** is committed and holds framework defaults and generic use-case configs.
   **`conf/local/`** is gitignored and holds environment-specific values (tables, paths, Spark, theme).
   They merge base → local at load.
-- **Profiles** (`quick` / `standard` / `thorough`) set defaults for every stage (D-023). The
+- **Profiles** (`quick` / `standard` / `thorough`) set defaults for every stage (D-023); they are
+  to become automation levels, from fully autonomous to fully manual (D-077, OD-25). The
   **decision** drives the metric, the gates and what reports emphasise (D-032).
 - **Stepwise sections:** eligibility and feature checks are ordered lists of named steps, and each
   step logs rows/columns in → out and the reason. The feature ledger carries the per-feature trail.
-- **Frozen config:** the fully resolved config saved with every artifact. Reports and reproduction
-  use only frozen configs.
+- **Frozen config:** the fully resolved config saved with every artifact, as plain data, with a
+  housekeeping block (framework and library versions, time, identities). Reports and reproduction
+  use only frozen configs. The config is never edited after the fact: decisions taken downstream go
+  to a decision audit log (direction, OD-10).
 - Breaking a schema follows `CLAUDE.md` §2 (version bump + migration + test).
 
 ## 4. Time model and splits
@@ -101,8 +110,10 @@ change-request path and the open questions are owned by [lifecycle](components/l
   - model key = (entity, domain, use case, split), with split = `all` in Phase 2
   - `scoring_batch_id`
   - code version = framework version + use-case repo commit
-- **The model bundle is a versioned artifact:** plain-data encoder and calibration, and the
-  engine's native model format where available (D-051).
+- **The model bundle is a versioned artifact:** every part as plain data, JSON where possible,
+  never pickle (D-051, D-078).
+- **Retraining in production** (promote the recipe, production retrains it) is under study
+  (OD-27).
 - **A DS session never writes to production** (D-033).
 - **Manifests** link a scoring batch to the models that produced it (`run_id` + `model_hash`).
   Reproduction verifies the hash before loading.
@@ -120,14 +131,16 @@ change-request path and the open questions are owned by [lifecycle](components/l
   - realised performance against baselines and business impact: thin in Phase 2, built so they work
     as soon as outcomes exist.
 
-  Details: [monitoring](components/monitoring.md).
+  Monitoring outputs feed the data observability framework (D-075); tooling and dashboards are the
+  platform / MLOps team's (D-079). Details: [monitoring](components/monitoring.md).
 
 ## 7. Run modes
 
 - **Manual:** guided notebooks, one per stage. They load the config, call the stage and display its
   artifacts. Users may copy them and explore; production never depends on notebook code (D-039).
 - **Automated / production:** `python -m core_modelling run <config> [--stages …]` and the matching
-  Python API, plus separate `register`, `promote` and `deploy` commands. Scheduling, if any, calls
+  Python API, plus separate `register`, `promote` and `deploy` commands, and an entry point for the
+  feature sign-off (D-076; how it is recorded: OD-10). Scheduling, if any, calls
   the CLI.
 - **Experiment sweeps:** run one config with a single field varied (e.g. the observation window) and
   compare the variants on the same validation set. A sweep that picks a variant labels the winner's
@@ -138,7 +151,7 @@ change-request path and the open questions are owned by [lifecycle](components/l
 
 - **Task:** every task-specific hook (target builder, EDA ranking, leakage screen, selection rule,
   contract checks, baselines, metrics, views, calibration, output columns…) lives in one per-task
-  spec dict keyed by `task` (D-050). Panel tasks come first: binary plus one more in Phase 2. Unbuilt tasks fail with a
+  spec dict keyed by `task` (D-050). Panel tasks come first: binary and regression in Phase 2 (D-080). Unbuilt tasks fail with a
   clear "not implemented".
 - **Domains, entities, sources:** configuration only; never names in code; no data merged across
   entities (D-034).
@@ -161,7 +174,7 @@ One module owns:
 - the compat shim
 - the transport (filesystem vs `hdfs dfs`)
 - path construction, per tier and entity
-- table resolution (logical source → physical table)
+- table resolution (logical source → physical table, or the feature store: OD-26)
 - the report theme location
 
 Framework code calls only its functions. On a laptop, `conf/local/` points the logical sources at the
@@ -181,7 +194,7 @@ synthetic dataset. See [environment](components/environment.md) and
   - `eda/`: population/target profile, univariate ranking, key features, pivots
   - `feature_checks/`: check steps, stability, lineage guard
   - `ledger.py`: feature ledger (create, append, resolve the final feature list)
-  - `training/`: model interface, AutoML path (FLAML), predefined path (Optuna), automated
+  - `training/`: model interface, AutoML path (FLAML), predefined path (Optuna, Phase 3), automated
     selection, categorical encoding, calibration
   - `evaluation/`: metrics by task, stratified metrics, baselines, view slots, comparison
   - `lifecycle/`: register, promote, deploy, registry records

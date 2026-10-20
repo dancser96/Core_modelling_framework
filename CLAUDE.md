@@ -12,11 +12,13 @@ of every live model. Where we start from and where we want to reach: `docs/conte
   local → registered → production, and a data scientist's session never writes to production.
 - **Intermediate outputs:** every stage writes its own artifacts and a self-contained HTML report
   (EDA, feature checks + feature ledger, model performance, model card, monitoring).
-- **Coverage:** panel tasks (one row per unit per period) first: binary, plus at least one more task
-  type in Phase 2. Series tasks (forecasting) come later. Any domain (retail, SME, corporate) and any
+- **Coverage:** panel tasks (one row per unit per period) first: binary and regression in Phase 2
+  (D-080). Series tasks (forecasting) come later. Any domain (retail, SME, corporate) and any
   entity (subsidiary) is handled through configuration.
-- **Model types:** AutoML (FLAML) and predefined model families tuned with Optuna, behind one model
-  interface.
+- **Model types:** AutoML (FLAML) in Phase 2; predefined model families tuned with Optuna in
+  Phase 3 (D-080); both behind one model interface.
+- **Integrations (first release):** the feature store upstream and the data observability
+  framework downstream. LLM-assisted modelling comes in Phase 3 (D-075).
 - **Current state:** Phase 2, design baseline done; the package is still a skeleton. The crunch
   implementation in `legacy/propensity_crunch/` is reference only. Status: `docs/UPDATES.md`. Plan
   and open decisions: `docs/roadmap.md`. Vocabulary: `docs/glossary.md`. Reading order and the
@@ -136,8 +138,9 @@ pinning doesn't relax this.
 - **Every config carries `schema_version`.** A schema change means: bump the version, write a small
   migration function old → new, add a test that loads an old config. Old configs keep loading and
   emit a deprecation warning.
-- **Artifact formats are versioned the same way:** model bundle (D-051), model card, manifest,
-  scores schema, feature ledger, drift reference, registry records, monitoring tables.
+- **Artifact formats are versioned the same way:** model bundle (D-051; never pickle, D-078),
+  model card, manifest, scores schema, feature ledger, drift reference, registry records,
+  monitoring tables.
 - **Deprecate before removing:** keep the deprecated path for at least one minor version.
 - **Semantic versioning** via `__version__` in `src/core_modelling/__init__.py`.
 - Run the **compat-guardian** subagent whenever you touch config schemas, public functions or
@@ -160,8 +163,8 @@ pinning doesn't relax this.
 - **Environment-specific things live only in the environment adapter + `conf/local/`** (gitignored):
   Spark session, HDFS transport, paths, table names, compat shims, report theme. **No bank names,
   paths, table names or people's names anywhere in the repo**; use roles instead.
-- **Task-agnostic shapes.** Configs carry `task`. Panel tasks come first (binary built, plus at least
-  one more task type in Phase 2); series tasks come later. Every task-specific choice (target builder,
+- **Task-agnostic shapes.** Configs carry `task`. Panel tasks come first (binary and regression in
+  Phase 2, D-080); series tasks come later. Every task-specific choice (target builder,
   EDA ranking, leakage screen, selection rule, contract checks, baselines, metrics, views,
   calibration, output columns…) dispatches on `task` through one per-task spec dict (D-050). Never
   bake binary or single-month assumptions into
@@ -215,7 +218,9 @@ pinning doesn't relax this.
 12. **Sampling never depends on a client's outcomes unless weights undo it**, and it happens after the
     client split.
 13. **No model without data knowledge.** Training requires EDA and Feature Checks artifacts for the
-    same data-definition hash; hands-off profiles run them automatically (D-031).
+    same data-definition hash; hands-off profiles run them automatically (D-031). A person signs off
+    every feature before a model is registered, at every automation level; an LLM never passes this
+    gate (D-076).
 
 Run the **ml-correctness-auditor** subagent whenever you touch Target Factory, the dataset/splits,
 features, training, evaluation, calibration or inference.
@@ -341,7 +346,9 @@ numbered list for a flow, nested bullets for a tree and a narrow table for a map
 
 - **Roles.** The user is the senior DS who builds the framework and owns every decision; all design
   flows through them. The Lead DS reviews in a daily ~1h sync (prepare with `/brief`). The Chief DS
-  sets direction. Refer to people by role only.
+  sets direction and leaves the design to the SDS and LDS; topics for the CDS go to
+  `docs/roadmap.md` → Chief DS topics (D-073). Downstream operation questions go to the platform /
+  MLOps team (D-079). Refer to people by role only.
 - **Ask first** before: a new dependency, a public API or schema change, a large refactor, deleting
   anything, or anything that touches the lifecycle tiers.
 - **Git.** Commit only when the SDS asks, even locally, and always with a message. Commits go

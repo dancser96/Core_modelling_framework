@@ -2,7 +2,7 @@
 **Status:** legacy-only · **Legacy:** `src/run.py`, `src/dataset.py`, `src/calibration.py`, `src/contract.py`
 **Related:** [dataset](dataset.md) · [feature ledger](feature_ledger.md) · [evaluation](evaluation.md) ·
 [config](config.md) · [lifecycle](lifecycle.md) · [monitoring](monitoring.md) (drift reference) · D-030, D-031, D-032, D-037,
-D-049, D-050, D-051, D-052, D-054 · OD-22
+D-049, D-050, D-051, D-052, D-054, D-078, D-080 · OD-22, OD-27
 
 ## Purpose
 Fit a model on the train split of the observation window, using only vetted features, through one of
@@ -12,7 +12,8 @@ two modelling paths. Write a local-tier run with the frozen config, hashes and t
 1. **Due-diligence gate:** refuse to train unless EDA and Feature Checks artifacts exist for the same
    data-definition hash. Hands-off profiles run them first (D-031).
 2. **Two modelling paths behind one small model interface** (`fit`, `predict`, `describe`). Both
-   return a scikit-learn-compatible model bundle (encoder + model + calibration).
+   return a scikit-learn-compatible model bundle (encoder + model + calibration). Phase 2 builds
+   the AutoML path only; the predefined path and its trade-off chart come in Phase 3 (D-080).
    - **AutoML:** FLAML.
      - Estimator list and time budget, with optional per-learner budgets so one cheap learner can't
        consume the whole budget.
@@ -50,16 +51,19 @@ two modelling paths. Write a local-tier run with the frozen config, hashes and t
 9. **Record what the engine actually did:** best estimator and config, trials per learner (FLAML
    `config_history`, T14), Optuna trials, seeds.
 10. **Runtime levers** in config, with profile defaults: budget, learners, trials, sampling.
-11. **Versioned model bundle** (D-051): encoder levels and calibration as plain data (JSON); the
-    model in its engine's native format where the path exposes it; pickle only as a fallback, with
-    library versions recorded.
+11. **Versioned model bundle** (D-051, D-078): every part as plain data, never pickle. Encoder
+    levels and calibration as JSON; the model in a lossless non-pickle format, JSON where possible,
+    with library versions recorded. A model family is offered only once that format is verified for
+    it on the pinned versions (a round trip giving identical predictions), so FLAML's estimator list
+    is limited to such families.
 12. **Drift reference** (D-054): feature distributions of the training window and a score
     distribution, computed in Spark on the true eligible population (not the sample), saved with
     the run for [monitoring](monitoring.md).
 13. **Optional refit** (D-052), off by default: on all clients (train + test) or on an extended
     window (the latest months whose labels have matured). The refit is a new run linked to its
     evaluated parent, with the same features and hyperparameters and calibration recomputed. Its
-    card shows the parent's evaluation metrics and says it is a refit.
+    card shows the parent's evaluation metrics and says it is a refit. Retraining in production
+    could run this refit from the promoted recipe (OD-27).
 
 ## Design constraints
 - The engine never sees the raw feature universe; evaluation happens outside it (§4.5).
@@ -85,4 +89,7 @@ T9, T14; downsampling, calibration and FLAML-search lessons in `docs/context/les
   weighted rate equals the true rate, so the offset is zero (D-049). Verify both against the
   synthetic oracle (reliability curves) before choosing the default.
 - Platt vs isotonic for the general calibration step.
-- Which engine-native model formats FLAML 2.7 exposes on the pinned versions (D-051): unverified.
+- A lossless non-pickle format per model family on the pinned versions (D-078), all unverified:
+  XGBoost's JSON; LightGBM's text model (its JSON dump may not load back); CatBoost's JSON;
+  scikit-learn's forests (FLAML `rf`, `extra_tree`) have none without a new dependency (e.g. skops)
+  or our own exporter. Any non-executable plain-data format counts, JSON preferred (D-078).

@@ -1,7 +1,7 @@
 # Environment adapter
 **Status:** built (partial: compat shim + local Spark session) · **Legacy:** `src/_compat.py`, `src/io.py` (`_read`), `src/inference.py` (`_put_file`, `_read_text`, `_fetch_dir`, `_is_hdfs`)
 **Related:** [`docs/context/environment.md`](../context/environment.md) · [lifecycle](lifecycle.md) (tier paths) ·
-[reporting](reporting.md) (theme) · [test harness](test_harness.md) (synthetic sources) · D-011 · OD-06
+[reporting](reporting.md) (theme) · [test harness](test_harness.md) (synthetic sources) · D-011, D-075 · OD-06, OD-26
 
 ## Purpose
 The single seam between framework logic and wherever it runs (laptop vs bank). Framework code never
@@ -19,7 +19,9 @@ checks where it is running; it calls this module, and `conf/local/` decides.
    reports, per entity where the layout needs it (OD-06). HDFS paths are built by string joining,
    never with `pathlib` (T2).
 5. Source resolution: a logical source name in the use-case config maps to a physical Hive table or
-   path in `conf/local/`. On a laptop it maps to the synthetic dataset in `data/01_raw/`.
+   path in `conf/local/`. On a laptop it maps to the synthetic dataset in `data/01_raw/`. In the
+   first release a source can also be the feature store, alone or next to other sources (D-075);
+   how is designed after the work stream that learns it (OD-26).
 6. The report theme location (a theme file in `conf/local/`, used after internalisation).
 
 ## Design constraints

@@ -69,4 +69,4 @@ that showed nothing at low prevalence (T16); EDA run last because it gave no ins
 - Default number of key features per profile; exact report sections (structure agreed: summary page
   + core + extended, see [reporting](reporting.md); content OD-12).
 - Which pivot dimensions to pre-compute in the report vs leave to the notebook functions.
-- Ranking statistic and base-rate views for the second task type (D-050, OD-15).
+- Ranking statistic and base-rate views for the second task type (regression, D-050, D-080).

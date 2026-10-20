@@ -15,31 +15,40 @@ Status values: `legacy-only` (exists only in legacy) · `designing` · `stub` (i
 | Repo bootstrap (docs, skills, agents, requirements, package skeleton) | built | |
 | Design baseline (docs rebuilt after three review rounds + Lead DS notes) | built | 2026-10-12; milestone M0 |
 | Environment adapter (Spark session, compat shim, transport, paths, sources) | built | Partial: compat shim + local Spark session (M1 step 0, D-057); transport, paths, sources in M2. Traps T1–T5, T18 |
-| Config spine (single file, profiles, decision, entities, data-definition hash, migrations) | designing | `components/config.md` |
+| Config spine (single file, profiles, decision, entities, data-definition hash, migrations) | designing | `components/config.md`. Research before M2: YAML or Python files (OD-24), the decision audit log (OD-10), automation levels (D-077, OD-25) |
 | Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | tested | M1: steps 0–7 built (2026-10-17); the SDS's review round 1 applied (2026-10-19): role folders, slimmer `truth.json`, two new traps, exit rates, top-down spec with a code map. Feature mart (147 columns), traps on two products, oracle and `truth.json`, CLI, source mapping; every independent check row passes at 100k; approved by the SDS (2026-10-19), with the LDS for review (`synthetic/REVIEW.md`). D-056, D-064–D-070 |
 | Target Factory (targets only, optional) | legacy-only | Renamed from Data Creation (D-029) |
 | Dataset: observation window, client-grouped split, OOT validation, sampling | designing | Big-ticket item (D-030); sampling choice OD-17 |
 | EDA (worth running first; low-prevalence aware) | legacy-only | Major rethink |
 | Feature Checks (correctness and quality only) | legacy-only | Major rethink; selection moved to Training (D-028) |
 | Feature ledger | designing | Sketch awaiting review (OD-11) |
-| Training (AutoML + predefined/Optuna paths, selection, encoding, calibration) | legacy-only | D-037; FLAML only under review (OD-15) |
+| Training (AutoML + predefined/Optuna paths, selection, encoding, calibration) | legacy-only | FLAML only in Phase 2, predefined + Optuna in Phase 3 (D-080); no pickle, lossless formats per family (D-078) |
 | Evaluation (stratified metrics, compatibility table, comparison) | legacy-only | Core views OD-12 |
 | Reporting (self-contained HTML, plotly, chart rules) + model card | legacy-only | D-036 |
-| Lifecycle: register / promote / deploy, registry tables, inventory | designing | OD-06–OD-09, OD-14; needs Chief DS + MLE/MLOps input, who builds it OD-23 |
+| Lifecycle: register / promote / deploy, registry tables, inventory | designing | Evolves as built (D-073); OD-06–OD-09, OD-14; retraining in production OD-27; who builds it OD-23, with the platform / MLOps team (D-079) |
 | Inference (batch-scoped, manifest, reinference) | legacy-only | Output columns / layout OD-18 |
-| Monitoring (operational + drift deep; performance + impact thin) | designing | Renamed from Tracking (D-040); tooling OD-13; downstream design still largely open |
+| Monitoring (operational + drift deep; performance + impact thin) | designing | Renamed from Tracking (D-040); the data observability integration OD-13; tooling and dashboards are the platform / MLOps team's (D-079); downstream design still largely open |
+| Feature store integration (upstream) | designing | First release (D-075); a work stream to learn the feature store comes first (OD-26) |
+| Data observability integration (monitoring) | designing | First release (D-075); a work stream to learn the framework comes first (OD-13) |
 | CLI / Python API / guided notebooks / experiment sweeps | designing | D-024, D-039 |
-| Second task type | designing | Whether and which: OD-15 (Chief DS), chosen by the end of M1; per-task spec D-050 |
-| LLM-assisted modelling branch | designing | After internalisation |
+| Second task type: regression | designing | D-080; its per-task spec is designed in M1 (D-060, D-050) |
+| LLM-assisted modelling branch | designing | Phase 3 (D-075) |
 | Full test coverage + CI/Sonar readiness | designing | Before migration (M5) |
 
 ## Open questions
 
 All open decisions are tracked as OD-nn rows in [`docs/roadmap.md`](roadmap.md#open-decisions),
-together with the topics for the Chief DS design meeting (week of 2026-10-12).
+together with the topics to raise with the Chief DS.
 
 ## Log (major changes only, newest first)
 
+- 2026-10-20 — Phase 2 modelling scope settled: binary and regression, FLAML only; the predefined
+  path + Optuna moves to Phase 3 (D-080). Task order after the first release (D-081).
+- 2026-10-20 — Chief DS design meeting (2026-10-15) outcomes integrated, D-073–D-079: the CDS
+  leaves the design to the SDS and LDS; the package ships in the base image; the first release
+  adds feature store and data observability integration (no LLM until Phase 3); a person signs off every feature; profiles become
+  automation levels (soft); no pickle; downstream operations go to the platform / MLOps team.
+  Research questions opened: OD-24–OD-27, OD-10 widened. Meeting folder removed.
 - 2026-10-19 — Synthetic data generator approved by the SDS and passed to the LDS for review
   (`synthetic/REVIEW.md`); M1 still needs OD-15.
 - 2026-10-19 — Synthetic data, the SDS's review round 1 applied (D-070): code in role folders

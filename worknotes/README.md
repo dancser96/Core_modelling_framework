@@ -8,7 +8,6 @@ are **never loaded at session start**; they are read only when asked (`CLAUDE.md
 |---|---|---|---|
 | `sync.md` | The sync page: new decisions, what the LDS should review, questions, what changed since the last sync | Refreshed at the end of every turn that changed files, settled something or produced a finding | Before each sync; `/brief` |
 | `log.md` | The verbose trail, newest first: what changed, why, files, decisions | Appended at the same moments as `sync.md` | When the detail behind a sync item is needed |
-| `chief_ds_meeting/` | Material for the Chief DS design meeting (2026-10-15): `overview.md` (15-minute direction pre-read) and `questions.md` (questions per topic) | Drafted with the builder before the meeting | In the meeting; delete once the outcomes are in `docs/decisions.md` and `docs/roadmap.md` |
 | `handovers/<topic>.md` | A chat handover, one file per topic, so several topics can run in parallel | `/handover <topic>` (overwrites that topic's file) | Only via `/resume <topic>` |
 
 **Rules**

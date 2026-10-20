@@ -85,5 +85,5 @@ resume on either machine.
 3. Copy the contents into the internal repo, then set `conf/local/` there (it is gitignored here and
    never leaves the bank).
 
-The longer-term release path (internal CI, a package repository, version pins) is open: OD-04 in
-`docs/roadmap.md`.
+The channel is settled: the base image through Nexus (D-074). The release mechanics (CI, who
+publishes, image cadence) are open: OD-04 in `docs/roadmap.md`.

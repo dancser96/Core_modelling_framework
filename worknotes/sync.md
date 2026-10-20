@@ -1,12 +1,16 @@
 # Sync page
-_For the SDS and the LDS · last updated: 2026-10-19 · last sync: 2026-10-13 (2026-10-14: CDS prep only)_
+_For the SDS and the LDS · last updated: 2026-10-20 · last sync: 2026-10-13 (2026-10-14: CDS prep only)_
 
-**New decisions since the last sync:** D-056–D-072 (`docs/decisions.md`)
+**New decisions since the last sync:** D-056–D-081 (`docs/decisions.md`)
 
 Detail behind each item: `worknotes/log.md`. Open decisions (OD-nn): `docs/roadmap.md`. How this
 page is written: `worknotes/README.md`.
 
 ## For the LDS: to review (most important first, then newest)
+- [ ] **CDS meeting outcomes** — `docs/decisions.md` D-073–D-079, then `docs/roadmap.md` (open
+      decisions and the new Chief DS topics) — feedback wanted: does this match your notes from
+      the two sessions? Especially the feature sign-off before register (D-076), automation
+      levels (D-077) and no pickle (D-078).
 - [ ] **Synthetic data generator (M1)** — `synthetic/REVIEW.md`, then
       `notebooks/00_synthetic_data.ipynb` and `docs/components/test_harness.md` (Levels 1
       and 2) — feedback wanted: is the book realistic enough to develop against, and are the
@@ -46,24 +50,41 @@ page is written: `worknotes/README.md`.
   component in Phase 2, with health and drift monitoring deep (D-040). Agree?
 - **Example notebooks:** beyond running as a pipeline and through notebooks, anything more you want
   from the release examples? (`docs/components/run_modes.md`)
-- **Model documentation:** what did you mean by "checks that the necessary inputs exist"?
+- **Model documentation (Phase 3):** what did you mean by "checks that the necessary inputs exist"?
 
 ## Open questions for both of us
 
 | Question | Context | Current leaning | Needs |
 |---|---|---|---|
-| CDS meeting, 2026-10-15 (2 × 30 min) | Covers OD-06–OD-09, OD-13, OD-15, OD-23 and D-055 | Material reviewed together on 10-14; questions carry our joint proposals; the lifecycle design gets a separate blank-slate session | SDS + LDS, then the CDS |
+| Config research before M2 (OD-24, OD-25) | YAML or Python configs; automation levels | — | SDS + LDS |
 | Depth per component (OD-01) | full / deep / thin / stub | — | SDS + LDS |
-| Human feature decisions (OD-10) | Resolving a flag after training would force an identical retrain | Grouped lists, one note per group; only a `keep` that resolves a flag needs one | SDS |
+| Decision audit log (OD-10) | CDS direction: the config never changes; later decisions go to a log. Fixes the flag case (a `keep` in the config changed its hash) | Append-only records per decision point; draft inventory in `config.md` | SDS |
 
 ## Since the last sync
+- **CDS meeting outcomes** (D-073–D-079). The CDS leaves the design to us and wants the lifecycle
+  to evolve as we build, not a blank-slate redesign. Settled:
+  - the package ships in the base image through Nexus; the image pins the version;
+  - the first release adds feature store integration (on the feature store, other sources, or
+    both) and data observability integration for monitoring, both thin; no LLM until Phase 3
+    (the CDS's "LLM-written documentation" means our own repo docs);
+  - a person signs off every feature before a model is registered, at every automation level;
+  - profiles become automation levels, from fully autonomous to fully manual (soft);
+  - no pickle for models;
+  - downstream operations (flags, live-model ownership, monitoring tooling) go to the platform /
+    MLOps team.
+
+  New research questions: YAML or Python configs (OD-24), a decision audit log with the config
+  never changing (OD-10), automation levels (OD-25), the feature store (OD-26), retraining in
+  production (OD-27). The SDS then settled the Phase 2 modelling scope: binary and regression, FLAML only, the predefined
+  path + Optuna in Phase 3 (D-080); and the task order after the first release (D-081). — look at: `docs/roadmap.md` → Open
+  decisions, Chief DS topics
 - **Synthetic data generator done and approved by the SDS** (M1; D-064–D-071). Population,
   holdings, amounts, the feature mart, traps, oracle and CLI were built in one go (10-17). The SDS's
   review (10-19) reorganised the code into role folders, cut what did little (`truth.json`
   234 → 55 KB), added a moderate leak and a shifted column, raised exits and made the book a steady
   state. The notebook is now a visual tour, with the checks in an appendix. It shows a leakage
   screen, the gains a perfect model would reach, heavy tails, collinear clusters and the regression
-  oracle's band. It is now on your review list. Still open in M1: the second task type (OD-15). —
+  oracle's band. It is now on your review list. Still open in M1: regression's per-task spec (D-060). —
   look at: `synthetic/REVIEW.md`
 - **Window ablation without a second validation month** (D-062): the window is chosen on test and
   validation equally; train only shows the overfitting gap. — look at: `docs/components/dataset.md`
@@ -85,23 +106,25 @@ page is written: `worknotes/README.md`.
   guide for larger agreed builds.
 
 ## Demo next
-- The CDS meeting outcomes (2026-10-15), then where the synthetic data generator stands.
+- The CDS outcomes and the new research questions (`docs/roadmap.md`), then where the synthetic
+  data generator stands.
 
 ## Last 7 days
+- 10-20 — **CDS meeting outcomes**: design left to us; feature store and data observability in
+  the first release; feature sign-off; no pickle; binary + regression, FLAML only — D-073–D-081,
+  OD-24–OD-27
 - 10-19 — **Working rules and doc structure**: plans in major/minor steps, commits only on
   request, three-level docs without flowcharts, open decisions split by horizon — D-072
 - 10-17–19 — **Synthetic data generator (M1)**: built, reviewed by the SDS, approved; ready for
   the LDS — `synthetic/REVIEW.md`
 - 10-14 — **CDS meeting material**: three rounds with the SDS, then a review with the LDS that added
-  our joint proposals (OD-02, OD-04, OD-15, OD-21) and split off a blank-slate lifecycle session —
-  `worknotes/chief_ds_meeting/`
+  our joint proposals (repos, release path, task scope and order); the material was removed once its outcomes were
+  in the docs (10-20)
 - 10-14 — **Follow-ups to the 10-13 sync**: feature decisions, lifecycle depth, regression shapes,
   targets — D-058–D-061
 - 10-13–15 — **Synthetic data (M1) design**: feature-mart spec settled, local Spark harness running,
   population and holdings built — D-056, D-057, D-062–D-066, `docs/components/test_harness.md`
-- 10-13 — **LDS sync**: Phase 2 scope reopened (FLAML only / binary only, OD-15); the registry and
+- 10-13 — **LDS sync**: Phase 2 scope reopened (FLAML only / binary only; settled by D-080); the registry and
   deployment need an owner (OD-23); MLflow for the registry rather than monitoring (OD-13)
 - 10-12–13 — **Holistic review of the baseline**: where test or validation data could choose
   something, and shape risks — D-047–D-055
-- 10-12 — **Design baseline (M0)**: docs rebuilt from three review rounds and the LDS notes;
-  roadmap with milestones and open decisions; worknotes shared — D-020–D-046

@@ -1,7 +1,7 @@
 # Run modes: CLI, Python API, guided notebooks
 **Status:** designing · **Legacy:** `run_product.py`, `notebooks/`
 **Related:** [config](config.md) · [environment](environment.md) · [dataset](dataset.md) (experiment sweeps) ·
-`notebooks/README.md` · D-024, D-039, D-047, D-053 · OD-02, OD-04, OD-05
+`notebooks/README.md` · D-024, D-039, D-047, D-053, D-074 · OD-02, OD-04, OD-05
 
 ## Purpose
 The same functions, used two ways: guided notebooks for manual work and learning, and a CLI / Python
@@ -11,7 +11,8 @@ so users can see and debug what happens under the hood.
 ## Phase 2 requirements
 1. **CLI:** `python -m core_modelling run <config> [--stages …] [--profile …] [--entity …]`, plus
    separate `register`, `promote` and `deploy` commands. They are gated steps run by different
-   actors: the change-request process runs `deploy`.
+   actors: the change-request process runs `deploy`. The feature sign-off (D-076; how it is
+   recorded: OD-10) needs an entry point.
 2. **Python API:** one function per stage, plus `run(config, stages=...)` taking a config path or a
    loaded config.
 3. **Experiment sweeps:** a function that runs one config with a single field varied (e.g. the
@@ -35,7 +36,8 @@ so users can see and debug what happens under the hood.
 - No HTTP / scheduler layer. Scheduling, if any, calls the CLI.
 
 ## Open questions
-- Where use cases live and how users get the notebooks (OD-02). Not one shared repo with code
+- Where use cases live and how users get the notebooks (OD-02). Leaning: one repo per entity ×
+  domain, with a use case branching into its own repo as it grows; not one shared repo with code
   folders.
-- Distribution channel and release path (OD-04); where extension code lives (OD-05). Each use case
-  pins its framework version (D-047).
+- The package ships in the base image through Nexus, which pins each use case's framework version
+  (D-074, D-047). Still open: the release mechanics (OD-04) and where extension code lives (OD-05).

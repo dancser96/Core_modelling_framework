@@ -23,6 +23,8 @@ known traps: `docs/context/environment.md` and `docs/context/lessons.md`.
 - [ ] **Local I/O** helpers coerce `Path(x)` at the boundary (T4).
 - [ ] **Spark → pandas.** Prune columns/rows (and sample) in Spark before `toPandas()`.
 - [ ] **Write modes.** No overwrite inside loops; batch-scoped outputs written once (T6, T7).
+- [ ] **No pickle for models.** Model files use a lossless non-pickle format, never `pickle` or
+      `joblib` (D-078).
 - [ ] **Identifiers.** No bank names, internal paths, table names or people's names. Physical names
       belong only in `conf/local/` (gitignored).
 - [ ] **Java 11 / Python 3.11 features only.** No syntax or stdlib features beyond Python 3.11.

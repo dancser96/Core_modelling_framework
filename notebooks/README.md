@@ -8,7 +8,7 @@ functions and a way to learn how things work under the hood (D-039, `docs/compon
 - One notebook per stage, **never** one per use case. To work on another use case, change the config
   path in the first cell and rerun.
 - Every notebook has the same shape:
-  1. **Guide cell:** what this stage is for, what to look at, which decisions to record in the config,
+  1. **Guide cell:** what this stage is for, what to look at, which decisions to record in the config (or the decision audit log, OD-10),
      and links to the docs. Written as instructions, not commentary.
   2. **Setup cell:** environment adapter (compat shim + Spark) and config load.
   3. **One call per step:** `run_<stage>(cfg)` or finer-grained public functions, each preceded by a

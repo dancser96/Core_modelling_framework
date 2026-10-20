@@ -5,7 +5,7 @@ LDS for review, guided by `synthetic/REVIEW.md` (D-067, D-070) · **Legacy:** `t
 **Related:** [dataset](dataset.md) (time model) · [target factory](target_factory.md) ·
 [EDA](eda.md) · [feature checks](feature_checks.md) · [environment](environment.md) ·
 [config](config.md) · `tests/README.md` · `synthetic/REVIEW.md` (review guide) · D-014, D-041,
-D-056, D-057, D-062, D-064–D-070 · OD-15, OD-17
+D-056, D-057, D-062, D-064–D-070, D-080 · OD-17
 
 Read it in three levels:
 - **Level 1** (a two-minute read) gives the essentials.
@@ -214,7 +214,7 @@ What ties the products together:
 
   The null controls score about 0.5 on every target.
 - **A regression ceiling too.** The oracle also gives the true mean and quantiles of each card
-  holder's next-3-month card spend, for regression (OD-15).
+  holder's next-3-month card spend, for regression (D-080).
 
 ### How a month runs, and where the code is
 The generator is a loop over months, vectorised over clients. It starts 13 months before the panel:
@@ -853,8 +853,8 @@ Later (not in M1): an interaction-only feature.
     deviation and spend, starting at the true state. The paths have their own random stream and
     are conditioned on the client staying.
   - It integrates over the trait path, unlike the window probability.
-  - It takes more than half the generation time; it is kept for regression, the likely second
-    task type (OD-15).
+  - It takes more than half the generation time; it is kept for regression, the second
+    task type (D-080).
 - **`truth.json`** holds only what can't be recomputed from the mart and the oracle file:
   - `generator_version`, numpy / scipy / pandas / pyarrow `versions` (the seed-to-data mapping
     depends on them), `seed`, `preset`, `n_clients`, `n_months`, `first_month`;

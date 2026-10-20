@@ -38,7 +38,8 @@ Check each item and state **holds / violated / not affected / cannot tell**:
     map to the reserved level and are counted, never silently dropped or crashing. Structural
     mismatches fail loud.
 11. **Due diligence.** Training checks for EDA and Feature Checks artifacts with the same
-    data-definition hash.
+    data-definition hash. Registration requires a recorded human feature sign-off at every
+    automation level (D-076).
 12. **Reproducibility.** Frozen config, config hash, data-definition hash, feature signature, model
     hash and code version are written and verified. Scores are traceable.
 13. **Statistics.** Metrics are valid at the prevalence in play (e.g. MI at <1% prevalence, PR-AUC

@@ -1,13 +1,14 @@
 # Feature ledger
 **Status:** designing (sketch for review, OD-11) · **Legacy:** none (the crunch had only `features_include` / `features_exclude`)
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [training](training.md) ·
-[evaluation](evaluation.md) · [config](config.md) · [reporting](reporting.md) · D-043 · OD-10
+[evaluation](evaluation.md) · [config](config.md) · [reporting](reporting.md) · D-043, D-058, D-076 · OD-10, OD-11
 
 ## Purpose
 One table that answers, for every candidate feature: what we started with, what each step found,
 what a human decided, what automated selection did, and what the model finally used. It gives
 oversight of "initial vs selected features" while the config stays compact. The config holds the
-decisions; the ledger holds the evidence and the trail.
+decisions; the ledger holds the evidence and the trail. It is the per-feature part of the decision
+audit log (OD-10).
 
 ## Sketch
 - One row per candidate feature, per run lineage (data-definition hash + `run_id`).
@@ -37,6 +38,10 @@ decisions; the ledger holds the evidence and the trail.
 ## Rules
 - **Flags never drop.** A flagged feature stays in unless a human excludes it. In hands-off profiles,
   unresolved flags are listed on the model card and block registration (D-031).
+- **A person signs off the features** before any model is registered, at every automation level:
+  the list after Feature Checks, or the final list in hands-off runs. The sign-off is recorded with
+  the run (D-076). If a sign-off after training rejects a feature, the model is retrained without
+  it, and that is recorded too (OD-10).
 - **Human decisions go both ways.** *Exclude* removes a feature that passed. *Keep* resolves a flag
   and protects the feature from automated pruning, e.g. keeping both of a highly correlated pair when
   both are strong. Human decisions are grouped lists with one note per group; whether a note is

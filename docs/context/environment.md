@@ -16,7 +16,9 @@ so moving the code inside needs configuration, not code edits.
 
 **Code flow is one-way.** To release: download a zip of the repo, then copy its contents into the
 internal repo. Nothing comes back out: no data, no outputs, no code. Changes made inside are
-reported back **in words** and re-applied here.
+reported back **in words** and re-applied here. Inside, the package is published through Nexus into
+the base image; images are supported for a year, and the image a use case starts on pins its
+framework version (D-074).
 
 ## Pinned versions (bank parity — keep in sync with `requirements.txt`)
 
@@ -89,8 +91,9 @@ multi-objective studies and pruning against 5.0 before relying on them.
 - **Assumed, unverified:** a source month never changes after it has been loaded (no late-arriving
   rows or restatements). Reproducibility from frozen config + hashes depends on it (`CLAUDE.md`
   §4.10); the data-definition hash describes the data, it doesn't fingerprint it.
-- **Unverified:** which engine-native model formats (LightGBM text, XGBoost JSON, CatBoost binary)
-  can be extracted from FLAML 2.7's fitted models on the pinned versions (D-051).
+- **Unverified:** a lossless non-pickle format per model family on the pinned versions (XGBoost
+  JSON, LightGBM text, CatBoost JSON; scikit-learn forests have none), each proven by a round trip
+  giving identical predictions (D-078; list in `docs/components/training.md`).
 - **Assumed, unverified:** no internet access from the bank's notebooks, so reports embed plotly.js
   instead of loading it from a CDN (~4–5 MB per report). Plotly rendering inside the bank's
   JupyterLab is also unverified.
@@ -103,7 +106,8 @@ All of the following live in one place (the `environment` component) and are dri
 - The compat shim
 - The read/write transport (filesystem vs `hdfs dfs`)
 - Root paths for data, models, registry and outputs (per entity where needed, OD-06)
-- Source resolution: logical source → Hive table or path (the synthetic dataset on a laptop)
+- Source resolution: logical source → Hive table or path (the synthetic dataset on a laptop), or the
+  feature store (OD-26)
 - The report theme file (after internalisation)
 
 The framework code never branches on "am I inside the bank". It calls the adapter, and the config

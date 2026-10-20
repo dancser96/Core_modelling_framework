@@ -28,7 +28,7 @@ standard where it can.
 |---|---|---|
 | **Speed** | 2–4 months per use case; "modelling takes months" is taken for granted | ~3 days on the hands-off `quick` profile to ~3 weeks on `thorough`; a first model within days |
 | **Structure** | A bespoke pipeline per use case; notebooks copied and hand-edited per product; logic inside notebooks | One versioned library; a use case is a config; custom code only at named extension points |
-| **Decisions** | Features, windows and eligibility live in code or in someone's head | Every decision in one config; the frozen config plus hashes reproduce any run |
+| **Decisions** | Features, windows and eligibility live in code or in someone's head | Every decision in one config, or in its decision audit log (OD-10); the frozen config plus hashes reproduce any run |
 | **Targets and leakage** | Targets built ad hoc, next to the raw forward columns they came from; leakage caught by memory, if at all | Target Factory records lineage and excludes those columns automatically; time separation is enforced at the boundary |
 | **Data understanding** | EDA is ad hoc, slow or skipped; charts show nothing at low prevalence | EDA worth running first: population, target, key features and segment comparisons, built for rare targets, plus pivot tools for exploring |
 | **Feature decisions** | Afterwards, nobody can say which features were dropped, by what, or why | A feature ledger records every candidate, every check, every human and automated decision, and what the model used |
@@ -37,31 +37,33 @@ standard where it can.
 | **Explainability** | Explainers that error out and get switched off | Views chosen per model family from a compatibility table; anything that should work does work |
 | **Registry and deployment** | Models copied by hand and promoted as a side effect of scoring; unclear what is in production | register → promote → deploy, gated and signed off; tables showing every registered and production model |
 | **Scoring** | Outputs overwritten; scores not traceable to a model or config | Batch-scoped outputs with manifests; every score traces to its model, config and code version |
-| **Monitoring** | Rare and manual; performance seldom checked after go-live | Operational health and drift from day one; realised performance and impact as soon as outcomes exist |
+| **Monitoring** | Rare and manual; performance seldom checked after go-live | Operational health and drift from day one, connected to the data observability framework; realised performance and impact as soon as outcomes exist |
 | **Knowledge** | Inconsistent vocabulary; no overview of live models; little learning across the team | A shared glossary, a model inventory, and guided notebooks that show how things work under the hood |
 | **Environment** | Laptop code breaks inside the bank (paths, versions, HDFS) | An environment adapter and bank-parity pins: moving inside is configuration, not code |
 
 ## Goals
 
-1. **Speed with rigour.** Profiles trade depth for speed (`quick` ≈ 3 days, `thorough` ≈ 3 weeks).
-   Correctness checks are never what gets skipped: the hands-off mode skips human effort, not the
-   checks themselves.
+1. **Speed with rigour.** Profiles, to become automation levels (D-077, soft), trade human effort
+   for speed: from fully autonomous (≈ 3 days, today's `quick`) to fully manual (≈ 3 weeks, today's
+   `thorough`). Correctness
+   checks are never what gets skipped, and a person always signs off the features before a model is
+   registered (D-076).
 2. **One standard for the whole lifecycle:** target creation, data understanding, feature checks,
    training, evaluation, registration, deployment, scoring and monitoring.
 3. **Reproducibility.** Frozen config, config hash, data-definition hash, feature signature, model
    hash and code version. Every number and every score traces back.
 4. **Maintainability** of 50–100 live models: tiers, registry tables, versioned artifacts, and use
    cases that upgrade at their own pace without breaking (D-047, `CLAUDE.md` §2).
-5. **Generality.** Any domain, entity and source, through configuration. Task families are kept
-   open, and a second working task type proves extensibility.
+5. **Generality.** Any domain, entity and source, through configuration, including the feature
+   store alone or with other sources (D-075). Task families are kept open, and a second working task
+   type proves extensibility.
 6. **Guidance and learning.** Every non-trivial choice comes with options and when-to-use guidance.
    Notebooks are guided. Users can see and debug what happens under the hood (a library, not a
    black-box service).
 7. **Overview.** Registry tables, a model inventory and a cross-model monitoring view show the whole
    estate.
-8. **Ready for assisted modelling.** The config-in / artifacts-out runs and bounded experiment
-   sweeps are what an LLM loop will drive after internalisation (token-frugal, and it never replaces
-   the checks).
+8. **Ready for assisted modelling.** From Phase 3, an LLM loop drives the config-in / artifacts-out runs and bounded experiment sweeps
+   (token-frugal, and it never replaces the checks or the human feature sign-off).
 
 ## Scope
 
@@ -72,25 +74,28 @@ standard where it can.
 - **Series tasks:** aggregate time series (forecasting). They need their own data contract, rolling
   validation and metrics, and share the lifecycle, registry, reporting and monitoring.
 - **Nearby problems** (uplift, recommendation, segmentation, anomaly detection…) are not excluded,
-  and the shapes must not block them. The eventual list is a Chief DS meeting topic (OD-21).
+  and the shapes must not block them. The working order is D-081.
 - **Every domain** (retail, SME, corporate) and **every entity**.
 
 **Phase 2:**
 
 | | Phase 2 | Later |
 |---|---|---|
-| Task types | Binary plus at least one more panel task type, end to end (which one: OD-15) | Other panel tasks; series tasks |
+| Task types | Binary and regression, end to end (D-080) | Other panel tasks; series tasks |
 | Domains / entities | Any, through configuration (synthetic data outside the bank) | — |
-| Modelling paths | AutoML (FLAML) and predefined model + Optuna | Spark-native engines, only if ever needed |
+| Modelling paths | AutoML (FLAML) only (D-080) | Predefined model + Optuna (Phase 3); Spark-native engines, only if ever needed |
 | Training data | Multi-month observation windows | — |
-| Lifecycle | local → registered → production; register / promote / deploy; registry tables | Sign-off log; shadow challengers; MLflow (if adopted) |
-| Monitoring | Operational and drift: deep. Realised performance and impact: thin | Alerting; retrain automation |
+| Automation | Profiles, to become automation levels from fully autonomous to fully manual, with the same checks at every level (D-077, soft; OD-25) | — |
+| Upstream | Feature store integration: worked examples on the feature store, other sources and both (D-075, OD-26) | — |
+| Lifecycle | local → registered → production; register / promote / deploy; registry tables | Sign-off log; shadow challengers; MLflow (if adopted); retraining in production (OD-27) |
+| Monitoring | Operational and drift: deep. Realised performance and impact: thin. Integrated with the data observability framework (D-075) | Alerting outputs (acting on them: the platform / MLOps team, D-079); retrain automation |
 | Run modes | Library + CLI + Python API + guided notebooks | No service layer planned |
-| LLM-assisted modelling | Interface kept in mind only | After internalisation |
+| LLM-assisted modelling | Interface kept in mind only | Phase 3 (D-075) |
 
 **Phase 2 is done when** a DS can take a new use case, for whichever entities it applies to, from
 data to scores from a production model using only a config and the guided notebooks. Every component
-exists at least as a thin version (depth per component: OD-01), and only the LLM branch is missing.
+exists at least as a thin version (depth per component: OD-01), including the feature store and data
+observability integrations (thin); LLM-assisted modelling comes in Phase 3 (D-075).
 The production step is met outside the bank when `deploy` runs against a production-tier path on
 synthetic data, and inside the bank when the first change request runs it (D-055). Target: move into the bank around December 2026 (in early October 2026 this was put as "within 1–2
 months"; there is no hard deadline). Build order and milestones: `docs/roadmap.md`.
@@ -115,9 +120,14 @@ Chief DS).
   decisions flow through them.
 - **The Lead DS** reviews in a daily ~1-hour sync (design, reviews, ideas). Each sync is prepared with
   `/brief` from `worknotes/sync.md`.
-- **The Chief DS** sets direction. A design meeting is on 2026-10-15 (topics: `docs/roadmap.md`).
-- **Platform / MLE colleagues** own the production paths and the change-request process. Who builds
-  the registry and deployment (an MLE/MLOps colleague?) and when they join: OD-23.
+- **The Chief DS** sets direction and leaves the design to the SDS and LDS (D-073). Topics for him
+  are collected in `docs/roadmap.md` → Chief DS topics and raised at check-ins.
+- **The platform / MLOps team** owns the production paths and the change-request process, and
+  handles the downstream operation questions: who acts on monitoring flags, who owns a live model
+  after its builder moves on, monitoring tooling and dashboards (D-079). Who builds the registry and
+  deployment, and when: OD-23.
+- **The feature store and data observability teams** own the frameworks the first release
+  integrates with (D-075).
 - **Users** are the unit's data scientists. **Consumers** are the business and the strategy team
   (via reports and monitoring).
 
@@ -125,11 +135,12 @@ Chief DS).
 
 The framework is a versioned Python library with a config-driven CLI and Python API; there is no
 service (D-024). A service would mean running a platform, and users learn more when they can see
-under the hood. Each use case pins the framework version it runs with, upgrades at its own pace, and
-scores its models with that version. Use cases are not folders in one shared repo (D-047). Still
-open: the channel (e.g. an internal package repository with version pins, or git clone), the release
-path, where use cases live, and where their extension code lives (OD-02, OD-04, OD-05). These are a
-Chief DS meeting topic. Forward compatibility stays a first-class constraint either way, because
+under the hood. The package ships in the base image through Nexus; images are supported for a year,
+so the image a use case starts on pins its framework version (D-074). Each use case upgrades at its
+own pace and scores its models with its pinned version. Use cases are not folders in one shared repo
+(D-047). Still open: where use cases live (OD-02; leaning one repo per entity × domain, with use
+cases branching off as they grow), the release mechanics (OD-04) and where extension code lives
+(OD-05). Forward compatibility stays a first-class constraint either way, because
 many versions write to the same shared tables (`CLAUDE.md` §2).
 
 ## History
@@ -146,7 +157,8 @@ many versions write to the same shared tables (`CLAUDE.md` §2).
 3. **Phase 2 (now):** back to the drawing board with the crunch takeaways. In October 2026, three
    review rounds with the builder and notes from the Lead DS reshaped the scope: domain- and
    entity-agnostic, observation windows, two modelling paths, a full lifecycle, guided usage
-   (D-020 to D-043).
+   (D-020 to D-043). On 2026-10-15 the Chief DS reviewed the design and left it to the SDS and LDS,
+   adding feature store and data observability integration to the first release (D-073–D-079).
 
 **Crunch results — read carefully.** Most models reached 0.85–0.95 OOT AUC. That is very likely
 inflated by pooling a heterogeneous client base: segments with near-zero propensity make ranking easy

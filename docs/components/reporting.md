@@ -1,7 +1,7 @@
 # Reporting and model card
 **Status:** legacy-only · **Legacy:** `src/card.py`, `src/analysis.py` plotting helpers
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [evaluation](evaluation.md) ·
-[monitoring](monitoring.md) · [lifecycle](lifecycle.md) · [environment](environment.md) (theme) · D-036, D-052, D-053 · OD-12
+[monitoring](monitoring.md) · [lifecycle](lifecycle.md) · [environment](environment.md) (theme) · D-036, D-052, D-053, D-076 · OD-12
 
 ## Purpose
 One shared writer that turns structured results from any stage into a self-contained HTML report,
@@ -29,7 +29,7 @@ model card · monitoring.
    - sampling, calibration (prior shift and any calibration step);
    - modelling path and best config;
    - metrics vs baselines (overall and stratified), importance;
-   - unresolved flags and human decisions;
+   - unresolved flags, human decisions and the feature sign-off (D-076);
    - for a refit: the parent run and its evaluation metrics (D-052).
 
    It is designed so a later generator can map it onto the internal model documentation standard

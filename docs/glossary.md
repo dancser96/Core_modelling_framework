@@ -17,6 +17,10 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Feature mart:** a source with one row per unit per month, holding the unit's description,
   current-month values and backward rollups. What retail use cases read inside the bank, and what
   the synthetic data mimics (D-056).
+- **Feature store:** a shared store of engineered features with its own framework and team. The
+  first release reads from it, alone or with other sources (D-075).
+- **Data observability framework:** the existing framework for watching data, with its own team.
+  Monitoring integrates with it in the first release (D-075).
 - **Unit:** what one row describes at one point in time (client, account, card, merchant…). Shapes
   say `unit_id`; the client is the usual unit.
 - **Use case:** one modelling problem (e.g. one product's acquisition propensity), defined by one
@@ -67,6 +71,9 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Flag:** a check's finding. A flag never drops a feature by itself.
 - **Human decision:** in config, either *exclude* or *keep* (despite a flag or against automated
   pruning), always with a reason.
+- **Feature sign-off:** a person's recorded approval of the features a model may use: the list after
+  Feature Checks (automated selection can only drop from it) or, in hands-off runs, the model's final
+  list after training. Required before any model is registered, at every automation level (D-076).
 - **Automated selection:** relevance pruning inside Training, on the train split only.
 - **Feature ledger:** the table recording every candidate's path through EDA, checks, decisions,
   selection and use in the model.
@@ -81,7 +88,12 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Base / local config:** `conf/base/` (committed, generic) merged with `conf/local/` (gitignored,
   environment-specific).
 - **Profile:** `quick`, `standard` or `thorough`. Profiles set the defaults for every stage, from
-  hands-off (~3 days) to deep (~3 weeks).
+  hands-off (~3 days) to deep (~3 weeks). They are to become automation levels (D-077).
+- **Automation level:** how much of a run is decided by rules and how much by a person, from fully
+  autonomous to fully manual; every level runs the same checks (D-077, details OD-25). Not a
+  lifecycle tier.
+- **Decision audit log:** (direction, OD-10) the record of every decision taken after the config,
+  automated or human; the config itself never changes. The feature ledger is its per-feature part.
 - **Decision (business decision):** how the scores will be used (e.g. top-N list, threshold, ranking,
   probability). It drives the optimisation metric, the gates and what reports emphasise.
 - **Choices block:** the opening section of every report: what was chosen, the alternatives, and
@@ -93,7 +105,8 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **EDA**, **Feature Checks**, **Training**, **Evaluation**, **Inference**, **Monitoring** (earlier
   name: Tracking): the stages, in run order with the lifecycle steps between Evaluation and
   Inference.
-- **Modelling path:** `automl` (FLAML) or `predefined` (a named model family tuned with Optuna).
+- **Modelling path:** `automl` (FLAML) or `predefined` (a named model family tuned with Optuna;
+  Phase 3, D-080).
 - **Model interface:** the small `fit` / `predict` / `describe` contract that both paths implement.
 - **Trade-off chart:** tuning trials plotted as in-time metric vs train–test gap. The user (or a
   profile rule) picks the point.
@@ -115,7 +128,7 @@ Whether this glossary is also published to the wider unit is part of the open do
 
 - **Local / registered / production:** the three model tiers.
 - **Register:** local → registered, producing an immutable, hashed version of a model key. The gates
-  are open (OD-09).
+  include the feature sign-off (D-076); the rest is open (OD-09).
 - **Promote:** choosing a registered version for production. The approved PR is the sign-off, and
   promotion builds the verified deployment bundle.
 - **Deploy:** the change-request process copies the bundle to production paths and records it. A
@@ -129,11 +142,13 @@ Whether this glossary is also published to the wider unit is part of the open do
   the models that produced it.
 - **Model card:** the generated, versioned record of a model's facts.
 - **Model bundle:** the saved model a run produces (encoder, model, calibration), in a versioned
-  format (D-051).
+  format (D-051), never pickle (D-078).
 - **Drift reference:** the feature and score distributions saved at training, on the true
   population, that monitoring compares against (D-054).
 - **Framework pin:** the framework version a use case runs with. Its models are scored with it, and
   the use case upgrades it at its own pace (D-047).
+- **Base image:** the internal devcontainer image the package ships in, through Nexus. Images are
+  supported for a year, and the image a use case starts on pins its framework version (D-074).
 - **Registry tables:** the registered-models and production-models tables that people query.
 - **Model inventory:** the overview of every model across use cases and entities (design open,
   OD-14).

@@ -102,7 +102,7 @@ it at w = 6.
 ## 5. Settled choices
 | Choice | Why |
 |---|---|
-| The regression oracle is kept (57% of generation time) | It is the ceiling for next-3-month card spend, and regression is the likely second task (OD-15) |
+| The regression oracle is kept (57% of generation time) | It is the ceiling for next-3-month card spend, and regression is the second task (D-080) |
 | Exact medians (`scipy.stats.exponnorm` offsets) | Medians land exactly on the spec's level table, so the table can be read and checked |
 | The starting book is built from each client's history in closed form | No long burn-in, and holdings agree with tenure from month 1 |
 | Dirty data and extra columns, off by default | The contract-check and scale tests need them |

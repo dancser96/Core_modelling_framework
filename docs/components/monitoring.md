@@ -1,12 +1,13 @@
 # Monitoring
 **Status:** designing · **Legacy:** none (score/outcome logging was prepared in the crunch) · earlier name: Tracking
 **Related:** [inference](inference.md) · [lifecycle](lifecycle.md) · [reporting](reporting.md) · [dataset](dataset.md)
-(drift baselines) · [training](training.md) (drift reference) · [target factory](target_factory.md) (labels) · D-009, D-040, D-054 · OD-13, OD-14
+(drift baselines) · [training](training.md) (drift reference) · [target factory](target_factory.md) (labels) · D-009, D-040, D-054, D-075, D-079 · OD-13, OD-14
 
 ## Purpose
 Keep every production model honest. Is it running? Are its inputs and scores stable? Once outcomes
 exist, is it delivering against its baselines? The audience is model owners, the Lead DS, the business,
-and the strategy team that relays results to the business.
+and the strategy team that relays results to the business. Who acts on flags, and who owns a live
+model after its builder moves on, are for the platform / MLOps team to handle (D-079).
 
 ## Layers and Phase 2 depth
 
@@ -24,18 +25,16 @@ and the strategy team that relays results to the business.
    maximum age, drift threshold) sets a "retrain recommended" flag.
 3. The outcome join is keyed by `scoring_batch_id` and model hash, and is built and tested on synthetic
    data, so it works the day labels exist.
+4. Monitoring outputs are integrated with the **data observability framework** (D-075). How is
+   designed after the work stream that learns it (OD-13).
 
 ## Design constraints
 - Performance monitoring is label-gated. Its absence before labels mature is correct, not a gap.
 - Simple, transparent maths: this serves the business and model maintenance, not research.
 
 ## Open questions
-- Tooling: MLflow or not, what to expose, where dashboards live (OD-13, after the Chief DS meeting).
-  MLflow suits the registry and experiment tracking better than tracking decay over time, and the
-  Chief DS is expected to see it the same way. The monitoring design itself (what is computed,
-  stored and shown, and where) needs much more work.
+- Tooling and dashboards: the platform / MLOps team's to handle (D-079). The data observability
+  integration is ours, designed after the work stream (D-075, OD-13). MLflow suits the registry and experiment tracking better than tracking
+  decay over time. What is computed, stored and shown still needs much more design.
 - How monitoring feeds the model inventory (OD-14).
-- Who acts on a flag and owns a live model after its builder moves on. Proposal for the CDS: a
-  central team monitors the live models.
-- Whether the existing data observability framework can be reused for monitoring (OD-13).
 - Retraining automation and retirement policy (recorded as policy first, automation later).

@@ -2,6 +2,95 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-10-20 — CDS outcomes: the SDS's answers to Q209–Q216 (D-080, D-081)
+- Q209 (default) → D-080: binary and regression end to end, FLAML only; the predefined path + Optuna
+  and its trade-off chart move to Phase 3. OD-15 deleted; M1 still needs regression's per-task spec
+  (D-060).
+- Q210 (default) → D-081 (soft): the proposed task order; regulated models only when a use case
+  asks. OD-21 deleted.
+- Q211: "documentation written by an LLM" means the framework's own repo docs (a future Claude
+  prompt), not a Phase 2 work stream. D-075 (c) removed: no LLM in the first release; the model
+  documentation generator is back in the Phase 3 backlog; `llm_assist.md`, `reporting.md`, the
+  adapter docs, architecture, glossary, project and roadmap reverted to match.
+- Q212 (default): sign-off placement as in D-076 (end of Feature Checks in manual runs, after
+  training in hands-off runs, always before register).
+- Q213 (default): any non-executable plain-data format counts, JSON preferred; no pickle anywhere
+  (D-078 status).
+- Q214 (default): both integrations thin, one worked example each; December target kept, revisited
+  after the work streams (D-075).
+- Q215 (default): the compatibility window stays noted in OD-04, decided at M5. The SDS expects the
+  shared tables to be less of a problem than Claude suggested.
+- Q216 (default): the housekeeping block stays a requirement in `config.md`.
+- Before that, same day: a fresh-context review of the integration found 11 must-fix and 13
+  consider items. Fixed: data observability integration is ours (only tooling and dashboards are
+  the platform team's), which feature list is signed off, thresholds the same at every level, the
+  config hash excluding the housekeeping block, stale environment and workflow notes, several
+  sources per entity in the config from v1 (feature store), inference and the in-memory pickling
+  of broadcast models, the no-pickle rule mirrored in the auditor, tests README and bank-parity
+  skill.
+- Files: as in the entry below, plus `docs/components/{eda,inference,test_harness}.md`,
+  `docs/context/environment.md`, `docs/guides/claude_code_workflow.md`, `conf/local/README.md`,
+  `notebooks/README.md`, `tests/README.md`, `synthetic/REVIEW.md`,
+  `.claude/agents/ml-correctness-auditor.md`, `.claude/skills/bank-parity-check/SKILL.md`.
+- Decisions / open decisions: D-080, D-081; D-075, D-076, D-078 statuses; OD-15, OD-21 deleted;
+  OD-01, OD-04, OD-20, OD-22 updated.
+- Still open: nothing from this round.
+
+### 2026-10-20 — CDS design meeting outcomes integrated (D-073–D-079, OD-24–OD-27)
+- The SDS's notes from the two CDS sessions (2026-10-15) were routed to their owner docs, and the
+  meeting material (`worknotes/chief_ds_meeting/`) was deleted.
+- Already settled in session 1, now recorded: the library is the consumption model (D-024
+  confirmed); the package ships in the base image through Nexus, and images are supported for a
+  year (D-074; OD-04 narrowed to the release mechanics); an LLM writes the model documentation in
+  the current documentation structure (D-075).
+- Where each note went:
+  - the main message (the CDS trusts us; downstream effects are worked out when we get there)
+    → D-073. Open decisions now start with an area tag and are owned by SDS + LDS instead of "Chief
+    DS meeting"; the meeting table became "Chief DS topics"; the blank-slate lifecycle session is
+    dropped;
+  - config: Python files preferred (research) → OD-24. "The config never changes; downstream
+    decisions go to an audit log", with the SDS's pathway idea → OD-10 widened, with a draft
+    inventory of decision points in `config.md`. Housekeeping block → `config.md` requirement 2;
+  - first release: the feature store → D-075, OD-26, a learning work stream in the backlog; the
+    data observability framework → D-075, OD-13; LLM → D-075 (documentation now, the modelling
+    loop in Phase 3), and `llm_assist.md` is rewritten around the two uses;
+  - human in the loop → D-076, `CLAUDE.md` §4.13, feature checks and the ledger;
+  - model tiers → D-077 (soft) and OD-25, named "automation levels" because "tier" is the
+    lifecycle's word (local → registered → production);
+  - JSON rather than pickle → D-078 (amends D-051); per-family research in `training.md`;
+  - retraining in production → OD-27;
+  - f1 and f4 → D-079 (the platform / MLOps team), and OD-23's leaning;
+  - hints: a1 and a3 → OD-21 and OD-15, now owned by SDS + LDS; b1 → OD-02's leaning (a hybrid:
+    entity × domain repos, use cases branching off), moved to medium-term because it doesn't
+    block M2; no blank-slate lifecycle → D-073.
+  - Not in the notes: d2 (OD-06 stays open, now ours), d5 (stage structure: D-028 marked decided
+    under D-073), f2 (OD-14), f3 (a confirm item: D-040 marked confirmed).
+- Critique (Claude):
+  - **Python configs:** a Python config runs code when it is loaded, the same class of risk as the
+    pickle the CDS bans. Migrations (`dict → dict`) and hashing also assume plain data. Whatever
+    the authoring format, the frozen config must stay plain data.
+  - **Audit log:** it solves OD-10's flag case, since a `keep` no longer edits the config.
+    Reproducibility then means "frozen config + the decisions used", and the run's hash must cover
+    both. Keep it an append-only table, not a graph engine.
+  - **Autonomous vs the feature sign-off:** by D-076, "fully autonomous" still stops at the human
+    sign-off before register. The two directions fit only if "autonomous" means autonomous up to
+    registration.
+  - **Retraining in production:** the model that scores is no longer the one evaluated, as with a
+    refit (D-052), so production needs a check before it scores.
+  - **No pickle:** this limits FLAML's estimator list. Scikit-learn's forests have no non-pickle
+    format without a new dependency or our own exporter (unverified for the pinned versions).
+  - **Scope:** two integrations with systems we don't know yet, plus a documentation writer, on a
+    December target. Leaning: thin integrations; revisit the target after the work streams.
+- Questions to the SDS: Q209–Q216, answered in the entry above.
+- Files: `CLAUDE.md`; `docs/{decisions,roadmap,UPDATES,README,glossary,architecture}.md`;
+  `docs/context/project.md`;
+  `docs/components/{config,feature_checks,feature_ledger,training,lifecycle,monitoring,reporting,target_factory,environment,run_modes,llm_assist}.md`;
+  `worknotes/{README,sync,log}.md`; `worknotes/chief_ds_meeting/` deleted.
+- Decisions / open decisions: D-073–D-079. Status notes on D-017, D-021, D-023, D-024, D-028,
+  D-031, D-033, D-040, D-043, D-051 and D-055. OD-24–OD-27 opened; OD-02, OD-04, OD-09, OD-10,
+  OD-13, OD-15, OD-19–OD-21 and OD-23 updated.
+- Still open: see the entry above.
+
 ### 2026-10-19 — Synthetic data notebook: a visual tour
 - The SDS chose 5 of 9 proposed charts:
   - the leakage screen preview (2);
