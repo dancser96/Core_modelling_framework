@@ -2,6 +2,35 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-10-21 — `delegation` skill (D-071 as a procedure)
+- 2026-10-21, after the SDS's subscription upgrade: a `delegation` skill so parallel subagent
+  work and model routing happen by procedure, not by wish. It covers the split (disjoint files,
+  one deliverable each), the routing table (haiku for searches, sonnet for implementation,
+  tests, research and doc edits; the four review agents and all design or §4 judgement stay on
+  the session model), a seven-part brief template with a capped report format, spawning rules
+  (one message, background, one memory-heavy job at a time), integration and verification, and
+  the anti-patterns.
+- Why: with usage limits relaxed, the bottleneck is whether Claude actually delegates and briefs
+  well; a skill with a trigger-rich description is the only mechanism short of CLAUDE.md that
+  loads on demand. CLAUDE.md §1 now points at it; worker agent files were deliberately not added
+  (per-call `model` on the Agent tool does the routing without new files).
+- Files: `.claude/skills/delegation/SKILL.md` (new); `CLAUDE.md` §1 and §10;
+  `docs/guides/skills_and_agents.md`; `docs/guides/claude_code_workflow.md`.
+- Decisions / open decisions: D-071 (unchanged).
+- 2026-10-21, routing revised after the SDS's review: research is split from design (research
+  gathers evidence, design decides and never leaves the main thread) and into three tiers
+  (locate on haiku; fact checks on sonnet high with `file:line` quotes, or a strong model when
+  tracing several code paths; best-practice research on a strong model, xhigh for a major
+  step). Docs: sonnet only propagates settled text; component doc content goes to a strong
+  model; the sync page, log, decisions, OD rows, UPDATES and review guides stay on the main
+  thread, and every doc diff is read in full before the SDS sees it. ML-critical code and §4 or
+  §2 tests go to a strong model; ordinary implementation and tests to sonnet high. Every Agent
+  call passes `effort`, because the fallback when none is set isn't documented and the 5.5
+  models default to `medium`; reviewers run at high, `ml-correctness-auditor` at xhigh.
+- Still open: trigger test in a fresh session; check after the first real build which delegated
+  pieces needed rework, and adjust the tiers; dedicated worker agents and a nested orchestrator
+  agent if the main thread still does the pieces itself.
+
 ### 2026-10-21 — The SDS's second answers to the holistic review (D-098–D-102; questions round 3)
 - The SDS answered part of round 2 and asked that unanswered questions never be deleted, and
   that the answer mapping go in the chat reply rather than a section of the questions file.

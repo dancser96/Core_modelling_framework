@@ -95,7 +95,8 @@ complete or "future-proof" code. When in doubt, write less.
 **Workflow for any non-trivial task**
 
 **Parallel by default** (D-071): split the work into independent pieces and run them at the same
-time, using subagents as much as possible:
+time, using subagents as much as possible. The `delegation` skill is the procedure (the split,
+which model takes which piece, the brief template, integration); in short:
 - delegate research, reviews and audits, and independent code, test or doc pieces, to subagents;
 - run long jobs (data generation, slow tests) in the background meanwhile;
 - give each subagent a complete brief (goal, files, constraints, what to report), since it starts
@@ -375,6 +376,7 @@ numbered list for a flow, nested bullets for a tree and a narrow table for a map
 | Skill | `simplicity-review` | Reviewing any diff against §1 before presenting it |
 | Skill | `doc-sync` | End of every task — applies §8 |
 | Skill | `holistic-review` | Every major step (§1 workflow step 0) and before finalising a plan touching more than one stage |
+| Skill | `delegation` | Start of every non-trivial task and every review round: the split, model routing and briefs for subagents (D-071) |
 | Skill | `new-component` | Adding a new stage, lifecycle unit or versioned artifact |
 | Skill | `bank-parity-check` | New imports/deps, IO code, anything that must run inside the bank |
 | Skill | `brainstorming` | New or unsettled design, before the §1 plan (includes research + critique) |

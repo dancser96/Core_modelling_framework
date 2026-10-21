@@ -58,16 +58,21 @@ resume on either machine.
 - "Review this diff with the simplicity-review skill and fix only blocking findings."
 - "What in this change could break an existing config or a public function?"
 - "Holistic review: what else does this affect?"
+- "Delegate this: split it into parallel pieces, cheaper models for the mechanical ones, and show
+  me the briefs before spawning."
 
 ## Context and usage
 
 - `/clear` between unrelated tasks; `/compact` in long sessions, or `/handover` + a fresh chat when
   the context is bloated. Subagents keep reviews out of the main context, and work runs in
   parallel by default: subagents for independent pieces, long jobs in the background
-  (`CLAUDE.md` §1 workflow, D-071).
-- Opus-heavy sessions use up plan limits quickly. Keep tasks small, and use `/model` to drop to a
-  lighter model for mechanical work (renames, doc edits). The subagents default to the session model
-  (`model: inherit`); set them to `sonnet` in `.claude/agents/*.md` if usage becomes the bottleneck.
+  (`CLAUDE.md` §1 workflow, D-071). The `delegation` skill is the procedure; "delegate this" or
+  "in parallel" calls it explicitly.
+- Strong-model sessions use up plan limits quickly. Keep tasks small, and use `/model` to drop to
+  a lighter model only for mechanical sessions (renames, moving files), not ones that write the
+  docs you read. `delegation` sends only mechanical, fully checked pieces to sonnet or haiku;
+  research that feeds a design, ML-critical code and tests, the reviews and the docs you and the
+  Lead DS read run on a strong model, and design never leaves the main thread.
 
 ## Hard rules
 
