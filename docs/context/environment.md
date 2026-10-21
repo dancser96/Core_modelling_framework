@@ -63,7 +63,7 @@ A package that other packages pull in must be pinned even before our code uses i
 pins, pip resolved scipy 1.17.1 and plotly 7.1.0 locally (2026-10-14).
 
 **Installed on top, like FLAML:** optuna 5.0.0 (the version `pip install optuna` resolves to inside
-the bank; the predefined-model tuning path, D-037). Its API is unverified here: check
+the bank; the predefined-model tuning path, Phase 3, D-080). Its API is unverified here: check
 multi-objective studies and pruning against 5.0 before relying on them.
 
 ## Known compatibility facts
@@ -108,19 +108,23 @@ All of the following live in one place (the `environment` component) and are dri
 - Root paths for data, models, registry and outputs (per entity where needed, OD-06)
 - Source resolution: logical source → Hive table or path (the synthetic dataset on a laptop), or the
   feature store (OD-26)
-- The report theme file (after internalisation)
+- The report theme file (the mechanism in Phase 2; the corporate look after internalisation)
 
 The framework code never branches on "am I inside the bank". It calls the adapter, and the config
 decides.
 
 ## Runtime notes (from the crunch)
 
+- Marts usually hold 24 months of history. A use case starts from 100–300 candidate features,
+  often pre-filtered from thousands (especially with the feature store), so the framework's
+  candidate lists and patterns are a second filter, not the first (the SDS, 2026-10-20).
 - Retail scale is ~2M rows per month × ~50 columns per model (ceiling ~5M × 400).
   Single-node pandas and FLAML are fine **if** columns and rows are pruned in Spark first. With
   multi-month observation windows this becomes e.g. ~24M unit-months for 12 months, so Spark-side
   sampling against a row budget is the normal case (`docs/components/dataset.md`).
 - `toPandas()` of the full width is the main OOM risk. Downsampling after collection won't prevent
-  an OOM, so sample negatives in Spark before collecting.
+  an OOM, so sample in Spark before collecting (whichever sampling option,
+  `docs/components/dataset.md`).
 - FLAML is time-budgeted. At 2M rows, LightGBM tends to consume most of the budget, and other
   learners may barely run. Read `automl.config_history` / `best_config_per_estimator` to see what
   was actually tried.

@@ -2,6 +2,137 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-10-21 — The SDS's second answers to the holistic review (D-098–D-102; questions round 3)
+- The SDS answered part of round 2 and asked that unanswered questions never be deleted, and
+  that the answer mapping go in the chat reply rather than a section of the questions file.
+- Decided: D-098 (test metrics per month first; denominators), D-099 (trial budget plus seeds,
+  time recorded), D-100 (M2 engineering shape: Protocol-ready plain-function model interface,
+  compatibility table as a dict, Spark session fails loud, test runtimes with reminders, oracle
+  tolerance), D-101 (pickle only matters for saved and moved artifacts), D-102 (doc upkeep:
+  three-level template on rebuild; one hygiene pass). D-078 status noted.
+- Routed without a decision row: Q233 (start from the retail platform team's current output
+  format as a guide; other entities and domains may differ) → OD-18 leaning; the screenshot the
+  SDS mentioned didn't reach the chat, so Q233 stays open for it. Q234 deleted (the SDS tests
+  plotly in the bank later). Q257 → a to-do in `evaluation.md` (OD-12). Q266 → roadmap backlog
+  (integration seams designed when code moves toward the bank). Q273 declined (local counts can
+  be deleted anyway). Q287 accepted (sampling literature round after M2.1) → OD-17.
+- Reminders the SDS asked for, kept in Claude's memory (`project_reminders.md`) and raised at
+  session start: the five spikes before M2.3 (the SDS runs them), the full test suite after 7
+  days without a run (last: 2026-10-19), the sampling literature round after M2.1.
+- Questions round 3: section A for both (Q217, Q218, Q223, Q260, Q262, Q263; detailed proposals
+  Q241 on the config + audit log as the SDS frames it, Q254 on client-grouped validation inside
+  training, Q286 on how long old versions keep working); B facts (Q232, Q233, Q235, Q237, Q238);
+  C for the SDS (Q267, Q290 new on "PSB"; elaborated Q268 with what "offset" means, Q269 with
+  Claude's answer on recency weighting, Q272, Q275 with the three sampling options, Q276 on
+  refits, Q281, Q284, Q285).
+- Doc-hygiene pass (Q288) delegated to a separate agent after Claude's own edits, so the two
+  never edited the same file at once. All 15 items fixed: two-paths wording marked Phase 3 across
+  six docs; settled-OD references pointed at their decisions (status columns only); M2 monitoring
+  a stub; human-decision wording hedged with OD-10; the three sign-offs kept apart (feature,
+  promotion, CR) with a new glossary entry; CLI list and role-subfolder rule in `architecture.md`;
+  Phase 3 list and theme wording; stale paths; template status values; 13 glossary entries; the
+  synthetic "profile" clash noted. Verified by Claude: decision texts unchanged except D-065's
+  path, every table's cell counts consistent, no live reference to a closed OD left. Five
+  leftovers the agent reported were then fixed by Claude: the learning-curve check now scores
+  test (D-083), the UPDATES training row, `architecture.md`'s OD-27 line cites D-096, the theme
+  wording in both environment docs, and the `doc-sync` skill's "local sync notes".
+- Files: `docs/{decisions,roadmap,glossary}.md`;
+  `docs/components/{training,evaluation,dataset,inference,environment}.md`; `tests/README.md`;
+  `worknotes/{holistic_review,holistic_review_questions,timeline_proposal,sync,log}.md`; plus the
+  hygiene pass's files.
+- Later the same day, Q233: the SDS shared a screenshot of the retail platform team's expected
+  propensity output (customer id, product, activity, score 0–1, source, refresh date). Recorded in
+  `inference.md` requirement 4 and OD-18, with the bank-specific example values (the source code,
+  the id prefix) left out of the repo. Q233 closed; new questions Q291–Q295: two layers (the
+  framework's traceable scores table plus a per-consumer column mapping), product and activity as
+  config fields, writing only one's own partitions of the shared table, column meanings, and
+  whether scores must be comparable across products (calibrated probabilities). Q267 restated.
+- Decisions / open decisions: D-098–D-102; OD-10, OD-12, OD-17, OD-18 updated.
+- Still open: questions round 3.
+
+### 2026-10-20 — The SDS's answers to the holistic review (D-082–D-097; questions round 2)
+- The SDS answered Q217–Q265 the same day, with notes on the review itself. Recorded:
+  - review corrections: "every stage writes an HTML report" was Claude's drift; the intent is EDA
+    and Feature Checks as a product within the product (a data-analysis report); the speed /
+    automation wording; `v + w ≤` the last month as a config requirement; what to do about
+    correlated rows (count events, change nothing in the fit); leavers are null only inside the
+    target window; D-062 vs OD-22 settled on train and test only; the sync-page rule;
+  - decisions D-082–D-097 (`docs/decisions.md`), with status notes on D-023, D-052, D-053
+    (superseded), D-062 (amended), D-076, D-077, D-080;
+  - `CLAUDE.md`: the speed claim, the outputs bullet, §4.4 reworded (tuning choices may weigh
+    test; validation never). Flagged to the SDS as the one invariant change;
+  - OD-05, OD-09, OD-22, OD-24 deleted; OD-01, OD-10 (restated proposal), OD-11 (not urgent),
+    OD-17 (sampling research), OD-25 (narrowed), OD-27 (shape settled) updated; Chief DS topics:
+    the plan with dates, YAML as an information item;
+  - owner docs: `architecture.md` (reports, YAML, shared-table rule, identities, sweeps),
+    `project.md` (speed, goal 1, automation row, definition of done at release 1.0, extension
+    code), `glossary.md` (profile, automation level, positive events, sign-off, sweep, register,
+    run id, model hash, recipe), `config.md` (YAML, levels, `v + w` validation, the identities
+    section with a worked example, open questions), `dataset.md`, `target_factory.md`,
+    `feature_checks.md`, `feature_ledger.md`, `training.md`, `evaluation.md`, `reporting.md`,
+    `run_modes.md`, `llm_assist.md`, `lifecycle.md`, `context/lessons.md` (SE on events),
+    `context/environment.md` (24 months; 100–300 candidates from thousands);
+  - `worknotes/README.md`: review items tagged needs decision / for information, cap of five,
+    the LDS's review scope; the sync page drained to the planning set and the synthetic data;
+  - `docs/guides/setup_windows_wsl2.md`: the machine-switch checklist now lists every laptop-level
+    Claude item (the memory folder, user settings, the synced user-level skill, the plugin list);
+    the answer to the SDS's Q229.
+- The questions file is now round 2: section A (still open: Q217, Q218, Q223, Q232–Q235, Q237
+  part, Q238, Q257, Q260, Q262, Q263), section B (restated: spikes Q230, the audit log Q241, the
+  grouped-CV fallback Q254), section C (new Q266–Q289 from the review's open-ended pointers,
+  especially §4–§7), section D (where each answer went).
+- Not done on purpose: the doc-hygiene pass (Q288) and the sampling literature round (Q287) wait
+  for the answers; nothing committed.
+- Files: `CLAUDE.md`; `docs/{decisions,roadmap,UPDATES,architecture,glossary}.md`;
+  `docs/context/{project,lessons,environment}.md`; `docs/guides/setup_windows_wsl2.md`;
+  `docs/components/{config,dataset,target_factory,feature_checks,feature_ledger,training,evaluation,reporting,run_modes,llm_assist,lifecycle}.md`;
+  `worknotes/{README,sync,log,holistic_review,holistic_review_questions,timeline_proposal}.md`.
+- Decisions / open decisions: D-082–D-097; OD-05, OD-09, OD-22, OD-24 deleted; OD-01, OD-10,
+  OD-11, OD-17, OD-25, OD-27 updated.
+- Still open: round 2 of the questions (sections A–C); the planning session with the LDS.
+
+### 2026-10-20 — Holistic review of the design and plan; the planning-session set
+- The SDS asked for a critical review of everything designed so far, before the planning session
+  with the LDS that will attach deadlines to the milestones: risks, weaknesses, suggestions and
+  questions for both of them, in two worknotes files, plus a small timeline suggestion.
+- Done, as three files in `worknotes/`:
+  - `holistic_review.md`: verdict (proceed with changes), what to keep, ten ranked risks, scope
+    and goals, stage-by-stage findings, forward compatibility, process, a doc-hygiene list, and
+    a "do before M2.1" list;
+  - `holistic_review_questions.md`: Q217–Q265 in nine groups (target and scope; process; facts
+    from outside the team; config spine; dataset to ledger; training and evaluation; lifecycle
+    to monitoring; reporting, notebooks, tests; the CDS), each with a default and an owner;
+  - `timeline_proposal.md`: scenario A (December = pre-release of the skeleton plus one deepening
+    round inside the bank; release 1.0 mid-February 2027 with the integrations) against
+    scenario B (release 1.0 in December, not recommended); dated milestones M2.1–M2.4, M3,
+    M5-lite, M4; spikes and learn sessions beside the critical path; the OD-01 depth table in
+    three columns; review cadence; risks to the dates.
+- How: every doc in `docs/`, the decision log to D-081 and the worknotes read on the main thread;
+  three subagents in parallel (D-071): an ML-correctness audit of the design, a
+  forward-compatibility audit, and a cross-doc consistency sweep. Their findings were integrated
+  and the ones the review leans on were checked in the pinned sources:
+  - FLAML 2.7.0 `DataTransformer` drops constant columns and fills `__NAN__`
+    (`flaml/automl/data.py` 313–324) and the estimator wrapper recodes categoricals
+    (`model.py` 1475–1486); `AutoML.predict` re-applies both. No out-of-fold prediction API. `fit`
+    accepts `sample_weight`, `groups` and `split_type` (honouring the weights in grouped CV is
+    unverified);
+  - `test_harness.md` promises a time-alignment check for the shifted column that
+    `feature_checks.md` never lists.
+- Main findings (detail in the review): December means two things; review bandwidth is the
+  binding constraint; no rule for old versions reading rows newer versions wrote; identities and
+  hashes undefined; the model bundle under FLAML loses a preprocessing layer; the calibration
+  chain unspecified; the refit registers an unevaluated model; "positives" should mean events in
+  every support rule; leavers make the rates survivor-conditioned; the post-training sign-off sees
+  validation results; D-062 and OD-22 disagree; regression hooks missing; about 25 doc
+  inconsistencies and 15 glossary gaps.
+- Not done on purpose: the doc-hygiene fixes (§8 of the review) and the conversion of questions
+  into OD rows; both wait for the SDS's answers so the docs change once.
+- Files: `worknotes/{holistic_review,holistic_review_questions,timeline_proposal}.md` (new);
+  `worknotes/{README,sync,log}.md`; `docs/UPDATES.md` (log line).
+- Decisions / open decisions: none yet; Q217–Q265 feed D rows and OD-01, OD-10, OD-17, OD-18,
+  OD-24, OD-25 and the roadmap dates.
+- Still open: the planning session; the spike week; the three external sessions.
+
 ### 2026-10-20 — CDS outcomes: the SDS's answers to Q209–Q216 (D-080, D-081)
 - Q209 (default) → D-080: binary and regression end to end, FLAML only; the predefined path + Optuna
   and its trade-off chart move to Phase 3. OD-15 deleted; M1 still needs regression's per-task spec

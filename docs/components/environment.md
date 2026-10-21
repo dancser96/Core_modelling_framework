@@ -9,6 +9,10 @@ checks where it is running; it calls this module, and `conf/local/` decides.
 
 ## Phase 2 requirements
 1. Create or get the Spark session from config, including the Arrow setting and app name.
+   `getOrCreate()` silently reuses an existing session: it ignores static settings (master,
+   memory) and overwrites runtime SQL settings. Calling the session function again with different
+   arguments (e.g. re-running a notebook's setup cell) therefore fails loud or restarts the
+   session, never keeps the old one quietly (D-100).
 2. Apply the numpy/PySpark compat shim once, before any pyspark/flaml import (T1).
 3. Transport functions that work for local paths and `hdfs://` URIs alike:
    - `read_text`
@@ -22,7 +26,8 @@ checks where it is running; it calls this module, and `conf/local/` decides.
    path in `conf/local/`. On a laptop it maps to the synthetic dataset in `data/01_raw/`. In the
    first release a source can also be the feature store, alone or next to other sources (D-075);
    how is designed after the work stream that learns it (OD-26).
-6. The report theme location (a theme file in `conf/local/`, used after internalisation).
+6. The report theme location: a theme file in `conf/local/` (the mechanism in Phase 2; the corporate
+   look it applies comes after internalisation).
 
 ## Design constraints
 - Plain functions in one module until it genuinely outgrows ~300 lines.
@@ -51,8 +56,5 @@ Built so far (M1 steps 0 and 7, D-057), all private until M2 lists them in the P
   `SparkSession.builder.getOrCreate()`. Which arguments the bank needs (memory, executors, queue,
   extra conf…) is listed by the builder when M2 designs it. `conf/local/` also sets the bank's
   time zone (local default: UTC).
-- M2: `getOrCreate()` silently reuses an existing session: it ignores static settings (master,
-  memory) and overwrites runtime SQL settings. Re-running a notebook's setup cell with different
-  arguments must therefore fail loud (or restart the session), never keep the old one quietly.
 - The bank-side folder layout for the registered/production tiers per entity × domain, and whether
   permissions differ per entity (OD-06).

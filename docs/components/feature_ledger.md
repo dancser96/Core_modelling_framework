@@ -7,8 +7,8 @@
 One table that answers, for every candidate feature: what we started with, what each step found,
 what a human decided, what automated selection did, and what the model finally used. It gives
 oversight of "initial vs selected features" while the config stays compact. The config holds the
-decisions; the ledger holds the evidence and the trail. It is the per-feature part of the decision
-audit log (OD-10).
+human decisions today (whether they move to the decision audit log is OD-10); the ledger holds the
+evidence and the trail. It is the per-feature part of the decision audit log (OD-10).
 
 ## Sketch
 - One row per candidate feature, per run lineage (data-definition hash + `run_id`).
@@ -22,7 +22,7 @@ audit log (OD-10).
 | Identity | feature, kind (numeric / categorical), source column, readable label (optional) | load |
 | EDA | missing %, distinct levels, univariate AUC and direction (train-split clients in the window), rank, key feature (top-N or user-listed) | EDA |
 | Checks | one flag + value per check step (lineage, leakage, eligibility-constant, stability, redundancy with partner and both AUCs, data quality); checks verdict (pass / flagged / auto-excluded) | Feature Checks |
-| Decision | human decision (keep / exclude), reason, where it lives in the config | config, read by Checks |
+| Decision | human decision (keep / exclude), its group's note, where it is recorded | config today (or the audit log, OD-10), read by Checks |
 | Selection | automated selection result and the rule that made it (train split only) | Training |
 | Use | in model (yes/no + why not), importance and rank, effect direction | Training, Evaluation |
 
@@ -40,8 +40,10 @@ audit log (OD-10).
   unresolved flags are listed on the model card and block registration (D-031).
 - **A person signs off the features** before any model is registered, at every automation level:
   the list after Feature Checks, or the final list in hands-off runs. The sign-off is recorded with
-  the run (D-076). If a sign-off after training rejects a feature, the model is retrained without
-  it, and that is recorded too (OD-10).
+  the run (D-076), as its own record, never as a config edit (OD-10). It is given over the model's
+  final list, flags grouped, features sorted by importance, with train-only evidence; the
+  candidate list is reviewed only where flagged (D-092). If a sign-off after training rejects a
+  feature, the model is retrained without it, and that is recorded too.
 - **Human decisions go both ways.** *Exclude* removes a feature that passed. *Keep* resolves a flag
   and protects the feature from automated pruning, e.g. keeping both of a highly correlated pair when
   both are strong. Human decisions are grouped lists with one note per group; whether a note is
@@ -54,10 +56,13 @@ audit log (OD-10).
   resolved feature list, and its hash is the feature signature.
 
 ## Open questions
-- Review this sketch (OD-11). Two issues to fix there:
+- Review this sketch (OD-11); not urgent, decided when the ledger is built (M2.2). Leaning: two
+  parts, one per data definition keyed by the data-definition hash (EDA + checks) and one per run
+  keyed by `run_id` (selection + use), joined on feature name; human decisions read from the
+  frozen config at training time. The two issues:
   - EDA and Feature Checks write their columns before any `run_id` exists, and two training runs on
-    the same data (e.g. AutoML and predefined) share them. One part per data definition and one
-    per run?
+    the same data (e.g. two FLAML runs with different budgets) share them. One part per data
+    definition and one per run?
   - human decisions copied in when Feature Checks runs go stale if the config is edited later.
     Record them at training time, from the frozen config?
 - Config lifecycle for human decisions, including the flag case (OD-10).

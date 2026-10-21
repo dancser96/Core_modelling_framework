@@ -10,7 +10,7 @@ harness, an environment adapter and explicit invariants. Legacy file references 
 
 | # | Trap | What happened | Rule now |
 |---|---|---|---|
-| T1 | numpy 2 vs PySpark 3.4 | `import flaml` → pandas-on-Spark → `np.NaN` → crash | Compat shim before any pyspark/flaml import (`src/_compat.py`) |
+| T1 | numpy 2 vs PySpark 3.4 | `import flaml` → pandas-on-Spark → `np.NaN` → crash | Compat shim before any pyspark/flaml import (`src/core_modelling/_compat.py`) |
 | T2 | `pathlib` on `hdfs://` | `Path("hdfs://x")/"y"` → `hdfs:/x/y`; `_is_hdfs` silently false | HDFS paths are strings joined with `/`; only local paths become `Path` |
 | T3 | Reading HDFS in Python | `pickle` / `read_bytes` can't read HDFS | Fetch to a local temp dir via `hdfs dfs -get`, then load |
 | T4 | `str / str` TypeError | A temp dir (str) was passed into a function using `/` | Local-I/O functions coerce `Path(x)` at their boundary |
@@ -36,8 +36,9 @@ harness, an environment adapter and explicit invariants. Legacy file references 
   Rank features with univariate AUC (base-rate agnostic) and read direction from target-rate
   deciles. Don't compute MI on downsampled data: it silently changes the joint distribution.
 - **Univariate AUC floor.** Direction-agnostic AUC < ~0.515 is a drop candidate. Treat this mainly
-  as a speed lever (more FLAML trials per budget). Its standard error is ≈ `0.5/sqrt(n_positives)`,
-  so with ~800 positives the third decimal is noise.
+  as a speed lever (more FLAML trials per budget). Its standard error is ≈
+  `0.5/sqrt(n_positive_events)`, counting distinct converting clients rather than rows (D-082), so
+  with ~800 events the third decimal is noise.
 - **Downsampling.** Keep all positives; the negative:positive ratio is mostly a compute lever that
   barely moves ranking. The positive *count* is the real ceiling (e.g. ~800 for a 0.04% product
   is low-confidence at any ratio). Set the ratio per use case. Stratified negative sampling is the

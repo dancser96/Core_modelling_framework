@@ -18,7 +18,7 @@ gets them through git.
 | Kind | Name | Purpose |
 |---|---|---|
 | Skill | `simplicity-review` | Checklist review of a diff against the code-light rules |
-| Skill | `doc-sync` | Applies the documentation rules (`CLAUDE.md` §8) at the end of a task, including the local sync notes |
+| Skill | `doc-sync` | Applies the documentation rules (`CLAUDE.md` §8) at the end of a task, including the committed worknotes (sync page and log) |
 | Skill | `holistic-review` | Cross-component review against goals, architecture, every component doc and the decision log, so no component is extended in isolation |
 | Skill | `new-component` | Adds a new component with its doc, config section, tests and status row |
 | Skill | `bank-parity-check` | Checks deps, imports and IO against the bank environment |

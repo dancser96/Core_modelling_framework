@@ -26,7 +26,7 @@ standard where it can.
 
 | Area | Today | Target |
 |---|---|---|
-| **Speed** | 2–4 months per use case; "modelling takes months" is taken for granted | ~3 days on the hands-off `quick` profile to ~3 weeks on `thorough`; a first model within days |
+| **Speed** | 2–4 months per use case; "modelling takes months" is taken for granted | A registered candidate in days to a few weeks of DS effort, depending on the automation level; production follows through the change-request calendar (D-085) |
 | **Structure** | A bespoke pipeline per use case; notebooks copied and hand-edited per product; logic inside notebooks | One versioned library; a use case is a config; custom code only at named extension points |
 | **Decisions** | Features, windows and eligibility live in code or in someone's head | Every decision in one config, or in its decision audit log (OD-10); the frozen config plus hashes reproduce any run |
 | **Targets and leakage** | Targets built ad hoc, next to the raw forward columns they came from; leakage caught by memory, if at all | Target Factory records lineage and excludes those columns automatically; time separation is enforced at the boundary |
@@ -43,13 +43,13 @@ standard where it can.
 
 ## Goals
 
-1. **Speed with rigour.** Profiles, to become automation levels (D-077, soft), trade human effort
-   for speed: from fully autonomous (≈ 3 days, today's `quick`) to fully manual (≈ 3 weeks, today's
-   `thorough`). Correctness
-   checks are never what gets skipped, and a person always signs off the features before a model is
-   registered (D-076).
+1. **Speed with rigour.** A registered candidate takes days to a few weeks of DS effort (D-085).
+   Automation levels (D-077, D-087) run the same checks at every level; the difference is human
+   time, and a higher-value use case brings more people and inputs that shape its choices.
+   Correctness checks are never what gets skipped, and a person always signs off the features
+   before a model is registered (D-076). Production follows through the change-request calendar.
 2. **One standard for the whole lifecycle:** target creation, data understanding, feature checks,
-   training, evaluation, registration, deployment, scoring and monitoring.
+   training, evaluation, registration, promotion, deployment, scoring and monitoring.
 3. **Reproducibility.** Frozen config, config hash, data-definition hash, feature signature, model
    hash and code version. Every number and every score traces back.
 4. **Maintainability** of 50–100 live models: tiers, registry tables, versioned artifacts, and use
@@ -85,9 +85,9 @@ standard where it can.
 | Domains / entities | Any, through configuration (synthetic data outside the bank) | — |
 | Modelling paths | AutoML (FLAML) only (D-080) | Predefined model + Optuna (Phase 3); Spark-native engines, only if ever needed |
 | Training data | Multi-month observation windows | — |
-| Automation | Profiles, to become automation levels from fully autonomous to fully manual, with the same checks at every level (D-077, soft; OD-25) | — |
+| Automation | Two automation levels, `autonomous` and `assisted`, with the same checks at both (D-077, D-087; OD-25) | `manual` |
 | Upstream | Feature store integration: worked examples on the feature store, other sources and both (D-075, OD-26) | — |
-| Lifecycle | local → registered → production; register / promote / deploy; registry tables | Sign-off log; shadow challengers; MLflow (if adopted); retraining in production (OD-27) |
+| Lifecycle | local → registered → production; register / promote / deploy; registry tables | Sign-off log; shadow challengers; MLflow (if adopted); retraining in production (shape settled by D-096; researched with the platform team in M4, OD-27) |
 | Monitoring | Operational and drift: deep. Realised performance and impact: thin. Integrated with the data observability framework (D-075) | Alerting outputs (acting on them: the platform / MLOps team, D-079); retrain automation |
 | Run modes | Library + CLI + Python API + guided notebooks | No service layer planned |
 | LLM-assisted modelling | Interface kept in mind only | Phase 3 (D-075) |
@@ -97,8 +97,11 @@ data to scores from a production model using only a config and the guided notebo
 exists at least as a thin version (depth per component: OD-01), including the feature store and data
 observability integrations (thin); LLM-assisted modelling comes in Phase 3 (D-075).
 The production step is met outside the bank when `deploy` runs against a production-tier path on
-synthetic data, and inside the bank when the first change request runs it (D-055). Target: move into the bank around December 2026 (in early October 2026 this was put as "within 1–2
-months"; there is no hard deadline). Build order and milestones: `docs/roadmap.md`.
+synthetic data, and inside the bank when the first change request runs it (D-055). This definition
+of done is met at **release 1.0**; December 2026 is a pre-release into the bank whose content and
+dates are being agreed with the LDS (D-097; proposal in `worknotes/timeline_proposal.md`). In early
+October 2026 the target was put as "within 1–2 months"; there is no hard deadline. Build order and
+milestones: `docs/roadmap.md`.
 
 ## Entities, domains and sources
 
@@ -139,8 +142,8 @@ under the hood. The package ships in the base image through Nexus; images are su
 so the image a use case starts on pins its framework version (D-074). Each use case upgrades at its
 own pace and scores its models with its pinned version. Use cases are not folders in one shared repo
 (D-047). Still open: where use cases live (OD-02; leaning one repo per entity × domain, with use
-cases branching off as they grow), the release mechanics (OD-04) and where extension code lives
-(OD-05). Forward compatibility stays a first-class constraint either way, because
+cases branching off as they grow) and the release mechanics (OD-04). Extension code lives in the
+use case's repo, never in the framework (D-090). Forward compatibility stays a first-class constraint either way, because
 many versions write to the same shared tables (`CLAUDE.md` §2).
 
 ## History

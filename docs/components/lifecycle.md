@@ -1,7 +1,7 @@
 # Lifecycle: register, promote, deploy
 **Status:** designing · **Legacy:** `src/inference.py` (`promote_model`, `verify_model`, manifests) — promotion was coupled to inference in the crunch
 **Related:** [inference](inference.md) · [monitoring](monitoring.md) · [reporting](reporting.md) (model card) ·
-[environment](environment.md) · D-033, D-034, D-047, D-051, D-052, D-073, D-076, D-078, D-079 · OD-06, OD-07, OD-08, OD-09, OD-14,
+[environment](environment.md) · D-033, D-034, D-047, D-051, D-052, D-073, D-076, D-078, D-079, D-095, D-096 · OD-06, OD-07, OD-08, OD-14,
 OD-23, OD-27
 
 ## Purpose
@@ -13,13 +13,14 @@ recorded transitions, and a clear view of what is registered and what is in prod
 Three tiers in order, each with the step(s) that move a model on to the next:
 
 1. **LOCAL**: experiments; cheap, disposable.
-   - `register`: gates, including the human feature sign-off (D-076); what "registered" means:
-     OD-09.
+   - `register`: gates, including the human feature sign-off (D-076). A registered model is any
+     model a person has defended and wants to keep (D-095).
 2. **REGISTERED**: immutable, content-hashed, versioned per model key.
-   - `promote`: choose the version for production; the approved PR is the sign-off. Builds a
-     verified bundle (model, frozen config, card, drift reference, checksums, framework version).
-     With retraining in production (OD-27), it could carry the recipe instead, and production
-     would retrain it.
+   - `promote`: picks the production candidate among the registered versions (D-095); the approved
+     PR is the sign-off. Builds a verified bundle (model, frozen config, card, drift reference,
+     checksums, framework version). The bundle carries the recipe (`recipe_hash`, D-096), so with
+     retraining in production (OD-27) production runs the refit from it instead of copying the
+     fitted model.
    - `deploy`: the change-request process copies the bundle to production paths and records it.
 3. **PRODUCTION**: one version per model key in Phase 2 (OD-07).
 
@@ -30,8 +31,10 @@ Three tiers in order, each with the step(s) that move a model on to the next:
   production at the registered (sandpit) paths. The Lead DS's view is that the model should be moved
   to production paths, so deployment may simply be a job that copies the selected model there. To be
   confirmed with the platform / MLOps team (OD-06, OD-08).
-- **Sign-off:** external in Phase 2 (CR + code review by the project owner/lead), recorded as the
-  approved PR. Phase 3 adds a sign-off log in the registry that pulls the approvers.
+- **Sign-offs, kept apart:** the **feature sign-off** (D-076, D-092) gates `register` and is
+  recorded with the run; the **promotion sign-off** is the approved PR (code review by the project
+  owner/lead) behind `promote`; the CR process approves and runs `deploy`. The PR and CR approvals
+  are external in Phase 2; Phase 3 adds a sign-off log in the registry that pulls the PR approvers.
 - **Model key** = (entity, domain, use case, split). split = `all` in Phase 2; it is reserved for
   per-segment models later.
 
@@ -61,7 +64,7 @@ Promote-on-inference coupling; hash verification; manifest reproduction; T2–T4
 
 ## Open questions
 - The lifecycle evolves as it is built; the CDS doesn't want a blank-slate redesign (D-073).
-  OD-06 to OD-09 are the pieces. Downstream operation questions are the platform / MLOps team's
+  OD-06 to OD-08 are the pieces. Downstream operation questions are the platform / MLOps team's
   (D-079); the SDS won't design the registry and deployment alone if they are to become the unit's
   new registry type. The proposals below are straw men. Who builds them, and when: OD-23.
 - The exact CR steps (who runs what, windows, approvals) are not known in detail yet; the current
@@ -76,11 +79,11 @@ Promote-on-inference coupling; hash verification; manifest reproduction; T2–T4
   - "current production" as a view;
   - records shaped like MLflow's concepts (experiment, run, params, metrics, artifacts, registered
     model, version), so a later move is a mapping, not a redesign.
-- OD-09: what "registered" means (any kept run vs a gated production candidate).
 - OD-14: model inventory design.
-- OD-27: retraining in production. The CDS prefers models retrained in production rather than
-  moved: promote and deploy would move the recipe (frozen config, model family, hyperparameters,
-  features, encoder levels), and production could run it as a refit (D-052). It changes what
-  promote and deploy move, and needs a production-side check before the retrained model scores.
+- OD-27: retraining in production. The shape is settled (D-096): the bundle carries the recipe,
+  production runs the refit (D-052) with a label-free agreement check against the parent before
+  it scores; `model_hash` and `parent_run_id` identify what scored. Still open with the platform
+  / MLOps team (M4): whether production has the data and compute to train, determinism, and what
+  "deployed" then records.
 - Not to solve now: the code version of a run made from uncommitted code, and which repo's PR is
-  the sign-off (depends on OD-02, OD-05).
+  the sign-off (depends on OD-02; extension code lives in the use case's repo, D-090).

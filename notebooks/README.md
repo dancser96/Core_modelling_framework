@@ -28,4 +28,6 @@ Notebooks: `00_synthetic_data` (exists; dev only and temporary: a visual tour of
 with its checks in an appendix, see `docs/components/test_harness.md`; not a guided stage
 notebook). Planned,
 created as their stages are built: `01_target_factory`, `02_eda`, `03_feature_checks`,
-`04_training`, `05_evaluation`, `06_register_promote`, `07_inference`, `08_monitoring`.
+`04_training`, `05_evaluation`, `06_register_promote`, `07_inference`, `08_monitoring`. No notebook
+deploys: the change-request process runs `deploy` (D-033). The feature sign-off is recorded from
+`03_feature_checks` in manual runs, or after training in hands-off runs (D-076).

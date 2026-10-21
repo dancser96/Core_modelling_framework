@@ -2,7 +2,7 @@
 **Status:** designing (Phase 3, D-075) · **Legacy:** none
 **Related:** [run modes](run_modes.md) (experiment sweeps) · [dataset](dataset.md) (window ablation) ·
 [config](config.md) · [target factory](target_factory.md) (config mode) · [feature checks](feature_checks.md)
-(the human gate) · D-017, D-053, D-075, D-076 · OD-19
+(the human gate) · D-017, D-075, D-076, D-083 · OD-19
 
 ## Purpose
 The assisted-modelling sponsor's branch: an LLM loop that drafts configs from a business intake and
@@ -24,8 +24,8 @@ on this branch for Phase 3.
    older models, so prompts must be small and structured, and outputs validated against the config
    schema.
 5. Gate: the loop starts only when the pipeline is a clean config-in / artifacts-out job, with the
-   invariants enforced and tests green. Before it picks variants, a selection month must exist:
-   choose on one out-of-time month, report on a later one (D-053).
+   invariants enforced and tests green. It picks variants the way every sweep does: on train and
+   test metrics, never on the validation month (D-083).
 
 ## Design constraints
 - Nothing in the core package depends on an LLM.

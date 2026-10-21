@@ -15,17 +15,17 @@ Status values: `legacy-only` (exists only in legacy) · `designing` · `stub` (i
 | Repo bootstrap (docs, skills, agents, requirements, package skeleton) | built | |
 | Design baseline (docs rebuilt after three review rounds + Lead DS notes) | built | 2026-10-12; milestone M0 |
 | Environment adapter (Spark session, compat shim, transport, paths, sources) | built | Partial: compat shim + local Spark session (M1 step 0, D-057); transport, paths, sources in M2. Traps T1–T5, T18 |
-| Config spine (single file, profiles, decision, entities, data-definition hash, migrations) | designing | `components/config.md`. Research before M2: YAML or Python files (OD-24), the decision audit log (OD-10), automation levels (D-077, OD-25) |
+| Config spine (single file, profiles, decision, entities, data-definition hash, migrations) | designing | `components/config.md`. Settled 2026-10-20: YAML (D-086), two automation levels (D-087), identities with a worked example (D-088), the shared-table rule (D-089), extension code in use-case repos (D-090). Still open before M2.1: the audit log's Phase 2 scope (OD-10), the level mapping (OD-25) |
 | Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | tested | M1: steps 0–7 built (2026-10-17); the SDS's review round 1 applied (2026-10-19): role folders, slimmer `truth.json`, two new traps, exit rates, top-down spec with a code map. Feature mart (147 columns), traps on two products, oracle and `truth.json`, CLI, source mapping; every independent check row passes at 100k; approved by the SDS (2026-10-19), with the LDS for review (`synthetic/REVIEW.md`). D-056, D-064–D-070 |
 | Target Factory (targets only, optional) | legacy-only | Renamed from Data Creation (D-029) |
 | Dataset: observation window, client-grouped split, OOT validation, sampling | designing | Big-ticket item (D-030); sampling choice OD-17 |
 | EDA (worth running first; low-prevalence aware) | legacy-only | Major rethink |
 | Feature Checks (correctness and quality only) | legacy-only | Major rethink; selection moved to Training (D-028) |
 | Feature ledger | designing | Sketch awaiting review (OD-11) |
-| Training (AutoML + predefined/Optuna paths, selection, encoding, calibration) | legacy-only | FLAML only in Phase 2, predefined + Optuna in Phase 3 (D-080); no pickle, lossless formats per family (D-078) |
+| Training (FLAML path; predefined + Optuna in Phase 3; selection, encoding, calibration) | legacy-only | FLAML only in Phase 2, predefined + Optuna in Phase 3 (D-080); no pickle, lossless formats per family (D-078); M2 offers `lgbm`, `xgboost` and `catboost` (D-093); own encoding before FLAML, the calibration chain and `model_hash` over parts (D-094) |
 | Evaluation (stratified metrics, compatibility table, comparison) | legacy-only | Core views OD-12 |
 | Reporting (self-contained HTML, plotly, chart rules) + model card | legacy-only | D-036 |
-| Lifecycle: register / promote / deploy, registry tables, inventory | designing | Evolves as built (D-073); OD-06–OD-09, OD-14; retraining in production OD-27; who builds it OD-23, with the platform / MLOps team (D-079) |
+| Lifecycle: register / promote / deploy, registry tables, inventory | designing | Evolves as built (D-073); "registered" settled (D-095); `recipe_hash` and the refit as production retraining (D-096); OD-06–OD-08, OD-14; retraining in production OD-27; who builds it OD-23, with the platform / MLOps team (D-079) |
 | Inference (batch-scoped, manifest, reinference) | legacy-only | Output columns / layout OD-18 |
 | Monitoring (operational + drift deep; performance + impact thin) | designing | Renamed from Tracking (D-040); the data observability integration OD-13; tooling and dashboards are the platform / MLOps team's (D-079); downstream design still largely open |
 | Feature store integration (upstream) | designing | First release (D-075); a work stream to learn the feature store comes first (OD-26) |
@@ -42,6 +42,21 @@ together with the topics to raise with the Chief DS.
 
 ## Log (major changes only, newest first)
 
+- 2026-10-21 — The SDS's second answers: D-098–D-102 (test metrics per month first and named
+  denominators; reproducible runs on a trial budget; the M2 engineering shape; pickle only for
+  saved and moved artifacts; doc upkeep). One doc-hygiene pass across `docs/`, `CLAUDE.md`,
+  `conf/base/` and `notebooks/README.md` fixed the review's inconsistencies and glossary gaps.
+  Questions round 3 in `worknotes/holistic_review_questions.md`.
+- 2026-10-20 — The SDS answered the holistic review: D-082–D-097 (positive events; choices weigh
+  train and test only and `CLAUDE.md` §4.4 is reworded; working rules round 3; the speed claim;
+  YAML; two automation levels; identities; the shared-table rule; extension code in use-case
+  repos; M2 defaults; the sign-off view; M2 never lesser than the crunch; training under FLAML;
+  "registered"; `recipe_hash`; the plan shape with release 1.0 as the definition of done). OD-05,
+  OD-09, OD-22, OD-24 closed. Questions round 2 in `worknotes/holistic_review_questions.md`.
+- 2026-10-20 — Holistic review of the whole design before the planning session with the LDS:
+  verdict, ranked risks, Q217–Q265 with defaults, and a timeline proposal with the OD-01 depth
+  table (`worknotes/holistic_review.md`, `holistic_review_questions.md`, `timeline_proposal.md`).
+  Dates and depth go to `docs/roadmap.md` once agreed.
 - 2026-10-20 — Phase 2 modelling scope settled: binary and regression, FLAML only; the predefined
   path + Optuna moves to Phase 3 (D-080). Task order after the first release (D-081).
 - 2026-10-20 — Chief DS design meeting (2026-10-15) outcomes integrated, D-073–D-079: the CDS

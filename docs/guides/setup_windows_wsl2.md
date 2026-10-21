@@ -111,10 +111,21 @@ Everything committed travels with git. These don't:
 1. **This guide's system setup:** Java 11 + `JAVA_HOME`, Python 3.11, `libgomp1` (the Mac's
    `libomp`), then `pip install -r requirements-dev.txt` (it also installs `synthetic/` and the
    scipy / plotly pins).
-2. **Claude Code's memory:** copy `~/.claude/projects/<mac-path>/memory/` from the Mac into the
-   folder Claude Code creates for the repo on the PC (`~/.claude/projects/<pc-path>/memory/`). The
-   folder name encodes the repo's absolute path, so it differs per machine. Open a session in the
-   repo once first, so the folder exists.
+2. **Claude Code's laptop-level state.** Everything project-specific that Claude follows is in the
+   repo (`CLAUDE.md`, `.claude/skills`, `.claude/agents`, `.claude/commands`, `.claude/settings.json`)
+   and travels with git. What does not, as of 2026-10-20:
+   - **The memory folder** `~/.claude/projects/<mac-path>/memory/`: the rules and preferences
+     Claude recorded across sessions (one file per fact plus `MEMORY.md`). Copy it into the folder
+     Claude Code creates for the repo on the PC (`~/.claude/projects/<pc-path>/memory/`). The
+     folder name encodes the repo's absolute path, so it differs per machine. Open a session in
+     the repo once first, so the folder exists. This is the only place where Claude's cross-session
+     "rules" live outside the repo; sessions and chat history do not transfer and are not needed.
+   - **User settings** `~/.claude/settings.json`: currently only the model choice. Copy or set it.
+   - **User-level skills** `~/.claude/skills/`: the synced `skill-creator` (kept user-level by
+     D-019). It re-syncs from the account; nothing to copy.
+   - **Plugins** `~/.claude/plugins/installed_plugins.json`: `pyright-lsp` (D-019). Re-enable it
+     from the marketplace on the PC rather than copying the file.
+   - **Gitignored repo files** are item 3 below.
 3. **Gitignored local files**, if they exist by then: `conf/local/` (copy),
    `.claude/settings.local.json` (copy), `data/` (regenerate the synthetic data from its seed
    rather than copying it).

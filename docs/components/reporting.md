@@ -1,7 +1,7 @@
 # Reporting and model card
 **Status:** legacy-only · **Legacy:** `src/card.py`, `src/analysis.py` plotting helpers
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [evaluation](evaluation.md) ·
-[monitoring](monitoring.md) · [lifecycle](lifecycle.md) · [environment](environment.md) (theme) · D-036, D-052, D-053, D-076 · OD-12
+[monitoring](monitoring.md) · [lifecycle](lifecycle.md) · [environment](environment.md) (theme) · D-036, D-052, D-076, D-083 · OD-12
 
 ## Purpose
 One shared writer that turns structured results from any stage into a self-contained HTML report,
@@ -9,7 +9,9 @@ plus the versioned model card. Reports are generated from frozen configs, never 
 notebooks, and the same objects display in notebooks.
 
 **Reports:** EDA · Feature Checks (+ ledger) · model performance (evaluation) · model comparison ·
-model card · monitoring.
+model card · monitoring. EDA and Feature Checks together form a data-analysis report in its own
+right, a product within the product, not notebook output next to artifacts. Target Factory,
+Training, Inference and the lifecycle steps write artifacts, not reports.
 
 ## Phase 2 requirements
 1. **Self-contained HTML:** styled tables (pandas Styler) and interactive plotly charts, with plotly.js
@@ -17,13 +19,14 @@ model card · monitoring.
 2. **Every report has the same structure:**
    1. A one-page summary for business and governance readers. It opens with a **choices block**:
       what was chosen (profile, decision, metric, sampling, modelling path), the alternatives, and
-      rule-based warnings (e.g. few positives, pooled AUC far above within-segment AUC, a sweep
-      winner's optimistic validation result).
+      rule-based warnings (e.g. few positive events, pooled AUC far above within-segment AUC, a
+      choice among variants made on test metrics, D-083).
    2. Core views.
    3. Extended views, or "not available: reason".
    4. A technical appendix.
-3. **Theme:** neutral in the repo. After internalisation, a theme file in `conf/local/` (palette,
-   fonts, logo path) applies the corporate look inside the bank.
+3. **Theme:** neutral in the repo. A theme file in `conf/local/` (palette, fonts, logo path) is
+   the Phase 2 mechanism; the corporate look it applies inside the bank comes after
+   internalisation (Phase 3).
 4. **Model card = structured facts only**, with a versioned schema (§2). It covers:
    - config summary, data definition and lineage, dates, eligibility;
    - sampling, calibration (prior shift and any calibration step);

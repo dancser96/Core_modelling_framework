@@ -38,7 +38,7 @@ belongs in `docs/UPDATES.md` and `docs/decisions.md`. `test_harness.md` is the w
 
 ```markdown
 # <Component>
-**Status:** designing | stub | built | tested · **Legacy:** <files or "none">
+**Status:** legacy-only | designing | stub | built | tested | blocked · **Legacy:** <files or "none">
 **Related:** <links to the docs this depends on and that depend on it> · D-nnn · OD-nn
 
 Read it in three levels: Level 1 gives the essentials, Level 2 how the parts connect, Level 3

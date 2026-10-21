@@ -13,7 +13,9 @@
 - Config migrations: old configs still load (`CLAUDE.md` §2).
 - Generator validation tests for the synthetic data (`docs/components/test_harness.md`).
 - One end-to-end test on synthetic data with **real local PySpark**: no stubs, and assertions against
-  the generator's ground truth (traps flagged, oracle AUC never beaten).
+  the generator's ground truth (traps flagged, oracle AUC never beaten by more than about two
+  standard errors on positive events). On the `unit` preset it stays under two minutes; the
+  canonical run is nightly or on request (D-100).
 
 Tests import the dev-only `synthetic` package. The `unit` preset keeps them fast; the `canonical`
 dataset is for notebooks and demos.

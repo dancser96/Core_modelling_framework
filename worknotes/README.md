@@ -9,6 +9,7 @@ are **never loaded at session start**; they are read only when asked (`CLAUDE.md
 | `sync.md` | The sync page: new decisions, what the LDS should review, questions, what changed since the last sync | Refreshed at the end of every turn that changed files, settled something or produced a finding | Before each sync; `/brief` |
 | `log.md` | The verbose trail, newest first: what changed, why, files, decisions | Appended at the same moments as `sync.md` | When the detail behind a sync item is needed |
 | `handovers/<topic>.md` | A chat handover, one file per topic, so several topics can run in parallel | `/handover <topic>` (overwrites that topic's file) | Only via `/resume <topic>` |
+| `holistic_review.md`, `holistic_review_questions.md`, `timeline_proposal.md` | The planning-session set of 2026-10-20: the critical review of the design and plan, the questions (Q217–Q265) with defaults, and the proposed milestone dates with the depth-per-component draft (OD-01) | Once, by request; deleted once their outcomes are in `docs/` (D rows, OD rows, roadmap dates) | The planning session with the LDS |
 
 **Rules**
 - These files are visible to the Lead DS. No bank data, no internal identifiers, no people's names
@@ -21,8 +22,11 @@ are **never loaded at session start**; they are read only when asked (`CLAUDE.md
 30–60 minutes, and only reads (code and markdown) and reviews, never writes or runs anything.
 - **New decisions first, by reference only:** one line at the top, e.g. "D-056–D-061". The LDS reads
   them in `docs/decisions.md`; the sync page never restates them.
-- **Review list: most important first, then newest.** An item stays until the SDS says the LDS has
-  finished it (that news usually arrives a day later).
+- **Review list: most important first, then newest.** Every item is tagged **needs decision** or
+  **for information**, and at most five "needs decision" items are open at once (D-084). The LDS
+  reviews design docs and the ML-critical code (dataset, Target Factory, training, calibration,
+  evaluation) in full and samples the rest. An item stays until the SDS says the LDS has
+  finished it (that news usually arrives a day later), or the SDS drains the list.
 - **Since the last sync: only what changes the LDS's picture** (design, scope, findings, something
   ready to review, a blocker). One bullet per topic, merging same-day and same-topic updates. No
   tooling, package versions, machine setup or "notes recorded" items. Bullets the last sync
@@ -45,7 +49,7 @@ _For the SDS and the LDS · last updated: YYYY-MM-DD · last sync: YYYY-MM-DD_
 **New decisions since the last sync:** D-nnn–D-nnn (`docs/decisions.md`)
 
 ## For the LDS: to review (most important first, then newest)
-- [ ] <what to review> — <path> — feedback wanted: <the specific question>
+- [ ] **<what to review>** (needs decision | for information) — <path> — feedback wanted: <the specific question>
 
 ## Questions for the LDS
 - <question> (OD-nn) — <one line of context; our leaning>

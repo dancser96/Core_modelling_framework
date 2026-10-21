@@ -1,6 +1,6 @@
 ---
 name: doc-sync
-description: Bring the repo documentation in line with the code and decisions at the end of a task, applying the update rules in CLAUDE.md §8 (owner docs, update triggers, creation rules, cross-links, local sync notes). Use this at the end of every task that changed code, config, dependencies, decisions or open questions, when the user says "update the docs", "sync docs", "wrap up", or before committing.
+description: Bring the repo documentation in line with the code and decisions at the end of a task, applying the update rules in CLAUDE.md §8 (owner docs, update triggers, creation rules, cross-links, the committed worknotes). Use this at the end of every task that changed code, config, dependencies, decisions or open questions, when the user says "update the docs", "sync docs", "wrap up", or before committing.
 ---
 
 # Doc sync

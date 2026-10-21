@@ -2,16 +2,17 @@
 
 **What this is.** `core_modelling` is how the unit builds, ships and maintains models: a versioned
 Python library driven by one config file per use case, used through guided notebooks, a CLI and a
-Python API. It replaces months of bespoke work with delivery in days: about 3 days on the hands-off
-`quick` profile, up to about 3 weeks on `thorough`. It sets one standard for every stage of the data
+Python API. It replaces months of bespoke work with a registered candidate in days to a few weeks of
+DS effort (D-085); production follows through the change-request calendar. It sets one standard for every stage of the data
 science lifecycle: correctness, reproducibility, maintainability, a shared vocabulary and an overview
 of every live model. Where we start from and where we want to reach: `docs/context/project.md`.
 
 - **Lifecycle:** Target Factory (optional) → EDA → Feature Checks → Training → Evaluation → register →
   promote → deploy → Inference → Monitoring. Every stage runs alone from a config. Model tiers are
   local → registered → production, and a data scientist's session never writes to production.
-- **Intermediate outputs:** every stage writes its own artifacts and a self-contained HTML report
-  (EDA, feature checks + feature ledger, model performance, model card, monitoring).
+- **Intermediate outputs:** every stage writes its own artifacts. EDA and Feature Checks together
+  are a product within the product: a data-analysis report in its own right (plus the feature
+  ledger), not just notebook output. The other reports: model performance, model card, monitoring.
 - **Coverage:** panel tasks (one row per unit per period) first: binary and regression in Phase 2
   (D-080). Series tasks (forecasting) come later. Any domain (retail, SME, corporate) and any
   entity (subsidiary) is handled through configuration.
@@ -53,7 +54,8 @@ complete or "future-proof" code. When in doubt, write less.
    - Pydantic config models and small dataclasses;
    - scikit-learn-compatible estimator/transformer wrappers (subclassing `BaseEstimator`, which
      pickling, SHAP and pipelines need);
-   - a small `Protocol` shared by interchangeable parts, e.g. the AutoML and predefined-model paths.
+   - a small `Protocol` shared by interchangeable parts, e.g. the AutoML and predefined-model paths
+     (from Phase 3, D-100).
 
    Inherit only from library base classes, or one shallow level of your own, and say why in the
    step summary. Still no ABC hierarchies, metaclasses, decorator registries, dependency-injection
@@ -196,8 +198,10 @@ pinning doesn't relax this.
    target window does not overlap any training target window (`v ≥ tk + w`).
 3. **Baseline and metric (or the decision they derive from) are declared in config before any result
    is seen.**
-4. **Fit and select on the train split only.** No feature selection, tuning choice or fitted
-   transform ever sees test or validation data. Checks that use labels (EDA feature–target views and
+4. **Fit and select on the train split only.** No feature selection or fitted transform ever sees
+   test or validation data, and the validation (OOT) month never informs any choice. A choice among
+   variants or tuning trials (window, sweep, trade-off point) weighs train and test metrics only
+   (D-083). Checks that use labels (EDA feature–target views and
    ranking, leakage screens, stability of AUC) use train-split clients within the observation window.
    Label-free comparisons (e.g. PSI) may use later months, except the validation month (D-048).
 5. **Checks wrap the engine.** The modelling engine sees only the vetted feature set; validation runs
@@ -403,7 +407,7 @@ ruff check . && ruff format <changed files>  # lint; format only files you touch
 ```
 CLAUDE.md                  this file (always loaded)
 src/core_modelling/        the package (currently a skeleton)
-synthetic/                 dev-only synthetic data package: spec/, mechanisms/, truth/, checks/ (not core_modelling)
+synthetic/src/synthetic/   dev-only synthetic data package: spec/, mechanisms/, truth/, checks/ (not core_modelling)
 conf/base/                 committed configs and examples
 conf/local/                gitignored: environment-specific paths/tables/theme (bank side)
 data/                      gitignored: Kedro-style layered data folders (see data/README.md)

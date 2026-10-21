@@ -20,7 +20,9 @@ Either way a **human gate** follows: a person must be able to defend every featu
 a person signs off the features before any model is registered, at every automation level. In human
 mode it closes this stage, on the list after the checks (automated selection can only drop from
 it). In hands-off runs it comes after training, on the model's final list, and rejecting a feature
-then means a retrain. An LLM review never passes this gate (D-076).
+then means a retrain. An LLM review never passes this gate (D-076). The sign-off is given over the
+model's final list, shown with flags grouped and features sorted by importance, with train-only
+evidence; the candidate list (hundreds) is reviewed only where flagged (D-092).
 
 ## Phase 2 requirements
 1. Ordered, configured steps. Each writes a log entry (features in → out or flagged, reason,
@@ -34,6 +36,8 @@ then means a retrain. An LLM review never passes this gate (D-076).
 5. **Eligibility interaction:** flag features that are constant within the eligible population (T11).
 6. **Stability** (§4.4, D-048):
    - per-month univariate AUC range and PSI across the window's months, on train-split clients;
+     a per-month statistic is shown only for months with at least 50 positive events (D-082,
+     D-091);
    - a separate stability measure for categoricals (T10);
    - label-free drift (PSI) of the window against the gap months between the window and the
      validation month, and against the latest available month (the one production will score);

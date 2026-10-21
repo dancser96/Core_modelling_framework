@@ -6,7 +6,8 @@ and what it aims for: `docs/context/project.md`. Terms: `docs/glossary.md`.
 
 **Verdict:** a versioned Python library of plain functions, driven by one config file per use case.
 - Each stage runs alone, from guided notebooks, the CLI or the Python API, and writes its own
-  artifacts and HTML report.
+  artifacts. EDA and Feature Checks together are a product within the product: a data-analysis
+  report in its own right; the other reports are model performance, the model card and monitoring.
 - An environment adapter isolates everything bank-specific.
 - A three-tier lifecycle (local → registered → production) keeps a large estate of models
   maintainable.
@@ -65,10 +66,15 @@ OD-26) and the data observability framework downstream (OD-13), both thin.
 
 ## 3. Config
 
-- **One file per use case** (the goal, D-043), validated by Pydantic v2. YAML for now; Python
-  files are under study (OD-24). It carries
+- **One file per use case** (the goal, D-043), written in YAML (D-086) and validated by Pydantic
+  v2; the Pydantic model is the programmatic API. It carries
   `schema_version`, `task`, `profile` and `decision`. Shared sections (entities, data, time,
   features) plus one section per stage. Details: [config](components/config.md).
+- **Shared tables** (registry, scores, monitoring, model cards, labels) are written and read by
+  many pinned versions at once (D-047), so they follow one rule (D-089): every row carries
+  `schema_version` and `framework_version`; within a major version columns are only added
+  (nullable), never renamed, retyped or removed; readers select columns by name and ignore
+  unknown ones; removal only at a major bump, which keeps old readers for one image lifetime.
 - **`conf/base/`** is committed and holds framework defaults and generic use-case configs.
   **`conf/local/`** is gitignored and holds environment-specific values (tables, paths, Spark, theme).
   They merge base → local at load.
@@ -102,18 +108,24 @@ stage are tabulated in [dataset](components/dataset.md).
 production (or a pinned registered version); local models only in dev mode. Gates, sign-off, the
 change-request path and the open questions are owned by [lifecycle](components/lifecycle.md).
 
-- **Identities:**
-  - `run_id` = config hash + timestamp
-  - `model_hash` = content hash of the model file
+- **Identities** (D-088, D-094, D-096; the worked example is in [config](components/config.md)):
+  - config hash = the use-case definition after profile resolution, without `conf/local` and the
+    housekeeping block
+  - `data_definition_hash` = entity, sources, eligibility, target spec, observation window and
+    candidates (the validation and inference months are run arguments)
+  - `run_id` = config hash + entity + timestamp (one per instance)
   - `feature_signature` = hash of the final feature list
-  - `data_definition_hash` (see [config](components/config.md))
+  - `recipe_hash` = frozen config + features + hyperparameters + encoder levels + calibration spec
+  - `model_hash` = a hash over the bundle's per-part hashes (encoder, model, calibration with the
+    prior-shift offset, metadata); a refit is one more fit of a recipe, with `parent_run_id`
   - model key = (entity, domain, use case, split), with split = `all` in Phase 2
   - `scoring_batch_id`
   - code version = framework version + use-case repo commit
+  - every hash is computed on the migrated canonical form and stored with a `hash_version`
 - **The model bundle is a versioned artifact:** every part as plain data, JSON where possible,
   never pickle (D-051, D-078).
-- **Retraining in production** (promote the recipe, production retrains it) is under study
-  (OD-27).
+- **Retraining in production** (promote the recipe, production retrains it): the shape is settled
+  (D-096), the operational side is researched with the platform / MLOps team in M4 (OD-27).
 - **A DS session never writes to production** (D-033).
 - **Manifests** link a scoring batch to the models that produced it (`run_id` + `model_hash`).
   Reproduction verifies the hash before loading.
@@ -143,9 +155,10 @@ change-request path and the open questions are owned by [lifecycle](components/l
   feature sign-off (D-076; how it is recorded: OD-10). Scheduling, if any, calls
   the CLI.
 - **Experiment sweeps:** run one config with a single field varied (e.g. the observation window) and
-  compare the variants on the same validation set. A sweep that picks a variant labels the winner's
-  validation result as optimistic (D-053). The same mechanism is what the LLM branch will later
-  drive. Details: [run modes](components/run_modes.md), [dataset](components/dataset.md).
+  compare the variants on the same validation set. A sweep that picks a variant picks on train and
+  test metrics, weighted; the validation month is reported, never chosen on (D-083). The same
+  mechanism is what the LLM branch will later drive. Details: [run modes](components/run_modes.md),
+  [dataset](components/dataset.md).
 
 ## 8. Generality without frameworks
 
@@ -185,7 +198,8 @@ synthetic dataset. See [environment](components/environment.md) and
 
 - `src/core_modelling/`
   - `__init__.py`: version
-  - `__main__.py`: CLI entry (`run <config>`)
+  - `__main__.py`: CLI entry: `run`, `register`, `promote`, `deploy` and the feature sign-off
+    entry point (§7; [run modes](components/run_modes.md) owns the list)
   - `config/`: schema, loading (base+local merge), profiles, migrations
   - `_compat.py`: numpy/PySpark compat shim, imported first by `__init__.py` (T1)
   - `environment.py`: Spark session, transport, paths, sources
@@ -204,7 +218,8 @@ synthetic dataset. See [environment](components/environment.md) and
 - `synthetic/`: dev-only synthetic data package (top level; not part of `core_modelling`)
 
 A folder becomes a single module file when it only needs one. Don't create empty sub-packages ahead
-of need.
+of need. A package with more than a handful of modules splits them into role subfolders (rules as
+plain data, functions, checks), as `synthetic/` does (`CLAUDE.md` §1 rule 5, D-070).
 
 ## Public API
 

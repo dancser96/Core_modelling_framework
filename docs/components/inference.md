@@ -19,6 +19,23 @@ registering, promoting or deploying happens here.
 4. **Output is task-agnostic and long format:** `unit_id, entity, use_case, model_hash, infer_date,
    score`, plus task-specific columns only when needed. The exact format, including extra columns
    for the campaign system, is open (OD-18).
+
+   **The first known consumer format** (received 2026-10-21): the table the retail platform team
+   expects today for propensity scores. It is a guide in lieu of other directives; other entities
+   and domains may expect different formats. One table holds every product's scores.
+
+   | Column | Type | Meaning |
+   |---|---|---|
+   | CustomerID | string | The customer's pseudonymised id |
+   | Product | string | The product, e.g. Forex, Credit Cards, Wealth |
+   | Activity | string | The model's activity: Retention, Activation or Build |
+   | Score | decimal | The model's output, between 0 and 1 |
+   | Source | string | The producing team or system (a bank identifier: its value lives in `conf/local/` only) |
+   | Date_Refreshed | date | The date the score was refreshed |
+
+   It carries none of the framework's traceability (entity, model hash, run, scoring batch,
+   inference month). How the two fit together: Q291–Q295 in
+   `worknotes/holistic_review_questions.md`.
 5. **Batch-scoped and written once.** Collect, then write once, and assert that every "ok" model
    landed on disk (T6, T7). The path layout is under review (manifests vs score files, OD-18).
 6. **Reinference** from a manifest: rescore the same registered models on a new month or table,
@@ -45,12 +62,12 @@ T2–T7; the per-use-case run-pin dict; reinference worked without local runs.
 
 ## Open questions
 - Scoring in Spark vs driver-side chunks for the largest populations (decide by measurement).
-- Spark ships a broadcast model to executors serialised in memory (cloudpickle). D-078 is about
-  model files; confirm that in-memory serialisation is acceptable, or load the bundle's plain-data
-  format on the executors (unverified).
+- Spark ships a broadcast model to executors serialised in memory (cloudpickle). That is fine:
+  only saved and moved artifacts must avoid pickle (D-101).
 - With retraining in production (OD-27), the manifest's `model_hash` points at the model retrained
   in production, linked to its evaluated parent; the drift reference may need recomputing there.
-- Extra output columns (e.g. product) needed for seamless integration with the downstream campaign /
-  decisioning system. Details to come from the Lead DS (OD-18).
+- How the framework's own scores table and the consumer's format fit together (requirement 4):
+  two layers, how product and activity are set, writing into one shared table, column meanings,
+  and whether scores must be comparable across products (OD-18; Q291–Q295).
 - Output path layout: manifests (JSON) currently sit next to the score files, which breaks a Hive
   table built over the scores folder. Separate them. Details to come from the Lead DS (OD-18).

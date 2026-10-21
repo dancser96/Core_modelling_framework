@@ -24,7 +24,8 @@ Features come from upstream, and the stage asks nothing extra of upstream (D-029
      end: end-of-window rules miss events that reverse inside the window and, for loans, openings
      hidden by a maturity. Acquisition is one target whether the client never held the product or
      churned (D-056); build it from the flag, not the status column, so lineage exclusion keeps the
-     status's churned signal;
+     status's churned signal. M2 builds this flag rule with lineage; count rises, thresholds on
+     sums and leavers-as-negatives follow in M3 (D-091);
    - regression is the second task in Phase 2 (D-080).
 4. Forward windows exclude the current month `(1, w)` (T8). Windows come only from config (T13).
 5. **Panel-edge guard:** the target is null where the full forward window is missing, per client:

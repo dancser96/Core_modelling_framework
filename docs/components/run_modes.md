@@ -1,7 +1,7 @@
 # Run modes: CLI, Python API, guided notebooks
 **Status:** designing · **Legacy:** `run_product.py`, `notebooks/`
 **Related:** [config](config.md) · [environment](environment.md) · [dataset](dataset.md) (experiment sweeps) ·
-`notebooks/README.md` · D-024, D-039, D-047, D-053, D-074 · OD-02, OD-04, OD-05
+`notebooks/README.md` · D-024, D-039, D-047, D-074, D-083, D-090, D-097 · OD-02, OD-04
 
 ## Purpose
 The same functions, used two ways: guided notebooks for manual work and learning, and a CLI / Python
@@ -19,12 +19,14 @@ so users can see and debug what happens under the hood.
    observation window) and compares the variants on the same validation set ([dataset](dataset.md)
    window ablation, whose design that doc owns). Each variant changes only that field (same
    eligibility, candidates, budget, seeds, sampling rule). The comparison report comes from
-   [evaluation](evaluation.md). A sweep that picks a variant labels the winner's validation result
-   as optimistic; a separate selection month comes with the LLM branch (D-053). The name is still
-   to be decided.
+   [evaluation](evaluation.md). A sweep that picks a variant picks on train and test metrics,
+   weighted; the validation month is reported, never chosen on (D-083). The name is still to be
+   decided.
 4. **Guided notebooks, one per stage.** Each opens with what the stage is for, what to look at, which
-   decisions to record in config, and links to the docs. Then: load config → call the stage →
-   display the artifacts. Written as instructions, not commentary.
+   decisions to record in the config or the decision audit log (OD-10), and links to the docs.
+   Then: load config → call the stage → display the artifacts. Written as instructions, not
+   commentary. Thin in M2 (load, call, display); the guidance text is written in M3 with the LDS
+   reviewing as the proxy user (D-097).
 5. **Example notebooks on release** = the guided notebooks run end to end on the synthetic dataset,
    outputs included.
 6. **Users may copy the notebooks and explore.** Production runs, registered models and reports never
@@ -40,4 +42,5 @@ so users can see and debug what happens under the hood.
   domain, with a use case branching into its own repo as it grows; not one shared repo with code
   folders.
 - The package ships in the base image through Nexus, which pins each use case's framework version
-  (D-074, D-047). Still open: the release mechanics (OD-04) and where extension code lives (OD-05).
+  (D-074, D-047). Still open: the release mechanics (OD-04). Extension code lives in the use
+  case's repo, never in the framework (D-090).

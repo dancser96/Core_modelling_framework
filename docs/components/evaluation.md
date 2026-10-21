@@ -1,7 +1,7 @@
 # Evaluation
 **Status:** legacy-only · **Legacy:** `src/evaluate.py`, `src/importance.py`, `src/analysis.py`
 **Related:** [reporting](reporting.md) · [training](training.md) · [dataset](dataset.md) · [lifecycle](lifecycle.md)
-(gates) · D-035, D-036, D-038, D-050, D-053 · OD-12
+(gates) · D-035, D-036, D-038, D-050, D-082, D-083, D-098, D-100 · OD-12
 
 ## Purpose
 Judge a model out of time against declared baselines, outside the engine. Produce the numbers and
@@ -12,11 +12,12 @@ practical set of metrics and charts, produced reliably for every model family.
 1. **Metrics from the per-task spec** (D-050). Binary: AUC, PR-AUC, base rate; precision / recall / lift at the
    `top_pct` and `top_n` slices. What gets emphasised follows the declared decision.
 2. **Test vs validation:** metrics on test (unseen clients, same months) and on validation (OOT). The
-   gap separates overfitting from decay over time. Optional: validation on test clients only
-   (unseen clients and an unseen month), the cleanest estimate.
+   gap separates overfitting from decay over time. Test metrics are shown per observation month
+   first and pooled second, so test compares with the single validation month (D-098). Optional:
+   validation on test clients only (unseen clients and an unseen month), the cleanest estimate.
 3. **Stratified metrics are mandatory** (D-038). Every metric is shown overall and per level of each
    configured variable. Levels are capped (top levels + "other"), and strata below the per-task
-   minimum support (binary: positives) are shown as insufficient.
+   minimum support (binary: positive events, D-082) are shown as insufficient.
 4. **Baselines:** population base rate (always), previous model, historic predicted rate, as declared.
 5. **Views are organised as slots**, each with an ordered list of methods. The method is chosen per
    model family from a **compatibility table** (view × family → method, or "not available: reason"):
@@ -29,12 +30,12 @@ practical set of metrics and charts, produced reliably for every model family.
    supports, labelled with the method used.
 6. **Failure policy** (D-035): a view the table declares compatible must work, and a failure is an
    error. Incompatible views are skipped by design and shown as "not available: reason".
-7. **Model comparison is first-class.** Several runs (AutoML vs predefined, challenger vs champion,
-   window variants) are shown on the identical validation set, overlaid and side by side. Where the
-   rows match, differences come from a **paired bootstrap** over validation clients, which gives much
-   tighter intervals than comparing two separate ones. The window ablation's design is owned by
-   [dataset](dataset.md). When a sweep picks a variant, the report labels the winner's validation
-   result as optimistic (D-053).
+7. **Model comparison is first-class.** Several runs (challenger vs champion, window variants;
+   AutoML vs predefined from Phase 3) are shown on the identical validation set, overlaid and side
+   by side. Where the rows match, differences come from a **paired bootstrap** over validation
+   clients, which gives much tighter intervals than comparing two separate ones. The window ablation's design is owned by
+   [dataset](dataset.md). A sweep picks on train and test metrics; the validation month is
+   reported for every variant and never chooses (D-083).
 8. Results are structured data first; plots and reports are rendered from them.
 
 ## Design constraints
@@ -52,6 +53,10 @@ with raw-string categoricals. SHAP failed across the original estimator set and 
 *(fill when built)*
 
 ## Open questions
-- The mandatory core set per task (OD-12).
+- **To decide when Evaluation is built (M2.3):** the mandatory core set per task (OD-12).
+  Proposal for binary: core = gains / lift, reliability, score distribution, the stratified
+  metrics table, permutation importance, one feature-effects slot (SHAP's tree explainer, which
+  covers all three M2 families); extended = PDP / ICE, per-level categorical tables. In M2 the
+  compatibility table is a dict of view → function with "not available: reason" entries (D-100).
 - Parked proposal: store all results as tidy tables, with bootstrap intervals by default. Revisit when
   evaluation is designed in depth.

@@ -1,7 +1,7 @@
 # Dataset: observation window, splits, sampling
 **Status:** designing · **Legacy:** `src/io.py` (load + prune in Spark), `src/dataset.py` (labelled frames, downsampling)
 **Related:** [config](config.md) (time and data sections) · [training](training.md) · [evaluation](evaluation.md) ·
-[feature checks](feature_checks.md) · [EDA](eda.md) · [test harness](test_harness.md) · D-030, D-048, D-049, D-052, D-054 · OD-17
+[feature checks](feature_checks.md) · [EDA](eda.md) · [test harness](test_harness.md) · D-030, D-048, D-049, D-052, D-054, D-082, D-083, D-091, D-098 · OD-17
 
 ## Purpose
 Builds the frames every stage works on, from one definition. That means the eligible population over
@@ -36,7 +36,10 @@ The periods, earliest to latest:
 1. Eligibility (ordered config steps) is applied identically to every month of train/test, validation
    and inference (§4.9). Each step logs rows in → out.
 2. Keep every eligible unit-month row in the window. Report both **positive rows** and **positive
-   events**, because one conversion is positive in up to `w` consecutive months.
+   events**, because one conversion is positive in up to `w` consecutive months. Every rule that
+   uses a count of positives as evidence (minimum support per stratum, standard errors, the AUC
+   floor, per-month statistics) counts events, and bootstraps and CV folds resample clients
+   (D-082). The model itself keeps every row: correlated rows cost variance, not bias (below).
 3. Split train/test by client (§4.11). Each client is assigned by a seeded hash of its id, so the
    assignment is stable across months and reruns. Any CV inside train is grouped by client.
    Label-using checks in EDA and Feature Checks apply the same assignment first and use train-split
@@ -57,12 +60,17 @@ The periods, earliest to latest:
    Whatever the option, the prior-shift offset uses the effective (weighted) training rate (D-049);
    computed from the unweighted rate it would correct twice.
 7. Optional recency weighting through sample weights, off by default.
-8. Contract checks on the true population before any sampling (§4.8): unique unit per month,
+8. **Denominators** (D-098): the "true population" is the eligible rows regardless of label (the
+   drift reference and the contract band use it); the prior-shift true rate comes from the
+   unsampled train split, never train plus test; the null-label share (clients who leave inside
+   the target window, panel-edge rows) is reported per month and per scoring batch; probabilities
+   are conditional on staying through the target window.
+9. Contract checks on the true population before any sampling (§4.8): unique unit per month,
    non-degenerate target, plausible rate band. This doc owns them; which checks apply comes from
    the per-task spec (D-050).
-9. Window ablation: the same config with only the window changed produces comparable runs, scored
+10. Window ablation: the same config with only the window changed produces comparable runs, scored
    on the identical validation set (see below).
-10. Refit frames (D-052): all clients (train + test) of the window, or an extended window moved to
+11. Refit frames (D-052): all clients (train + test) of the window, or an extended window moved to
     the latest months whose labels have matured. They are built by the same function.
 
 ## Downstream effects of the window
@@ -106,8 +114,8 @@ The periods, earliest to latest:
      the model interface. Unverified on the bank cluster and not built in Phase 2.
 - Scoring has no such ceiling: inference runs in Spark.
 - **To tell whether the cap costs accuracy,** run a learning-curve check: train on 25 / 50 / 100% of
-  the budget and score the same validation set. If the curve is still rising, raise the budget or
-  change the sampling.
+  the budget and score the same test split. If the curve is still rising, raise the budget or
+  change the sampling. The choice is made on test, never on the validation month (D-083).
 
 ### Is automatic downsampling safe when a client's rows are correlated?
 - Random negative sampling (independent of the features, within each class) is unbiased. It keeps
@@ -142,14 +150,14 @@ This is answered by a built-in **window ablation**:
   conditions), not just from more rows.
 - **Show month-to-month luck.** Train single-month models on each month of the window and score them
   on the same validation month.
-- No second validation month: it would push the training window further into the past. The choice
-  weighs test and validation performance equally; train performance only shows the overfitting gap,
-  since it is in-sample and weighting it would reward overfitting (D-062).
+- No second validation month: it would push the training window further into the past (D-062).
+  The choice weighs train and test metrics, e.g. the test metric penalised by the train–test gap;
+  the validation month is reported for every variant and never chooses (D-083).
 - The mechanism (vary one config field, compare on a fixed validation set) is also the bounded-axis
   loop the original roadmap planned for the LLM branch. It is built once in Phase 2 as an
   experiment-sweep function (name to be decided; see [run modes](run_modes.md)); the LLM drives it
-  later. This section owns the ablation design. A sweep that *picks* a window for a use case labels
-  the winner's validation result as optimistic (D-053).
+  later. This section owns the ablation design. A sweep that *picks* a window for a use case picks
+  the same way: on train and test, never on validation (D-083).
 
 ## Design constraints
 - Spark does every row and column reduction. `toPandas` runs only on the pruned, sampled frame
@@ -161,7 +169,8 @@ This is answered by a built-in **window ablation**:
 *(fill when built)*
 
 ## Open questions
-- The default sampling option and its parameters; the window ablation details (OD-17). Proposed:
-  option 1 as the default, settled by the synthetic-data comparison (backlog in `docs/roadmap.md`).
-- Default window length per profile.
+- The default sampling option and its parameters; smarter downsampling as a framework asset (the
+  SDS wants this researched); the window ablation details (OD-17). M2 runs option 1 with one
+  negative-keep fraction across the window's months; the comparison in M3 settles the default.
+- Default window: 6 months with `w = 3` (D-091); per-profile variation later.
 - FLAML grouped CV on 2.7 (`split_type="group"` with `groups`): unverified.
