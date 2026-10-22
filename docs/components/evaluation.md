@@ -1,7 +1,7 @@
 # Evaluation
 **Status:** legacy-only · **Legacy:** `src/evaluate.py`, `src/importance.py`, `src/analysis.py`
 **Related:** [reporting](reporting.md) · [training](training.md) · [dataset](dataset.md) · [lifecycle](lifecycle.md)
-(gates) · D-035, D-036, D-038, D-050, D-082, D-083, D-098, D-100 · OD-12
+(gates) · D-035, D-036, D-038, D-050, D-082, D-083, D-098, D-100, D-104 · OD-12
 
 ## Purpose
 Judge a model out of time against declared baselines, outside the engine. Produce the numbers and
@@ -54,9 +54,10 @@ with raw-string categoricals. SHAP failed across the original estimator set and 
 
 ## Open questions
 - **To decide when Evaluation is built (M2.3):** the mandatory core set per task (OD-12).
-  Proposal for binary: core = gains / lift, reliability, score distribution, the stratified
-  metrics table, permutation importance, one feature-effects slot (SHAP's tree explainer, which
-  covers all three M2 families); extended = PDP / ICE, per-level categorical tables. In M2 the
-  compatibility table is a dict of view → function with "not available: reason" entries (D-100).
+  Proposal for binary: core = gains / lift, reliability (correct calibration is a release
+  requirement, D-104), score distribution, the stratified metrics table, permutation importance,
+  one feature-effects slot (SHAP's tree explainer, which covers all three M2 families); extended
+  = PDP / ICE, per-level categorical tables. In M2 the compatibility table is a dict of view →
+  function with "not available: reason" entries (D-100).
 - Parked proposal: store all results as tidy tables, with bootstrap intervals by default. Revisit when
   evaluation is designed in depth.

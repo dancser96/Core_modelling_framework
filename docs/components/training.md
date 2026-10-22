@@ -2,7 +2,7 @@
 **Status:** legacy-only · **Legacy:** `src/run.py`, `src/dataset.py`, `src/calibration.py`, `src/contract.py`
 **Related:** [dataset](dataset.md) · [feature ledger](feature_ledger.md) · [evaluation](evaluation.md) ·
 [config](config.md) · [lifecycle](lifecycle.md) · [monitoring](monitoring.md) (drift reference) · D-030, D-031, D-032, D-037,
-D-049, D-050, D-051, D-052, D-054, D-078, D-080, D-082, D-083, D-093, D-094, D-096 · OD-27
+D-049, D-050, D-051, D-052, D-054, D-078, D-080, D-082, D-083, D-093, D-094, D-096, D-104, D-106, D-117, D-120 · OD-27
 
 ## Purpose
 Fit a model on the train split of the observation window, using only vetted features, through the
@@ -22,7 +22,15 @@ run with the frozen config, hashes and training metadata.
        non-pickle round trip; never the scikit-learn forests; a use case may restrict the list to
        one family (D-093, D-080).
      - Bounded search spaces.
-     - CV grouped by client.
+     - Trial selection (D-106, D-120): Phase 2 relies on the client split between train and
+       test, and builds no own CV loop around FLAML. No CV fold mixes a client's rows: FLAML gets
+       the client groups as `groups`, plus `split_type="group"` for regression, whose automatic
+       split stays by rows. For classification, passing `groups` turns the automatic split into a
+       group split (verified in FLAML 2.7.0, `decide_split_type` in
+       `flaml/automl/task/generic_task.py`). If spike 1 shows the group split fails with sample
+       weights, a client-grouped holdout built from the same fold assignment goes in as
+       `X_val` / `y_val` instead. An own client-grouped CV loop around the tuner is on the
+       Phase 3 wishlist (D-121).
      - The framework encodes categoricals to integer codes before FLAML sees the frame, so FLAML's
        hidden transformer (it drops constant columns, fills `__NAN__` and recodes categoricals;
        verified on 2.7.0) is the identity. Inference calls the saved booster directly, never
@@ -52,13 +60,16 @@ run with the frozen config, hashes and training metadata.
    - structural problems (a missing column, a changed type) fail loud.
 7. **Contract checks** as owned by [dataset](dataset.md), on the true population before any
    sampling (§4.8).
-8. **Sampling and row budget** as in [dataset](dataset.md). Calibration comes from the per-task spec
-   (§4.7, D-049). Binary, as one chain (D-094): raw score → general calibration (Platt in M2,
+8. **Sampling and row budget** as in [dataset](dataset.md), without sample weights in Phase 2
+   (D-123). Calibration comes from the per-task spec (§4.7, D-049). Binary, as one chain (D-094): raw score → general calibration (Platt in M2,
    isotonic in M3; optional, on by default when the decision is `probability`), fitted on the
    framework's own client-grouped out-of-fold predictions that refit `best_config`, since FLAML
-   exposes none → the prior-shift offset in logit space whenever sampling happened, from the
-   effective (weighted) training rate. Parameters are stored as plain numbers with the
-   framework's own predict code, never as scikit-learn objects.
+   exposes none (kept under D-106) → the prior-shift offset in logit space whenever sampling
+   happened, from the effective (weighted) training rate. Parameters are stored as plain numbers
+   with the framework's own predict code, never as scikit-learn objects. Retail propensity use cases
+   default to the `probability` decision, because their scores are compared across products
+   downstream; correct calibration is a release requirement, not an option (D-104,
+   [inference](inference.md) requirement 4).
 9. **Record what the engine actually did:** best estimator and config, trials per learner (FLAML
    `config_history`, T14), seeds, and the time spent.
 10. **Runtime levers** in config, with profile defaults: budget, learners, trials, sampling. The
@@ -96,14 +107,15 @@ T9, T14; downsampling, calibration and FLAML-search lessons in `docs/context/les
 *(fill when built)*
 
 ## Open questions
-- Verify FLAML 2.7 + xgboost 3.2 before enabling xgboost by default; verify FLAML grouped CV on 2.7.
+- Verify FLAML 2.7 + xgboost 3.2 before enabling xgboost by default.
+- Spike 1: verify FLAML 2.7's group split on the synthetic data (no sample weights in Phase 2,
+  D-123); the fallback is in requirement 2 (D-120).
 - Verify the Optuna 5.0 API (multi-objective, pruning) when first used (Phase 3).
 - The default pick rule on the trade-off chart for hands-off profiles (Phase 3).
-- Calibration under the sampling options in [dataset](dataset.md) (OD-17): month-stratified negative
-  sampling shifts the class balance per month, so the prior-shift offset must use the sampled vs true
-  rate over the whole window (or per month); under outcome-stratified client sampling the
-  weighted rate equals the true rate, so the offset is zero (D-049). Verify both against the
-  synthetic oracle (reliability curves) before choosing the default.
+- Calibration under uniform negative downsampling ([dataset](dataset.md)): one keep fraction for
+  the whole window, so one prior-shift offset from the sampled vs true rate holds for every month
+  (D-117). Verify it against the synthetic oracle (reliability curves). Weighted sampling, whose
+  offset is zero (D-049), is on the Phase 3 wishlist (D-123).
 - A lossless non-pickle format per model family on the pinned versions (D-078), all unverified
   and all three needed in M2 (D-093): XGBoost's JSON; LightGBM's text model (its JSON dump may
   not load back); CatBoost's JSON. Scikit-learn's forests (FLAML `rf`, `extra_tree`) have none

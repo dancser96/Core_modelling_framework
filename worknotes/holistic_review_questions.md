@@ -1,8 +1,9 @@
-# Questions for the planning session, round 3
-_Updated 2026-10-21 after the SDS's second round of answers. Only open questions are listed;
-answered ones are recorded in `docs/decisions.md` (D-082–D-102) and the owner docs. Each question
-carries Claude's proposed default, so "default" is enough as an answer. Findings behind the
-questions: `holistic_review.md`. Dates: `timeline_proposal.md`. New numbers continue from Q289._
+# Questions for the planning session, round 5
+_Updated 2026-10-22 after the fourth round of answers. Only open questions are listed; answered
+ones are recorded in `docs/decisions.md` (D-082–D-122) and the owner docs. Each question carries
+Claude's proposed default, so "default" is enough as an answer, and every decision it cites is
+summarised in brackets (D-122). Findings behind the questions: `holistic_review.md`. Dates:
+`timeline_proposal.md`. New numbers continue from Q301; Q297–Q299 belong to `pickle_summary.md`._
 
 **Who:** SDS, LDS, or both.
 
@@ -10,320 +11,226 @@ questions: `holistic_review.md`. Dates: `timeline_proposal.md`. New numbers cont
 
 | # | Question | Default | Who |
 |---|---|---|---|
-| Q217 | Which December do we mean: an internal pre-release of the walking skeleton plus one deepening round (scenario A), or release 1.0 with both integrations (scenario B)? D-097 already puts the definition of done at release 1.0, which implies A | A; release 1.0 around mid-February 2027 | both |
-| Q218 | OD-01: accept the depth-per-component draft in `timeline_proposal.md` (three columns: M2, December pre-release, release 1.0), with edits? | Yes | both |
-| Q223 | M3 priorities (2.5 weeks, Nov 25 – Dec 11): which candidates make the cut? | Sampling comparison (OD-17), EDA deep dives, Feature Checks stability, calibration + categoricals, evaluation core views, monitoring drift | both |
-| Q260 | OD-07 / OD-08: one production version per key; append-only event records (UUID, model key, version, hashes, framework version) with derived tables; a tiny `production.json` per model key at an adapter-resolved path as the one record every pinned version reads; shadow challengers in Phase 3 | Yes | both |
-| Q262 | Monitoring in December: health and drift tables with flags (thin+), realised performance thin, impact stub; "deep" drift in M4. Categorical drift measure: PSI on level shares with `__other__` | Yes | both |
-| Q263 | Report size: self-contained HTML with plotly.js embedded (4–5 MB each, per stage, per run, per entity), or one shared JS file per report folder (smaller, no longer self-contained)? | Self-contained; revisit after the SDS's own test of plotly in the bank's JupyterLab (spike 5) | both |
-| Q291 | **Two layers for scores** (OD-18). The retail platform team's table (customer id, product, activity, score, source, refresh date; `inference.md` requirement 4) carries no traceability: no entity, model, run, scoring batch or inference month. Proposal: (1) the framework writes its own scores table, long format and fully traceable (unit id, entity, domain, use case, product, activity, task, score, inference month, scoring batch id, run id, model hash, framework and schema version), shared across versions under D-089; (2) each consumer's table is written from it through a column mapping in the use case's config (rename columns, add constants such as Source from `conf/local/`, pick the date). The retail platform's format is the first mapping and the default for retail propensity use cases; a regression use case, whose score isn't 0–1, maps to its own consumer | Yes | both |
-| Q293 | **One shared consumer table.** Every retail propensity use case writes into the same table. Each write must replace only its own slice, never another use case's rows: the crunch lost scores exactly this way (T6, T7). Partition by refresh date, product and activity, and overwrite only the partitions the batch owns? | Yes | both |
-| Q295 | **Comparable across products?** One table holding every product's scores invites comparing them per customer (e.g. picking the next best offer). That only works if every score is a calibrated probability on the true scale: the prior shift applied, and the use case's decision set to `probability`, so the calibration step is on (D-049, D-094). Is the table used that way downstream? | Assume yes: retail propensity use cases writing to this table default to `probability` | both |
+| Q218 | Accept the reshaped plan in `timeline_proposal.md`? Round 1 to 12-08 (stages of 4–6 days; the week of 11-30 counted as lost); run-through 1 and the pre-release by 12-18 (code into the internal repo, not production); a slowdown to 01-01; round 2 to 02-05; release 1.0 by 02-19, submitted as the first change request (D-115: the year-end freeze makes the first change request release 1.0, framework only). Also the depth per component with nice to haves (OD-01: depth per component per phase). It moves categoricals, refit and the deep EDA, Feature Checks and Evaluation to round 2, makes the window ablation a nice to have, and keeps monitoring's content light (D-112: monitoring's frame built properly, its content light) | Yes | both |
+| Q223 | Round 1b (11-23 – 12-08, about 8 working days): exit-point shapes close to final, calibration right (D-104: scores are compared across products, so calibration is a release requirement), a presentable EDA + Feature Checks report. Must anything else be in the pre-release, e.g. for the year-end showcase? | These three; the report is the first to move to round 2 if time runs short | both |
 
-### Q241. The config and the audit log (OD-10)
-**Your framing:** the config is set once Target Factory has run; every later decision is logged in
-an audit trail; loading the config plus the log always gives one obvious final input for the
-modelling step, from which the other artifacts follow.
+### Q241. The config and the audit log
+_OD-10: how the config can stay unchanged while every downstream decision, by a rule or a person,
+is recorded._
 
-**Claude's view: it aligns.** The proposal below follows it, with two clarifications built in: the
-data definition can't change through the log (point 4), and the run's identity moves to the
-replayed input (point 7).
+**The proposal in five points:**
+- **The config is the intent, frozen once Target Factory has built the target.** Nobody edits it
+  afterwards.
+- **Every later decision is an entry in an append-only log:** who (a person or a rule), what, why
+  and the evidence. Entries are never edited; a reversal is a new entry. Decisions inside a
+  training run (selection drops, the winning family) are logged as run outputs, not inputs.
+- **Replay gives a run's one input:** the config plus entries 1 to n, applied in order and
+  validated by the schema, is the resolved config a run trains on. Each run records the entry it
+  replayed up to.
+- **The log can't change the data definition** (entity, sources, eligibility, target, window,
+  candidates). Changing those means a new config, with fresh EDA and Feature Checks.
+- **What it replaces:** human keep / exclude lists move from the config to the log (amends D-043:
+  human feature decisions live in the config as keep / exclude lists with one reason per group).
 
-1. **The config is the intent, fixed after Target Factory.** It holds the data definition (entity,
-   sources, eligibility, target spec, observation window, candidates), the stage rules and
-   settings, and the business decision. It can be edited freely until Target Factory has built the
-   target (or the upstream target column is named); from then on nobody edits it.
-2. **The audit log holds every later decision, in order.** It is append-only, one entry per
-   decision:
-   - a sequence number and the time;
-   - who decided: a person (role or user id), or a rule (its step name);
-   - the stage and decision point (the inventory in `config.md`);
-   - the operation: exclude features, keep features despite a flag, change a setting, sign off
-     the feature list, choose a variant, register, promote;
-   - the reason (one note per group) and a link to the evidence (report, ledger rows).
+**The verbose table.** Card acquisition within 3 months on the synthetic mart, entity A.
+`show_decisions(config, entity)` prints it in a notebook; each report's choices block shows the
+entries up to its run, and the model card the slice up to the registered run.
 
-   Entries are never edited; a reversal is a new entry.
-3. **Replay gives the final input.** Loading means the config plus the log's entries applied in
-   order up to a chosen point, validated by the same schema. The result is the resolved config,
-   saved as the frozen config with every artifact. "The final input for the modelling step" is the
-   replay up to the start of training. A training run records the entry it replayed up to, so its
-   input is exactly "config c1 + entries 1–17".
-4. **The data definition can't change through the log.** Changing the entity, sources,
-   eligibility, target, window or candidates changes the population or the target, so it means a
-   new config: a new data-definition hash and fresh EDA and Feature Checks. The log can never
-   quietly change what EDA looked at.
-5. **Rule decisions are logged too.** Rule outcomes before training (lineage exclusions, check
-   flags) are entries made by a rule, so the final input can be read without rerunning anything,
-   and a rerun on restated data shows up as a difference against the log. Decisions inside
-   training (automated selection drops, the winning family) are outputs of the run: logged for the
-   pathway and recorded in the ledger, but not part of the input.
-6. **After training, the same trail continues.** The feature sign-off, register and promote are
-   entries. A sign-off that rejects a feature appends an exclude, and the retrain replays up to
-   that new entry.
-7. **Identities.** The config hash and the data-definition hash never change after Target
-   Factory. The run's identity uses the hash of the replayed input: `run_id` = replayed-input hash
-   + entity + timestamp (amends D-088). In the worked example in `config.md`, step 3 changes: a
-   human exclude is an entry, both config hashes stay, and the replayed-input hash changes.
-8. **Storage.** One append-only file per instance (JSON lines) next to its artifacts, keyed by the
-   data-definition hash. Registering copies the run's slice of the log into the registered bundle,
-   where it is immutable. Local logs go with local runs, as today.
-9. **Entry points.** One public function records a person's decision from a notebook, and one CLI
-   command does the same; stages append rule entries themselves.
-10. **What it replaces.** Human keep / exclude lists move from the config to the log (amends
-    D-043). Automated filters stay rules in the config (D-058), with their outcomes logged.
+| # | Date | By | Stage | Decision | What | Reason | Evidence |
+|---|---|---|---|---|---|---|---|
+| 1 | 10-27 | rule `target_lineage` | Target Factory | exclude | `cc_flag` | Builds the target | lineage file |
+| 2 | 10-27 | rule `quality.all_null` | Feature Checks | exclude | 1 feature | No values in the window | checks log, step 1 |
+| 3 | 10-27 | rule `quality.near_constant` | Feature Checks | exclude | 1 feature | 99.9% one value | checks log, step 2 |
+| 4 | 10-27 | rule `leakage.too_strong` | Feature Checks | flag | 2 features | Univariate AUC 0.97 and 0.88 | report → Leakage |
+| 5 | 10-27 | rule `stability.psi` | Feature Checks | flag | 5 features | PSI above 0.25 across the window | report → Stability |
+| 6 | 10-27 | person (DS) | Feature Checks | exclude | the 2 flagged in #4 | Set after the offer, so not known at scoring time | #4; report → Leakage |
+| 7 | 10-27 | person (DS) | Feature Checks | keep despite flag | the 5 flagged in #5 | Digital adoption trend; monitoring watches it | #5; report → Stability |
+| 8 | 10-28 | stage | Training | run `r1` | input = config + #1–7 | — | training report |
+| 9 | 10-28 | rule `selection.importance` | Training | dropped (run output) | 71 features | Below the importance floor | ledger, run `r1` |
+| 10 | 10-28 | person (DS) | Settings | change | `training.max_iter` 100 → 300 | AUC still rising at the last trials | training report, `r1` |
+| 11 | 10-29 | stage | Training | run `r2` | input = config + #1–10 | — | training report |
+| 12 | 10-29 | person (DS) | Sign-off | exclude | `nationality` | Not used for product targeting | sign-off view, `r2` |
+| 13 | 10-29 | stage | Training | run `r3` | input = config + #1–12 | — | training report |
+| 14 | 10-30 | person (DS) | Sign-off | approve | the 61 features of `r3` | Each defensible; flags reviewed | sign-off view, `r3` |
+| 15 | 10-30 | person (DS) | register | register | `r3` as version 1 | Candidate for production | model card |
+| 16 | 11-02 | person (reviewer) | promote | promote | version 1 | Approved pull request | registry record |
 
-**Questions:**
-- (a) Adopt this? **Default:** yes; D-043 and D-088 amended, `config.md` and `feature_ledger.md`
-  updated. **Who:** both.
-- (b) May settings (budgets, thresholds, sampling) also change through the log after Target
-  Factory, with a reason, or only feature decisions and sign-offs, so that any settings change is a
-  new config? **Default:** settings may change through the log, so the config truly never
-  changes. **Who:** LDS.
-- (c) Who may write a person's entry: any DS on the use case, or only its owner? **Default:** any
-  DS; the sign-off names the person. **Who:** LDS.
-- (d) Is a file per instance enough for oversight, or should registered slices also land in a
-  queryable table? **Default:** a file now; a table with the registry tables in M4. **Who:** LDS.
+**Replay: how the table rebuilds the state.** Entries apply in order. Each row below is the state
+after that entry, which is exactly what a run started at that point would train on.
 
-### Q254. Client-grouped validation inside training
-**The problem.** Training has one row per client per month over the observation window, so with a
-6-month window each client appears up to six times. A client's rows are near-copies: holdings and
-balances are sticky, and one conversion makes up to `w` consecutive rows positive. FLAML picks
-among its trials (model family, hyperparameters) with an internal validation that by default
-splits by **rows**. A client's March row then sits in the fit fold and its April row in the scoring
-fold. A model that memorises clients (deep trees, many leaves, small leaves) recognises them in the
-scoring fold, scores well, and wins.
+| After | Excluded | Kept despite a flag | Open flags | `max_iter` | Input hash |
+|---|---|---|---|---|---|
+| config only | — | — | — | 100 | `h0` |
+| #3 | 3 (#1 lineage, #2–3 quality) | — | — | 100 | `h3` |
+| #5 | 3 | — | 7 (#4 leakage 2, #5 stability 5) | 100 | `h5` |
+| #6 | 5 (+2 leaks) | — | 5 | 100 | `h6` |
+| #7 → run `r1` | 5 | 5 | 0 | 100 | `h7` |
+| #9 | unchanged: a run output, not an input | | | | `h7` |
+| #10 → run `r2` | 5 | 5 | 0 | 300 | `h10` |
+| #12 → run `r3` | 6 (+`nationality`) | 5 | 0 | 300 | `h12` |
+| #14–16 | unchanged: the sign-off, register and promote are the trail | | | | `h12` |
 
-The test split (unseen clients) and the validation month stay honest, so no reported number is
-wrong. The damage is that the wrong model is picked, and its overfitting only shows afterwards as
-a large train–test gap.
+`resolve_config(config, entity, upto=12)` returns the state run `r3` trained on, each value
+pointing at the entry that set it:
 
-**Why it is new.** The crunch trained on a single month, so every client appeared once and a row
-split was a client split. The multi-month window (D-030) creates the problem.
+```yaml
+# resolved: cc_acquisition.yml + entries 1–12 (input hash h12)
+features:
+  exclude:
+    - cc_flag                                  # 1, rule target_lineage
+    - legacy_risk_grade_trap_all_null          # 2, rule quality.all_null
+    - paper_statement_flag_trap_near_constant  # 3, rule quality.near_constant
+    - cc_preapproval_score_trap_leak           # 6, person: set after the offer
+    - cc_campaign_response_score_trap_leak     # 6
+    - nationality                              # 12, person: not used for targeting
+  keep_despite_flags:
+    - login_digital_mobile_cnt                 # 7, person: digital adoption trend
+    - login_digital_mobile_cnt_0_2_months_avg  # 7 (and three more rollups)
+training:
+  max_iter: 300                                # 10, person: AUC still rising
+```
 
-**What the answer decides, beyond a fallback:**
-1. How FLAML picks trials: client-grouped CV, one client-grouped holdout, or row CV.
-2. Whether the in-train metric that picks trials resembles the test metric. D-083 lets choices
-   weigh train and test metrics, which only makes sense if the in-train choice was itself made on
-   unseen clients.
-3. Cost: K-fold grouped CV costs K fits per trial; one holdout costs one, so more trials fit the
-   same budget.
-4. The calibration step's out-of-fold predictions (D-094) and automated selection's importance
-   pruning need client-grouped folds too; one fold assignment can serve all three.
-5. The same rule carries into the Phase 3 Optuna path.
-6. FLAML's `sample=True` (early trials on subsamples) may subsample rows rather than clients:
-   unverified, part of spike 1.
+What makes the rebuilt state trustworthy:
+1. **Order decides.** A later entry on the same feature or setting wins: an "include back" after
+   an "exclude" restores the feature.
+2. **Replaying to any point reproduces any run.** `upto=7` gives `r1`'s input, so an old run can be
+   rerun or compared without guessing what was decided at the time.
+3. **Rule entries can be checked.** Rerunning Feature Checks on unchanged data reproduces #1–5. If
+   the data was restated and a rule now decides differently, replay shows the difference, and the
+   person entries that cited the old rule entry (#6 cites #4) are flagged for a look rather than
+   applied silently.
+4. **Stale entries fail loud.** An entry naming a feature that is no longer a candidate stops the
+   replay with the entry number.
+5. **The trail never changes the input.** Run outputs (#9) and the sign-off, register and promote
+   entries (#14–16) are recorded but leave the resolved config alone.
 
-**Options:**
-- **A. One client-grouped holdout we build**, passed to FLAML as `X_val`, `y_val` (its `fit`
-  accepts them). Simple and fast; noisier when the holdout has few positive events.
-- **B. FLAML's grouped CV** (`split_type="group"`, `groups=client_id`), if spike 1 shows it works
-  with sample weights. Less noisy; K times the cost per trial.
-- **C. Row CV, relying on regularisation.** No extra code, but it picks overfit models. Not
-  recommended.
-- **D. Our own CV loop around FLAML's tuner.** Most control, most code.
+**Writing an entry** is one call in a notebook, or the same through the CLI (`python -m
+core_modelling decide`):
 
-**Proposal.** One client-grouped fold assignment (a seeded hash of the client id, like the
-train/test split) is the single source of every split inside train: FLAML's trial selection, the
-calibration step's out-of-fold predictions, and automated selection. FLAML receives it through B
-if spike 1 passes, otherwise through A built from the same assignment; never row-level. Measure the
-size of the effect once on the synthetic data (row-CV AUC vs grouped-CV AUC vs test AUC) and keep
-the numbers in `training.md`.
+```python
+record_decision(
+    "conf/base/cc_acquisition.yml", entity="entity_a",
+    exclude=["cc_preapproval_score_trap_leak", "cc_campaign_response_score_trap_leak"],
+    reason="Set after the offer, so not known at scoring time",
+    evidence="feature_checks#leakage",
+)
+```
 
-**Questions:**
-- (a) Adopt this? **Default:** yes. **Who:** both.
-- (b) Did any of the unit's existing multi-month models handle this, and how? **Default:** none
-  known; noted as a lesson either way. **Who:** LDS.
+It is refused at once when a feature isn't a candidate, the reason is missing, the change touches
+the data definition, or a setting fails the schema.
 
-### Q286. How long old framework versions must keep working
-**Background.** Each use case pins the framework version it runs with (D-047), and the base image
-it starts on lives a year (D-074). A year-old version can therefore run beside new ones, all
-reading and writing the same shared tables (registry, scores, monitoring, model cards) and loading
-the same kind of model bundles. `CLAUDE.md` §2 says a deprecated path is kept "at least one minor
-version". That rule fits some changes and not others:
-- **Code changes** (a renamed public function or config field): a use case meets them only when it
-  raises its pin, and the migration plus the deprecation warning handle them at that moment. One
-  minor version is enough.
-- **Shared formats** (rows several versions write and read at the same time, and bundles a newer
-  version must load): an old version keeps running for up to a year, so these need a longer
-  promise. D-089 already says columns are only added within a major version.
-- **Version numbers:** the package is 0.1.0. Under semantic versioning 0.x promises nothing, so the
-  promises only start at 1.0.0.
+**The cost.** The current state can't be read from the config file alone: a person needs
+`show_decisions` or `resolve_config`. The framework gains three public functions (record, show,
+resolve) and one CLI command.
 
-**Proposal:**
-1. Code deprecations: one minor version, as today.
-2. Config and artifact migrations are cumulative within a major version: any 1.x version loads any
-   1.x config or bundle.
-3. Shared formats change only additively within a major version (D-089).
-4. A major version bump keeps readers for the previous major's formats for at least one image
-   lifetime (12 months).
-5. 1.0.0 is release 1.0 (D-097). The December pre-release (0.x) writes only to sandpit and local
-   paths, never to shared production tables, so its rows can be thrown away; shared formats freeze
-   from the first row 1.0.0 writes inside the bank.
-6. `CLAUDE.md` §2 is reworded to say this.
+**Questions** (each with options; the recommendation first):
+- (a) **Where do people's feature decisions live?** **Who:** both.
+  - A. In the log, as above: the full trail (who, when, why, in what order); the config file never
+    changes. Recommended.
+  - B. In the config, as keep / exclude lists (today's D-043: human decisions as lists in the
+    config, one reason per group): the current state readable in one file; the trail only in git
+    history; every edit changes the config hash.
+  - C. Both: lists in the config, with a log entry written automatically from each change: a
+    readable file and a trail, but two sources of truth that can disagree.
+- (b) **What may the log change after Target Factory?** **Who:** both.
+  - A. Feature decisions, settings (budgets, thresholds, sampling) and sign-offs, each with a
+    reason; only the data definition needs a new config. Recommended: the config file truly never
+    changes.
+  - B. Feature decisions and sign-offs only; a settings change is a new config version.
+  - C. Everything, including the data definition, with EDA and Feature Checks rerun automatically.
+    Not recommended: EDA's findings would no longer describe the data being modelled.
+- (c) **Are rule outcomes entries in the log?** **Who:** LDS.
+  - A. Yes, as #1–5 above: one table holds the whole trail, and a rerun on restated data shows up
+    as a difference. Recommended.
+  - B. No: the log holds people's decisions only; rule outcomes stay in the Feature Checks log and
+    the feature ledger. A shorter table, but the trail is split across places.
+- (d) **What identifies a run?** **Who:** SDS.
+  - A. The hash of the resolved input: two runs on the same state share it, however that state was
+    reached (amends D-088: `run_id` = config hash + entity + timestamp). Recommended.
+  - B. The config hash plus the last entry number replayed: readable, but the same state reached
+    by different entries gets different identities.
+- (e) **Where are entries stored?** **Who:** SDS.
+  - A. One small file per entry (`decisions/0006.json`): no appending, which may be switched off on
+    the bank's HDFS (unverified); two people writing at once can't interleave. Recommended for now.
+  - B. One appended file per instance: one file to copy, but needs append on HDFS.
+  - C. A shared table: queryable across use cases, but every pinned version must write the same
+    schema (D-089: shared tables only grow within a major version). Recommended later, for
+    registered slices, with the registry tables in round 2.
+- (f) **Who may write a person's entry?** **Who:** LDS.
+  - A. Any DS on the use case; the entry names the person. Recommended.
+  - B. Only the use case's owner.
+  - C. Any DS, but the sign-off (D-076: a person signs off every feature before register) only by
+    the owner.
+- (g) **Usability:** is the verbose table what you'd want to read, and the replay view enough to
+  see what a run used? **Default:** yes. **Who:** both.
 
-**Questions:**
-- (a) Adopt this? **Default:** yes. **Who:** both.
-- (b) Can a use case take a newer framework version within its image's year (a newer package in
-  the same image), or only by moving to a newer image (OD-04)? **Default:** unknown; ask the
-  platform team in the Q232 session. **Who:** LDS.
+### Q276. Refit: what we refit on, and which checks stay possible
+**What a refit is.** After a model is evaluated and accepted, it can be retrained with the same
+features and hyperparameters on more data (D-052: an optional refit on more data after
+evaluation). The result is one more fit of the same recipe (D-096: a fitted model is one fit of a
+recipe, and production retraining is such a refit, checked against its parent).
 
-## B. Facts from outside the code
+**(a) What do we refit on?** **Who:** both.
+- A. **No refit:** the evaluated model is registered as is. Every metric belongs to the model that
+  scores; the test clients' rows are never trained on.
+- B. **All clients, same window:** train and test clients over the observation window. The
+  validation month is still later and unseen, so the refit gets its own honest number.
+- C. **Extended window ("all data"):** the window moves forward to the latest months whose labels
+  have matured, usually including the validation month. The most recent data, but no month is
+  left to validate on.
 
-| # | Question | Default | Who |
+**Recommendation:** A by default (the refit stays optional); B when a refit is wanted in the
+sandpit; C only as retraining in production (OD-27: whether production has the data and compute
+to retrain), with the checks in (b).
+
+**(b) Which checks stay possible?** **Who:** both.
+
+| Check | A. No refit | B. All clients | C. Extended window |
 |---|---|---|---|
-| Q232 | Who are the contacts, and can three 30-minute sessions be booked by Nov 6: platform / MLOps (change-request steps, registry owner OD-23, permissions OD-06, Sonar quality gate, scheduling); the feature store team (OD-26); the data observability team (OD-13)? | The LDS books them; the SDS leads them with a one-page question list each | LDS |
-| Q235 | Sonar and CI: what are the quality gates (coverage threshold, duplication, complexity, security rules)? They size M4's test work | Ask the platform team; assume 80% coverage until answered | LDS |
-| Q237 | Real-data facts still open: are source months ever restated after loading (the `CLAUDE.md` §4.10 assumption); when does the monthly mart land; do storage permissions differ per entity (OD-06)? | The LDS answers from experience; verified inside the bank at M5-lite | LDS |
-| Q238 | Change requests: how long from "promote" to a deployed model in practice (days? weeks?), and can a first `deploy` inside the bank realistically run in January? | The LDS estimates; D-055's inside step goes to M4 | LDS |
-| Q294 | **Column meanings in the retail platform's table:** (a) `Date_Refreshed`: the date the scoring ran, or the month the features are as of (our inference month)? (b) `Activity`: what does "Build" mean (acquisition, balance build-up, cross-sell?), and which kinds of target map to Retention, Activation and Build? (c) `Score`: what decimal precision? (d) `CustomerID`: is it the same pseudonymised id the feature marts carry, or is a mapping needed? (e) `Source`: one fixed value per producing team? | (a) the run date, with the inference month kept in the framework's own table; (b) to be answered; (c) decimal(10,8); (d) the same id; (e) a constant from `conf/local/` | SDS |
+| Metrics on the card | the model's own | the parent's, plus the refit's own validation score | the parent's only, labelled "not this model" |
+| Validation month | scored | scored | none left |
+| Agreement with the parent on the latest month (rank correlation, top-N overlap, score PSI) | not needed | useful | the only check; a large difference stops it until a person looks |
+| Encoder levels | its own | inherited; new levels go to `__other__` and are counted | inherited, as in B |
+| Calibration | checked on validation | refitted, checked on validation | refitted; checked only once labels arrive (monitoring) |
 
-## C. For the SDS
+**Question:** adopt the recommendation in (a) and the checks per column in (b)? **Default:** yes.
 
-| # | Question | Default | Who |
-|---|---|---|---|
-| Q267 | Shapes for later tasks (D-081): reserve nullable `task` and `score_component` columns, and store metrics as long rows keyed by metric name in the registry, the card and monitoring. With the consumer format now known (Q291), these columns belong in the framework's own scores table, not in the consumer's | Yes, in the framework's own table only | SDS |
-| Q290 | "PSB": the synthetic spec groups Affluent and Mass as "PSB" (D-056, `test_harness.md`). If "PSB" is the bank's own segment name, it breaks the no-identifiers rule. Rename it in the spec and docs to a neutral label (e.g. "mass market")? | Rename, if it is the bank's term | SDS |
-| Q292 | **Product and activity as explicit fields** in the use-case config (e.g. `product: Credit Cards`, `activity: Activation`), never parsed from the use case's name; the values a consumer accepts are listed in `conf/local/` and validated at load | Yes | SDS |
-
-### Q268. One keep fraction across months (and what "offset" means)
-**The offset.** When negatives are downsampled, the model trains on a much higher positive rate
-than the real one, so its scores come out too high by a known factor. The prior-shift offset is one
-number subtracted from every score's log-odds to undo that factor. Example: at a true rate of 0.2%,
-keeping every positive and 5% of negatives trains on about 4% positives, so scores are about 20
-times too high; subtracting `log(20) ≈ 3.0` from each score's log-odds puts them back on the true
-scale. The ranking doesn't change, only the level (`glossary.md` → Calibration). Every "offset" in
-these questions means this number.
-
-**The question.** "Row-level negative sampling, stratified by month" can be set up two ways:
-- **One keep fraction for every month** (e.g. keep 5% of each month's negatives). Months with more
-  conversions keep their higher rate in the sample, so the model still sees the seasonal
-  differences, and one offset (`log(1/0.05)`) undoes the sampling exactly for any month, including
-  the inference month.
-- **A fixed ratio per month** (e.g. 20 negatives per positive in each month). Every month then has
-  the same sampled rate (about 5%), so the model can't see that some months convert more, and the
-  true offset differs per month. At inference there is no month-specific offset to apply, so the
-  level is off by however much the inference month differs from the average.
-
-**Default:** one keep fraction across months, chosen from the row budget.
-
-### Q269. Recency weighting in Phase 2?
-**Your question:** is it actually important in this phase? **Claude's answer: no.**
-- It is already off by default.
-- The window is short (6 months by default, D-091), so the oldest rows are half a year old.
-- Drift is handled by retraining and monitoring.
-- It interacts with the offset: recency weights change the effective training rate, so the offset
-  would partly undo them.
-- The window ablation answers the underlying question ("do older months hurt?") without it.
-
-**Question:** drop recency weighting from Phase 2 (remove `dataset.md` requirement 7) and revisit
-only if the window ablation shows that older months hurt? **Default:** yes.
-
-### Q272. Upstream targets: does Feature Checks cover it?
-**Your question:** if Feature Checks is designed properly, this shouldn't be a requirement, should
-it? **Half right**, because the question had two parts:
-- **The time-alignment check is part of designing Feature Checks properly.** It belongs in the step
-  catalogue, not in a separate requirement. It compares each feature's power to predict the target
-  forward with its power to "predict" the same event backward, in the months before the
-  observation month. A legitimate feature does both about equally; a column shifted forward or
-  built from the future does only the forward one. It is called out because the step list as
-  written (near-perfect separators, dominance, missingness) would miss the traps that look strong
-  but not perfect: the moderate leak (AUC 0.877 against the oracle's 0.842) and the column shifted
-  a month ahead.
-- **The lineage list can't come from Feature Checks.** Only the DS knows which upstream columns an
-  upstream team used to build a target. Without that list, a leaking column is caught only if the
-  screen happens to flag it.
-
-**Question:** add the time-alignment check to Feature Checks' step catalogue, and for upstream
-targets keep the lineage list optional but warn in the report's choices block when it is empty?
-**Default:** yes.
-
-### Q275. Weight-aware statistics for sampling option 3
-**The three sampling options** (`dataset.md` requirement 6), all train-only and after the client
-split:
-1. **Row-level negative sampling, stratified by month:** keep every positive row and a fraction of
-   the negative rows in each month. For rare binary targets; M2's default.
-2. **Client-level random sampling:** keep all rows of a random sample of clients. For common
-   targets and regression.
-3. **Outcome-stratified client sampling with weights:** keep every client who converts at least
-   once in the window, with all their months, plus a random sample of the other clients. Each
-   sampled non-converter gets a weight of 1 / (its sampling fraction), so the weighted sample
-   matches the population.
-
-**The question.** Option 3 over-represents converters' months, including their quiet months before
-converting. Every statistic computed on the sample that selects or fits something must use the
-weights, or it sees a distorted population: the univariate AUC floor, importance pruning, the
-calibration step, and FLAML's internal metric. Mark in the per-task spec which statistics take the
-weights, before option 3 is offered? **Default:** yes, as part of the sampling research (the
-literature round after M2.1, then M3).
-
-### Q276. Refit checks
-**What a refit is** (D-052): after a model is evaluated and accepted, it is retrained with the same
-features and hyperparameters on more data. There are two kinds:
-- **All clients:** the same observation window, with train and test clients together. The
-  validation month is still later and unseen, so this refit *can* be scored on it.
-- **Extended window ("all data"):** the window moves forward to the latest months whose labels have
-  matured, usually including the validation month. You're right: then no month is left to
-  validate on, in the sandpit or in production.
-
-**Why it needs checks.** With the extended window, the model that gets registered, or that scores
-in production, is one no metric ever touched; its card can only show the parent's evaluation. The
-checks are what remains possible without labels:
-1. the card labels every metric as "the parent's evaluation, not this model";
-2. before registering or scoring, the parent and the refit both score the latest month, and their
-   scores are compared: rank correlation, overlap of the top-N lists, and the shift of the score
-   distribution (PSI). Close agreement means the parent's evaluation carries over; a large
-   difference stops the refit until a person has looked;
-3. the refit inherits the parent's encoder levels (new levels go to `__other__` and are counted),
-   so it sees the data the same way.
-
-**Question:** adopt these three for every refit, and also score the all-clients kind on the
-validation month? **Default:** yes.
+## B. For the SDS
 
 ### Q281. Which functions are "public"?
-**Your question:** do we need to talk about APIs when it's shipped as a package? **Yes, in a narrow
-sense only.** A package's API is simply the functions people import. Because use cases pin
-versions and upgrade at their own pace (D-047), `CLAUDE.md` §2 promises not to break public
-functions between versions; everything else may change freely. The Public API table in
-`architecture.md` is where that promise is written down. Without a rule, every function a guided
-notebook calls becomes public in practice, since users copy the notebooks, and renaming it later
-breaks their copies. No service API is involved.
+**Your question:** with several active versions, each tied to its base image, why is this a
+problem? **It isn't, while a use case stays on its version.** It matters when a use case moves up.
+Its own code calls framework functions by name: the copied notebooks, the extension functions in
+its repo (D-090: custom builders live in the use case's repo, never in the framework) and the CLI
+calls in its schedule. If the newer version renamed or removed one of them, the move breaks right
+there. A "public API" is just the list of functions we promise to keep working across versions, so
+moving up stays painless; everything else may change freely. D-107 (compatibility is about
+outputs; wrappers for renamed functions matter little) already lowers the stakes, so the list can
+be short.
 
-**Question:** public = the stage functions, `run`, the CLI commands, the config schema, and any
-function the shipped notebooks call; everything else gets a leading underscore; a small test
-checks the notebooks' calls against the table? **Default:** yes.
+**Options:**
+- A. **A short public list:** the stage functions, `run`, the CLI commands and the config schema.
+  The shipped notebooks call only those, which a small test checks. Recommended.
+- B. **No list:** every function may change; a use case re-tests its notebooks and extension code
+  whenever it moves up. Least work for us, most for each use case.
+- C. **Everything public:** nothing is renamed without a deprecation. Safe, but it freezes the code.
 
-### Q284. An inventory of versioned artifacts
-**The problem.** The framework will write about fifteen kinds of files and tables: the frozen
-config, the decision audit log, EDA artifacts, the Feature Checks log, the feature ledger, target
-lineage, the model bundle, training metadata, evaluation results, the model card, the drift
-reference, registry records, scores, manifests, monitoring tables and labels for scored months.
-Several are read later by a *different* framework version:
-- EDA artifacts written under 0.3 are read by training under 0.4 (the due-diligence gate, D-031);
-- a bundle registered under 1.0 is loaded by inference under 1.2;
-- scores written by many versions are read by monitoring.
+**Default:** A.
 
-Each such artifact needs two things: a version field saying which format it is in, and a rule for
-what a newer reader does with an older file (migrate it on read; read it as is, because the format
-only grows; or refuse it). Today 3 of the ~15 have a named version field (config, bundle, ledger).
+### Q292. Where a score's product and activity come from
+**What it's about.** Each row of the master layer (D-103: the framework's own traceable scores
+table; consumable tables are built outside it) has to say which product (e.g. Credit Cards) and
+which activity (e.g. Activation) the score is for. Consumers select scores by these two, and the
+retail platform's table has both as columns. The question is where the framework gets the two
+values.
 
-**Question:** at M2.1, add one table to `architecture.md` (artifact → owner doc → version field
-name → the stage that writes it → the stages that read it, possibly under another version → the
-compatibility rule), and give every artifact its version field from its first version?
-**Default:** yes.
+**Options:**
+- A. **Two fields in the use case's config** (`product: Credit Cards`, `activity: Activation`),
+  checked at load against a list of allowed values in `conf/local/`, so "Credit Card" and "Credit
+  Cards" can't become two products. Recommended.
+- B. **Parsed from the use case's name** (`cc_acquisition` → Credit Cards, Activation): no new
+  fields, but a naming convention becomes data, and renaming a use case changes its product.
+- C. **Left out:** consumers map use cases to products themselves. Least for us; every consumer
+  keeps its own mapping.
 
-### Q285. Detecting a model that scores differently after an upgrade
-**The problem.** A production model trained under framework 1.0 with lightgbm 4.6 is still scoring
-a year later. The use case raises its pin, and the new base image has a newer lightgbm. The saved
-model file loads without error, but a changed default (e.g. in how missing values are routed)
-makes it predict slightly differently. Nothing today notices: scores shift silently, and
-monitoring would read it as drift.
-
-**Proposal.** When a bundle is saved, build a small fixed "probe" table (about 200 synthetic rows,
-built deterministically from the model's own encoder levels and the numeric ranges in its drift
-reference, so no client data), score it, and store those predictions in the bundle. Every load
-scores the probe again and compares; any difference fails loud with "this model predicts
-differently in this environment: retrain it or keep the old version". Add one test that loads a
-bundle written by the previous framework version. Cost: about 50 lines, and milliseconds per load.
-
-**Question:** build the probe with the bundle (M2.3), and the cross-version test once a previous
-version exists to test against (M4)? **Default:** yes.
+**Default:** A.

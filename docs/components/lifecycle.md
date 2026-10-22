@@ -1,7 +1,7 @@
 # Lifecycle: register, promote, deploy
 **Status:** designing · **Legacy:** `src/inference.py` (`promote_model`, `verify_model`, manifests) — promotion was coupled to inference in the crunch
 **Related:** [inference](inference.md) · [monitoring](monitoring.md) · [reporting](reporting.md) (model card) ·
-[environment](environment.md) · D-033, D-034, D-047, D-051, D-052, D-073, D-076, D-078, D-079, D-095, D-096 · OD-06, OD-07, OD-08, OD-14,
+[environment](environment.md) · D-033, D-034, D-047, D-051, D-052, D-073, D-076, D-078, D-079, D-095, D-096, D-111, D-115, D-116 · OD-06, OD-08, OD-14,
 OD-23, OD-27
 
 ## Purpose
@@ -22,15 +22,18 @@ Three tiers in order, each with the step(s) that move a model on to the next:
      retraining in production (OD-27) production runs the refit from it instead of copying the
      fitted model.
    - `deploy`: the change-request process copies the bundle to production paths and records it.
-3. **PRODUCTION**: one version per model key in Phase 2 (OD-07).
+3. **PRODUCTION**: one version per model key in Phase 2 (D-111); shadow challengers are on the
+   Phase 3 wishlist.
 
 - **A DS session never writes to production.** Production changes go through change requests (CR),
-  which need pre-agreed windows and platform and security approval. `deploy` is the framework command
-  the CR process runs; it verifies checksums before copying.
+  which need pre-agreed windows and platform and security approval (how long they take: see
+  [environment](../context/environment.md) → Change requests). `deploy` is the framework command
+  the CR process runs; it verifies checksums before copying. The first CR (release 1.0) carries
+  only the framework; a model's first deploy inside the bank is a later, quicker CR (D-115).
 - **Production paths, not sandpit paths.** The way currently proposed inside the bank points
   production at the registered (sandpit) paths. The Lead DS's view is that the model should be moved
   to production paths, so deployment may simply be a job that copies the selected model there. To be
-  confirmed with the platform / MLOps team (OD-06, OD-08).
+  confirmed with the platform / MLOps team (OD-06).
 - **Sign-offs, kept apart:** the **feature sign-off** (D-076, D-092) gates `register` and is
   recorded with the run; the **promotion sign-off** is the approved PR (code review by the project
   owner/lead) behind `promote`; the CR process approves and runs `deploy`. The PR and CR approvals
@@ -42,14 +45,18 @@ Three tiers in order, each with the step(s) that move a model on to the next:
 1. register, promote and deploy are separate commands with recorded outcomes. None of them happens as
    a side effect of inference.
 2. Registered models are immutable. A retrain is a new version of the same model key, linked to the
-   previous one (OD-07). A refit carries a link to its evaluated parent run (D-052).
+   previous one (D-111). A refit carries a link to its evaluated parent run (D-052).
 3. **Integrity:** every load verifies the content hash.
 4. **Visibility: two tables people can query.**
    - Registered models: run id, model key, version, code version (framework version + use-case repo
      commit), status, path, dates, headline metrics.
    - Production models: the same, for deployed versions only.
 
-   Storage design: OD-08. MLflow later, if adopted (OD-13).
+   Both are derived from append-only registry events (registered, promoted, deployed, retired,
+   rolled back), each carrying a UUID, model key, version, hashes and framework version. A small
+   `production.json` per model key, at a path the adapter resolves, is the one record every
+   pinned framework version reads to find the production model (D-111). Metrics are stored as long
+   rows keyed by metric name (D-116). Whether MLflow carries the registry later: OD-08 (OD-13).
 5. **Model inventory** (an overview of every model across use cases and entities) is in scope; its
    design is open (OD-14).
 6. Retirement and rollback are recorded, not deleted.
@@ -64,7 +71,7 @@ Promote-on-inference coupling; hash verification; manifest reproduction; T2–T4
 
 ## Open questions
 - The lifecycle evolves as it is built; the CDS doesn't want a blank-slate redesign (D-073).
-  OD-06 to OD-08 are the pieces. Downstream operation questions are the platform / MLOps team's
+  OD-06 and OD-08 are the open pieces; D-111 settles the Phase 2 records. Downstream operation questions are the platform / MLOps team's
   (D-079); the SDS won't design the registry and deployment alone if they are to become the unit's
   new registry type. The proposals below are straw men. Who builds them, and when: OD-23.
 - The exact CR steps (who runs what, windows, approvals) are not known in detail yet; the current
@@ -72,13 +79,9 @@ Promote-on-inference coupling; hash verification; manifest reproduction; T2–T4
   / MLOps team.
 - OD-06: folder layout per entity × domain. Keep the current folder structure that emulates the
   permission barriers? Are storage permissions actually separate per entity?
-- OD-07: model versions per key, one production version per key, shadow challengers.
-- OD-08: registry storage. Proposal (not agreed):
-  - append-only event records (registered, promoted, deployed, retired, rolled back) on HDFS, with
-    tables on top;
-  - "current production" as a view;
-  - records shaped like MLflow's concepts (experiment, run, params, metrics, artifacts, registered
-    model, version), so a later move is a mapping, not a redesign.
+- OD-08: whether MLflow carries the registry later. Proposal (not agreed): shape the Phase 2
+  records like MLflow's concepts (experiment, run, params, metrics, artifacts, registered model,
+  version), so a later move is a mapping, not a redesign.
 - OD-14: model inventory design.
 - OD-27: retraining in production. The shape is settled (D-096): the bundle carries the recipe,
   production runs the refit (D-052) with a label-free agreement check against the parent before

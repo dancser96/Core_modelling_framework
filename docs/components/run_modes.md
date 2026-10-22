@@ -1,7 +1,7 @@
 # Run modes: CLI, Python API, guided notebooks
 **Status:** designing · **Legacy:** `run_product.py`, `notebooks/`
 **Related:** [config](config.md) · [environment](environment.md) · [dataset](dataset.md) (experiment sweeps) ·
-`notebooks/README.md` · D-024, D-039, D-047, D-074, D-083, D-090, D-097 · OD-02, OD-04
+`notebooks/README.md` · D-024, D-039, D-047, D-074, D-083, D-090, D-097, D-114 · OD-02, OD-04
 
 ## Purpose
 The same functions, used two ways: guided notebooks for manual work and learning, and a CLI / Python
@@ -42,5 +42,6 @@ so users can see and debug what happens under the hood.
   domain, with a use case branching into its own repo as it grows; not one shared repo with code
   folders.
 - The package ships in the base image through Nexus, which pins each use case's framework version
-  (D-074, D-047). Still open: the release mechanics (OD-04). Extension code lives in the use
-  case's repo, never in the framework (D-090).
+  (D-074, D-047). A use case can also take a newer framework version within its base image's
+  year, as a newer package in the same image (D-114). Still open: the release mechanics (OD-04).
+  Extension code lives in the use case's repo, never in the framework (D-090).

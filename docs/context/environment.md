@@ -86,17 +86,33 @@ multi-objective studies and pruning against 5.0 before relying on them.
   a small FLAML run that includes `xgboost` in `estimator_list` before relying on it.
 - **Unverified:** PySpark 3.4.3 `toPandas()` with pandas 2.2.3 and Arrow for all column types
   (datetime columns in particular). Test on the synthetic panel with Arrow on and off.
-- **Unverified:** FLAML 2.7 grouped CV (`split_type="group"` with `groups`), needed because train
-  rows repeat clients across months (`docs/components/dataset.md`).
-- **Assumed, unverified:** a source month never changes after it has been loaded (no late-arriving
-  rows or restatements). Reproducibility from frozen config + hashes depends on it (`CLAUDE.md`
-  §4.10); the data-definition hash describes the data, it doesn't fingerprint it.
+- **Verified in FLAML 2.7.0:** for classification, passing `groups` turns the automatic split into
+  a group split; regression also needs `split_type="group"`, or its automatic split stays by rows
+  (`decide_split_type` in `flaml/automl/task/generic_task.py`). Train rows repeat clients across
+  months, so FLAML gets the client groups (D-120). **Unverified:** the group split on our data
+  (spike 1; Phase 2 has no sample weights, D-123; fallback in `docs/components/training.md`).
+- **Assumed:** a source month never changes after it has been loaded (no late-arriving rows or
+  restatements). Reproducibility from frozen config + hashes depends on it (`CLAUDE.md` §4.10);
+  the data-definition hash describes the data, it doesn't fingerprint it. Upstream data facts are
+  the data owners' and the platform's responsibility, not the framework's (D-108): whether source
+  months are restated, when the monthly mart lands, and how storage permissions differ per
+  entity. The framework states its assumption, reads tables and paths from `conf/local/`, and
+  training's count check against the EDA artifact catches a restatement in between (D-088).
 - **Unverified:** a lossless non-pickle format per model family on the pinned versions (XGBoost
   JSON, LightGBM text, CatBoost JSON; scikit-learn forests have none), each proven by a round trip
   giving identical predictions (D-078; list in `docs/components/training.md`).
 - **Assumed, unverified:** no internet access from the bank's notebooks, so reports embed plotly.js
-  instead of loading it from a CDN (~4–5 MB per report). Plotly rendering inside the bank's
-  JupyterLab is also unverified.
+  instead of loading it from a CDN (~4–5 MB per report, not optimised in Phase 2, D-105). Plotly
+  rendering and report opening time inside the bank's JupyterLab are also unverified; the SDS's
+  JupyterLab test inside the bank shows both.
+
+## Change requests
+
+Every production change goes through a change request (`docs/components/lifecycle.md`). The first
+one is very slow; later, iterative ones are quicker (the LDS, 2026-10-21; Q238). No durations are
+known yet. A long change freeze around the year end (dates unknown) shapes the first one: it is
+release 1.0 and carries only the framework, no model; a model's first deploy is a later, quicker
+change request (D-115).
 
 ## Environment adapter (the seam)
 

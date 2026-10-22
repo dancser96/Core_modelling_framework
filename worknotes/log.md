@@ -2,6 +2,106 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-10-22 — Fourth round of answers, the plan adjusted, questions round 5
+- 2026-10-22: the SDS answered Q260, Q262, Q267, Q268 (asked back), Q269, Q272, Q275, Q281 (asked
+  back), Q284, Q285, Q290, Q292 (didn't understand), Q296, Q301 and all of section B, and gave
+  timeline notes: stages may differ in length, the year-end change freeze, the week of 11-30
+  mostly lost, a year-end slowdown rather than a stop.
+- Decisions D-111–D-122 (registry records, soft; monitoring frame vs content; where scores are
+  written; a newer version within an image's year, soft; the first change request is release 1.0,
+  framework only; reserved later-task columns; sampling; lineage; artifact inventory; FLAML client
+  groups; Phase 3 wishlist; bracket summaries in questions). Status notes on D-040, D-055, D-106.
+- Numbering clash: a parallel session had added its own D-110 (pickle scope) after D-109; this
+  session's rows first went in as a second D-110–D-121 and were shifted to D-111–D-122 everywhere
+  (decisions, roadmap, timeline, questions, `CLAUDE.md`, memory, eleven owner docs). The other
+  session's D-110 references were left as they were.
+- Answers given back in chat: month stratification adds nothing when months are large, similar
+  slices and one keep fraction is used (the SDS was right); downsampling low-value rows can
+  calibrate back if each kept row carries 1 / its keep probability, and local case-control
+  sampling (Fithian and Hastie, 2014) is the closest known method; this goes to the literature
+  round. Public API: several active versions are no problem while a use case stays pinned; the
+  list matters when it moves up.
+- Questions round 5: section B (facts) deleted (to-dos already, or answered); Q241 reframed (five
+  points, verbose table, replay table and resolved YAML, seven sub-questions with alternatives);
+  Q276 moved to section A as refit options plus a checks table; Q281 and Q292 restated with
+  options. Open: Q218, Q223, Q241, Q276, Q281, Q292.
+- Timeline: stages S1 6, S2 4, S3 6, S4 4 days; round 1b 11-23 – 12-08 (about 8 days); run-through
+  1 12-09 – 12-18 (into the internal repo, a demo, no production); slowdown 12-21 – 01-01 for fixes
+  and the integration designs; round 2 01-04 – 02-05; release 1.0 by 02-19 as the first change
+  request.
+- `CLAUDE.md` §9: the bracket rule (D-122); the doc map lists the Phase 3 wishlist. Roadmap: OD-07
+  closed, OD-04 and OD-08 narrowed, OD-17 updated, milestone dates, the wishlist.
+- Delegated: owner docs (dataset, training, inference, lifecycle, monitoring, feature checks,
+  Target Factory, run modes, environment, project) to an Opus agent at high effort; read on the
+  main thread, which also fixed the monitoring wording in `architecture.md` and `UPDATES.md`.
+- Later the same day: "keep sampling simple for Phase 2; low-value downsampling and anything else
+  advanced to Phase 3" became D-123. Phase 2 keeps uniform negative downsampling, a random sample
+  of clients, or no sampling, all without sample weights. Option 3 with its weight-aware
+  statistics, low-value downsampling, the smart-downsampling research and the comparison against
+  the oracle moved to the Phase 3 wishlist. OD-17 narrowed to the window ablation; the literature
+  round and its reminder dropped; spike 1 no longer needs sample weights. Edited: decisions,
+  roadmap, dataset, training, environment, glossary, test harness, timeline, UPDATES, memory.
+- Open: the six questions; spike 1 decides FLAML's group split or the holdout fallback.
+
+### 2026-10-21 — Third round of answers, the plan reshaped, synthetic data accepted
+- 2026-10-21, evening: the SDS passed on the LDS's review of the synthetic data and answers to
+  Q237, Q238, Q241, Q254, Q263, Q286, Q291, Q293, Q295, plus planning notes.
+- Decisions D-103–D-109: the master layer is where the framework's scores end, consumable tables
+  are others' (D-103); scores are compared across products, so calibration is a release
+  requirement (D-104); reports self-contained, size not optimised, spike 4 dropped (D-105); the
+  train/test client split is Phase 2's only requirement for validation inside training, an own CV
+  loop a later wishlist item (D-106); compatibility is about outputs, `CLAUDE.md` §2 reworded
+  (D-107); upstream data facts aren't the framework's (D-108); the plan is milestones with dates
+  per stage, December a pre-release with two purposes, scenario A (D-109).
+- Plan: `worknotes/timeline_proposal.md` rewritten as one plan table (five stages, depth at the
+  pre-release and release 1.0, nice to haves, dates). Answer to the SDS's "2.5 rounds" question:
+  yes, with the skeleton first inside round 1, exit-point shapes close to final by 12-04, and a
+  second run-through mirrored before release 1.0. Round 1 10-26 – 12-04, run-through 1 and the
+  pre-release 12-07 – 12-18, round 2 01-04 – 02-05, release 1.0 by 02-19.
+- Q241: a worked example of the audit log in use (16 entries from Feature Checks to promote, the
+  write call and CLI command, the stored entry, replay, the cost); storage moves to one file per
+  entry, because HDFS append may be off in the bank (unverified).
+- Verified in FLAML 2.7.0 (`flaml/automl/task/generic_task.py`, `decide_split_type`): for
+  classification, passing `groups` turns the automatic split into a group split; for regression it
+  stays by rows unless `split_type="group"` is passed. Basis of Q296.
+- Found: D-106 relaxes `CLAUDE.md` §4.11 ("any CV inside train is grouped by client") unless FLAML
+  gets the groups (Q296). D-103's one master table may clash with D-034, entities never merged
+  (Q301, raised by the propagation agent).
+- New: Q296, Q300 (first change request), Q301 (scores table per entity), Q286b (left from Q286),
+  OD-28 (rank score). Q297–Q299 are `pickle_summary.md`'s, from a parallel session.
+- Delegated: the owner-doc propagation (inference, training, evaluation, reporting, dataset,
+  lifecycle, test_harness, environment, architecture) to an Opus agent at high effort; read and
+  rewrapped on the main thread.
+- Files: `docs/decisions.md`, `docs/roadmap.md` (M1 accepted, milestone mapping, OD-01, OD-06,
+  OD-10, OD-17, OD-18 narrowed, OD-28), `docs/glossary.md` (master layer, exit point),
+  `CLAUDE.md` §2, the nine owner docs above, `worknotes/holistic_review_questions.md` (round 4),
+  `worknotes/timeline_proposal.md`, `worknotes/sync.md`.
+- Open: Q218, Q223, Q241, Q296, Q300, Q301 and the rest of round 4.
+
+### 2026-10-21 — MLflow teaching summary and the no-pickle difficulties
+- 2026-10-21: the SDS asked for an MLflow explanation (the CDS chose MLflow) and for the
+  difficulties of a no-pickle bundle; both saved in `worknotes/mlflow_summary.md`. Checked on the
+  pinned versions: LightGBM text and XGBoost JSON round-trip identically; CatBoost JSON does not
+  (up to 1.3e-15, drifts on re-save), CatBoost `.cbm` does. FLAML 2.7.0 logs to MLflow by itself
+  once a run is open (`mlflow_logging=False` needed).
+- 2026-10-21, later: the SDS asked for a compact summary of every difficulty of a no-pickle,
+  JSON-only bundle, not just MLflow's: model families, our own code around the booster, JSON
+  itself, tests and lint, MLflow, habits. Newly verified: in ruff 0.17, `S301` misses
+  `joblib.load` and `S403` is preview-only, so a `banned-api` list (`TID251`) is needed.
+  `worknotes/mlflow_summary.md` is no longer in the repo.
+- 2026-10-21, rework: the SDS found the summary too long and not focused on disadvantages, and
+  set the scope: no pickle only for what is promoted from the sandpit to production; HDFS saves
+  in the sandpit may pickle (D-110, superseding D-101's "local runs included"). The summary was
+  rewritten as six disadvantages; the lint and JSON-detail points were dropped, since the
+  sandpit may now pickle.
+- Why: the SDS had not used MLflow; the pickle result affects D-078 and the CatBoost plan.
+- Files: `worknotes/mlflow_summary.md` (new, since removed); `worknotes/pickle_summary.md` (new,
+  rewritten); `docs/decisions.md` (D-110; status notes on D-078, D-101);
+  `docs/components/inference.md`; `.claude/skills/bank-parity-check/SKILL.md`.
+- Open: Q297–Q299 (the promote gate; strict JSON vs plain data, first raised as Q296, a number
+  D-106 has since reused; security sign-off on the formats); the CDS's MLflow decision as a D-row
+  (OD-08, OD-13).
+
 ### 2026-10-21 — `delegation` skill (D-071 as a procedure)
 - 2026-10-21, after the SDS's subscription upgrade: a `delegation` skill so parallel subagent
   work and model routing happen by procedure, not by wish. It covers the split (disjoint files,

@@ -1,7 +1,7 @@
 # Reporting and model card
 **Status:** legacy-only · **Legacy:** `src/card.py`, `src/analysis.py` plotting helpers
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [evaluation](evaluation.md) ·
-[monitoring](monitoring.md) · [lifecycle](lifecycle.md) · [environment](environment.md) (theme) · D-036, D-052, D-076, D-083 · OD-12
+[monitoring](monitoring.md) · [lifecycle](lifecycle.md) · [environment](environment.md) (theme) · D-036, D-052, D-076, D-083, D-105 · OD-12
 
 ## Purpose
 One shared writer that turns structured results from any stage into a self-contained HTML report,
@@ -15,7 +15,9 @@ Training, Inference and the lifecycle steps write artifacts, not reports.
 
 ## Phase 2 requirements
 1. **Self-contained HTML:** styled tables (pandas Styler) and interactive plotly charts, with plotly.js
-   embedded once per file so reports open offline inside the bank (no CDN).
+   embedded once per file so reports open offline inside the bank (no CDN). That makes each report
+   about 4–5 MB, and the size isn't optimised in Phase 2: reports regenerate from frozen configs,
+   and retraining in production regenerates them anyway (D-105).
 2. **Every report has the same structure:**
    1. A one-page summary for business and governance readers. It opens with a **choices block**:
       what was chosen (profile, decision, metric, sampling, modelling path), the alternatives, and
@@ -55,5 +57,5 @@ Training, Inference and the lifecycle steps write artifacts, not reports.
 
 ## Open questions
 - The mandatory core views (OD-12).
-- Unverified: report size (~4–5 MB of embedded plotly.js each) and plotly rendering in the bank's
-  JupyterLab.
+- Unverified: how fast a report opens and whether plotly renders in the bank's JupyterLab. Both
+  show in the SDS's JupyterLab test inside the bank (D-105).

@@ -16,9 +16,9 @@ Status values: `legacy-only` (exists only in legacy) · `designing` · `stub` (i
 | Design baseline (docs rebuilt after three review rounds + Lead DS notes) | built | 2026-10-12; milestone M0 |
 | Environment adapter (Spark session, compat shim, transport, paths, sources) | built | Partial: compat shim + local Spark session (M1 step 0, D-057); transport, paths, sources in M2. Traps T1–T5, T18 |
 | Config spine (single file, profiles, decision, entities, data-definition hash, migrations) | designing | `components/config.md`. Settled 2026-10-20: YAML (D-086), two automation levels (D-087), identities with a worked example (D-088), the shared-table rule (D-089), extension code in use-case repos (D-090). Still open before M2.1: the audit log's Phase 2 scope (OD-10), the level mapping (OD-25) |
-| Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | tested | M1: steps 0–7 built (2026-10-17); the SDS's review round 1 applied (2026-10-19): role folders, slimmer `truth.json`, two new traps, exit rates, top-down spec with a code map. Feature mart (147 columns), traps on two products, oracle and `truth.json`, CLI, source mapping; every independent check row passes at 100k; approved by the SDS (2026-10-19), with the LDS for review (`synthetic/REVIEW.md`). D-056, D-064–D-070 |
+| Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | tested | M1: steps 0–7 built (2026-10-17); the SDS's review round 1 applied (2026-10-19): role folders, slimmer `truth.json`, two new traps, exit rates, top-down spec with a code map. Feature mart (147 columns), traps on two products, oracle and `truth.json`, CLI, source mapping; every independent check row passes at 100k; approved by the SDS (2026-10-19); reviewed and accepted by the LDS (2026-10-21), with three future to-dos (noise and very-low-fill columns, named like the traps; `test_harness.md`). D-056, D-064–D-070 |
 | Target Factory (targets only, optional) | legacy-only | Renamed from Data Creation (D-029) |
-| Dataset: observation window, client-grouped split, OOT validation, sampling | designing | Big-ticket item (D-030); sampling choice OD-17 |
+| Dataset: observation window, client-grouped split, OOT validation, sampling | designing | Big-ticket item (D-030); sampling kept simple in Phase 2, advanced sampling in Phase 3 (D-123); window ablation OD-17 |
 | EDA (worth running first; low-prevalence aware) | legacy-only | Major rethink |
 | Feature Checks (correctness and quality only) | legacy-only | Major rethink; selection moved to Training (D-028) |
 | Feature ledger | designing | Sketch awaiting review (OD-11) |
@@ -26,8 +26,8 @@ Status values: `legacy-only` (exists only in legacy) · `designing` · `stub` (i
 | Evaluation (stratified metrics, compatibility table, comparison) | legacy-only | Core views OD-12 |
 | Reporting (self-contained HTML, plotly, chart rules) + model card | legacy-only | D-036 |
 | Lifecycle: register / promote / deploy, registry tables, inventory | designing | Evolves as built (D-073); "registered" settled (D-095); `recipe_hash` and the refit as production retraining (D-096); OD-06–OD-08, OD-14; retraining in production OD-27; who builds it OD-23, with the platform / MLOps team (D-079) |
-| Inference (batch-scoped, manifest, reinference) | legacy-only | Output columns / layout OD-18 |
-| Monitoring (operational + drift deep; performance + impact thin) | designing | Renamed from Tracking (D-040); the data observability integration OD-13; tooling and dashboards are the platform / MLOps team's (D-079); downstream design still largely open |
+| Inference (batch-scoped, manifest, reinference) | legacy-only | Output ends at the framework's own scores table, the master layer; consumable tables are built outside (D-103); calibration a release requirement (D-104); path layout OD-18 |
+| Monitoring (four layers: frame deep, content light) | designing | Renamed from Tracking (D-040); frame vs content (D-112); the data observability integration OD-13; tooling and dashboards are the platform / MLOps team's (D-079); downstream design still largely open |
 | Feature store integration (upstream) | designing | First release (D-075); a work stream to learn the feature store comes first (OD-26) |
 | Data observability integration (monitoring) | designing | First release (D-075); a work stream to learn the framework comes first (OD-13) |
 | CLI / Python API / guided notebooks / experiment sweeps | designing | D-024, D-039 |
@@ -42,6 +42,17 @@ together with the topics to raise with the Chief DS.
 
 ## Log (major changes only, newest first)
 
+- 2026-10-22 — Fourth round of answers: D-111–D-123 (Phase 2 registry records; monitoring's frame
+  deep, content light; the first change request is release 1.0, framework only; simple sampling,
+  with advanced sampling and recency weighting moved to Phase 3; FLAML gets the client groups; a
+  Phase 3 wishlist in the roadmap). OD-07 closed, OD-17 narrowed to the window ablation. Timeline
+  adjusted for the lost week of 11-30 and the year-end slowdown.
+- 2026-10-21 — Third round of answers (the SDS and the LDS): D-103–D-109 (scores end at the
+  master layer; calibration a release requirement; reports self-contained; the train/test client
+  split as Phase 2's validation inside training; compatibility is about outputs, `CLAUDE.md` §2;
+  upstream data facts aren't ours; the plan is milestones per stage, December a pre-release).
+  Timeline reshaped into two build rounds with a run-through after each (pre-release by 12-18,
+  release 1.0 by 02-19), awaiting the LDS. Synthetic data accepted by the LDS (M1). OD-28 opened.
 - 2026-10-21 — The SDS's second answers: D-098–D-102 (test metrics per month first and named
   denominators; reproducible runs on a trial budget; the M2 engineering shape; pickle only for
   saved and moved artifacts; doc upkeep). One doc-hygiene pass across `docs/`, `CLAUDE.md`,

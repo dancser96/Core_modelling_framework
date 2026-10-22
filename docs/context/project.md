@@ -87,8 +87,8 @@ standard where it can.
 | Training data | Multi-month observation windows | — |
 | Automation | Two automation levels, `autonomous` and `assisted`, with the same checks at both (D-077, D-087; OD-25) | `manual` |
 | Upstream | Feature store integration: worked examples on the feature store, other sources and both (D-075, OD-26) | — |
-| Lifecycle | local → registered → production; register / promote / deploy; registry tables | Sign-off log; shadow challengers; MLflow (if adopted); retraining in production (shape settled by D-096; researched with the platform team in M4, OD-27) |
-| Monitoring | Operational and drift: deep. Realised performance and impact: thin. Integrated with the data observability framework (D-075) | Alerting outputs (acting on them: the platform / MLOps team, D-079); retrain automation |
+| Lifecycle | local → registered → production; register / promote / deploy; one production version per model key; registry tables derived from append-only records (D-111) | Sign-off log; shadow challengers (Phase 3 wishlist in `docs/roadmap.md`); MLflow (if adopted); retraining in production (shape settled by D-096; researched with the platform team in M4, OD-27) |
+| Monitoring | The frame built properly: all four layers present (health, drift, realised performance, impact), with versioned tables, flags and the seam to the data observability framework (D-075). The content light: a few health and drift measures, realised performance thin, impact a stub (D-112) | Richer content; alerting outputs (acting on them: the platform / MLOps team, D-079); retrain automation |
 | Run modes | Library + CLI + Python API + guided notebooks | No service layer planned |
 | LLM-assisted modelling | Interface kept in mind only | Phase 3 (D-075) |
 
@@ -97,9 +97,12 @@ data to scores from a production model using only a config and the guided notebo
 exists at least as a thin version (depth per component: OD-01), including the feature store and data
 observability integrations (thin); LLM-assisted modelling comes in Phase 3 (D-075).
 The production step is met outside the bank when `deploy` runs against a production-tier path on
-synthetic data, and inside the bank when the first change request runs it (D-055). This definition
-of done is met at **release 1.0**; December 2026 is a pre-release into the bank whose content and
-dates are being agreed with the LDS (D-097; proposal in `worknotes/timeline_proposal.md`). In early
+synthetic data (D-055). Inside the bank, a long change freeze around the year end makes the first
+change request release 1.0, which carries only the framework, no model; a model's first deploy is
+a later, quicker change request (D-115). This definition of done is met at **release 1.0**;
+December 2026 is a pre-release that moves the code into the bank's internal repo, committed and
+demonstrated, not into production (D-115). Its content and dates are being agreed with the LDS
+(D-097; proposal in `worknotes/timeline_proposal.md`). In early
 October 2026 the target was put as "within 1–2 months"; there is no hard deadline. Build order and
 milestones: `docs/roadmap.md`.
 

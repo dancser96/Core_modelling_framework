@@ -1,7 +1,7 @@
 # Target Factory
 **Status:** legacy-only · **Legacy:** `src/rollups.py`, `notebooks/Data_Creation.ipynb` (crunch name: Data Creation)
 **Related:** [config](config.md) · [dataset](dataset.md) · [feature checks](feature_checks.md) (lineage
-exclusion) · [monitoring](monitoring.md) (labels) · [LLM assist](llm_assist.md) · D-029, D-050, D-054, D-066, D-075, D-080 · OD-19, OD-26
+exclusion) · [monitoring](monitoring.md) (labels) · [LLM assist](llm_assist.md) · D-029, D-050, D-054, D-066, D-075, D-080, D-118 · OD-19, OD-26
 
 ## Purpose
 Builds targets. This is the one piece of data work the framework keeps: it links upstream data
@@ -34,8 +34,9 @@ Features come from upstream, and the stage asks nothing extra of upstream (D-029
    hardcoded. A target fixed by an as-of column (e.g. a loan closing, set by its maturity) is
    degenerate and should be refused with a reason.
 6. **Target lineage recorded:** the columns used to build each target are written to metadata, so
-   Feature Checks excludes them automatically (T12). For targets built upstream, the DS can list the
-   lineage columns in config; this is optional and asks nothing of upstream.
+   Feature Checks excludes them automatically (T12). For targets built upstream, no lineage list is
+   required: a target is almost never built from more than one column, and a DS knows the data
+   (D-118). The DS can still list lineage columns in config; this asks nothing of upstream.
 7. **Partial and incremental builds.** Build per source, per entity and per month without touching
    other sources' or months' outputs (partitioned, idempotent writes). Domains arrive at different
    times with different schemas, and the spec names columns per source.

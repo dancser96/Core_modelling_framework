@@ -75,6 +75,10 @@ OD-26) and the data observability framework downstream (OD-13), both thin.
   `schema_version` and `framework_version`; within a major version columns are only added
   (nullable), never renamed, retyped or removed; readers select columns by name and ignore
   unknown ones; removal only at a major bump, which keeps old readers for one image lifetime.
+  The promise is about outputs (D-107): what a version writes or saves (shared tables, configs,
+  bundles, other artifacts) stays similar and readable, while internals change freely. The 0.x
+  pre-release writes only to sandpit and local paths; shared formats freeze from the first row
+  release 1.0 writes inside the bank.
 - **`conf/base/`** is committed and holds framework defaults and generic use-case configs.
   **`conf/local/`** is gitignored and holds environment-specific values (tables, paths, Spark, theme).
   They merge base → local at load.
@@ -138,10 +142,11 @@ change-request path and the open questions are owned by [lifecycle](components/l
   business reporting), `previous_model`, `historic_predicted_rate`.
 - Training saves a **drift reference** computed on the true population, and Target Factory builds
   labels for scored months (D-054).
-- Monitoring has four layers (D-040):
-  - operational health and input/score drift: deep in Phase 2;
-  - realised performance against baselines and business impact: thin in Phase 2, built so they work
-    as soon as outcomes exist.
+- Monitoring has four layers (D-040). Phase 2 builds their frame properly and keeps the content
+  light (D-112):
+  - operational health and input/score drift: a deep frame, a few measures with flags;
+  - realised performance against baselines: thin, built so it works as soon as outcomes exist;
+  - business impact: a stub.
 
   Monitoring outputs feed the data observability framework (D-075); tooling and dashboards are the
   platform / MLOps team's (D-079). Details: [monitoring](components/monitoring.md).

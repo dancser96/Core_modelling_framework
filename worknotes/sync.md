@@ -1,50 +1,32 @@
 # Sync page
-_For the SDS and the LDS · last updated: 2026-10-21 (planning set, round 3) · last sync: 2026-10-13 (2026-10-14: CDS prep only)_
+_For the SDS and the LDS · last updated: 2026-10-22 (planning set, round 5) · last sync: 2026-10-13 (2026-10-14: CDS prep only)_
 
-**New decisions since the last sync:** D-056–D-102 (`docs/decisions.md`); D-082–D-102 are the SDS's answers to the holistic review (2026-10-20 and 10-21)
+**New decisions since the last sync:** D-056–D-123 (`docs/decisions.md`); D-082–D-123 are the answers to the holistic review (2026-10-20 to 10-22), except D-110 (pickle scope)
 
 Detail behind each item: `worknotes/log.md`. Open decisions (OD-nn): `docs/roadmap.md`. How this
 page is written: `worknotes/README.md`.
 
 ## For the LDS: to review (most important first, then newest)
 Tags per D-084: **needs decision** (at most five) or **for information**. The list was drained on
-10-20 at the SDS's request: everything except the synthetic data and the current planning is
-covered by the planning set below or by D-073–D-102.
-- [ ] **Planning-session set, round 3** (needs decision) — `worknotes/holistic_review.md` (§1
-      verdict and §3 top risks first), `worknotes/timeline_proposal.md` (scenario A vs B, the
-      dates, the OD-01 depth table), then `worknotes/holistic_review_questions.md` section A (for
-      both of us) and B (facts) — feedback wanted: what December means (Q217), the depth table
-      (Q218), the M3 priorities (Q223); three proposals that shape M2: the config + audit log as
-      the SDS frames it (Q241), client-grouped validation inside training (Q254), how long old
-      versions must keep working (Q286); and the facts only you have (Q232, Q235, Q237, Q238).
-- [ ] **The SDS's answers as decisions** (needs decision) — `docs/decisions.md` D-082–D-102 —
+10-20 at the SDS's request; the synthetic data left it on 10-21, reviewed and accepted by you.
+Everything else is covered by the planning set below or by D-073–D-123.
+- [ ] **Planning-session set, round 5** (needs decision) — `worknotes/timeline_proposal.md` (the
+      plan: two build rounds, each followed by a run-through; stages sized in days; the lost week
+      of 11-30 and the year-end slowdown), then `worknotes/holistic_review_questions.md` section A
+      — feedback wanted: the plan (Q218) and round 1b's content (Q223); the audit log (Q241),
+      reframed with replay rebuilding the state and seven sub-questions with alternatives; the
+      refit (Q276): what we refit on, and which checks stay possible.
+- [ ] **The answers as decisions** (needs decision) — `docs/decisions.md` D-082–D-123 —
       feedback wanted: D-082 (positive events), D-083 (train and test choose, never validation;
       `CLAUDE.md` §4.4 reworded), D-093 (M2 never lesser than the crunch), D-094 (training under
-      FLAML, the calibration chain), D-098 (per-month test metrics; denominators), D-101 (pickle
-      only matters for saved and moved artifacts).
-- [ ] **Synthetic data generator (M1)** (for information) — `synthetic/REVIEW.md`, then
-      `notebooks/00_synthetic_data.ipynb` and `docs/components/test_harness.md` (Levels 1
-      and 2) — feedback wanted: is the book realistic enough to develop against, and are the
-      traps the ones the framework must catch? The SDS approved it on 10-19. In short:
-      - 100k clients × 24 months, written as a 147-column feature mart that Spark reads like the
-        real one;
-      - a steady-state book: 8–12% of clients leave a year and as many join, while shares, ages
-        and tenure stay flat;
-      - 12 standard targets, each with a known ceiling (the oracle: AUC 0.70–0.95);
-      - traps the framework must catch: two leaks, an upstream target, a process leak, a column
-        shifted a month ahead, a Simpson effect, drift and a rare level;
-      - 1,263 independent check rows, all passing; the code is in role folders (rules, functions,
-        truth, checks).
-- [ ] **Synthetic data spec** (for information) — `docs/components/test_harness.md` — feedback
-      wanted: is the synthetic retail book realistic enough to develop against? Especially the
-      mixes per profile and the product rates taken from public UAE figures (D-064).
+      FLAML, the calibration chain), D-098 (per-month test metrics; denominators). D-103–D-123
+      record our answers of 10-21 and 10-22: check the wording, especially D-112 (monitoring: the
+      frame built properly, the content light) and D-115 (the first change request is release
+      1.0, framework only; a model's first deploy comes after it).
 
 ## Questions for the LDS
-- **The planning set** (above): section A of `worknotes/holistic_review_questions.md` (Q217,
-  Q218, Q223, Q241, Q254, Q260, Q262, Q263, Q286) and the facts in section B.
-- **Monitoring in Phase 2 (OD-01):** you suggested Phase 3; the SDS wants every major component at
-  least thin by December, with health and drift monitoring deep by release 1.0 (D-040, D-097).
-  Agree?
+- **The planning set** (above): section A of `worknotes/holistic_review_questions.md` (Q218,
+  Q223, Q241, Q276).
 - **Example notebooks:** beyond running as a pipeline and through notebooks, anything more you want
   from the release examples? (`docs/components/run_modes.md`)
 - **Model documentation (Phase 3):** what did you mean by "checks that the necessary inputs exist"?
@@ -53,11 +35,39 @@ covered by the planning set below or by D-073–D-102.
 
 | Question | Context | Current leaning | Needs |
 |---|---|---|---|
-| What December means, and the dates to M2–M5 (Q217, Q218, Q223) | D-097 puts the definition of done at release 1.0 and makes December a pre-release; content and dates still to agree | Scenario A: pre-release in December, release 1.0 mid-February 2027 (`worknotes/timeline_proposal.md`) | SDS + LDS, then the CDS |
-| The config + audit log (OD-10, Q241) and the automation-level mapping (OD-25) | The SDS's framing: the config is set after Target Factory, every later decision is logged, config + log replay to one final modelling input | Proposal in Q241: append-only log per instance, replay to the frozen config, data definition locked, `run_id` on the replayed input | SDS + LDS |
-| Depth per component (OD-01) | full / deep / thin / stub, in three columns | Draft in `worknotes/timeline_proposal.md` | SDS + LDS |
+| The plan: rounds, dates and depth per component (Q218, Q223, OD-01) | December is a pre-release with two purposes: a working result to show at year end, and exit points close to final for the downstream teams (D-109) | Round 1 to 12-08, run-through and pre-release (into the internal repo, not production) by 12-18, round 2 to 02-05, release 1.0 by 02-19 as the first change request (D-115) (`worknotes/timeline_proposal.md`) | SDS + LDS, then the CDS |
+| The config + audit log (OD-10, Q241) and the automation-level mapping (OD-25) | The SDS's framing: the config is set after Target Factory, every later decision is logged, config + log replay to one final modelling input | Q241 reframed: five points, the 16-entry table, replay rebuilding the state, and seven sub-questions with alternatives (where people's decisions live, what the log may change, rule entries, run identity, storage, who writes, usability) | SDS + LDS |
 
 ## Since the last sync
+- **Fourth round of answers; plan adjusted** (10-22): D-111–D-123. Phase 2 registry records
+  (D-111, soft); monitoring's frame built properly, its content light (D-112); scores written per
+  entity × domain where possible (D-113); a newer framework version within an image's year
+  (D-114, soft); the first change request is release 1.0, framework only, after the year-end
+  freeze (D-115); reserved columns for later tasks (D-116); sampling kept simple (one keep
+  fraction, no month stratification), with advanced sampling, low-value downsampling included,
+  and recency weighting moved to Phase 3 (D-117, D-123); no
+  lineage list for upstream targets (D-118); an artifact inventory at S1 (D-119); FLAML gets the
+  client groups (D-120); a Phase 3 wishlist in the roadmap (D-121); decisions summarised in
+  brackets inside questions (D-122). The timeline now sizes stages in days and counts the week of
+  11-30 as lost. — look at: `worknotes/timeline_proposal.md`,
+  `worknotes/holistic_review_questions.md`, `docs/roadmap.md` → Phase 3 wishlist
+- **Third round of answers; the plan reshaped** (10-21): D-103–D-109. The framework's scores end
+  at its own traceable table, the master layer; consumable tables are built outside it (D-103).
+  Scores are compared across products, so calibration is a release requirement (D-104; a rank
+  score later is OD-28). Reports stay self-contained, size not optimised (D-105). Phase 2 relies
+  on the train/test client split, nothing more around FLAML's trial selection (D-106; whether to
+  pass FLAML the client groups, as `CLAUDE.md` §4.11 asks, is Q296). Compatibility is about
+  outputs (D-107; `CLAUDE.md` §2). Upstream data facts aren't ours (D-108). The plan is
+  milestones with dates per stage; December is a pre-release with two purposes (D-109), and the
+  timeline is reshaped into two build rounds with a run-through after each. The synthetic data is
+  accepted, with three future to-dos. Q241 now shows the audit log in use. — look at:
+  `worknotes/timeline_proposal.md`, `docs/decisions.md` D-103–D-109,
+  `worknotes/holistic_review_questions.md` Q241
+- **No pickle only at promotion** (10-21, D-110): the sandpit may save pickle; only what moves
+  to production may not. The main disadvantage: the promoted model is a plain-data rebuild, so
+  Evaluation must score that rebuild or its evidence doesn't carry over. Fewer families reach
+  production (CatBoost only as `.cbm`; no scikit-learn forests), and MLflow's default flavors
+  pickle (Q297–Q299). — look at: `worknotes/pickle_summary.md`
 - **The SDS's second round of answers** (10-21): D-098–D-102: test metrics per month first and
   named denominators (D-098); reproducible runs on a trial budget with time recorded (D-099); M2
   engineering shape, including a Protocol-ready model interface and test runtimes (D-100);
@@ -135,11 +145,15 @@ covered by the planning set below or by D-073–D-102.
   guide for larger agreed builds.
 
 ## Demo next
-- The planning set: the verdict and top risks (`worknotes/holistic_review.md` §1, §3), then the
-  two December scenarios and the depth table (`worknotes/timeline_proposal.md`); the CDS outcomes
-  and the synthetic data generator after that.
+- The planning set: the reshaped plan (`worknotes/timeline_proposal.md`: verdict, dates, the plan
+  table), then the audit log in practice (Q241's worked example); the CDS outcomes after that.
 
 ## Last 7 days
+- 10-22 — **Fourth answers; plan adjusted**: D-111–D-123; questions round 5; Phase 3 wishlist —
+  `worknotes/timeline_proposal.md`, `docs/roadmap.md`
+- 10-21 — **Third answers; plan reshaped; synthetic data accepted by the LDS**: D-103–D-109;
+  questions round 4; two build rounds with a run-through after each —
+  `worknotes/timeline_proposal.md`
 - 10-21 — **Holistic review, second answers**: D-098–D-102; questions round 3; doc-hygiene pass —
   `worknotes/holistic_review_questions.md`
 - 10-20 — **Holistic review answered**: D-082–D-097; questions round 2; `CLAUDE.md` §4.4 and the

@@ -134,7 +134,9 @@ which model takes which piece, the brief template, integration); in short:
 Each use case pins the framework version it runs with and upgrades at its own pace (D-047). Many
 versions therefore run at once and write to the same shared tables, and every upgrade must keep a
 use case and its production model working. Simplicity never justifies a silent breaking change, and
-pinning doesn't relax this.
+pinning doesn't relax this. The promise is about outputs (D-107): what a version writes or saves
+(shared tables, configs, bundles, artifacts) stays similar and readable; internals change freely.
+The 0.x pre-release promises nothing; shared formats freeze from release 1.0's first row in the bank.
 
 - **Public API** = the functions listed in `docs/architecture.md` §Public API. Everything else is
   private (`_name`) and can change freely.
@@ -288,7 +290,7 @@ Each fact has **one owner doc**; every other doc links to it instead of repeatin
 | `CLAUDE.md` | Working rules for this repo | committed | Always (auto-loaded) |
 | `docs/README.md` | Reading order + stage → component map | committed | Finding your way; after adding/renaming docs |
 | `docs/UPDATES.md` | Status table + log of major changes | committed | Every session start |
-| `docs/roadmap.md` | Phases, milestones, depth levels, backlog, **open decisions (OD-nn)**, Chief DS topics | committed | Planning, "what next", sync prep |
+| `docs/roadmap.md` | Phases, milestones, depth levels, backlog, Phase 3 wishlist, **open decisions (OD-nn)**, Chief DS topics | committed | Planning, "what next", sync prep |
 | `docs/context/project.md` | Why, where we start → where we want to reach, goals, scope, roles | committed | New to the repo; scope questions |
 | `docs/glossary.md` | Vocabulary | committed | Naming anything; unfamiliar term |
 | `docs/architecture.md` | Target design, stage map, package layout, Public API | committed | Structural work |
@@ -360,6 +362,8 @@ numbered list for a flow, nested bullets for a tree and a narrow table for a map
   straight to main (no branches); push only when asked (D-072).
 - **Consult well.**
   - Ask numbered questions (continue the numbering across rounds), each with your proposed default.
+    A question that cites a decision or open decision summarises it in brackets, e.g. "D-089
+    (shared tables only grow within a major version)", so nobody has to switch files (D-122).
   - For genuine choices, lay out the options with when-to-use guidance and a recommendation.
   - Match the altitude to the phase: directions first, details when that component is designed.
 - **Verify, don't assume.** Check library behaviour against the pinned version. Say when something is

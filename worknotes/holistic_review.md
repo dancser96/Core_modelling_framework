@@ -1,10 +1,10 @@
 # Holistic review of the design and plan
 _Written 2026-10-20 for the SDS and the LDS, before the planning session. Everything that is not
-a question is here. The open questions: `holistic_review_questions.md` (round 3, 2026-10-21). The
+a question is here. The open questions: `holistic_review_questions.md` (round 5, 2026-10-22). The
 dates: `timeline_proposal.md`. Based on every doc in `docs/`, the decision log to D-081 and the
 worknotes, plus three fresh-context audits (ML correctness, forward compatibility, cross-doc
-consistency). Claims checked against the pinned library source are marked **verified**. The SDS's
-answers of 2026-10-20 and 10-21 are recorded as D-082–D-102; a question number cited here that is
+consistency). Claims checked against the pinned library source are marked **verified**. The
+answers of 2026-10-20 to 10-22 are recorded as D-082–D-122; a question number cited here that is
 no longer in the questions file has been answered. Corrected after the SDS's notes: §4 (reports;
 speed and automation), §5 (config validation; correlated rows; leavers; D-062 vs OD-22; the
 exposure count and in-memory pickle, 10-21), §7 (sync rules), §9 (status)._

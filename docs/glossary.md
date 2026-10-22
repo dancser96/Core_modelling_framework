@@ -70,8 +70,8 @@ Whether this glossary is also published to the wider unit is part of the open do
   results, to tell whether the cap costs accuracy (`docs/components/dataset.md`).
 - **Downsampling:** train-only sampling (of negative rows or of clients). It is always recorded, and
   the prior-shift offset undoes any change it makes to the class balance.
-- **Recency weighting:** optional sample weights that give the later months of the observation
-  window more weight; off by default (`docs/components/dataset.md`).
+- **Recency weighting:** sample weights that give the later months of the observation window more
+  weight; not in Phase 2, on the Phase 3 wishlist (D-117).
 
 ## Features
 
@@ -191,6 +191,12 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Code version:** framework version + use-case repo commit, recorded with every model.
 - **Scoring batch / `scoring_batch_id`:** one inference run. **Manifest:** links a scoring batch to
   the models that produced it.
+- **Scores table (master layer):** the framework's own scores output: long format, fully traceable
+  to model, run and config, shared by every pinned version (D-089). **Consumable tables** in a
+  consumer platform's format are built from it outside the framework (D-103).
+- **Exit point:** an output another team builds on: the scores table and manifest, the model
+  bundle, registry records, monitoring tables, the model card. Their shapes come close to final
+  before their contents deepen (D-109).
 - **Model card:** the generated, versioned record of a model's facts.
 - **Model bundle:** the saved model a run produces (encoder, model, calibration), in a versioned
   format (D-051), never pickle (D-078).

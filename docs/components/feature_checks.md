@@ -1,7 +1,7 @@
 # Feature Checks
 **Status:** legacy-only (major rethink) · **Legacy:** `src/leakage.py`, `src/feature_stats.py` (`signal_persistence`), `notebooks/Feature_Checks.ipynb`
 **Related:** [feature ledger](feature_ledger.md) · [EDA](eda.md) · [training](training.md) (automated selection) ·
-[target factory](target_factory.md) (lineage) · [dataset](dataset.md) · D-028, D-031, D-048, D-050, D-076, D-077 · OD-10, OD-25
+[target factory](target_factory.md) (lineage) · [dataset](dataset.md) · D-028, D-031, D-048, D-050, D-076, D-077, D-118 · OD-10, OD-25
 
 ## Purpose
 The correctness and data-quality gate between candidates and model inputs. It is a standalone unit
@@ -30,8 +30,10 @@ evidence; the candidate list (hundreds) is reviewed only where flagged (D-092).
    cases reach the person who signs off; flags never drop (D-076).
 2. **Data quality:** missingness, constant / near-constant, cardinality, type problems.
 3. **Leakage screen** on train-split clients: near-perfect separators (the per-task statistic;
-   binary: univariate AUC), dominance and missingness patterns. It flags and never drops; a human
-   decides (§4.6).
+   binary: univariate AUC), dominance and missingness patterns, and a **time-alignment check**: a
+   feature's power to predict the target forward vs to "predict" the same event backward, before
+   the observation month, which catches columns shifted forward or built from the future (D-118).
+   It flags and never drops; a human decides (§4.6).
 4. **Automatic exclusion** of target-lineage columns (T12).
 5. **Eligibility interaction:** flag features that are constant within the eligible population (T11).
 6. **Stability** (§4.4, D-048):

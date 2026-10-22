@@ -1,7 +1,7 @@
 # Synthetic data and test harness
-**Status:** tested (built 2026-10-17; the SDS's review applied and approved, 2026-10-19); with the
-LDS for review, guided by `synthetic/REVIEW.md` (D-067, D-070) · **Legacy:** `tests/smoke_test.py`
-(stub-based — do not copy its stubs)
+**Status:** tested (built 2026-10-17; the SDS's review applied and approved, 2026-10-19);
+reviewed and accepted by the LDS, 2026-10-21, guided by `synthetic/REVIEW.md` (D-067, D-070) ·
+**Legacy:** `tests/smoke_test.py` (stub-based — do not copy its stubs)
 **Related:** [dataset](dataset.md) (time model) · [target factory](target_factory.md) ·
 [EDA](eda.md) · [feature checks](feature_checks.md) · [environment](environment.md) ·
 [config](config.md) · `tests/README.md` · `synthetic/REVIEW.md` (review guide) · D-014, D-041,
@@ -832,8 +832,8 @@ Later (not in M1): an interaction-only feature.
     window runs past the panel.
   - **Why it is still the ceiling:** the oracle conditions on the realised trait path, but traits
     and exits get no feedback from holdings.
-  - This also serves OD-17: each sampling option's bias and calibration can be measured against
-    it.
+  - It also checks that option 1's offset brings scores back to the true level; comparing every
+    sampling option against it is on the Phase 3 wishlist (D-123).
 - **Standard targets** (oracle AUCs and sizing for `w` = 1, 3 and 6 months):
 
   | Target | Event | Eligible at `t` |
@@ -1176,3 +1176,11 @@ None. Answered in the SDS's review (2026-10-19):
 - dirty defects stay out of the rollups (stated as a known limit);
 - the loan rates and login levels are accepted;
 - the decisions taken during the build are confirmed.
+
+### Future to-dos (the LDS, 2026-10-21)
+Not built now. Each new column names what it is, like the traps (`_trap_<kind>`, D-069).
+- **More noise columns** of several kinds (univariate, random), to further prove the checks work.
+  Today there are the three null controls (`*_trap_null_control`) and the off-by-default
+  `extra_{nnnn}_trap_noise` / `_trap_weak` columns; new ones would be e.g. `_trap_noise`.
+- **Columns with very low fill rates** (say 0.1–2% filled), to test the quality checks. Today the
+  mart has only an all-null and a near-constant column; new ones would be e.g. `_trap_low_fill`.

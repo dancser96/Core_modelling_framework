@@ -1,7 +1,7 @@
 # Dataset: observation window, splits, sampling
 **Status:** designing · **Legacy:** `src/io.py` (load + prune in Spark), `src/dataset.py` (labelled frames, downsampling)
 **Related:** [config](config.md) (time and data sections) · [training](training.md) · [evaluation](evaluation.md) ·
-[feature checks](feature_checks.md) · [EDA](eda.md) · [test harness](test_harness.md) · D-030, D-048, D-049, D-052, D-054, D-082, D-083, D-091, D-098 · OD-17
+[feature checks](feature_checks.md) · [EDA](eda.md) · [test harness](test_harness.md) · D-030, D-048, D-049, D-052, D-054, D-082, D-083, D-091, D-098, D-106, D-117, D-120, D-123 · OD-17
 
 ## Purpose
 Builds the frames every stage works on, from one definition. That means the eligible population over
@@ -41,25 +41,32 @@ The periods, earliest to latest:
    floor, per-month statistics) counts events, and bootstraps and CV folds resample clients
    (D-082). The model itself keeps every row: correlated rows cost variance, not bias (below).
 3. Split train/test by client (§4.11). Each client is assigned by a seeded hash of its id, so the
-   assignment is stable across months and reruns. Any CV inside train is grouped by client.
+   assignment is stable across months and reruns. Any CV inside train is grouped by client, as the
+   calibration step's out-of-fold predictions are (D-094), and FLAML's trial selection gets the
+   client groups, so no fold mixes a client's rows ([training](training.md), D-120).
    Label-using checks in EDA and Feature Checks apply the same assignment first and use train-split
    clients only (D-048).
 4. Validation is the OOT month, scored by models trained on train only. It never informs selection
    or tuning (§4.4).
 5. Prune columns and rows in Spark, and sample in Spark before collecting. Estimate the collected
    size first and fail loud if it exceeds the row/memory budget, *before* calling `toPandas`.
-6. Sampling is train-only, recorded, and happens after the client split. The options, with
-   when-to-use guidance (default: OD-17):
-   - **row-level negative sampling, stratified by month.** For rare binary targets. Keeps all
-     positives; the prior-shift offset corrects the class balance.
+6. Sampling is train-only, recorded, and happens after the client split. Phase 2 keeps it simple
+   (D-123); the options, with when-to-use guidance:
+   - **uniform negative downsampling.** For rare binary targets. Keeps every positive row and one
+     keep fraction of the negative rows for the whole window, without stratifying by month: months
+     are large, similar slices, and one fraction keeps one prior-shift offset valid for every
+     month (D-117). The offset corrects the class balance.
    - **client-level random sampling** (all rows of the sampled clients). For common targets and
-     other tasks. The offset comes out ≈ 0.
-   - **outcome-stratified client sampling with inverse-probability weights.** Keeps every
-     converting client's full history. The weights restore the true rate, so the offset is 0.
+     regression. The offset comes out ≈ 0.
+   - **no sampling,** whenever the training rows fit the row budget.
+
+   Outcome-stratified client sampling with weights, downsampling low-value rows and smarter
+   downsampling in general are on the Phase 3 wishlist (D-123).
 
    Whatever the option, the prior-shift offset uses the effective (weighted) training rate (D-049);
    computed from the unweighted rate it would correct twice.
-7. Optional recency weighting through sample weights, off by default.
+7. **No sample weights in Phase 2** (D-123). They arrive with outcome-stratified sampling in
+   Phase 3, together with the per-task spec's list of statistics that must take them (D-117).
 8. **Denominators** (D-098): the "true population" is the eligible rows regardless of label (the
    drift reference and the contract band use it); the prior-shift true rate comes from the
    unsampled train split, never train plus test; the null-label share (clients who leave inside
@@ -79,7 +86,7 @@ The periods, earliest to latest:
 |---|---|
 | EDA | Feature–target views on train-split clients in the window; base rate per month (population level, for seasonality) over every month up to the window's end, because later months' target windows overlap the validation month's (D-048) |
 | Feature Checks | Stability across the window's months on train-split clients (per-month AUC range, PSI); label-free PSI against the gap months between window and `v` and the latest month, never `v` |
-| Training | CV grouped by client; sample weights (sampling option 3, recency); row budget |
+| Training | Train/test client split; calibration folds grouped by client; FLAML's trial selection grouped by client (D-120); row budget |
 | Calibration | Prior shift from the effective (weighted) training rate to the window's true rate; per-month base rates reported (seasonality); optional general calibration step out-of-fold inside train (D-049) |
 | Evaluation | Test (unseen clients, same months) vs validation (OOT): the gap separates overfitting from decay over time. Optional: validation on test clients only (unseen clients and an unseen month) |
 | Inference | Unchanged: one month at a time |
@@ -127,16 +134,23 @@ The periods, earliest to latest:
   pre-conversion negatives are the most informative negatives, and random row sampling keeps only a
   fraction of them.
   - That is lost variance, not bias.
-  - It is mostly about timing, which is inherently hard to learn. Regularisation and client-grouped
-    CV stop the model from memorising individual clients.
+  - It is mostly about timing, which is inherently hard to learn. Regularisation stops the model
+    from memorising individual clients, and the test split on unseen clients shows when it does
+    (FLAML's trial selection is grouped by client too, D-120).
 - **What would bias the model:** sampling based on a client's outcomes across months (e.g. keep every
   converting client's full history plus a sample of the rest) *without weights*. With
-  inverse-probability weights it is unbiased again; that is sampling option 3.
+  inverse-probability weights it is unbiased again; that option is on the Phase 3 wishlist
+  (D-123).
 - **Two practical traps:**
   - Sample *after* assigning clients to train/test, so no client straddles both.
-  - Stratify by month, so the window's month mix isn't distorted.
-- Recommendation: default to option 1, offer options 2 and 3 with guidance, and compare all three on
-  synthetic data. There the oracle shows which comes closest to the truth.
+  - Use one keep fraction for the whole window, so the window's month mix isn't distorted and one
+    prior-shift offset holds for every month (D-117).
+- Phase 2 (D-123): option 1 for rare binary targets, option 2 for common targets and regression,
+  no sampling when the rows fit the budget. Calibration's check against the synthetic oracle
+  shows that option 1's offset brings scores back to the true level; comparing every option
+  against the oracle is on the Phase 3 wishlist.
+- The LDS dislikes sampling because it distorts distributions, so Phase 2 samples only when the
+  row budget requires it (D-106, D-123).
 
 ### Does a multi-month window actually beat a single month?
 This is answered by a built-in **window ablation**:
@@ -169,8 +183,9 @@ This is answered by a built-in **window ablation**:
 *(fill when built)*
 
 ## Open questions
-- The default sampling option and its parameters; smarter downsampling as a framework asset (the
-  SDS wants this researched); the window ablation details (OD-17). M2 runs option 1 with one
-  negative-keep fraction across the window's months; the comparison in M3 settles the default.
+- The window ablation details (OD-17). Sampling is settled for Phase 2 (D-123); smarter
+  downsampling, including low-value rows with weights that calibrate back, is on the Phase 3
+  wishlist.
 - Default window: 6 months with `w = 3` (D-091); per-profile variation later.
-- FLAML grouped CV on 2.7 (`split_type="group"` with `groups`): unverified.
+- Whether FLAML's group split runs as expected (spike 1, unverified on 2.7; no sample weights in
+  Phase 2, D-123); the fallback is in [training](training.md) (D-120).
