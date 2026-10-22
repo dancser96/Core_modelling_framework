@@ -3,7 +3,7 @@
 **What this is.** `core_modelling` is how the unit builds, ships and maintains models: a versioned
 Python library driven by one config file per use case, used through guided notebooks, a CLI and a
 Python API. It replaces months of bespoke work with a registered candidate in days to a few weeks of
-DS effort (D-085); production follows through the change-request calendar. It sets one standard for every stage of the data
+DS effort (D-023); production follows through the change-request calendar. It sets one standard for every stage of the data
 science lifecycle: correctness, reproducibility, maintainability, a shared vocabulary and an overview
 of every live model. Where we start from and where we want to reach: `docs/context/project.md`.
 
@@ -14,12 +14,12 @@ of every live model. Where we start from and where we want to reach: `docs/conte
   are a product within the product: a data-analysis report in its own right (plus the feature
   ledger), not just notebook output. The other reports: model performance, model card, monitoring.
 - **Coverage:** panel tasks (one row per unit per period) first: binary and regression in Phase 2
-  (D-080). Series tasks (forecasting) come later. Any domain (retail, SME, corporate) and any
+  (D-020). Series tasks (forecasting) come later. Any domain (retail, SME, corporate) and any
   entity (subsidiary) is handled through configuration.
 - **Model types:** AutoML (FLAML) in Phase 2; predefined model families tuned with Optuna in
-  Phase 3 (D-080); both behind one model interface.
+  Phase 3 (D-020); both behind one model interface.
 - **Integrations (first release):** the feature store upstream and the data observability
-  framework downstream. LLM-assisted modelling comes in Phase 3 (D-075).
+  framework downstream. LLM-assisted modelling comes in Phase 3 (D-021).
 - **Current state:** Phase 2, design baseline done; the package is still a skeleton. The crunch
   implementation in `legacy/propensity_crunch/` is reference only. Status: `docs/UPDATES.md`. Plan
   and open decisions: `docs/roadmap.md`. Vocabulary: `docs/glossary.md`. Reading order and the
@@ -68,7 +68,7 @@ complete or "future-proof" code. When in doubt, write less.
 5. **Files by responsibility.** One module ≈ one concept, roughly ≤ 300 lines, but functions tied
    together stay in one module even past that. If you can't name the module in two words, it is
    doing too much. A package with more than a handful of modules splits them into role subfolders
-   (rules as plain data, functions, checks), never dozens side by side (D-070).
+   (rules as plain data, functions, checks), never dozens side by side (D-003).
 6. **No abstraction before a second real use.** The exception is §3 "shapes must be task-agnostic":
    config and data *shapes* stay general, *implementations* stay concrete.
 7. **Extension points are plain dicts** mapping names to functions
@@ -90,11 +90,11 @@ complete or "future-proof" code. When in doubt, write less.
 12. **No new dependency without asking.** It must also be installable inside the bank (see §5).
 13. **Small, reviewable steps.** One logical change per step, roughly ≤ 300–400 changed lines
     unless agreed. Stop, summarise, let the user review. A larger agreed build ships with a review
-    guide that says what to read, in which order, and what "right" looks like (D-067).
+    guide that says what to read, in which order, and what "right" looks like (D-003).
 
 **Workflow for any non-trivial task**
 
-**Parallel by default** (D-071): split the work into independent pieces and run them at the same
+**Parallel by default** (D-072): split the work into independent pieces and run them at the same
 time, using subagents as much as possible. The `delegation` skill is the procedure (the split,
 which model takes which piece, the brief template, integration); in short:
 - delegate research, reviews and audits, and independent code, test or doc pieces, to subagents;
@@ -134,7 +134,7 @@ which model takes which piece, the brief template, integration); in short:
 Each use case pins the framework version it runs with and upgrades at its own pace (D-047). Many
 versions therefore run at once and write to the same shared tables, and every upgrade must keep a
 use case and its production model working. Simplicity never justifies a silent breaking change, and
-pinning doesn't relax this. The promise is about outputs (D-107): what a version writes or saves
+pinning doesn't relax this. The promise is about outputs (D-007): what a version writes or saves
 (shared tables, configs, bundles, artifacts) stays similar and readable; internals change freely.
 The 0.x pre-release promises nothing; shared formats freeze from release 1.0's first row in the bank.
 
@@ -143,7 +143,7 @@ The 0.x pre-release promises nothing; shared formats freeze from release 1.0's f
 - **Every config carries `schema_version`.** A schema change means: bump the version, write a small
   migration function old → new, add a test that loads an old config. Old configs keep loading and
   emit a deprecation warning.
-- **Artifact formats are versioned the same way:** model bundle (D-051; never pickle, D-078),
+- **Artifact formats are versioned the same way:** model bundle (D-051; never pickle),
   model card, manifest, scores schema, feature ledger, drift reference, registry records,
   monitoring tables.
 - **Deprecate before removing:** keep the deprecated path for at least one minor version.
@@ -169,7 +169,7 @@ The 0.x pre-release promises nothing; shared formats freeze from release 1.0's f
   Spark session, HDFS transport, paths, table names, compat shims, report theme. **No bank names,
   paths, table names or people's names anywhere in the repo**; use roles instead.
 - **Task-agnostic shapes.** Configs carry `task`. Panel tasks come first (binary and regression in
-  Phase 2, D-080); series tasks come later. Every task-specific choice (target builder,
+  Phase 2, D-020); series tasks come later. Every task-specific choice (target builder,
   EDA ranking, leakage screen, selection rule, contract checks, baselines, metrics, views,
   calibration, output columns…) dispatches on `task` through one per-task spec dict (D-050). Never
   bake binary or single-month assumptions into
@@ -206,7 +206,7 @@ The 0.x pre-release promises nothing; shared formats freeze from release 1.0's f
    variants or tuning trials (window, sweep, trade-off point) weighs train and test metrics only
    (D-083). Checks that use labels (EDA feature–target views and
    ranking, leakage screens, stability of AUC) use train-split clients within the observation window.
-   Label-free comparisons (e.g. PSI) may use later months, except the validation month (D-048).
+   Label-free comparisons (e.g. PSI) may use later months, except the validation month (D-030).
 5. **Checks wrap the engine.** The modelling engine sees only the vetted feature set; validation runs
    outside the engine.
 6. **Leakage screens flag, never auto-drop.** Columns used to build the target are excluded
@@ -227,7 +227,7 @@ The 0.x pre-release promises nothing; shared formats freeze from release 1.0's f
 13. **No model without data knowledge.** Training requires EDA and Feature Checks artifacts for the
     same data-definition hash; hands-off profiles run them automatically (D-031). A person signs off
     every feature before a model is registered, at every automation level; an LLM never passes this
-    gate (D-076).
+    gate (D-031).
 
 Run the **ml-correctness-auditor** subagent whenever you touch Target Factory, the dataset/splits,
 features, training, evaluation, calibration or inference.
@@ -312,7 +312,7 @@ Each fact has **one owner doc**; every other doc links to it instead of repeatin
 | A config field is added, changed or removed | `docs/components/config.md` + example in `conf/base/`; §2 procedure if breaking |
 | An artifact format changes (card, manifest, scores, ledger, registry, monitoring tables) | The owning component doc + the §2 procedure; run compat-guardian |
 | A public function is added or changed | `docs/architecture.md` → Public API |
-| A decision is made (pattern, dependency, lifecycle, naming) | New row in `docs/decisions.md` (mark rows it supersedes); `docs/architecture.md` if structure changes |
+| A decision is made (pattern, dependency, lifecycle, naming) | `docs/decisions.md`: extend the set row it is heavily adjacent to, else a new row in the high-impact or the low-impact table; a superseding decision replaces the original row in place (same ID; no superseded rows are kept); the log holds every active decision in as few rows as reasonable. `docs/architecture.md` if structure changes |
 | A question is opened, answered or parked | `docs/roadmap.md` → Open decisions (add, update or delete the OD row, in the short-term or medium-term table); component-only questions go in that doc's Open questions |
 | Work item started / finished / blocked | `docs/UPDATES.md` status table (dated log line if major); milestone/backlog in `docs/roadmap.md` |
 | A new term, or a term changes meaning | `docs/glossary.md` first, then use it consistently |
@@ -362,8 +362,8 @@ numbered list for a flow, nested bullets for a tree and a narrow table for a map
   straight to main (no branches); push only when asked (D-072).
 - **Consult well.**
   - Ask numbered questions (continue the numbering across rounds), each with your proposed default.
-    A question that cites a decision or open decision summarises it in brackets, e.g. "D-089
-    (shared tables only grow within a major version)", so nobody has to switch files (D-122).
+    A question that cites a decision or open decision summarises it in brackets, e.g. "D-007
+    (shared tables only grow within a major version)", so nobody has to switch files (D-072).
   - For genuine choices, lay out the options with when-to-use guidance and a recommendation.
   - Match the altitude to the phase: directions first, details when that component is designed.
 - **Verify, don't assume.** Check library behaviour against the pinned version. Say when something is
@@ -380,7 +380,7 @@ numbered list for a flow, nested bullets for a tree and a narrow table for a map
 | Skill | `simplicity-review` | Reviewing any diff against §1 before presenting it |
 | Skill | `doc-sync` | End of every task — applies §8 |
 | Skill | `holistic-review` | Every major step (§1 workflow step 0) and before finalising a plan touching more than one stage |
-| Skill | `delegation` | Start of every non-trivial task and every review round: the split, model routing and briefs for subagents (D-071) |
+| Skill | `delegation` | Start of every non-trivial task and every review round: the split, model routing and briefs for subagents (D-072) |
 | Skill | `new-component` | Adding a new stage, lifecycle unit or versioned artifact |
 | Skill | `bank-parity-check` | New imports/deps, IO code, anything that must run inside the bank |
 | Skill | `brainstorming` | New or unsettled design, before the §1 plan (includes research + critique) |

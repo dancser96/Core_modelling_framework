@@ -122,8 +122,8 @@ Everything committed travels with git. These don't:
      "rules" live outside the repo; sessions and chat history do not transfer and are not needed.
    - **User settings** `~/.claude/settings.json`: currently only the model choice. Copy or set it.
    - **User-level skills** `~/.claude/skills/`: the synced `skill-creator` (kept user-level by
-     D-019). It re-syncs from the account; nothing to copy.
-   - **Plugins** `~/.claude/plugins/installed_plugins.json`: `pyright-lsp` (D-019). Re-enable it
+     D-013). It re-syncs from the account; nothing to copy.
+   - **Plugins** `~/.claude/plugins/installed_plugins.json`: `pyright-lsp` (D-013). Re-enable it
      from the marketplace on the PC rather than copying the file.
    - **Gitignored repo files** are item 3 below.
 3. **Gitignored local files**, if they exist by then: `conf/local/` (copy),

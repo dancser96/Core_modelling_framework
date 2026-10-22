@@ -1,13 +1,13 @@
 # Synthetic data — review guide
 
-The review guide for the synthetic data generator (M1, D-067), version 0.4.0. Approved by the SDS
+The review guide for the synthetic data generator (M1, D-003), version 0.4.0. Approved by the SDS
 on 2026-10-19; the LDS reviews it next (summary on `worknotes/sync.md`). The spec and code map are
-in `docs/components/test_harness.md`; history is in `docs/UPDATES.md` and D-056–D-071.
+in `docs/components/test_harness.md`; history is in `docs/UPDATES.md` and D-003, D-011, D-029, D-033, D-041, D-043, D-050, D-064, D-072, D-083.
 
 ## 1. What it is
 - A retail book of 100k clients over 24 months, written as an upstream-style feature mart: 147
   columns, one row per client per month.
-- The code is in four role folders under `synthetic/src/synthetic/` (32 modules, D-070):
+- The code is in four role folders under `synthetic/src/synthetic/` (32 modules, D-003):
   - `spec/`: the rules, as plain data;
   - `mechanisms/`: the functions that simulate;
   - `truth/`: the oracle, the regression oracle and `truth.json`;
@@ -102,7 +102,7 @@ it at w = 6.
 ## 5. Settled choices
 | Choice | Why |
 |---|---|
-| The regression oracle is kept (57% of generation time) | It is the ceiling for next-3-month card spend, and regression is the second task (D-080) |
+| The regression oracle is kept (57% of generation time) | It is the ceiling for next-3-month card spend, and regression is the second task (D-020) |
 | Exact medians (`scipy.stats.exponnorm` offsets) | Medians land exactly on the spec's level table, so the table can be read and checked |
 | The starting book is built from each client's history in closed form | No long burn-in, and holdings agree with tenure from month 1 |
 | Dirty data and extra columns, off by default | The contract-check and scale tests need them |

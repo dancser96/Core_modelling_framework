@@ -2,6 +2,82 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-10-22 — Decision log compacted; inconsistency sweep; LDS review list
+- 2026-10-22: the SDS asked for a holistic pass now that the key designs are in place: compact
+  `docs/decisions.md` by merging very similar rows, sweep every doc for inconsistencies between
+  decisions, open decisions and descriptions, and list the twenty decisions the LDS should read first.
+- The log went from 128 rows to 58, in two tables: high-impact (42 rows: scope, outputs, ML
+  correctness, lifecycle, compatibility, responsibilities) and low-impact (16 rows: working rules,
+  tooling, docs, dev-only data, defaults, naming). Every merge went into the lowest ID of its cluster;
+  the surviving row's status names the IDs it absorbed. New rule in the file header and D-072 (g): a
+  superseding decision replaces the original row in place (same ID), no superseded rows are kept.
+  Four subagents remapped about 1,000 references in the current-state docs; this log and the `## Log`
+  section of `docs/UPDATES.md` keep their old numbers as history, resolved through the mapping below.
+- Old → new mapping (retired → surviving): D-002→D-001; D-005, D-080→D-020; D-008, D-059, D-095→D-033;
+  D-010, D-018, D-074, D-127→D-024; D-015→D-039; D-019→D-013; D-025, D-063, D-067, D-070 (code
+  layout)→D-003; D-027, D-045→D-044; D-042→D-012; D-048→D-030; D-053, D-062→D-083; D-055, D-075,
+  D-115→D-021; D-056→D-041; D-057→D-011; D-058, D-086→D-043; D-060→D-050; D-061, D-066, D-118→D-029;
+  D-065, D-068, D-069, D-070 (synthetic mechanics)→D-064; D-071, D-084, D-102, D-121, D-122→D-072;
+  D-076, D-092→D-031; D-077, D-085, D-087→D-023; D-078, D-101, D-110→D-051; D-089, D-107, D-119→D-007;
+  D-090→D-006; D-093→D-037; D-096, D-126→D-052; D-097, D-109, D-124→D-022; D-099→D-094; D-103, D-113,
+  D-116→D-016; D-104→D-049; D-105→D-036; D-108→D-079; D-112→D-040; D-114→D-047; D-120→D-106;
+  D-123→D-117. Lettered items were re-lettered: D-084 (a)–(g) are now D-072 (h), (i), (i), (j), (k),
+  (h), (g); the old D-072 (b)–(e) are now (c)–(f).
+- Four more subagents swept the docs for inconsistencies; the findings became the question list
+  `worknotes/inconsistency_questions.md`. The LDS reading list is `worknotes/decisions_LDS_review.md`.
+- Files: `docs/decisions.md` (rewritten), `CLAUDE.md` §8 (decision trigger), `.claude/skills/doc-sync/SKILL.md`,
+  `worknotes/README.md` (two new files registered), `worknotes/decisions_LDS_review.md`,
+  `worknotes/inconsistency_questions.md`, and D-number references across `docs/`, `worknotes/`,
+  `notebooks/`, `synthetic/`, `tests/README.md` and `.claude/`.
+- Decisions / open decisions: D-072 (g) extended (two tables; replace in place).
+- Still open: the SDS's answers to the inconsistency questions; the LDS's pass over the review list.
+
+### 2026-10-22 — Working rules: sync windows and the decision log
+- 2026-10-22: the SDS changed two working rules, built in without rework of existing content.
+  (1) The sync page's "since the last sync" becomes "last 2 days"; it and "last 7 days" are each at
+  most one page, important changes and updates only, no info dump; the 7-day recap covers days
+  3–7. (2) The decision log holds every active decision in as few rows as reasonable: new
+  information heavily adjacent to a set decision extends its row; a superseding decision replaces
+  it with a new row, the old one marked superseded.
+- Applied to itself: both rules extend D-084 as (f)–(g) rather than adding a row.
+- Files: `worknotes/README.md` (rules, template), `docs/decisions.md` (header, D-084),
+  `CLAUDE.md` §8 (decision trigger), `.claude/skills/doc-sync/SKILL.md`, `.claude/commands/brief.md`.
+- Still open: `sync.md` is reshaped at its next refresh; existing decision rows are not merged
+  (no rework asked).
+
+### 2026-10-22 — The planning thread closed
+- 2026-10-22, later: the SDS corrected the reading of Q218: the plan is a working assumption, not
+  agreed; the LDS still reviews it and stakeholder buy-in comes next week. The plan (dates, M2's
+  stages, depth per component) moved back into `worknotes/timeline_proposal.md`; the roadmap keeps
+  a short milestone table marked as the working assumption; OD-01 restored; D-124 now soft.
+- 2026-10-22, after the daily LDS sync: the last answers (Q223, Q241 (a)–(g), Q276, Q281, Q292)
+  and "barring any change in the timelines, all is answered", so Q218 counts as accepted.
+- Decisions: D-124 (the plan agreed; milestone IDs kept: M2 = round 1a in stages M2.1–M2.4, M3 =
+  round 1b, M4 = round 2, M5a/M5b = the run-throughs; OD-01 closed); D-125 (the decision audit log;
+  OD-10 closed; amends D-043 and D-088); D-126 (retraining keeps clients and window; all-clients
+  and extended-window refits to the Phase 3 wishlist; narrows D-052, D-096); D-127 (Public API,
+  option A); D-128 (product and activity parsed from `<product>_<activity>`, as in the crunch's
+  `fx_activation`).
+- Q241's concern (verbosity, entries → code, which decisions are allowed, how that list is kept)
+  is answered in `config.md`: a closed list of operations in one dict, a maintained list of
+  settings a `set` may touch with a test against the schema, replay rules, verbosity controls,
+  the resolved config saved as one file, and a registered bundle that carries its run's slice as
+  one file.
+- Roadmap: the agreed blocks, M2's stages and the depth per component moved in from the timeline
+  note; backlog retagged (most former M3 depth is now M4); two to-dos added (the learn sessions;
+  the first change request's first-time steps); OD-01 and OD-10 deleted; the CDS topic "Phase 2
+  plan" is now due.
+- Worknotes: `holistic_review.md` deleted (its "do before M2.1" items were all settled or held
+  elsewhere); the questions file closed; `timeline_proposal.md` trimmed to reasoning, work
+  streams, assumptions and risks; the sync page's last sync set to 10-22 and the bullets it
+  covered removed.
+- Delegated: the audit-log design into `config.md`, plus the ledger, architecture, lifecycle,
+  training, dataset, inference, run modes and notebooks README, to an Opus agent at high effort.
+  Its own choices, read and kept on the main thread: `include` reverses only a person's exclude;
+  the decision, metric and baselines are never loggable (§4.3); evidence cites train and test only
+  (§4.4); the registered slice includes the run's sign-off. New open point in `config.md`: does a
+  person entry citing a superseded rule entry block register?
+
 ### 2026-10-22 — Fourth round of answers, the plan adjusted, questions round 5
 - 2026-10-22: the SDS answered Q260, Q262, Q267, Q268 (asked back), Q269, Q272, Q275, Q281 (asked
   back), Q284, Q285, Q290, Q292 (didn't understand), Q296, Q301 and all of section B, and gave
@@ -225,9 +301,9 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   with the LDS that will attach deadlines to the milestones: risks, weaknesses, suggestions and
   questions for both of them, in two worknotes files, plus a small timeline suggestion.
 - Done, as three files in `worknotes/`:
-  - `holistic_review.md`: verdict (proceed with changes), what to keep, ten ranked risks, scope
-    and goals, stage-by-stage findings, forward compatibility, process, a doc-hygiene list, and
-    a "do before M2.1" list;
+  - `holistic_review.md` (deleted 2026-10-22): verdict (proceed with changes), what to keep, ten
+    ranked risks, scope and goals, stage-by-stage findings, forward compatibility, process, a
+    doc-hygiene list, and a "do before M2.1" list;
   - `holistic_review_questions.md`: Q217–Q265 in nine groups (target and scope; process; facts
     from outside the team; config spine; dataset to ledger; training and evaluation; lifecycle
     to monitoring; reporting, notebooks, tests; the CDS), each with a default and an owner;

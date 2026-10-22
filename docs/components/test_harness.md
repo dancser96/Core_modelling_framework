@@ -1,11 +1,11 @@
 # Synthetic data and test harness
 **Status:** tested (built 2026-10-17; the SDS's review applied and approved, 2026-10-19);
-reviewed and accepted by the LDS, 2026-10-21, guided by `synthetic/REVIEW.md` (D-067, D-070) ·
+reviewed and accepted by the LDS, 2026-10-21, guided by `synthetic/REVIEW.md` (D-003) ·
 **Legacy:** `tests/smoke_test.py` (stub-based — do not copy its stubs)
 **Related:** [dataset](dataset.md) (time model) · [target factory](target_factory.md) ·
 [EDA](eda.md) · [feature checks](feature_checks.md) · [environment](environment.md) ·
-[config](config.md) · `tests/README.md` · `synthetic/REVIEW.md` (review guide) · D-014, D-041,
-D-056, D-057, D-062, D-064–D-070, D-080 · OD-17
+[config](config.md) · `tests/README.md` · `synthetic/REVIEW.md` (review guide) · D-003, D-011, D-014, D-020, D-029,
+D-041, D-064, D-083 · OD-17
 
 Read it in three levels:
 - **Level 1** (a two-minute read) gives the essentials.
@@ -214,7 +214,7 @@ What ties the products together:
 
   The null controls score about 0.5 on every target.
 - **A regression ceiling too.** The oracle also gives the true mean and quantiles of each card
-  holder's next-3-month card spend, for regression (D-080).
+  holder's next-3-month card spend, for regression (D-020).
 
 ### How a month runs, and where the code is
 The generator is a loop over months, vectorised over clients. It starts 13 months before the panel:
@@ -281,14 +281,14 @@ amounts, mart, traps and oracle, then the code, the checks, the interface and th
 6. **Exact zeros** for non-holders and dormant users; **nulls only where the retail data has them**.
 7. **Time consistency:** fixed descriptors, day counters that grow by the days in the month, entry
    and exit, seasonality, drift. **Rare to semi-rare events**, each with a controllable rate.
-8. **Traps** on two products, each recorded in the trap summary (D-069).
+8. **Traps** on two products, each recorded in the trap summary (D-064).
 9. **Deterministic from a seed**, generated month by month; a month never depends on later months,
    except the declared look-ahead trap columns.
 10. **Ground truth:** `truth.json` plus a per-row oracle file. The generator assumes no particular
-    observation window (D-068).
+    observation window (D-064).
 
 Design constraints:
-- Libraries: numpy, pandas, pyarrow, scipy (pinned, D-042). Spark doesn't generate anything; it
+- Libraries: numpy, pandas, pyarrow, scipy (pinned, D-012). Spark doesn't generate anything; it
   reads what was written, through the environment adapter.
 - **One random stream per mechanism** (population, latents, holdings, amounts, cards, logins, traps,
   leaks, extras, regression, attributes), spawned from the seed and passed explicitly. A new
@@ -301,7 +301,7 @@ Design constraints:
   active/dormant usage.
 - **Every mechanism has its term in the oracle**; one it doesn't know about would make the oracle
   stop being the ceiling.
-- **Simplicity by measured effect** (D-070): a mechanism stays only if its effect is worth its code.
+- **Simplicity by measured effect** (D-003): a mechanism stays only if its effect is worth its code.
   Cut in round 1: the relevance rankings (recomputable from the oracle) and the `separation` knob
   (no effect at its only value). Kept by the SDS's choice: the regression oracle.
 
@@ -339,7 +339,7 @@ month, so the mix stays flat. New clients start at relationship day 0; leavers' 
 `n_clients` is the size 13 months before the panel starts (≈ 103k at month 1 for 100k). Dormant
 clients stay on the books with zero activity.
 
-**The book's tenure and age are the turnover's steady state** (D-070,
+**The book's tenure and age are the turnover's steady state** (D-064,
 [maths §2](#2-persistence-over-time-stationary-ar1)).
 - Clients join at the entry rate and leave at the exit rate. In a book growing at entry − exit,
   tenure is therefore exponential at the entry rate: a mean of 9.3 / 8.3 / 7.6 / 6.4 years
@@ -427,7 +427,7 @@ Also derived: the number of products held.
   - Half of salary-transfer clients get one, once a year, in a month of their own between January
     and April.
   - It is in the oracle, and gives recent-window columns signal of their own.
-- **What an event is in the mart** (the oracle prices exactly these; D-066):
+- **What an event is in the mart** (the oracle prices exactly these; D-029):
   - a 0/1 product is acquired when its flag is 1 in any month of the window, for a non-holder at
     the observation month; an end-of-window rule misses ≈ 1–10% of acquisitions (lost again);
   - a loan opens when its count rises in any month of the window; an account maturing in the
@@ -458,7 +458,7 @@ Sources: [cards](https://thenationalnews.com/business/uae-credit-cards-among-cos
 [mobile banking](https://expatica.com/ae/finance/banking/mobile-banking-in-the-united-arab-emirates-72232),
 [investment products](https://www.marmoremena.com/uae-asset-management-industry-an-overview/).
 
-**As few numbers as possible per product** (D-065), values in `spec/products.py`:
+**As few numbers as possible per product** (D-064), values in `spec/products.py`:
 - the share held (or active) per profile;
 - for 0/1 products, the adoptions a month in a 100k book (credit card and e-banking: after
   onboarding). These include the adoptions that refill the holdings of clients who left the bank;
@@ -699,7 +699,7 @@ All names are lowercase and come from one grammar (`mechanisms/mart.py`):
 - **Recency:** `months_since_last_{measure}_{product}[_{subcat}]` and
   `days_since_last_login_digital`.
 - **Ratio:** `{base}_0_2_vs_3_5_months_ratio` (average of months 0–2 over months 3–5).
-- **Trap columns** end in `_trap_{kind}` (D-069); extra columns are `extra_{nnnn}_trap_weak` /
+- **Trap columns** end in `_trap_{kind}` (D-064); extra columns are `extra_{nnnn}_trap_weak` /
   `extra_{nnnn}_trap_noise`.
 
 #### Columns
@@ -756,7 +756,7 @@ time by pyarrow into `<out>/mart/` and `<out>/oracle/`, with `<out>/truth.json` 
 `data/01_raw/synthetic_canonical/`.
 
 ### Trap summary
-Traps sit on **two products**, so a test of either target meets every kind (D-069): credit card
+Traps sit on **two products**, so a test of either target meets every kind (D-064): credit card
 acquisition (`cc_flag` 0 → 1) and personal-loan opening (`loan_personal_cnt` rises). A few concern
 no product. There are two sorts:
 - **Trap columns** (`trap_column` true) are added only to test the framework. Their names end in
@@ -780,7 +780,7 @@ each trap's evidence.
 | Credit card | Eligibility-defining | no | card amounts, `cc_active_flag` | 0 for non-holders | Constant within the eligible population; flagged |
 | Credit card | Decimal column | no | `cc_limit` | `decimal(18,2)` | Read by Spark as decimal; pandas gets Python objects unless it casts |
 | Personal loan | Process leak | yes | `application_loan_personal_cnt_trap_process_leak` | An opening at `t+1` is preceded by an application at `t` with chance 0.8; declined applications (never opened) are 30% of all, drawn with chance ∝ the client's opening chance at `t+1` | Beats the oracle for openings in the next month (w = 1), not at w = 3 or 6; leakage screen plus human review |
-| Personal loan | As-of misalignment | yes | `loan_personal_bal_trap_shifted` | Holds next month's `loan_personal_bal` (an upstream join on the wrong month); null where the client has no next month: it leaves, or it is the panel's last month. The real column comes from the name, so the spec's parameters are just `{"months": 1}` | Beats the oracle for openings next month (w = 1), not at w = 3 or 6; a time-alignment check (the column against its real sibling one month on) catches it. Two realistic tells: its nulls reveal next-month exits, which would leak the negatives of a target that counts leavers as negatives (an option D-066 allows), and it is all-null in the latest month |
+| Personal loan | As-of misalignment | yes | `loan_personal_bal_trap_shifted` | Holds next month's `loan_personal_bal` (an upstream join on the wrong month); null where the client has no next month: it leaves, or it is the panel's last month. The real column comes from the name, so the spec's parameters are just `{"months": 1}` | Beats the oracle for openings next month (w = 1), not at w = 3 or 6; a time-alignment check (the column against its real sibling one month on) catches it. Two realistic tells: its nulls reveal next-month exits, which would leak the negatives of a target that counts leavers as negatives (an option D-029 allows), and it is all-null in the latest month |
 | Personal loan | Rare high-rate level | no | `nationality` = Ghana (≈ 0.35% of clients) | +1.5 on the personal-loan log-odds | Stands out in event rate by level; unstable in CV |
 | Personal loan | Inverted U | no | `age` | Peak in the mid-30s | Spearman ≈ 0, mutual information high |
 | Personal loan | Hidden openings | no | `loan_personal_maturity_months` | A maturity in the same month hides an opening | Predictive under a "count at the end" rule only |
@@ -808,7 +808,7 @@ Later (not in M1): an interaction-only feature.
   - hidden attributes: `true_income`, `wealth_base`, `remitter_flag`, `school_payer_flag`,
     `bonus_month` (0 = none), `revolver_flag`, the power-law multipliers `pareto_<stock>`;
   - the regression oracle: `spend_cc_next_3_months_{mean,q10,q50,q90}` for card holders.
-- **Window probability, on demand** (`window_probability(mart, oracle, truth, target, w)`, D-066).
+- **Window probability, on demand** (`window_probability(mart, oracle, truth, target, w)`, D-029).
   It is keyed to the observation month, so no consumer shifts rows.
   - **The formula:** for an observation at `t`, the chance of an event is `1 − ∏(1 − p̃_s)` over
     `s = t+1 … t+w`. `p̃_s` is the chance the client would face with its state frozen at `t`, on
@@ -833,7 +833,7 @@ Later (not in M1): an interaction-only feature.
   - **Why it is still the ceiling:** the oracle conditions on the realised trait path, but traits
     and exits get no feedback from holdings.
   - It also checks that option 1's offset brings scores back to the true level; comparing every
-    sampling option against it is on the Phase 3 wishlist (D-123).
+    sampling option against it is on the Phase 3 wishlist (D-117).
 - **Standard targets** (oracle AUCs and sizing for `w` = 1, 3 and 6 months):
 
   | Target | Event | Eligible at `t` |
@@ -847,14 +847,14 @@ Later (not in M1): an interaction-only feature.
   | `spend_cc_next_3_months` (regression) | sum of `spend_cc_vol` over the next 3 months | `cc_flag` 1 |
 
   Clients who leave inside the window and windows past the panel get a null target.
-- **Regression oracle** (D-060): the true mean and 10% / 50% / 90% quantiles of next-3-month card
+- **Regression oracle** (D-050): the true mean and 10% / 50% / 90% quantiles of next-3-month card
   spend per card holder.
   - They come from 200 simulated forward paths of the card chains, traits, the current/savings
     deviation and spend, starting at the true state. The paths have their own random stream and
     are conditioned on the client staying.
   - It integrates over the trait path, unlike the window probability.
   - It takes more than half the generation time; it is kept for regression, the second
-    task type (D-080).
+    task type (D-020).
 - **`truth.json`** holds only what can't be recomputed from the mart and the oracle file:
   - `generator_version`, numpy / scipy / pandas / pyarrow `versions` (the seed-to-data mapping
     depends on them), `seed`, `preset`, `n_clients`, `n_months`, `first_month`;
@@ -1178,7 +1178,7 @@ None. Answered in the SDS's review (2026-10-19):
 - the decisions taken during the build are confirmed.
 
 ### Future to-dos (the LDS, 2026-10-21)
-Not built now. Each new column names what it is, like the traps (`_trap_<kind>`, D-069).
+Not built now. Each new column names what it is, like the traps (`_trap_<kind>`, D-064).
 - **More noise columns** of several kinds (univariate, random), to further prove the checks work.
   Today there are the three null controls (`*_trap_null_control`) and the off-by-default
   `extra_{nnnn}_trap_noise` / `_trap_weak` columns; new ones would be e.g. `_trap_noise`.

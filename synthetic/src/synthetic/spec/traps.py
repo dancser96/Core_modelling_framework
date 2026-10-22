@@ -1,7 +1,7 @@
 """Trap spec of the synthetic retail book: every trap, as plain data.
 
 Traps sit on two products, credit-card acquisition and personal-loan opening, so a test of either
-target meets every kind (D-069); a few traps concern no product (null controls, quality, drift,
+target meets every kind (D-064); a few traps concern no product (null controls, quality, drift,
 dirty data, extra columns). `trap_column` tells the two sorts apart:
 - True: a trap column, added only to test the framework; its name ends in `_trap_<kind>`;
 - False: the trap sits in real columns: an ordinary column (or several, or none in particular)

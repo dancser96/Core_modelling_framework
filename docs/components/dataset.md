@@ -1,7 +1,7 @@
 # Dataset: observation window, splits, sampling
 **Status:** designing · **Legacy:** `src/io.py` (load + prune in Spark), `src/dataset.py` (labelled frames, downsampling)
 **Related:** [config](config.md) (time and data sections) · [training](training.md) · [evaluation](evaluation.md) ·
-[feature checks](feature_checks.md) · [EDA](eda.md) · [test harness](test_harness.md) · D-030, D-048, D-049, D-052, D-054, D-082, D-083, D-091, D-098, D-106, D-117, D-120, D-123 · OD-17
+[feature checks](feature_checks.md) · [EDA](eda.md) · [test harness](test_harness.md) · D-030, D-049, D-052, D-054, D-082, D-083, D-091, D-098, D-106, D-117 · OD-17
 
 ## Purpose
 Builds the frames every stage works on, from one definition. That means the eligible population over
@@ -27,7 +27,7 @@ The periods, earliest to latest:
   history.
 - Validation is a single month for panel tasks. Series tasks will need rolling validation (later).
 - Example on the 24-month synthetic panel with 6-month backward windows, `w = 3` (an illustration:
-  the window is chosen per use case, and the synthetic data is built for none in particular, D-068):
+  the window is chosen per use case, and the synthetic data is built for none in particular, D-064):
   - window = months 6–11;
   - validation month = 14, labels mature by 17;
   - months 18–21 are free to test scoring plus monitoring with matured labels.
@@ -43,15 +43,15 @@ The periods, earliest to latest:
 3. Split train/test by client (§4.11). Each client is assigned by a seeded hash of its id, so the
    assignment is stable across months and reruns. Any CV inside train is grouped by client, as the
    calibration step's out-of-fold predictions are (D-094), and FLAML's trial selection gets the
-   client groups, so no fold mixes a client's rows ([training](training.md), D-120).
+   client groups, so no fold mixes a client's rows ([training](training.md), D-106).
    Label-using checks in EDA and Feature Checks apply the same assignment first and use train-split
-   clients only (D-048).
+   clients only (D-030).
 4. Validation is the OOT month, scored by models trained on train only. It never informs selection
    or tuning (§4.4).
 5. Prune columns and rows in Spark, and sample in Spark before collecting. Estimate the collected
    size first and fail loud if it exceeds the row/memory budget, *before* calling `toPandas`.
 6. Sampling is train-only, recorded, and happens after the client split. Phase 2 keeps it simple
-   (D-123); the options, with when-to-use guidance:
+   (D-117); the options, with when-to-use guidance:
    - **uniform negative downsampling.** For rare binary targets. Keeps every positive row and one
      keep fraction of the negative rows for the whole window, without stratifying by month: months
      are large, similar slices, and one fraction keeps one prior-shift offset valid for every
@@ -61,11 +61,11 @@ The periods, earliest to latest:
    - **no sampling,** whenever the training rows fit the row budget.
 
    Outcome-stratified client sampling with weights, downsampling low-value rows and smarter
-   downsampling in general are on the Phase 3 wishlist (D-123).
+   downsampling in general are on the Phase 3 wishlist (D-117).
 
    Whatever the option, the prior-shift offset uses the effective (weighted) training rate (D-049);
    computed from the unweighted rate it would correct twice.
-7. **No sample weights in Phase 2** (D-123). They arrive with outcome-stratified sampling in
+7. **No sample weights in Phase 2** (D-117). They arrive with outcome-stratified sampling in
    Phase 3, together with the per-task spec's list of statistics that must take them (D-117).
 8. **Denominators** (D-098): the "true population" is the eligible rows regardless of label (the
    drift reference and the contract band use it); the prior-shift true rate comes from the
@@ -77,16 +77,17 @@ The periods, earliest to latest:
    the per-task spec (D-050).
 10. Window ablation: the same config with only the window changed produces comparable runs, scored
    on the identical validation set (see below).
-11. Refit frames (D-052): all clients (train + test) of the window, or an extended window moved to
-    the latest months whose labels have matured. They are built by the same function.
+11. No refit frames in Phase 2 (D-052): a retrain keeps the data definition, so
+    it uses the same clients and window. Frames on all clients or an extended window are on the
+    Phase 3 wishlist.
 
 ## Downstream effects of the window
 
 | Area | Effect |
 |---|---|
-| EDA | Feature–target views on train-split clients in the window; base rate per month (population level, for seasonality) over every month up to the window's end, because later months' target windows overlap the validation month's (D-048) |
+| EDA | Feature–target views on train-split clients in the window; base rate per month (population level, for seasonality) over every month up to the window's end, because later months' target windows overlap the validation month's (D-030) |
 | Feature Checks | Stability across the window's months on train-split clients (per-month AUC range, PSI); label-free PSI against the gap months between window and `v` and the latest month, never `v` |
-| Training | Train/test client split; calibration folds grouped by client; FLAML's trial selection grouped by client (D-120); row budget |
+| Training | Train/test client split; calibration folds grouped by client; FLAML's trial selection grouped by client (D-106); row budget |
 | Calibration | Prior shift from the effective (weighted) training rate to the window's true rate; per-month base rates reported (seasonality); optional general calibration step out-of-fold inside train (D-049) |
 | Evaluation | Test (unseen clients, same months) vs validation (OOT): the gap separates overfitting from decay over time. Optional: validation on test clients only (unseen clients and an unseen month) |
 | Inference | Unchanged: one month at a time |
@@ -136,21 +137,21 @@ The periods, earliest to latest:
   - That is lost variance, not bias.
   - It is mostly about timing, which is inherently hard to learn. Regularisation stops the model
     from memorising individual clients, and the test split on unseen clients shows when it does
-    (FLAML's trial selection is grouped by client too, D-120).
+    (FLAML's trial selection is grouped by client too, D-106).
 - **What would bias the model:** sampling based on a client's outcomes across months (e.g. keep every
   converting client's full history plus a sample of the rest) *without weights*. With
   inverse-probability weights it is unbiased again; that option is on the Phase 3 wishlist
-  (D-123).
+  (D-117).
 - **Two practical traps:**
   - Sample *after* assigning clients to train/test, so no client straddles both.
   - Use one keep fraction for the whole window, so the window's month mix isn't distorted and one
     prior-shift offset holds for every month (D-117).
-- Phase 2 (D-123): option 1 for rare binary targets, option 2 for common targets and regression,
+- Phase 2 (D-117): option 1 for rare binary targets, option 2 for common targets and regression,
   no sampling when the rows fit the budget. Calibration's check against the synthetic oracle
   shows that option 1's offset brings scores back to the true level; comparing every option
   against the oracle is on the Phase 3 wishlist.
 - The LDS dislikes sampling because it distorts distributions, so Phase 2 samples only when the
-  row budget requires it (D-106, D-123).
+  row budget requires it (D-106, D-117).
 
 ### Does a multi-month window actually beat a single month?
 This is answered by a built-in **window ablation**:
@@ -164,7 +165,7 @@ This is answered by a built-in **window ablation**:
   conditions), not just from more rows.
 - **Show month-to-month luck.** Train single-month models on each month of the window and score them
   on the same validation month.
-- No second validation month: it would push the training window further into the past (D-062).
+- No second validation month: it would push the training window further into the past (D-083).
   The choice weighs train and test metrics, e.g. the test metric penalised by the train–test gap;
   the validation month is reported for every variant and never chooses (D-083).
 - The mechanism (vary one config field, compare on a fixed validation set) is also the bounded-axis
@@ -183,9 +184,9 @@ This is answered by a built-in **window ablation**:
 *(fill when built)*
 
 ## Open questions
-- The window ablation details (OD-17). Sampling is settled for Phase 2 (D-123); smarter
+- The window ablation details (OD-17). Sampling is settled for Phase 2 (D-117); smarter
   downsampling, including low-value rows with weights that calibrate back, is on the Phase 3
   wishlist.
 - Default window: 6 months with `w = 3` (D-091); per-profile variation later.
 - Whether FLAML's group split runs as expected (spike 1, unverified on 2.7; no sample weights in
-  Phase 2, D-123); the fallback is in [training](training.md) (D-120).
+  Phase 2, D-117); the fallback is in [training](training.md) (D-106).

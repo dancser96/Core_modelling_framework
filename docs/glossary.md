@@ -16,11 +16,11 @@ Whether this glossary is also published to the wider unit is part of the open do
   different use cases often read different sources.
 - **Feature mart:** a source with one row per unit per month, holding the unit's description,
   current-month values and backward rollups. What retail use cases read inside the bank, and what
-  the synthetic data mimics (D-056).
+  the synthetic data mimics (D-041).
 - **Feature store:** a shared store of engineered features with its own framework and team. The
-  first release reads from it, alone or with other sources (D-075).
+  first release reads from it, alone or with other sources (D-021).
 - **Data observability framework:** the existing framework for watching data, with its own team.
-  Monitoring integrates with it in the first release (D-075).
+  Monitoring integrates with it in the first release (D-021).
 - **Unit:** what one row describes at one point in time (client, account, card, merchant…). Shapes
   say `unit_id`; the client is the usual unit.
 - **Use case:** one modelling problem (e.g. one product's acquisition propensity), defined by one
@@ -45,7 +45,7 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Panel edge:** months near either end of the data where a full window is missing. Targets there
   are null.
 - **Gap months:** the months between the observation window and the validation month. Their labels
-  are never used; their features may be used for label-free checks (D-048).
+  are never used; their features may be used for label-free checks (D-030).
 
 ## Data and splits
 
@@ -58,7 +58,7 @@ Whether this glossary is also published to the wider unit is part of the open do
   a non-degenerate target, a plausible rate band. Which apply comes from the per-task spec
   (`docs/components/dataset.md`, `CLAUDE.md` §4.8).
 - **Label-free check:** a check or comparison that uses no labels (e.g. PSI). It may use months
-  after the observation window, but never the validation month (D-048).
+  after the observation window, but never the validation month (D-030).
 - **Positive rows vs positive events:** one conversion makes up to `w` consecutive rows positive.
   Reports show both counts. Wherever a count of positives decides something (minimum support,
   a standard error, the AUC floor, a per-month statistic) it counts events, i.e. distinct
@@ -81,17 +81,16 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Target lineage:** the columns a target was built from. They are excluded automatically.
 - **Flag:** a check's finding. A flag never drops a feature by itself.
 - **Human decision:** either *exclude* or *keep* (despite a flag or against automated pruning),
-  as grouped lists with one note per group (whether a note is required is OD-10; proposal: only for
-  a `keep` that resolves a flag). In the config today; whether it moves to the decision audit log
-  is OD-10 (`docs/components/feature_ledger.md`).
+  in groups with one note per group, recorded as entries in the decision audit log (D-125;
+  `docs/components/config.md`).
 - **Human gate:** the feature sign-off's place in the flow: it closes Feature Checks in manual
   runs and follows training in hands-off runs, always before register
-  (`docs/components/feature_checks.md`, D-076).
+  (`docs/components/feature_checks.md`, D-031).
 - **Feature sign-off:** a person's recorded approval of the features a model may use: the list after
   Feature Checks (automated selection can only drop from it) or, in hands-off runs, the model's final
-  list after training. Required before any model is registered, at every automation level (D-076).
+  list after training. Required before any model is registered, at every automation level (D-031).
   It is given over the model's final list, with flags grouped and features sorted by importance;
-  the candidate list is reviewed only where flagged (D-092).
+  the candidate list is reviewed only where flagged (D-031).
 - **Promotion sign-off:** the approved PR that lets `promote` pick a registered version for
   production (D-033). Separate from the feature sign-off, and from the CR process that runs
   `deploy`. The **sign-off log** (Phase 3) records PR approvers in the registry; the feature
@@ -114,18 +113,20 @@ Whether this glossary is also published to the wider unit is part of the open do
   environment-specific).
 - **Profile:** the config field (`quick`, `standard` or `thorough`) that sets the defaults for
   every stage. It is becoming the automation level; the field keeps its name until the levels
-  exist (D-087). In the synthetic data spec (`docs/components/test_harness.md`), "profile" means a
+  exist (D-023). In the synthetic data spec (`docs/components/test_harness.md`), "profile" means a
   client tier (Private, Priority, Affluent, Mass), not this field.
 - **Automation level:** how much of a run is decided by rules and how much by a person: Phase 2
   has `autonomous` (today's `quick`) and `assisted` (today's `standard`); `manual` comes later.
   Every level runs the same checks; the difference is human time, and a higher-value use case
-  brings more people and inputs that shape its choices (D-077, D-085, D-087). Not a lifecycle
+  brings more people and inputs that shape its choices (D-023). Not a lifecycle
   tier.
-- **Decision audit log:** (direction, OD-10) the record of every decision taken after the config,
-  automated or human; the config itself never changes. The feature ledger is its per-feature part.
+- **Decision audit log:** the append-only record of every decision taken after Target Factory, by
+  a person or a rule; the config itself never changes (D-125). Replaying the config plus entries
+  1–n gives the **resolved config**, a run's one input; it can be saved as one file. The feature
+  ledger is its per-feature part (`docs/components/config.md`).
 - **Decision point / pathway:** a decision point is a place in a run where something is chosen, by
   a rule or a person (draft inventory in `docs/components/config.md`); a run's pathway is the
-  chain of decision points it passed and what was chosen at each (direction, OD-10).
+  chain of decision points it passed and what was chosen at each, read from the decision audit log.
 - **Decision (business decision):** how the scores will be used (e.g. top-N list, threshold, ranking,
   probability). It drives the optimisation metric, the gates and what reports emphasise.
 - **Choices block:** the opening section of every report: what was chosen, the alternatives, and
@@ -143,7 +144,7 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Due-diligence gate:** Training refuses to run unless EDA and Feature Checks artifacts exist for
   the same data-definition hash; hands-off profiles run them first (`CLAUDE.md` §4.13, D-031).
 - **Modelling path:** `automl` (FLAML) or `predefined` (a named model family tuned with Optuna;
-  Phase 3, D-080).
+  Phase 3, D-020).
 - **Model interface:** the small `fit` / `predict` / `describe` contract every model family
   follows: plain functions per family in Phase 2, wrapped in a `Protocol` once the predefined path
   exists (Phase 3, D-100).
@@ -171,8 +172,8 @@ Whether this glossary is also published to the wider unit is part of the open do
 
 - **Local / registered / production:** the three model tiers.
 - **Register:** local → registered, producing an immutable, hashed version of a model key. A
-  registered model is any model a person has defended (the feature sign-off, D-076) and wants to
-  keep; `promote` picks the production candidate among them (D-095).
+  registered model is any model a person has defended (the feature sign-off, D-031) and wants to
+  keep; `promote` picks the production candidate among them (D-033).
 - **Promote:** choosing a registered version for production. The approved PR is the promotion
   sign-off, and promotion builds the verified deployment bundle.
 - **Promotion gate:** the metric check a model must pass on its way to production; its metric is
@@ -187,25 +188,25 @@ Whether this glossary is also published to the wider unit is part of the open do
   prior-shift offset, metadata), so any part changing changes it (D-094).
 - **Recipe / `recipe_hash`:** what a model is a fit of: the frozen config, features,
   hyperparameters, encoder levels and calibration spec. A refit, or a retrain in production, is
-  one more fit of the same recipe, linked by `parent_run_id` (D-096).
+  one more fit of the same recipe, linked by `parent_run_id` (D-052).
 - **Code version:** framework version + use-case repo commit, recorded with every model.
 - **Scoring batch / `scoring_batch_id`:** one inference run. **Manifest:** links a scoring batch to
   the models that produced it.
 - **Scores table (master layer):** the framework's own scores output: long format, fully traceable
-  to model, run and config, shared by every pinned version (D-089). **Consumable tables** in a
-  consumer platform's format are built from it outside the framework (D-103).
+  to model, run and config, shared by every pinned version (D-007). **Consumable tables** in a
+  consumer platform's format are built from it outside the framework (D-016).
 - **Exit point:** an output another team builds on: the scores table and manifest, the model
   bundle, registry records, monitoring tables, the model card. Their shapes come close to final
-  before their contents deepen (D-109).
+  before their contents deepen (D-022).
 - **Model card:** the generated, versioned record of a model's facts.
 - **Model bundle:** the saved model a run produces (encoder, model, calibration), in a versioned
-  format (D-051), never pickle (D-078).
+  format (D-051), never pickle.
 - **Drift reference:** the feature and score distributions saved at training, on the true
   population, that monitoring compares against (D-054).
 - **Framework pin:** the framework version a use case runs with. Its models are scored with it, and
   the use case upgrades it at its own pace (D-047).
 - **Base image:** the internal devcontainer image the package ships in, through Nexus. Images are
-  supported for a year, and the image a use case starts on pins its framework version (D-074).
+  supported for a year, and the image a use case starts on pins its framework version (D-024).
 - **Registry tables:** the registered-models and production-models tables that people query.
 - **Model inventory:** the overview of every model across use cases and entities (design open,
   OD-14).

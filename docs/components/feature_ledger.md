@@ -1,14 +1,16 @@
 # Feature ledger
 **Status:** designing (sketch for review, OD-11) · **Legacy:** none (the crunch had only `features_include` / `features_exclude`)
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [training](training.md) ·
-[evaluation](evaluation.md) · [config](config.md) · [reporting](reporting.md) · D-043, D-058, D-076 · OD-10, OD-11
+[evaluation](evaluation.md) · [config](config.md) · [reporting](reporting.md) · D-031, D-043, D-125 · OD-11
 
 ## Purpose
 One table that answers, for every candidate feature: what we started with, what each step found,
 what a human decided, what automated selection did, and what the model finally used. It gives
-oversight of "initial vs selected features" while the config stays compact. The config holds the
-human decisions today (whether they move to the decision audit log is OD-10); the ledger holds the
-evidence and the trail. It is the per-feature part of the decision audit log (OD-10).
+oversight of "initial vs selected features" while the config stays compact. Human decisions live
+in the decision audit log ([config](config.md#decision-audit-log-d-125), D-125, amending D-043),
+not in the config; the ledger holds the evidence and is the audit log read per feature. Each row
+shows that feature's entries, e.g. "flagged #4 (rule), excluded #6 (person): set after the
+offer".
 
 ## Sketch
 - One row per candidate feature, per run lineage (data-definition hash + `run_id`).
@@ -22,7 +24,7 @@ evidence and the trail. It is the per-feature part of the decision audit log (OD
 | Identity | feature, kind (numeric / categorical), source column, readable label (optional) | load |
 | EDA | missing %, distinct levels, univariate AUC and direction (train-split clients in the window), rank, key feature (top-N or user-listed) | EDA |
 | Checks | one flag + value per check step (lineage, leakage, eligibility-constant, stability, redundancy with partner and both AUCs, data quality); checks verdict (pass / flagged / auto-excluded) | Feature Checks |
-| Decision | human decision (keep / exclude), its group's note, where it is recorded | config today (or the audit log, OD-10), read by Checks |
+| Decision | human decision (keep / exclude), its group's reason, the entry numbers | the audit log entries the run replayed (D-125) |
 | Selection | automated selection result and the rule that made it (train split only) | Training |
 | Use | in model (yes/no + why not), importance and rank, effect direction | Training, Evaluation |
 
@@ -39,18 +41,18 @@ evidence and the trail. It is the per-feature part of the decision audit log (OD
 - **Flags never drop.** A flagged feature stays in unless a human excludes it. In hands-off profiles,
   unresolved flags are listed on the model card and block registration (D-031).
 - **A person signs off the features** before any model is registered, at every automation level:
-  the list after Feature Checks, or the final list in hands-off runs. The sign-off is recorded with
-  the run (D-076), as its own record, never as a config edit (OD-10). It is given over the model's
-  final list, flags grouped, features sorted by importance, with train-only evidence; the
-  candidate list is reviewed only where flagged (D-092). If a sign-off after training rejects a
-  feature, the model is retrained without it, and that is recorded too.
+  the list after Feature Checks, or the final list in hands-off runs. The sign-off is a `sign_off`
+  entry in the audit log that names the run and the person (D-031, D-125). It is given over the
+  model's final list, flags grouped, features sorted by importance, with train-only evidence; the
+  candidate list is reviewed only where flagged (D-031). If a sign-off after training rejects a
+  feature, that is an `exclude` entry, and the model is retrained without it.
 - **Human decisions go both ways.** *Exclude* removes a feature that passed. *Keep* resolves a flag
   and protects the feature from automated pruning, e.g. keeping both of a highly correlated pair when
-  both are strong. Human decisions are grouped lists with one note per group; whether a note is
-  required is OD-10 (proposal: only for a `keep` that resolves a flag).
+  both are strong. A person writes one entry per group, with one reason, which is required
+  (D-043, D-125).
 - **Automated decisions are recorded here** together with the rule that made them. The config holds
   only the rule, so a rerun on unchanged data gives the same outcome; the model bundle freezes the
-  features it uses (D-058).
+  features it uses (D-043).
 - **Final features** = candidates − lineage exclusions − human excludes − automated drops (features
   with a human *keep* are never dropped automatically). This list equals the frozen config's
   resolved feature list, and its hash is the feature signature.
@@ -58,11 +60,11 @@ evidence and the trail. It is the per-feature part of the decision audit log (OD
 ## Open questions
 - Review this sketch (OD-11); not urgent, decided when the ledger is built (M2.2). Leaning: two
   parts, one per data definition keyed by the data-definition hash (EDA + checks) and one per run
-  keyed by `run_id` (selection + use), joined on feature name; human decisions read from the
-  frozen config at training time. The two issues:
+  keyed by `run_id` (selection + use), joined on feature name; human decisions read at training
+  time from the audit log entries the run replayed (D-125). The open issue:
   - EDA and Feature Checks write their columns before any `run_id` exists, and two training runs on
     the same data (e.g. two FLAML runs with different budgets) share them. One part per data
     definition and one per run?
-  - human decisions copied in when Feature Checks runs go stale if the config is edited later.
-    Record them at training time, from the frozen config?
-- Config lifecycle for human decisions, including the flag case (OD-10).
+
+  Human decisions copied in can't go stale: entries are append-only and each run records the
+  entry it replayed up to (D-125).

@@ -66,7 +66,7 @@ resume on either machine.
 - `/clear` between unrelated tasks; `/compact` in long sessions, or `/handover` + a fresh chat when
   the context is bloated. Subagents keep reviews out of the main context, and work runs in
   parallel by default: subagents for independent pieces, long jobs in the background
-  (`CLAUDE.md` §1 workflow, D-071). The `delegation` skill is the procedure; "delegate this" or
+  (`CLAUDE.md` §1 workflow, D-072). The `delegation` skill is the procedure; "delegate this" or
   "in parallel" calls it explicitly.
 - Strong-model sessions use up plan limits quickly. Keep tasks small, and use `/model` to drop to
   a lighter model only for mechanical sessions (renames, moving files), not ones that write the
@@ -90,5 +90,5 @@ resume on either machine.
 3. Copy the contents into the internal repo, then set `conf/local/` there (it is gitignored here and
    never leaves the bank).
 
-The channel is settled: the base image through Nexus (D-074). The release mechanics (CI, who
+The channel is settled: the base image through Nexus (D-024). The release mechanics (CI, who
 publishes, image cadence) are open: OD-04 in `docs/roadmap.md`.

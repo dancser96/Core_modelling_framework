@@ -1,4 +1,4 @@
-"""Trap columns and dirty data (test_harness.md, "Trap summary"; D-069).
+"""Trap columns and dirty data (test_harness.md, "Trap summary"; D-064).
 
 A trap column ends in `_trap_<kind>` (`trap_name`) and takes its parameters from the spec's trap
 list (`spec.traps.TRAPS`, looked up by kind and column, `trap_record`). By when they are known:
@@ -33,7 +33,7 @@ TRAP_KINDS = ("leak", "upstream_target", "process_leak", "shifted", "null_contro
 
 
 def trap_name(name: str, kind: str) -> str:
-    """`{name}_trap_{kind}`: a trap column (D-069), e.g. `extra_0001_trap_weak`."""
+    """`{name}_trap_{kind}`: a trap column (D-064), e.g. `extra_0001_trap_weak`."""
     if kind not in TRAP_KINDS:
         raise ValueError(f"unknown trap kind {kind!r}; one of {TRAP_KINDS}")
     return f"{name}_trap_{kind}"
@@ -160,7 +160,7 @@ def _leak(
     """A calibrated leak of an acquisition: round(centre + scale · (μ·acquired + noise)), μ =
     √2·Φ⁻¹(auc), so its AUC is Φ(μ/√2) = auc; holders get the noise only.
 
-    A non-holder acquires when its flag is 1 in any of the next w months it is still here (D-066),
+    A non-holder acquires when its flag is 1 in any of the next w months it is still here (D-029),
     within the panel.
     """
     p, flag = record["parameters"], f"{record['product']}_flag"

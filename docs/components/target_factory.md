@@ -1,7 +1,7 @@
 # Target Factory
 **Status:** legacy-only · **Legacy:** `src/rollups.py`, `notebooks/Data_Creation.ipynb` (crunch name: Data Creation)
 **Related:** [config](config.md) · [dataset](dataset.md) · [feature checks](feature_checks.md) (lineage
-exclusion) · [monitoring](monitoring.md) (labels) · [LLM assist](llm_assist.md) · D-029, D-050, D-054, D-066, D-075, D-080, D-118 · OD-19, OD-26
+exclusion) · [monitoring](monitoring.md) (labels) · [LLM assist](llm_assist.md) · D-020, D-021, D-029, D-050, D-054 · OD-19, OD-26
 
 ## Purpose
 Builds targets. This is the one piece of data work the framework keeps: it links upstream data
@@ -23,10 +23,10 @@ Features come from upstream, and the stage asks nothing extra of upstream (D-029
      flag 1 in any forward month for a non-holder; any month-on-month count rise), not only at its
      end: end-of-window rules miss events that reverse inside the window and, for loans, openings
      hidden by a maturity. Acquisition is one target whether the client never held the product or
-     churned (D-056); build it from the flag, not the status column, so lineage exclusion keeps the
+     churned (D-041); build it from the flag, not the status column, so lineage exclusion keeps the
      status's churned signal. M2 builds this flag rule with lineage; count rises, thresholds on
      sums and leavers-as-negatives follow in M3 (D-091);
-   - regression is the second task in Phase 2 (D-080).
+   - regression is the second task in Phase 2 (D-020).
 4. Forward windows exclude the current month `(1, w)` (T8). Windows come only from config (T13).
 5. **Panel-edge guard:** the target is null where the full forward window is missing, per client:
    also where the client left inside the window (default; the alternative, leavers as negatives,
@@ -36,7 +36,7 @@ Features come from upstream, and the stage asks nothing extra of upstream (D-029
 6. **Target lineage recorded:** the columns used to build each target are written to metadata, so
    Feature Checks excludes them automatically (T12). For targets built upstream, no lineage list is
    required: a target is almost never built from more than one column, and a DS knows the data
-   (D-118). The DS can still list lineage columns in config; this asks nothing of upstream.
+   (D-029). The DS can still list lineage columns in config; this asks nothing of upstream.
 7. **Partial and incremental builds.** Build per source, per entity and per month without touching
    other sources' or months' outputs (partitioned, idempotent writes). Domains arrive at different
    times with different schemas, and the spec names columns per source.
@@ -58,7 +58,7 @@ T8, T11, T12, T13.
 *(fill when built)*
 
 ## Open questions
-- Features come from upstream: the feature store, other sources, or both (D-075, OD-26).
+- Features come from upstream: the feature store, other sources, or both (D-021, OD-26).
 - Whether Target Factory's targets are enrolled in the feature store, and how that work splits with
   the feature store team (OD-26).
 - Whether the Phase 3 LLM loop needs a feature-aggregation spec (OD-19); only its shape is kept in

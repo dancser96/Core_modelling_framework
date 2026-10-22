@@ -22,7 +22,7 @@ gets them through git.
 | Skill | `holistic-review` | Cross-component review against goals, architecture, every component doc and the decision log, so no component is extended in isolation |
 | Skill | `new-component` | Adds a new component with its doc, config section, tests and status row |
 | Skill | `bank-parity-check` | Checks deps, imports and IO against the bank environment |
-| Skill | `delegation` | Splits a task into parallel subagent pieces, keeps research apart from design, routes each piece by the cost of a wrong answer (cheaper models only for mechanical, fully checked work), and sets the brief and report format (D-071) |
+| Skill | `delegation` | Splits a task into parallel subagent pieces, keeps research apart from design, routes each piece by the cost of a wrong answer (cheaper models only for mechanical, fully checked work), and sets the brief and report format (D-072) |
 | Skill | `brainstorming` *(vendored)* | Clarifies intent and design before the CLAUDE.md plan step; for major steps adds research, critique and a holistic review |
 | Skill | `systematic-debugging` *(vendored)* | Root cause before any fix; one hypothesis at a time |
 | Skill | `verification-before-completion` *(vendored)* | No "done" or "passing" claim without fresh command output |

@@ -6,7 +6,7 @@ when_to_use: Trigger phrases include "delegate", "in parallel", "subagents", "sp
 
 # Delegation
 
-Work runs in parallel by default (D-071, `CLAUDE.md` §1 workflow). The main thread's context is
+Work runs in parallel by default (D-072, `CLAUDE.md` §1 workflow). The main thread's context is
 the scarce resource: it holds the plan, the SDS's decisions and the integration. Everything that
 doesn't need the whole picture goes to a subagent. Only mechanical, fully checked pieces go to a
 cheaper model; judgement stays on a strong one. A subagent starts with no context, so the brief

@@ -1,7 +1,7 @@
 # Reporting and model card
 **Status:** legacy-only · **Legacy:** `src/card.py`, `src/analysis.py` plotting helpers
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [evaluation](evaluation.md) ·
-[monitoring](monitoring.md) · [lifecycle](lifecycle.md) · [environment](environment.md) (theme) · D-036, D-052, D-076, D-083, D-105 · OD-12
+[monitoring](monitoring.md) · [lifecycle](lifecycle.md) · [environment](environment.md) (theme) · D-031, D-036, D-052, D-083 · OD-12
 
 ## Purpose
 One shared writer that turns structured results from any stage into a self-contained HTML report,
@@ -17,7 +17,7 @@ Training, Inference and the lifecycle steps write artifacts, not reports.
 1. **Self-contained HTML:** styled tables (pandas Styler) and interactive plotly charts, with plotly.js
    embedded once per file so reports open offline inside the bank (no CDN). That makes each report
    about 4–5 MB, and the size isn't optimised in Phase 2: reports regenerate from frozen configs,
-   and retraining in production regenerates them anyway (D-105).
+   and retraining in production regenerates them anyway (D-036).
 2. **Every report has the same structure:**
    1. A one-page summary for business and governance readers. It opens with a **choices block**:
       what was chosen (profile, decision, metric, sampling, modelling path), the alternatives, and
@@ -34,7 +34,7 @@ Training, Inference and the lifecycle steps write artifacts, not reports.
    - sampling, calibration (prior shift and any calibration step);
    - modelling path and best config;
    - metrics vs baselines (overall and stratified), importance;
-   - unresolved flags, human decisions and the feature sign-off (D-076);
+   - unresolved flags, human decisions and the feature sign-off (D-031);
    - for a refit: the parent run and its evaluation metrics (D-052).
 
    It is designed so a later generator can map it onto the internal model documentation standard
@@ -58,4 +58,4 @@ Training, Inference and the lifecycle steps write artifacts, not reports.
 ## Open questions
 - The mandatory core views (OD-12).
 - Unverified: how fast a report opens and whether plotly renders in the bank's JupyterLab. Both
-  show in the SDS's JupyterLab test inside the bank (D-105).
+  show in the SDS's JupyterLab test inside the bank (D-036).

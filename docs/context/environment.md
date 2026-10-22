@@ -18,7 +18,7 @@ so moving the code inside needs configuration, not code edits.
 internal repo. Nothing comes back out: no data, no outputs, no code. Changes made inside are
 reported back **in words** and re-applied here. Inside, the package is published through Nexus into
 the base image; images are supported for a year, and the image a use case starts on pins its
-framework version (D-074).
+framework version (D-024).
 
 ## Pinned versions (bank parity — keep in sync with `requirements.txt`)
 
@@ -44,7 +44,7 @@ framework version (D-074).
 Newer devcontainer images may move packages forward. When the user reports new versions, update
 this table and `requirements.txt` in the same change and re-run the tests.
 
-**Also in the standard devcontainer (usable; pin in `requirements.txt` on first use, D-042; scipy
+**Also in the standard devcontainer (usable; pin in `requirements.txt` on first use, D-012; scipy
 and plotly are already pinned above):**
 
 | Package | Version | Likely use |
@@ -57,13 +57,13 @@ and plotly are already pinned above):**
 
 **Dev-only tools** (`requirements-dev.txt`, never needed inside the bank): pytest, ruff, ipykernel
 and nbformat. plotly renders charts in a notebook only with nbformat; Jupyter installs it inside the
-bank, but `ipykernel` alone doesn't locally (D-063).
+bank, but `ipykernel` alone doesn't locally (D-013).
 
 A package that other packages pull in must be pinned even before our code uses it: without the
 pins, pip resolved scipy 1.17.1 and plotly 7.1.0 locally (2026-10-14).
 
 **Installed on top, like FLAML:** optuna 5.0.0 (the version `pip install optuna` resolves to inside
-the bank; the predefined-model tuning path, Phase 3, D-080). Its API is unverified here: check
+the bank; the predefined-model tuning path, Phase 3, D-020). Its API is unverified here: check
 multi-objective studies and pruning against 5.0 before relying on them.
 
 ## Known compatibility facts
@@ -89,30 +89,30 @@ multi-objective studies and pruning against 5.0 before relying on them.
 - **Verified in FLAML 2.7.0:** for classification, passing `groups` turns the automatic split into
   a group split; regression also needs `split_type="group"`, or its automatic split stays by rows
   (`decide_split_type` in `flaml/automl/task/generic_task.py`). Train rows repeat clients across
-  months, so FLAML gets the client groups (D-120). **Unverified:** the group split on our data
-  (spike 1; Phase 2 has no sample weights, D-123; fallback in `docs/components/training.md`).
+  months, so FLAML gets the client groups (D-106). **Unverified:** the group split on our data
+  (spike 1; Phase 2 has no sample weights, D-117; fallback in `docs/components/training.md`).
 - **Assumed:** a source month never changes after it has been loaded (no late-arriving rows or
   restatements). Reproducibility from frozen config + hashes depends on it (`CLAUDE.md` §4.10);
   the data-definition hash describes the data, it doesn't fingerprint it. Upstream data facts are
-  the data owners' and the platform's responsibility, not the framework's (D-108): whether source
+  the data owners' and the platform's responsibility, not the framework's (D-079): whether source
   months are restated, when the monthly mart lands, and how storage permissions differ per
   entity. The framework states its assumption, reads tables and paths from `conf/local/`, and
   training's count check against the EDA artifact catches a restatement in between (D-088).
 - **Unverified:** a lossless non-pickle format per model family on the pinned versions (XGBoost
   JSON, LightGBM text, CatBoost JSON; scikit-learn forests have none), each proven by a round trip
-  giving identical predictions (D-078; list in `docs/components/training.md`).
+  giving identical predictions (D-051; list in `docs/components/training.md`).
 - **Assumed, unverified:** no internet access from the bank's notebooks, so reports embed plotly.js
-  instead of loading it from a CDN (~4–5 MB per report, not optimised in Phase 2, D-105). Plotly
+  instead of loading it from a CDN (~4–5 MB per report, not optimised in Phase 2, D-036). Plotly
   rendering and report opening time inside the bank's JupyterLab are also unverified; the SDS's
   JupyterLab test inside the bank shows both.
 
 ## Change requests
 
 Every production change goes through a change request (`docs/components/lifecycle.md`). The first
-one is very slow; later, iterative ones are quicker (the LDS, 2026-10-21; Q238). No durations are
+one is very slow; later, iterative ones are quicker (the LDS, 2026-10-21). No durations are
 known yet. A long change freeze around the year end (dates unknown) shapes the first one: it is
 release 1.0 and carries only the framework, no model; a model's first deploy is a later, quicker
-change request (D-115).
+change request (D-021).
 
 ## Environment adapter (the seam)
 

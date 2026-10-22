@@ -23,7 +23,7 @@ Check each item and state **holds / violated / not affected / cannot tell**:
 4. **Fit/select on the train split only.** No target-aware selection, tuning choice, imputation or
    encoding is fitted on test, validation or the full population. Label-using checks look at
    train-split clients within the observation window only; label-free comparisons never use the
-   validation month (D-048).
+   validation month (D-030).
 5. **Client-grouped split.** No client appears in both train and test; CV inside train is grouped by
    client; sampling happens after the split.
 6. **The engine sees only vetted features.** Validation is computed outside the engine.
@@ -39,7 +39,7 @@ Check each item and state **holds / violated / not affected / cannot tell**:
     mismatches fail loud.
 11. **Due diligence.** Training checks for EDA and Feature Checks artifacts with the same
     data-definition hash. Registration requires a recorded human feature sign-off at every
-    automation level (D-076).
+    automation level (D-031).
 12. **Reproducibility.** Frozen config, config hash, data-definition hash, feature signature, model
     hash and code version are written and verified. Scores are traceable.
 13. **Statistics.** Metrics are valid at the prevalence in play (e.g. MI at <1% prevalence, PR-AUC

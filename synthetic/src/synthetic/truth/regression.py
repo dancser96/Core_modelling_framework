@@ -1,5 +1,5 @@
 """The regression oracle: the true distribution of each card holder's card spend over the next
-three months (D-060; test_harness.md, "Ground truth and oracle").
+three months (D-050; test_harness.md, "Ground truth and oracle").
 
 For every client holding a card at the end of a panel month t, `simulate_card_spend` runs forward
 paths of months t+1..t+3 from the client's true state at t, with the generator's own functions on

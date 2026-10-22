@@ -1,7 +1,7 @@
 # EDA
 **Status:** legacy-only (major rethink) · **Legacy:** `src/feature_stats.py`, `src/plots.py`, `notebooks/EDA.ipynb`
 **Related:** [dataset](dataset.md) · [feature ledger](feature_ledger.md) · [feature checks](feature_checks.md) ·
-[reporting](reporting.md) (chart rules) · D-031, D-048, D-050 · OD-12
+[reporting](reporting.md) (chart rules) · D-030, D-031, D-050 · OD-12
 
 ## Purpose
 The first stage after the target exists, and it has to be worth running first. It gives a fast,
@@ -24,7 +24,7 @@ that the notebooks were run in reverse order. Phase 2 fixes the content, not the
    - sizes and the eligibility funnel per month;
    - base rate per month over every month up to the window's end (population level: seasonality,
      how representative the window is). Later months stay hidden, because their target windows
-     overlap the validation month's (D-048);
+     overlap the validation month's (D-030);
    - positive rows vs positive events;
    - per-month row and positive counts are also saved as data in the EDA artifacts, so a later run
      on the same data definition shows when a source month was restated (`CLAUDE.md` §4.10);
@@ -50,7 +50,7 @@ that the notebooks were run in reverse order. Phase 2 fixes the content, not the
 7. **Iterative analysis:** notebook functions for styled pivots (rate / lift with counts and
    intervals, by any dimensions, with any filter), so analysts can play around without writing code.
    The report itself stays tight.
-8. **Train-split clients in the window only** for feature–target views (§4.4, D-048);
+8. **Train-split clients in the window only** for feature–target views (§4.4, D-030);
    population-level rates may show every month up to the window's end.
 9. **Fast at 2M+ rows per month:** aggregate in Spark or on declared samples, and say so in the report.
 
@@ -69,4 +69,4 @@ that showed nothing at low prevalence (T16); EDA run last because it gave no ins
 - Default number of key features per profile; exact report sections (structure agreed: summary page
   + core + extended, see [reporting](reporting.md); content OD-12).
 - Which pivot dimensions to pre-compute in the report vs leave to the notebook functions.
-- Ranking statistic and base-rate views for the second task type (regression, D-050, D-080).
+- Ranking statistic and base-rate views for the second task type (regression, D-050, D-020).

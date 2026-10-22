@@ -2,12 +2,12 @@
 _Written: 2026-10-16 · branch: main · last commit before the build: see `git log` (the spec and this
 plan are committed together)_
 
-> **Superseded layout (2026-10-19, D-070):** the modules below were moved into `spec/`, `mechanisms/`, `truth/` and `checks/` and partly merged; relevance rankings and `separation` were cut. The current map is `docs/components/test_harness.md` → Level 3 → Code map. This plan is history and goes when M1 closes.
+> **Superseded layout (2026-10-19, D-003):** the modules below were moved into `spec/`, `mechanisms/`, `truth/` and `checks/` and partly merged; relevance rankings and `separation` were cut. The current map is `docs/components/test_harness.md` → Level 3 → Code map. This plan is history and goes when M1 closes.
 
 
 ## Goal
 Finish the synthetic data generator (M1 steps 3–7) in one go, then one thorough review by the SDS
-(D-067). The **spec** is `docs/components/test_harness.md` (what the data is; every number lives
+(D-003). The **spec** is `docs/components/test_harness.md` (what the data is; every number lives
 there or in the spec modules). **This file** is how to build it: architecture, stages, function
 signatures, checks, the integration protocol, the review package. When the two disagree, the spec
 wins; fix this file. Removed when M1 closes.
@@ -28,14 +28,14 @@ Stage B review fixes applied (2026-10-16).
 ## Read first
 1. `CLAUDE.md` §1 (code rules), §4 (ML invariants), §5 (environment traps).
 2. `docs/components/test_harness.md`, whole (the spec).
-3. `docs/decisions.md` D-056, D-063–D-069.
+3. `docs/decisions.md` D-003, D-029, D-041, D-064.
 4. The existing package: `synthetic/src/synthetic/` (presets, products, population, latents,
    hazards, holdings, generate, check_table, checks_*, holding_events) and `tests/`.
 
 ---
 
 ## 1. Ground rules for every agent
-- **Code rules** (`CLAUDE.md` §1, D-063, D-067): every function, private and test functions
+- **Code rules** (`CLAUDE.md` §1, D-003): every function, private and test functions
   included, has type hints and a docstring; every module opens with a docstring that explains what
   it is for and how it fits (a short paragraph). Functions ≤ ~50 lines, modules ≤ ~300 lines;
   split by responsibility, named `verb_noun`. Functions, not classes. No new dependencies (numpy,
@@ -387,7 +387,7 @@ def relevance_ranking(mart, oracle, truth, target: str, sample: np.ndarray) -> p
 # regression.py
 def simulate_card_spend(spec, sim: dict, month, rng, n_paths: int = 200) -> dict[str, np.ndarray]
 ```
-- **`window_probability`** (D-066, spec): pivot `score_<product>` to a clients × months array;
+- **`window_probability`** (D-029, spec): pivot `score_<product>` to a clients × months array;
   for eligible rows at `t`, `p̃_s` from the profile intercept (truth calibration) + `score_s` +
   `log 2 · churned_t` (status products); onboarding by tenure (`months_on_book_s ≤ 3`, chance
   `1 − (1 − π_s)^(1/3)`, `π_s = p_s / (p_s + q)`); loans: `p_s` × [a slot free at `s` under the
@@ -553,7 +553,7 @@ null only in its cases); utilisation rollups null iff no card month in the windo
 dtypes in memory.
 
 **`target_windows` + `checks_traps`:** the checks' own realised targets for the standard targets
-(spec table; D-066 events; null for leavers and past the panel). Rows:
+(spec table; D-029 events; null for leavers and past the panel). Rows:
 - leak AUC vs the realised `cc_acquire` target (w = 3) = 0.97 ± 4.5 Hanley–McNeil SE; leak AUC >
   oracle AUC (rule);
 - upstream target equals the realised target where both are non-null (rule); 0 where the realised
@@ -629,7 +629,7 @@ Run mutations at 30–50k clients where the canonical size is too slow; record e
 - Spark infers the `snapshot_month` partition as a date only from `YYYY-MM-DD` folder names; never
   write nanosecond timestamps (T18).
 - The oracle's row `t` is the chance of the move into `t` (state at the end of `t − 1`); window
-  probabilities freeze the state at `t` (D-066). Leak columns are the only look-ahead.
+  probabilities freeze the state at `t` (D-029). Leak columns are the only look-ahead.
 - Holdings calibrate on the starting book without time terms; shares then wobble slightly with the
   season (the bonus trigger, FX summer, digital drift): the flat-share checks exclude `digital`
   (it trends) and accept the season.

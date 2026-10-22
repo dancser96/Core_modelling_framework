@@ -26,9 +26,9 @@ standard where it can.
 
 | Area | Today | Target |
 |---|---|---|
-| **Speed** | 2–4 months per use case; "modelling takes months" is taken for granted | A registered candidate in days to a few weeks of DS effort, depending on the automation level; production follows through the change-request calendar (D-085) |
+| **Speed** | 2–4 months per use case; "modelling takes months" is taken for granted | A registered candidate in days to a few weeks of DS effort, depending on the automation level; production follows through the change-request calendar (D-023) |
 | **Structure** | A bespoke pipeline per use case; notebooks copied and hand-edited per product; logic inside notebooks | One versioned library; a use case is a config; custom code only at named extension points |
-| **Decisions** | Features, windows and eligibility live in code or in someone's head | Every decision in one config, or in its decision audit log (OD-10); the frozen config plus hashes reproduce any run |
+| **Decisions** | Features, windows and eligibility live in code or in someone's head | The intent in one config and every later decision in its decision audit log (D-125); the frozen config plus hashes reproduce any run |
 | **Targets and leakage** | Targets built ad hoc, next to the raw forward columns they came from; leakage caught by memory, if at all | Target Factory records lineage and excludes those columns automatically; time separation is enforced at the boundary |
 | **Data understanding** | EDA is ad hoc, slow or skipped; charts show nothing at low prevalence | EDA worth running first: population, target, key features and segment comparisons, built for rare targets, plus pivot tools for exploring |
 | **Feature decisions** | Afterwards, nobody can say which features were dropped, by what, or why | A feature ledger records every candidate, every check, every human and automated decision, and what the model used |
@@ -43,11 +43,11 @@ standard where it can.
 
 ## Goals
 
-1. **Speed with rigour.** A registered candidate takes days to a few weeks of DS effort (D-085).
-   Automation levels (D-077, D-087) run the same checks at every level; the difference is human
+1. **Speed with rigour.** A registered candidate takes days to a few weeks of DS effort (D-023).
+   Automation levels (D-023) run the same checks at every level; the difference is human
    time, and a higher-value use case brings more people and inputs that shape its choices.
    Correctness checks are never what gets skipped, and a person always signs off the features
-   before a model is registered (D-076). Production follows through the change-request calendar.
+   before a model is registered (D-031). Production follows through the change-request calendar.
 2. **One standard for the whole lifecycle:** target creation, data understanding, feature checks,
    training, evaluation, registration, promotion, deployment, scoring and monitoring.
 3. **Reproducibility.** Frozen config, config hash, data-definition hash, feature signature, model
@@ -55,7 +55,7 @@ standard where it can.
 4. **Maintainability** of 50–100 live models: tiers, registry tables, versioned artifacts, and use
    cases that upgrade at their own pace without breaking (D-047, `CLAUDE.md` §2).
 5. **Generality.** Any domain, entity and source, through configuration, including the feature
-   store alone or with other sources (D-075). Task families are kept open, and a second working task
+   store alone or with other sources (D-021). Task families are kept open, and a second working task
    type proves extensibility.
 6. **Guidance and learning.** Every non-trivial choice comes with options and when-to-use guidance.
    Notebooks are guided. Users can see and debug what happens under the hood (a library, not a
@@ -81,28 +81,28 @@ standard where it can.
 
 | | Phase 2 | Later |
 |---|---|---|
-| Task types | Binary and regression, end to end (D-080) | Other panel tasks; series tasks |
+| Task types | Binary and regression, end to end (D-020) | Other panel tasks; series tasks |
 | Domains / entities | Any, through configuration (synthetic data outside the bank) | — |
-| Modelling paths | AutoML (FLAML) only (D-080) | Predefined model + Optuna (Phase 3); Spark-native engines, only if ever needed |
+| Modelling paths | AutoML (FLAML) only (D-020) | Predefined model + Optuna (Phase 3); Spark-native engines, only if ever needed |
 | Training data | Multi-month observation windows | — |
-| Automation | Two automation levels, `autonomous` and `assisted`, with the same checks at both (D-077, D-087; OD-25) | `manual` |
-| Upstream | Feature store integration: worked examples on the feature store, other sources and both (D-075, OD-26) | — |
-| Lifecycle | local → registered → production; register / promote / deploy; one production version per model key; registry tables derived from append-only records (D-111) | Sign-off log; shadow challengers (Phase 3 wishlist in `docs/roadmap.md`); MLflow (if adopted); retraining in production (shape settled by D-096; researched with the platform team in M4, OD-27) |
-| Monitoring | The frame built properly: all four layers present (health, drift, realised performance, impact), with versioned tables, flags and the seam to the data observability framework (D-075). The content light: a few health and drift measures, realised performance thin, impact a stub (D-112) | Richer content; alerting outputs (acting on them: the platform / MLOps team, D-079); retrain automation |
+| Automation | Two automation levels, `autonomous` and `assisted`, with the same checks at both (D-023; OD-25) | `manual` |
+| Upstream | Feature store integration: worked examples on the feature store, other sources and both (D-021, OD-26) | — |
+| Lifecycle | local → registered → production; register / promote / deploy; one production version per model key; registry tables derived from append-only records (D-111) | Sign-off log; shadow challengers (Phase 3 wishlist in `docs/roadmap.md`); MLflow (if adopted); retraining in production (shape settled by D-052; researched with the platform team in M4, OD-27) |
+| Monitoring | The frame built properly: all four layers present (health, drift, realised performance, impact), with versioned tables, flags and the seam to the data observability framework (D-021). The content light: a few health and drift measures, realised performance thin, impact a stub (D-040) | Richer content; alerting outputs (acting on them: the platform / MLOps team, D-079); retrain automation |
 | Run modes | Library + CLI + Python API + guided notebooks | No service layer planned |
-| LLM-assisted modelling | Interface kept in mind only | Phase 3 (D-075) |
+| LLM-assisted modelling | Interface kept in mind only | Phase 3 (D-021) |
 
 **Phase 2 is done when** a DS can take a new use case, for whichever entities it applies to, from
 data to scores from a production model using only a config and the guided notebooks. Every component
 exists at least as a thin version (depth per component: OD-01), including the feature store and data
-observability integrations (thin); LLM-assisted modelling comes in Phase 3 (D-075).
+observability integrations (thin); LLM-assisted modelling comes in Phase 3 (D-021).
 The production step is met outside the bank when `deploy` runs against a production-tier path on
-synthetic data (D-055). Inside the bank, a long change freeze around the year end makes the first
+synthetic data (D-021). Inside the bank, a long change freeze around the year end makes the first
 change request release 1.0, which carries only the framework, no model; a model's first deploy is
-a later, quicker change request (D-115). This definition of done is met at **release 1.0**;
+a later, quicker change request (D-021). This definition of done is met at **release 1.0**;
 December 2026 is a pre-release that moves the code into the bank's internal repo, committed and
-demonstrated, not into production (D-115). Its content and dates are being agreed with the LDS
-(D-097; proposal in `worknotes/timeline_proposal.md`). In early
+demonstrated, not into production (D-021). Its content and dates are being agreed with the LDS
+(D-022; proposal in `worknotes/timeline_proposal.md`). In early
 October 2026 the target was put as "within 1–2 months"; there is no hard deadline. Build order and
 milestones: `docs/roadmap.md`.
 
@@ -133,7 +133,7 @@ Chief DS).
   after its builder moves on, monitoring tooling and dashboards (D-079). Who builds the registry and
   deployment, and when: OD-23.
 - **The feature store and data observability teams** own the frameworks the first release
-  integrates with (D-075).
+  integrates with (D-021).
 - **Users** are the unit's data scientists. **Consumers** are the business and the strategy team
   (via reports and monitoring).
 
@@ -142,11 +142,11 @@ Chief DS).
 The framework is a versioned Python library with a config-driven CLI and Python API; there is no
 service (D-024). A service would mean running a platform, and users learn more when they can see
 under the hood. The package ships in the base image through Nexus; images are supported for a year,
-so the image a use case starts on pins its framework version (D-074). Each use case upgrades at its
+so the image a use case starts on pins its framework version (D-024). Each use case upgrades at its
 own pace and scores its models with its pinned version. Use cases are not folders in one shared repo
 (D-047). Still open: where use cases live (OD-02; leaning one repo per entity × domain, with use
 cases branching off as they grow) and the release mechanics (OD-04). Extension code lives in the
-use case's repo, never in the framework (D-090). Forward compatibility stays a first-class constraint either way, because
+use case's repo, never in the framework (D-006). Forward compatibility stays a first-class constraint either way, because
 many versions write to the same shared tables (`CLAUDE.md` §2).
 
 ## History
@@ -164,7 +164,7 @@ many versions write to the same shared tables (`CLAUDE.md` §2).
    review rounds with the builder and notes from the Lead DS reshaped the scope: domain- and
    entity-agnostic, observation windows, two modelling paths, a full lifecycle, guided usage
    (D-020 to D-043). On 2026-10-15 the Chief DS reviewed the design and left it to the SDS and LDS,
-   adding feature store and data observability integration to the first release (D-073–D-079).
+   adding feature store and data observability integration to the first release (D-021, D-023, D-024, D-031, D-051, D-073, D-079).
 
 **Crunch results — read carefully.** Most models reached 0.85–0.95 OOT AUC. That is very likely
 inflated by pooling a heterogeneous client base: segments with near-zero propensity make ranking easy

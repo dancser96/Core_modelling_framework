@@ -24,7 +24,7 @@ known traps: `docs/context/environment.md` and `docs/context/lessons.md`.
 - [ ] **Spark → pandas.** Prune columns/rows (and sample) in Spark before `toPandas()`.
 - [ ] **Write modes.** No overwrite inside loops; batch-scoped outputs written once (T6, T7).
 - [ ] **No pickle for promoted models.** What is promoted to production uses a lossless non-pickle
-      format, never `pickle` or `joblib` (D-078); sandpit saves may pickle (D-110).
+      format, never `pickle` or `joblib` (D-051); sandpit saves may pickle (D-051).
 - [ ] **Identifiers.** No bank names, internal paths, table names or people's names. Physical names
       belong only in `conf/local/` (gitignored).
 - [ ] **Java 11 / Python 3.11 features only.** No syntax or stdlib features beyond Python 3.11.

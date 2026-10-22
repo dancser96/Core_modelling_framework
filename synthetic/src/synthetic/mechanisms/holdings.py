@@ -280,7 +280,7 @@ def step_holdings(
 
     Every product moves from `before`, the state at the end of the previous month. Returns the new
     state, the chance of each mart-visible event per client (null where not at risk), and the
-    oracle's state-free terms (D-068): `score_<key>`, the log-odds without the intercept and the
+    oracle's state-free terms (D-064): `score_<key>`, the log-odds without the intercept and the
     state terms (churned odds, onboarding), calendar terms included, and `lapse_<key>`, a usage
     chain's lapse chance before the required product's leaving chance compounds it. With `z` as
     (clients, paths, traits) and the state as (clients, paths) arrays, it moves simulated paths

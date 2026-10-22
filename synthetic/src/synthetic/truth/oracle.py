@@ -1,5 +1,5 @@
 """The oracle's ground truth on demand: the standard targets, their realised values, the true
-window probabilities and the oracle's metrics (D-066, D-068; test_harness.md, "Ground truth and
+window probabilities and the oracle's metrics (D-029, D-064; test_harness.md, "Ground truth and
 oracle").
 
 A standard target is an event in the mart over the `w` months after an observation month t

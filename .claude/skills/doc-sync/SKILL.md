@@ -15,7 +15,9 @@ a doc); this skill applies them.
 1. **List what changed:** `git status`, `git diff --stat`, plus the conversation's decisions,
    answered questions and new open questions.
 2. **Apply the matching triggers** from `CLAUDE.md` §8. The ones most often missed:
-   - a decision → a new D-row in `docs/decisions.md`, with superseded rows marked;
+   - a decision → in `docs/decisions.md`, extend the set row it is heavily adjacent to, or add a new
+     D-row in the high-impact or the low-impact table; a superseding decision replaces the original
+     row in place (same ID, no superseded rows kept); rules in that file's header;
    - an open question opened, answered or parked → its OD row in `docs/roadmap.md` (an answered OD
      row becomes a D-row and is deleted);
    - a status change → `docs/UPDATES.md` (log line only if major) and the milestone/backlog in
@@ -31,8 +33,9 @@ a doc); this skill applies them.
    concise. Mark unverified claims as unverified. Roles, not names; no bank identifiers.
 6. **Worknotes (shared with the Lead DS).** Refresh `worknotes/sync.md` following the rules in
    `worknotes/README.md` → "Writing `sync.md` for the LDS": new decisions by reference at the top,
-   review list most important first then newest, "since the last sync" only for what changes the
-   LDS's picture (one bullet per topic, no tooling or setup noise), and a terse "last 7 days" recap.
+   review list most important first then newest, "last 2 days" and a terse "last 7 days" recap, each
+   at most one page and only the important changes (one bullet per topic, no info dump, no tooling or
+   setup noise).
    Add to `worknotes/log.md`, merging into the existing entry when the same topic was updated the
    same or a neighbouring day (each update keeps its date). This happens every time, not only for big changes.
 7. **Docs guide.** If a doc was added, renamed or deleted, update `docs/README.md` (reading order,

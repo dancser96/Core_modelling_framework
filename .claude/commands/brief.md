@@ -21,7 +21,8 @@ memory, so it works in a fresh chat.
    - **Risks / needs a decision:** anything blocked, unverified or drifting from the goals.
 4. Refresh `sync.md` following the rules in `worknotes/README.md` → "Writing `sync.md` for the LDS":
    new decisions by reference at the top, review list by importance then recency (tick or remove only
-   items the user says the LDS finished), "since the last sync" pruned to what the LDS needs, the
+   items the user says the LDS finished), "last 2 days" and "last 7 days" pruned to the important
+   changes and at most one page each, the
    open-questions table and "Demo next" updated, and `last sync` set. Don't commit anything; the user
    commits and pushes.
 

@@ -4,7 +4,7 @@
 scikit-learn object we trained and evaluated. It is rebuilt from plain parts, and proving that the
 rebuild is the same model is the main cost.
 
-**Related:** D-078, D-093, D-094, D-110. _Scope (D-110): only what moves from the sandpit to
+**Related:** D-037, D-051, D-094. _Scope (D-051): only what moves from the sandpit to
 production must avoid pickle; whatever is saved on HDFS in the sandpit may be pickle. "Verified"
 means run on the pinned versions._
 
@@ -14,7 +14,7 @@ means run on the pinned versions._
 2. **Fewer families reach production.** LightGBM (text) and XGBoost (JSON) round-trip identically;
    CatBoost only as binary `.cbm`, since its JSON drifts by up to 1e-15 (all verified).
    scikit-learn's forests have no format at all. FLAML must not search a family we can't promote,
-   or a winning model gets stuck in the sandpit. Strict JSON would also drop CatBoost (D-093).
+   or a winning model gets stuck in the sandpit. Strict JSON would also drop CatBoost (D-037).
 3. **More of our own code.** FLAML's `AutoML` object and scikit-learn's encoders and calibrators
    can't move. Encoding, calibration (Platt, isotonic) and the prior shift become our own
    parameters and predict code, and inference redoes FLAML's in-memory preprocessing (D-094). With
@@ -38,7 +38,7 @@ work), so one check at promote replaces any codebase-wide ban.
   (one scoring path); promote accepts only listed file types; pin bumps rerun stored bundles
   against stored predictions. Default: yes to all three.
 - **Q298** (first raised as Q296, a number D-106 has since reused) Strict JSON, or any
-  non-executable plain data, JSON preferred? This decides CatBoost. Default: plain data, as D-078
+  non-executable plain data, JSON preferred? This decides CatBoost. Default: plain data, as D-051
   reads now.
 - **Q299** Who confirms with security that `.cbm`, LightGBM's text model and, if it is ever used,
   MLflow's models from code are acceptable? Default: the SDS raises it through the CDS before the
