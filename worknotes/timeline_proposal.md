@@ -86,6 +86,7 @@ they are the first cut. Stage 5 (integrations and release) runs in M4 and both r
 | 4 | Guided notebooks | thin | deep (guidance reviewed by the LDS) | — |
 | 5 | Feature store integration | — (learn session; design in the slowdown) | thin | — |
 | 5 | Data observability integration | — (learn session; design in the slowdown) | thin | — |
+| 5 | MLflow (registry, experiment tracking; if confirmed available, D-111) | — (M2.4's records map onto it) | thin | — |
 | 5 | Regression | shapes (per-task spec entries) | end to end | — |
 | 5 | Tests | invariants, migrations, bundle round trip, e2e on `unit` | every function; CI / Sonar | — |
 | — | LLM-assisted modelling | — | — (Phase 3) | — |
@@ -140,7 +141,7 @@ they are the first cut. Stage 5 (integrations and release) runs in M4 and both r
 | An exit point's shape changes after the pre-release | A downstream team or the data observability session needs a different shape | Cheap until release 1.0's first shared row (D-007); collect the changes in run-through 1 |
 | Round 2 is too full | Behind plan in its third week | Cut the nice to haves, then depth in EDA and Evaluation. The integrations, regression and tests stay (D-021, D-022) unless the CDS agrees otherwise |
 | A spike fails | Any spike result before 11-09 | A family whose round trip fails is fixed in M2.3 rather than dropped (D-037); a failed group split falls back to a client-grouped holdout (D-106) |
-| External teams not available | No session booked by 11-06 | Stand-ins (the synthetic mart split into a "feature store" table; a flat monitoring export); the integrations stay in round 2 |
+| External teams not available | No session booked by 11-06 | The feature-store settings of the release example stay commented out (D-021); a flat monitoring export stands in; the integrations stay in round 2 |
 | Memory on the 8 GB Mac | An out-of-memory error in M2.3 or round 2 | The `dev` preset of about 20k clients for daily work; the WSL2 PC for comparisons |
 | Config questions reopen the spine | OD-25 (the automation-level mapping) still open on 10-26 | Settled in M2.1 with reversible defaults; no revisit before round 2 |
 | The first change request is slow | Its first-time steps can't start before 1.0 is final | Release 1.0 is ready by 02-19 but reaches production later (March or after); tell the CDS early |
