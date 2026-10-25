@@ -1,18 +1,18 @@
 # Inference
 **Status:** legacy-only · **Legacy:** `src/inference.py`, `notebooks/Inference.ipynb`
 **Related:** [lifecycle](lifecycle.md) · [training](training.md) (categorical handling) · [monitoring](monitoring.md) ·
-[environment](environment.md) · D-007, D-016, D-033, D-047, D-049, D-051, D-128 · OD-18, OD-27, OD-28
+[environment](environment.md) · D-007, D-016, D-033, D-047, D-049, D-051, D-052, D-088, D-128 · OD-18, OD-27, OD-28
 
 ## Purpose
 Pure scoring. Load production (or pinned registered) models, score the eligible population for a
-month (or another table with the same schema), and write one batch-scoped output with a manifest. No
-registering, promoting or deploying happens here.
+month (the inference month, a run argument, D-088) or another table with the same schema, and
+write one batch-scoped output with a manifest. No registering, promoting or deploying happens here.
 
 ## Phase 2 requirements
 1. **Model selection per model key:** the production version (default), a pinned registered version,
    or a dict `{model key: run_id}`. Local runs only in dev mode. Scoring routes by model key; split =
    `all` in Phase 2.
-2. **Eligibility and features come from the model's frozen config,** so a model always scores its own
+2. **Eligibility and features come from the model's resolved config,** so a model always scores its own
    definition.
 3. **Unseen categorical levels** map to `__other__` and are counted per column, reported in the
    manifest and monitored. A missing column or a changed type fails loud ([training](training.md)).
@@ -50,8 +50,9 @@ registering, promoting or deploying happens here.
 
    It carries none of the framework's traceability (entity, model hash, run, scoring batch,
    inference month); the master layer keeps it. Because one table holds every product's scores,
-   they are compared across products downstream. Retail propensity use cases therefore default to
-   the `probability` decision (calibration step on, prior shift applied), and correct calibration
+   they are compared across products downstream. The retail examples therefore default to the
+   `probability` decision through a comment in the example config, not a code default
+   (calibration step on, prior shift applied), and correct calibration
    is a release requirement (D-049; calibration in [training](training.md)).
 5. **Batch-scoped and written once.** Collect, then write once, and assert that every "ok" model
    landed on disk (T6, T7). The path layout is under review (manifests vs score files, OD-18).
@@ -63,7 +64,7 @@ registering, promoting or deploying happens here.
    exact scheduling setup inside the bank is unverified.
 9. **Framework version** (D-047): models are scored with the use case's pinned framework version.
    When a use case raises its pin, its production model must still load (versioned bundle, D-051;
-   never pickle, D-051)
+   never pickle once promoted, D-051)
    and score identically under the new version, or be retrained.
 
 ## Design constraints
@@ -80,9 +81,13 @@ T2–T7; the per-use-case run-pin dict; reinference worked without local runs.
 ## Open questions
 - Scoring in Spark vs driver-side chunks for the largest populations (decide by measurement).
 - Spark ships a broadcast model to executors serialised in memory (cloudpickle). That is fine:
-  only what is promoted to production must avoid pickle (D-051).
-- With retraining in production (OD-27), the manifest's `model_hash` points at the model retrained
-  in production, linked to its evaluated parent; the drift reference may need recomputing there.
+  the sandpit (local and registered tiers) may hold any format, and only what moves to production
+  must avoid pickle (D-051).
+- By default deploy retrains the recipe in production before it scores (D-033, D-052), on the same
+  window and clients (only the inference month moves) and only after it passes the production
+  retrain check against its parent ([lifecycle](lifecycle.md)); the manifest's `model_hash` then points at the model retrained in production, linked to its
+  evaluated parent by `parent_run_id`, and the drift reference may need recomputing there.
+  Whether production has the data and compute to train: OD-27.
 - The master layer's exact columns (requirement 4).
 - Whether a rank score should sit beside the probability in the long run (OD-28, D-049).
 - Output path layout, the part of OD-18 still open: manifests (JSON) currently sit next to the

@@ -1,8 +1,9 @@
 # conf/base — committed configuration
 
-Framework defaults (including the `quick` / `standard` / `thorough` profile defaults) and use-case
-configs. The goal is **one file per use case**, holding every decision made up front (human feature
-decisions too, for now: whether they move to the decision audit log is OD-10,
+Framework defaults (including the `autonomous` / `assisted` level defaults) and use-case configs.
+A use case is **one config file** (unless it bloats) and its decision audit log (D-006, D-043). The
+config holds the intent: the candidates, the rules and the settings. People's keep / exclude
+decisions are audit-log entries the run replays, never config content (D-125,
 `docs/components/config.md`). Values here are **generic**: logical source names, relative layouts,
 modelling settings. Physical, environment-specific values (Hive tables, HDFS roots, Spark settings,
 report theme) belong in `conf/local/`, which is merged on top at load time.

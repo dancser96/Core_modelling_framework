@@ -1,15 +1,18 @@
 # tests
 
-**Now (Phase 2 build-out): light tests.**
+**Now and at the December pre-release: light tests** (D-014).
 - Correctness invariants (`CLAUDE.md` §4):
   - time separation; OOT target windows not overlapping training's;
-  - client-grouped train/test split; label-using checks on train-split clients in the window, and
-    label-free checks never on the validation month;
-  - train-only sampling (after the split); the prior-shift offset uses the weighted training rate
-    (zero when the class balance is unchanged); calibration fitted out-of-fold inside train;
+  - client-grouped train/test split, made after Feature Checks; label-using views in EDA and
+    Feature Checks never after the window, fitting and choices from Training on train-split
+    clients only, and label-free checks never on the validation month;
+  - train-only sampling (after the split), only when the config declares it; the prior-shift
+    offset uses the effective training rate (the sampled rate in Phase 2, which has no sample
+    weights; zero when the class balance is unchanged); calibration fitted out-of-fold inside train;
   - lineage exclusion; unseen categorical levels handled;
   - the due-diligence gate and the feature sign-off before register; batch-write completeness;
-  - the model bundle's round trip without pickle (identical predictions, D-051).
+  - `register` writes the plain-data model, and the promoted bundle round-trips without pickle
+    (identical predictions, D-051).
 - Config migrations: old configs still load (`CLAUDE.md` §2).
 - Generator validation tests for the synthetic data (`docs/components/test_harness.md`).
 - One end-to-end test on synthetic data with **real local PySpark**: no stubs, and assertions against
@@ -20,7 +23,8 @@
 Tests import the dev-only `synthetic` package. The `unit` preset keeps them fast; the `canonical`
 dataset is for notebooks and demos.
 
-**Before migration into the bank:** every function tested, internal CI/CD and Sonar checks passing.
+**By release 1.0:** every function tested, internal CI/CD and Sonar checks passing (D-014). Tests
+are a milestone criterion, not part of a depth level.
 
 Run with `pytest` (configured to collect only this folder; `legacy/` is excluded). "No tests ran" is
 expected until the first tests exist.

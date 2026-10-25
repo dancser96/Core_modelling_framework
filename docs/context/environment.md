@@ -17,8 +17,8 @@ so moving the code inside needs configuration, not code edits.
 **Code flow is one-way.** To release: download a zip of the repo, then copy its contents into the
 internal repo. Nothing comes back out: no data, no outputs, no code. Changes made inside are
 reported back **in words** and re-applied here. Inside, the package is published through Nexus into
-the base image; images are supported for a year, and the image a use case starts on pins its
-framework version (D-024).
+the base image; images are supported for a year, and the image a use case starts on sets its
+default framework version, which the use case pins and may raise within the image's year (D-024).
 
 ## Pinned versions (bank parity — keep in sync with `requirements.txt`)
 
@@ -92,15 +92,16 @@ multi-objective studies and pruning against 5.0 before relying on them.
   months, so FLAML gets the client groups (D-106). **Unverified:** the group split on our data
   (spike 1; Phase 2 has no sample weights, D-117; fallback in `docs/components/training.md`).
 - **Assumed:** a source month never changes after it has been loaded (no late-arriving rows or
-  restatements). Reproducibility from frozen config + hashes depends on it (`CLAUDE.md` §4.10);
-  the data-definition hash describes the data, it doesn't fingerprint it. Upstream data facts are
-  the data owners' and the platform's responsibility, not the framework's (D-079): whether source
-  months are restated, when the monthly mart lands, and how storage permissions differ per
+  restatements). Reproducibility from the resolved config + hashes depends on it (`CLAUDE.md`
+  §4.10); the data-definition hash describes the data, it doesn't fingerprint it. Upstream data
+  facts are the data owners' and the platform's responsibility, not the framework's (D-079): whether
+  source months are restated, when the monthly mart lands, and how storage permissions differ per
   entity. The framework states its assumption, reads tables and paths from `conf/local/`, and
   training's count check against the EDA artifact catches a restatement in between (D-088).
-- **Unverified:** a lossless non-pickle format per model family on the pinned versions (XGBoost
-  JSON, LightGBM text, CatBoost JSON; scikit-learn forests have none), each proven by a round trip
-  giving identical predictions (D-051; list in `docs/components/training.md`).
+- **Unverified until spike 2:** a lossless non-pickle format per model family on the pinned
+  versions for what is promoted (LightGBM text, XGBoost JSON, CatBoost `.cbm` or its JSON, whichever
+  round-trips; scikit-learn forests have none), each proven by a round trip giving identical
+  predictions (D-051; list in `docs/components/training.md`).
 - **Assumed, unverified:** no internet access from the bank's notebooks, so reports embed plotly.js
   instead of loading it from a CDN (~4–5 MB per report, not optimised in Phase 2, D-036). Plotly
   rendering and report opening time inside the bank's JupyterLab are also unverified; the SDS's
@@ -136,11 +137,13 @@ decides.
   candidate lists and patterns are a second filter, not the first (the SDS, 2026-10-20).
 - Retail scale is ~2M rows per month × ~50 columns per model (ceiling ~5M × 400).
   Single-node pandas and FLAML are fine **if** columns and rows are pruned in Spark first. With
-  multi-month observation windows this becomes e.g. ~24M unit-months for 12 months, so Spark-side
-  sampling against a row budget is the normal case (`docs/components/dataset.md`).
+  multi-month observation windows this becomes e.g. ~24M unit-months for 12 months, beyond the row
+  budget. Sampling happens only when the config declares it (D-117); when the rows exceed the
+  budget with no sampling declared, the dataset step fails loud, naming the row count, the budget
+  and the two sampling options (`docs/components/dataset.md`).
 - `toPandas()` of the full width is the main OOM risk. Downsampling after collection won't prevent
-  an OOM, so sample in Spark before collecting (whichever sampling option,
+  an OOM, so declared sampling runs in Spark before collecting (whichever sampling option,
   `docs/components/dataset.md`).
-- FLAML is time-budgeted. At 2M rows, LightGBM tends to consume most of the budget, and other
-  learners may barely run. Read `automl.config_history` / `best_config_per_estimator` to see what
-  was actually tried.
+- In the crunch, FLAML was time-budgeted (Phase 2 runs on a trial budget plus seeds by default,
+  D-094). At 2M rows, LightGBM tends to consume most of the budget, and other learners may barely
+  run. Read `automl.config_history` / `best_config_per_estimator` to see what was actually tried.

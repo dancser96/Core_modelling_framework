@@ -1,26 +1,28 @@
 # Reporting and model card
 **Status:** legacy-only · **Legacy:** `src/card.py`, `src/analysis.py` plotting helpers
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [evaluation](evaluation.md) ·
-[monitoring](monitoring.md) · [lifecycle](lifecycle.md) · [environment](environment.md) (theme) · D-031, D-036, D-052, D-083 · OD-12
+[monitoring](monitoring.md) · [lifecycle](lifecycle.md) · [environment](environment.md) (theme) · D-020, D-031, D-036, D-052, D-083 · OD-12
 
 ## Purpose
 One shared writer that turns structured results from any stage into a self-contained HTML report,
-plus the versioned model card. Reports are generated from frozen configs, never hand-assembled in
+plus the versioned model card. Reports are generated from resolved configs, never hand-assembled in
 notebooks, and the same objects display in notebooks.
 
-**Reports:** EDA · Feature Checks (+ ledger) · model performance (evaluation) · model comparison ·
-model card · monitoring. EDA and Feature Checks together form a data-analysis report in its own
-right, a product within the product, not notebook output next to artifacts. Target Factory,
-Training, Inference and the lifecycle steps write artifacts, not reports.
+**Reports** (D-036): EDA · Feature Checks (+ ledger) · the model results (Evaluation, after FLAML
+training; model comparison included) · monitoring, plus the model card. EDA and Feature Checks
+together form a data-analysis report in its own right, a product within the product, not notebook
+output next to artifacts. Target Factory, Training, Inference and the lifecycle steps write
+artifacts only.
 
 ## Phase 2 requirements
 1. **Self-contained HTML:** styled tables (pandas Styler) and interactive plotly charts, with plotly.js
    embedded once per file so reports open offline inside the bank (no CDN). That makes each report
-   about 4–5 MB, and the size isn't optimised in Phase 2: reports regenerate from frozen configs,
+   about 4–5 MB, and the size isn't optimised in Phase 2: reports regenerate from resolved configs,
    and retraining in production regenerates them anyway (D-036).
 2. **Every report has the same structure:**
    1. A one-page summary for business and governance readers. It opens with a **choices block**:
-      what was chosen (profile, decision, metric, sampling, modelling path), the alternatives, and
+      what was chosen (automation level, decision, metric, sampling; modelling path from Phase 3,
+      D-020), the alternatives, and
       rule-based warnings (e.g. few positive events, pooled AUC far above within-segment AUC, a
       choice among variants made on test metrics, D-083).
    2. Core views.
@@ -56,6 +58,6 @@ Training, Inference and the lifecycle steps write artifacts, not reports.
 - One charting library (plotly) for reports. Revisit if it disappoints (D-036).
 
 ## Open questions
-- The mandatory core views (OD-12).
+- The core views per task of the EDA, Feature Checks and Evaluation reports (OD-12).
 - Unverified: how fast a report opens and whether plotly renders in the bank's JupyterLab. Both
   show in the SDS's JupyterLab test inside the bank (D-036).

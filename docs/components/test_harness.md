@@ -47,7 +47,8 @@ will read real data. Stubs hid every environment bug in the crunch (T15).
   leaks, a target built upstream, a process leak, a column shifted a month ahead, null controls, a
   rare level, an inverted U, a Simpson's reversal and drift. Dirty data is available on demand.
 - **A ceiling:** for each of 12 standard targets, the oracle's AUC (about 0.7–0.95) is what a
-  perfect model would reach. A model that beats it is leaking.
+  perfect model would reach. A model that beats it by more than about two standard errors on
+  positive events is leaking (D-100 (e)).
 
 **How it is trusted.** 8 check families compare 1,263 statistics with this spec, and all pass at
 100k. The checks are written from the spec and never call the code that makes the data. The notebook
@@ -208,7 +209,8 @@ What ties the products together:
   months, the window probability is the client's true chance of the event. It comes from the
   recorded scores, with the client's state frozen at `t`.
 - **The ceiling.** The oracle's AUC is the ceiling for that target and window: a model that beats
-  it there is almost certainly leaking. Each leak beats the oracle on the window it was built for:
+  it there by more than about two standard errors on positive events is almost certainly leaking
+  (D-100). Each leak beats the oracle on the window it was built for:
   - card acquisition (`w` = 3): 0.97 and 0.88 against 0.84;
   - personal-loan opening next month: 0.90 and 0.95 against 0.77.
 
@@ -874,7 +876,8 @@ Later (not in M1): an interaction-only feature.
   - `dirty`: the record of the defects, when dirty data is on.
 
 **The oracle AUC is the ceiling.** A model or univariate screen that beats it on the target's own
-window (the oracle AUC for the same target and `w`) is almost certainly leaking. The converse
+window (the oracle AUC for the same target and `w`) by more than about two standard errors on
+positive events is almost certainly leaking (D-100). The converse
 doesn't hold: a leak beats the oracle on the window it was built for, not necessarily on others.
 The card leaks (built for `w = 3`) beat it at `w = 3`; at `w = 1` the moderate one about ties it,
 and at `w = 6` neither beats it. The loan leaks (process leak, shifted column) beat it at `w = 1`

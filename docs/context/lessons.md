@@ -68,16 +68,17 @@ harness, an environment adapter and explicit invariants. Legacy file references 
 
 - **Two feature views of one config.** Exploration reads the candidates; the model reads the
   survivors (candidates − exclusions). One file, and excluded features stay inspectable. Phase 2
-  extends this to candidates + human decisions (both directions) + the feature ledger.
+  keeps the candidates and the rules in the config, records people's keep / exclude decisions as
+  audit-log entries the run replays (D-125), and adds the feature ledger as the per-feature view.
 - **EDA has to earn its place first.** In the crunch, EDA gave so little insight (and its charts
   showed nothing at low prevalence) that the notebooks were run in reverse order, checks first.
   Phase 2 keeps EDA first but changes its content, and draws clear lines: EDA understands, Feature
   Checks gates, Training selects (D-028).
 - **Config-driven top-k metrics:** percentile slices plus absolute-count slices (a count larger than
   the population is skipped). Full-population stats are always reported.
-- **Frozen config + hashes** (config hash, feature signature, model content hash) made every score
-  traceable. The manifest linked scoring batches to the exact models; verify the hash before
-  reproducing.
+- **The config saved with every run + hashes** (config hash, feature signature, model content hash)
+  made every score traceable; Phase 2 saves the resolved config (D-125). The manifest linked
+  scoring batches to the exact models; verify the hash before reproducing.
 - **Per-use-case run pinning** as a dict `{use_case: run_id}`, never a positional list.
 - **Reinference** from registered models + manifest (a new month or table with the same schema)
   worked without the local scratch runs. This is the value of a registry tier.

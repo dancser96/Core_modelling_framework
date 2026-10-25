@@ -1,8 +1,8 @@
 # Config spine
 **Status:** designing · **Legacy:** `configs/_schema.py`, `configs/_TEMPLATE.yaml`
 **Related:** [dataset](dataset.md) (time model) · [feature ledger](feature_ledger.md) · [lifecycle](lifecycle.md) ·
-[run modes](run_modes.md) · [environment](environment.md) · D-006, D-007, D-021, D-023, D-024, D-031,
-D-032, D-034, D-043, D-047, D-050, D-052, D-088, D-125, D-128 · OD-11, OD-25, OD-26
+[run modes](run_modes.md) · [environment](environment.md) · D-006, D-007, D-020, D-021, D-023, D-024,
+D-031, D-032, D-034, D-043, D-047, D-050, D-052, D-088, D-125, D-128 · OD-02, OD-11, OD-25, OD-26
 
 ## Purpose
 The whole definition of a use case, validated at load. It is the framework's most important contract
@@ -10,10 +10,12 @@ with its users and the thing a new framework version must never break when a use
 (D-047, `CLAUDE.md` §2). It must also
 **guide**:
 - every non-trivial option is listed with when to use it;
-- profiles fill sensible defaults, so a first run needs only a handful of fields.
+- automation levels fill sensible defaults, so a first run needs only a handful of fields.
 
 ## Shape (illustrative, not final)
-One file per use case is the goal, not a hard rule; split it only if it bloats (D-043). It is
+A use case = one config and its audit log (D-006, D-043); the config stays one file unless it
+bloats. As in the crunch, a repo may hold several similar use cases, each with its own config and
+audit log; extension code lives in the repo that holds the use case (which repos: OD-02). It is
 written in YAML (D-043); the Pydantic model is the programmatic API.
 
 ```yaml
@@ -21,27 +23,27 @@ schema_version: 1
 task: binary                        # dispatch key; panel tasks first
 use_case: product_x_acquisition    # <product>_<activity>; must split at load (D-128)
 domain: retail
-profile: standard                   # defaults for every stage; to become an automation level (D-023)
+automation_level: assisted          # defaults for every stage: autonomous or assisted (D-023)
 decision: {type: top_n, n: 10000}   # how scores will be used → metric, gates, report emphasis
 
 entities:                           # only where this use case applies; data never merged
   entity_a: {source: retail_products_a}   # per-entity overrides only where they differ
 
 data:          # unit and month keys, eligibility (ordered steps), target spec (Target Factory) or column
-time:          # observation window, target window, validation (OOT) month, inference month
+time:          # observation window, target window, validation (OOT) month; inference month: a run argument
 features:      # candidates (lists / patterns); human decisions: the audit log (D-125)
 eda:           # key features (top-N, user list), stratify_by, sampling
 feature_checks:  # ordered steps and thresholds
 training:      # path (automl; predefined from Phase 3), budgets, sampling, selection mode, calibration
 evaluation:    # slices (top_pct, top_n), baselines, views
-lifecycle:     # register gates, promote / deploy settings
+lifecycle:     # register gate, promote / deploy settings, production retrain check tolerances (D-052)
 inference:     # output settings, schedule-facing options
 monitoring:    # drift thresholds, outcome join, retrain policy
 ```
 
 **"Sections per stage", clarified.** Each stage reads the shared sections (`task`, `decision`,
 `entities`, `data`, `time`, `features`) plus its own. EDA can therefore run with only the shared
-sections filled, and stage sections left empty take the profile's defaults. Every stage reads the
+sections filled, and stage sections left empty take the level's defaults. Every stage reads the
 *same* data definition, so EDA, checks, training and evaluation can never quietly look at different
 populations.
 
@@ -49,21 +51,23 @@ populations.
 1. Every config has `schema_version` and `task`. Unbuilt tasks are defined but fail with a clear "not
    implemented".
 2. Load = `conf/base` → `conf/local` merge → migration → replay of the decision audit log's
-   entries → Pydantic v2 validation → **frozen config** saved with every artifact (resolved
-   values, including profile defaults and the entries replayed). The frozen config is plain data (YAML,
-   D-043); the config itself is never edited afterwards, since decisions taken later are entries in
-   the decision audit log (D-125, section below). The frozen config carries a **housekeeping
-   block**:
+   entries → Pydantic v2 validation (unknown keys fail loud, so a leftover `profile:` can't fall
+   back to a default level) → **resolved config** saved with every artifact and report
+   (resolved values, including level defaults and the entries replayed). The resolved config is
+   plain data (YAML, D-043); the config itself is never edited afterwards, since decisions taken
+   later are entries in the decision audit log (D-125, section below). The resolved config
+   carries a **housekeeping block**:
    - the framework version and a version card of the key libraries;
    - when the run was made;
    - the run's identities (`run_id`; config, data-definition and resolved-input hashes; the last
      entry replayed; code version; EDA and Feature Checks have no `run_id` yet). The hashes exclude
      this block, so they don't depend on themselves.
-3. **Profiles** (`quick` / `standard` / `thorough`) set defaults for every stage; explicit fields
-   override (D-023). They are becoming **automation levels**: two in Phase 2, `autonomous` and
-   `assisted`, `manual` later; the same checks at every level, differing in what is decided by
-   rule and what by a person. The field keeps the name `profile` until the levels exist and is
-   renamed with a migration (D-023; the mapping per decision point: OD-25).
+3. **Automation levels** (`autonomous` / `assisted`; `manual` in Phase 3) set defaults for every
+   stage; explicit fields override (D-023). The field is `automation_level` from M2.1; `profile` is
+   the retired name, with no migration since 0.x promises nothing (D-007 (c)). The same checks run
+   at every level, differing in what is decided by rule and what by a person. A level changes
+   through a config edit or an audit-log entry, never a CLI override (D-023; the mapping per
+   decision point: OD-25).
 4. **Business decision** (e.g. `top_n`, `threshold`, `ranking`, `probability`; other tasks add their
    own). It derives:
    - the optimisation metric;
@@ -84,8 +88,14 @@ populations.
    D-125). Automated decisions are *not* written into the config as outcomes: the config holds the
    rules that make them (ordered, named steps, like eligibility), and their outcomes are rule
    entries in the log and columns in the feature ledger (D-043, D-125).
-8. **Time:** observation window, target window, validation month and inference month. Validated at
-   load:
+8. **Time:** the observation window, target window and validation month are set in the config;
+   the inference month is a run argument (D-088). The validation month sits outside the
+   data-definition hash (EDA never reads it; Feature Checks reads it only to leave it out of its
+   comparisons), so moving it never changes the data-definition hash. After the config freezes, the validation month changes only through a
+   `set` entry in the audit log, refused when any Feature Checks run compared that month (Feature Checks
+   records the months it compared, [feature_checks](feature_checks.md); D-088). A Phase 2
+   production retrain moves only the inference month (D-052).
+   Validated at load:
    - window order;
    - `v ≥ tk + w` (no overlapping target windows);
    - `v + w ≤` the last loaded month, so every validation label has matured (otherwise partial
@@ -94,8 +104,8 @@ populations.
 9. **Data-definition hash:** computed from entity, sources, eligibility, target spec, observation
    window and candidates (D-088; the section below). It keys the EDA and Feature Checks artifacts
    that training requires (D-031). It assumes a source month never changes after loading
-   (`CLAUDE.md` §4.10); training recomputes the per-month row and positive counts and fails loud
-   when they differ from the EDA artifact's.
+   (`CLAUDE.md` §4.10); training recomputes the per-month row and positive counts on every client
+   in the window, before the client split, and fails loud when they differ from the EDA artifact's.
 10. **Model key** (entity, domain, use case, split) is derived from the config; split = `all` in
     Phase 2.
 11. **Downstream sections exist from v1** (lifecycle, inference, monitoring), even while those
@@ -112,7 +122,8 @@ populations.
 **Decided (settles the audit-log design; amends D-043 and D-088); planned, not built.** The SDS
 and LDS build from this section.
 
-**The model.** The config is the intent, frozen once Target Factory has built the target. Every
+**The model.** The config is the intent, immutable once Target Factory has built the target, or
+at the first EDA run for an upstream target. Every
 later decision, by a person or a rule, is an append-only entry in the decision audit log. Replaying the config plus entries 1–n gives a run's one input, the **resolved config**,
 validated by the same Pydantic schema. The log never changes the data definition (entity, sources,
 eligibility, target spec, window, candidates): changing it means a new config, with fresh EDA and
@@ -147,7 +158,8 @@ any extension-point entry.
 - `include` reverses a person's `exclude` only. A rule's `exclude` is reversed by changing the
   rule (a listed threshold); a lineage exclusion is never reversed (`CLAUDE.md` §4.6).
 - A write is refused at once when a feature isn't a candidate, the reason is missing, the change
-  touches the data definition, the setting isn't listed, or the value fails the schema.
+  touches the data definition, the setting isn't listed, the value fails the schema, or it moves
+  the validation month to one Feature Checks compared (D-088).
 - An entry's evidence may cite train and test results only: the validation month never informs a
   choice (`CLAUDE.md` §4.4).
 
@@ -162,6 +174,8 @@ LOGGABLE_SETTINGS = {
     "training.sampling.keep_fraction": "training",
     "training.calibration.method": "training",
     "feature_checks.stability.psi_max": "feature_checks",
+    # Refused when Feature Checks compared the new month (D-088).
+    "time.validation_month": "evaluation",
 }
 ```
 
@@ -243,7 +257,7 @@ entry. Entry 6 of the worked example, as stored:
 ### The final config as one file
 `resolve_config(config, entity, upto=None, save_to=None)` returns the resolved config, or writes it
 as one YAML file with each value's entry number as a comment. It is a view, regenerated on demand
-and never edited back. Every run already saves its resolved config as its frozen config.
+and never edited back. Every run already saves its resolved config with its artifacts.
 
 ### Storage
 - **Locally:** one small JSON file per entry, `decisions/<seq>.json`, per instance, under a folder
@@ -251,7 +265,8 @@ and never edited back. Every run already saves its resolved config as its frozen
   No append is needed (HDFS append may be off in the bank: unverified). Two simultaneous writers
   can't interleave: each write is create-if-absent, and on a clash it retries with the next number
   (that `hdfs dfs -put` without `-f` refuses an existing file is to be verified in the bank).
-- **Register:** the run's slice (the entries up to its run marker, plus the sign-off that approved
+- **Register:** the run's slice (the entries up to its run marker, any later validation-month entry
+  its Evaluation was scored with, plus the sign-off that approved
   the run) is packed into one file inside the registered bundle, immutable; promote reads it
   there. A folder of entries can't be registered or promoted as is ([lifecycle](lifecycle.md)).
 - **Later:** a shared, queryable table may come with the registry tables in round 2 (M4). It would
@@ -291,15 +306,15 @@ Card acquisition within 3 months on the synthetic mart, entity A.
 | 5 | 10-27 | rule `stability.psi` | Feature Checks | flag | 5 features | PSI above 0.25 across the window | report → Stability |
 | 6 | 10-27 | person (DS) | Feature Checks | exclude | the 2 flagged in #4 | Set after the offer, so not known at scoring time | #4; report → Leakage |
 | 7 | 10-27 | person (DS) | Feature Checks | keep_despite_flag | the 5 flagged in #5 | Digital adoption trend; monitoring watches it | #5; report → Stability |
-| 8 | 10-28 | stage | Training | run `r1` | input = config + #1–7 | — | training report |
+| 8 | 10-28 | stage | Training | run `r1` | input = config + #1–7 | — | model results report (Evaluation) |
 | 9 | 10-28 | rule `selection.importance` | Training | dropped | 71 features | Below the importance floor | ledger, run `r1` |
-| 10 | 10-28 | person (DS) | Training | set | `training.max_iter` 100 → 300 | AUC still rising at the last trials | training report, `r1` |
-| 11 | 10-29 | stage | Training | run `r2` | input = config + #1–10 | — | training report |
+| 10 | 10-28 | person (DS) | Training | set | `training.max_iter` 100 → 300 | AUC still rising at the last trials | model results report (Evaluation), `r1` |
+| 11 | 10-29 | stage | Training | run `r2` | input = config + #1–10 | — | model results report (Evaluation) |
 | 12 | 10-29 | person (DS) | Sign-off | exclude | `nationality` | Not used for product targeting | sign-off view, `r2` |
-| 13 | 10-29 | stage | Training | run `r3` | input = config + #1–12 | — | training report |
+| 13 | 10-29 | stage | Training | run `r3` | input = config + #1–12 | — | model results report (Evaluation) |
 | 14 | 10-30 | person (DS) | Sign-off | sign_off | the 61 features of `r3` | Each defensible; flags reviewed | sign-off view, `r3` |
 | 15 | 10-30 | person (DS) | register | register | `r3` as version 1 | Candidate for production | model card |
-| 16 | 11-02 | person (reviewer) | promote | promote | version 1 | Approved pull request | registry record |
+| 16 | 11-02 | person (DS) | promote | promote | version 1 | Promotion PR approved | registry record |
 
 **Replay, state after each entry.** Each row is exactly what a run started at that point would
 train on.
@@ -348,10 +363,10 @@ on the automation level (D-023, OD-25). `LOGGABLE_SETTINGS` and OD-25 both work 
 | EDA | Key features | Rule (top-N) + person (listed) |
 | Feature Checks | Lineage exclusions; one flag per check step | Rule |
 | Feature Checks | Exclude / keep, resolving flags | Person |
-| Feature Checks | Feature sign-off before register (D-031) | Person, always |
-| Training | Modelling path, budgets, calibration (refits on more data: Phase 3, D-052) | Level |
+| Training | Budgets, calibration; modelling path from Phase 3 (FLAML only in Phase 2, D-020); refits on more data: Phase 3 (D-052) | Level |
 | Training | Automated selection drops; search result (family, hyperparameters) | Rule |
 | Training | Point picked on the trade-off chart (Phase 3) | Level |
+| Sign-off | Feature sign-off, after training and before register (D-031) | Person, always |
 | Evaluation | Gates passed or failed | Rule |
 | register / promote | Register a version; choose the production version (approved PR) | Person |
 | deploy | Run by the change-request process | Person (CR) |
@@ -362,16 +377,17 @@ on the automation level (D-023, OD-25). `LOGGABLE_SETTINGS` and OD-25 both work 
 
 ## Identities (D-088, D-125): how the hashes work
 Every hash is taken over a canonical form (keys sorted, defaults resolved, migrated to the current
-schema) of a subset of the frozen config, and stored beside a `hash_version` that names the recipe
+schema) of a subset of the config or the resolved config (the table says which), and stored
+beside a `hash_version` that names the recipe
 that computed it.
 
 | Identity | Covers | Excludes | Changes when |
 |---|---|---|---|
-| config hash | the use-case definition: every section after profile resolution | the housekeeping block; every `conf/local` value (tables, paths, Spark, theme); the audit log's entries | the config file changes, which after Target Factory means a new config; decisions in the log leave it unchanged |
-| data-definition hash | entity, sources, eligibility steps, target spec, observation window, candidates | the validation and inference months (run arguments); the stage sections | the population, the target or the candidates change. It keys the EDA and Feature Checks artifacts training needs (D-031) |
+| config hash | the use-case definition: every section after level resolution | the housekeeping block; every `conf/local` value (tables, paths, Spark, theme); the audit log's entries | the config file changes, which after Target Factory means a new config; decisions in the log leave it unchanged |
+| data-definition hash | entity, sources, eligibility steps, target spec, observation window, candidates | the validation month (in the config; EDA never reads it, Feature Checks only to leave it out); the inference month (a run argument); the stage sections | the population, the target or the candidates change. It keys the EDA and Feature Checks artifacts training needs (D-031) |
 | resolved-input hash | the config plus entries 1–n, resolved (the run's one input) | the housekeeping block; `conf/local`; trail entries, which change nothing | every entry that changes the input: `exclude`, `include`, `keep_despite_flag`, `set` |
 | `run_id` | resolved-input hash + entity + timestamp | — | every training run of one instance |
-| `recipe_hash` | frozen config + final features + hyperparameters + encoder levels + calibration spec | the fitted numbers | the recipe changes; a retrain in production keeps it (D-052) |
+| `recipe_hash` | resolved config + final features + hyperparameters + encoder levels + calibration spec | the fitted numbers | the recipe changes; a retrain in production keeps it (D-052) |
 | `model_hash` | the bundle's per-part hashes | — | any part changes, a retrain included (D-094) |
 
 A worked example, one use case on two entities:
@@ -385,8 +401,9 @@ A worked example, one use case on two entities:
    needed. The resolved-input hash becomes `i2`, and training reruns with a new
    `run_id = i2 + A + <timestamp>`.
 4. Next month the DS scores: the inference month is a run argument, so no hash changes and
-   nothing has to be rerun. Likewise, moving the validation month for a sweep variant changes
-   no hash.
+   nothing has to be rerun. Moving the validation month (a checked `set` entry, e.g. for a sweep
+   variant) changes the resolved-input hash but not the data-definition hash, so EDA and Feature
+   Checks don't rerun.
 5. A framework upgrade migrates the config at load. Hashes are computed on the migrated canonical
    form; if the migration changes that form, the hashes change too, and the artifacts carry their
    `hash_version`, so the due-diligence gate can say "schema change, not a data change: rerun EDA
@@ -415,7 +432,7 @@ time checks.
   register until a person confirms it (today it is only flagged at replay).
 - Automation levels: what `autonomous` and `assisted` each decide by rule at each decision point
   (OD-25).
-- Profile defaults per stage (set as each stage is built).
-- Extension functions live in the use case's repo and are referenced by import path; the frozen
+- Level defaults per stage (set as each stage is built).
+- Extension functions live in the use case's repo and are referenced by import path; the resolved
   config records the path and a source hash (D-006). The exact fields are set when a use case
   first needs one; the walking skeleton's examples need none.

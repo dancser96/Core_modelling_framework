@@ -1,11 +1,11 @@
 # core_modelling
 
 The unit's standard way to build, ship and maintain models: a versioned, config-driven Python library
-used through guided notebooks, a CLI and a Python API. A use case goes from data to a monitored
-production model in days to weeks (≈ 3 days on the hands-off profile, ≈ 3 weeks on the thorough
-one), with one standard for correctness, reproducibility and maintainability across the whole
-lifecycle. Package: `core_modelling` (the repo name `retail.core_modelling` may change; the framework
-is domain-agnostic).
+used through guided notebooks, a CLI and a Python API. A use case goes from data to a registered
+candidate in days to a few weeks of DS effort, depending on the automation level; production
+follows through the change-request calendar. One standard for correctness, reproducibility and
+maintainability across the whole lifecycle. Package: `core_modelling` (the repo name
+`retail.core_modelling` may change; the framework is domain-agnostic).
 
 **Status:** Phase 2, design baseline done. The package is a skeleton; the working crunch
 implementation is in `legacy/propensity_crunch/` (reference only).

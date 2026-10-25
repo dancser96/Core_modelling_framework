@@ -19,16 +19,18 @@ and what it aims for: `docs/context/project.md`. Terms: `docs/glossary.md`.
   - guided notebooks: interface + learning;
   - CLI + Python API: automated / production runs.
 - **Use case** (one modelling problem):
-  - one config file: the whole definition, per-entity instances inside;
-  - extension functions, only at named points (mostly Target Factory);
+  - one config file (the intent, per-entity instances inside) and its decision audit log (D-006);
+    a repo may hold several similar use cases (which repos: OD-02);
+  - extension functions, only at named points (mostly Target Factory), in the repo that holds the
+    use case;
   - its own copies of the guided notebooks, to explore in.
 
 There is no service layer (D-024). Each use case pins the framework version it runs with, upgrades
 at its own pace, and scores its models with that version (D-047). Many versions therefore write to
 the same shared tables at once, so a new version must not break use cases or those tables
 (`CLAUDE.md` §2). The package ships in the base image through Nexus, so the image a use case starts
-on pins its version (D-024). Still open: where use cases live (OD-02) and the release mechanics
-(OD-04).
+on sets its default version, which the use case pins and may raise within the image's year
+(D-024). Still open: where use cases live (OD-02) and the release mechanics (OD-04).
 
 ## 2. Stages
 
@@ -38,13 +40,13 @@ them in order (D-028).
 | Stage | Consumes | Produces | Doc |
 |---|---|---|---|
 | **target_factory** (optional) | Source table(s) or the feature store | Targets + target lineage (saved, or passed on in memory); labels for scored months, for monitoring | [target_factory](components/target_factory.md) |
-| **eda** | Data definition (entity, source, eligibility, target, time, candidates) | EDA report; ledger columns (univariate ranking, key features) | [eda](components/eda.md) |
+| **eda** | Data definition (entity, sources, eligibility, target spec, observation window, candidates) | EDA report; ledger columns (univariate ranking, key features) | [eda](components/eda.md) |
 | **feature_checks** | Same + EDA ledger | Check log, flags, proposed decisions, ledger columns, report | [feature_checks](components/feature_checks.md) |
 | **training** | Resolved features + train split | Local-tier run: model bundle, selection in the ledger, training metadata, drift reference (no refit on more data in Phase 2, D-052) | [training](components/training.md) |
 | **evaluation** | Model + test + OOT validation + baselines | Metrics (overall and stratified), views, comparisons, card sections, report | [evaluation](components/evaluation.md) |
-| **register** | Local run + gates | Registered version (immutable, hashed) | [lifecycle](components/lifecycle.md) |
+| **register** | Local run + the feature sign-off (its one gate, D-033) | Registered version (immutable, hashed) | [lifecycle](components/lifecycle.md) |
 | **promote** | Registered version + approved PR | Promotion record + verified deployment bundle | [lifecycle](components/lifecycle.md) |
-| **deploy** | Bundle, run by the change-request process | Production copy + production record | [lifecycle](components/lifecycle.md) |
+| **deploy** | Promoted bundle, run by the change-request process | Production copy (by default retrained on the same data definition before it scores, D-052) + production record | [lifecycle](components/lifecycle.md) |
 | **inference** | Production (or pinned registered) model + a month | Batch-scoped scores + manifest | [inference](components/inference.md) |
 | **monitoring** | Scores, inputs, drift reference, matured labels, baselines | Monitoring tables + report, fed to the data observability framework (D-021) | [monitoring](components/monitoring.md) |
 
@@ -58,18 +60,21 @@ them in order (D-028).
 - [synthetic data](components/test_harness.md) (dev only)
 
 **Due-diligence gate (§4.13):** training requires EDA and Feature Checks artifacts for the same
-data-definition hash. Hands-off profiles run them automatically (D-031). A person signs off the
-feature list before any model is registered, at every automation level (D-031).
+data-definition hash. The `autonomous` level runs them automatically (D-031). A person signs off
+the final feature list after training and before any model is registered: one gate, at every
+automation level (D-031).
 
-**Integrations (first release, D-021):** the feature store upstream (alone or with other sources,
-OD-26) and the data observability framework downstream (OD-13), both thin.
+**Integrations (first release, D-021):** the feature store upstream, limited in Phase 2 to Stage 1
+(M2.1 Foundation), where a use case's data comes in, so no later stage knows about it (alone or with other sources,
+OD-26), and the data observability framework downstream, whose needs shape the monitoring tables
+only once we have seen it in use (OD-13); both thin.
 
 ## 3. Config
 
-- **One file per use case** (the goal), written in YAML (D-043) and validated by Pydantic
-  v2; the Pydantic model is the programmatic API. It carries
-  `schema_version`, `task`, `profile` and `decision`. Shared sections (entities, data, time,
-  features) plus one section per stage. Details: [config](components/config.md).
+- **One config file per use case** (unless it bloats, D-043), plus its decision audit log (D-006),
+  written in YAML and validated by Pydantic v2; the Pydantic model is the programmatic API. It
+  carries `schema_version`, `task`, `automation_level` and `decision`. Shared sections (entities,
+  data, time, features) plus one section per stage. Details: [config](components/config.md).
 - **Shared tables** (registry, scores, monitoring, model cards, labels) are written and read by
   many pinned versions at once (D-047), so they follow one rule (D-007): every row carries
   `schema_version` and `framework_version`; within a major version columns are only added
@@ -82,16 +87,19 @@ OD-26) and the data observability framework downstream (OD-13), both thin.
 - **`conf/base/`** is committed and holds framework defaults and generic use-case configs.
   **`conf/local/`** is gitignored and holds environment-specific values (tables, paths, Spark, theme).
   They merge base → local at load.
-- **Profiles** (`quick` / `standard` / `thorough`) set defaults for every stage (D-023); they are
-  to become automation levels, from fully autonomous to fully manual (D-023, OD-25). The
-  **decision** drives the metric, the gates and what reports emphasise (D-032).
+- **Automation levels** (`autonomous` / `assisted`; `manual` in Phase 3) set defaults for every
+  stage (D-023); a level changes through a config edit or an audit-log entry, never a CLI
+  override; what each level decides by rule and by a person is OD-25. The **decision** drives the
+  metric, the gates and what reports emphasise (D-032).
 - **Stepwise sections:** eligibility and feature checks are ordered lists of named steps, and each
   step logs rows/columns in → out and the reason. The feature ledger carries the per-feature trail.
-- **Frozen config:** the fully resolved config saved with every artifact, as plain data, with a
-  housekeeping block (framework and library versions, time, identities). Reports and reproduction
-  use only frozen configs. The config is never edited after the fact: every later decision, by a
-  person or a rule, is an append-only entry in the decision audit log, and replaying the config
-  plus entries 1–n gives a run's resolved input; the log never changes the data definition
+- **Resolved config:** the config with the audit-log entries replayed, saved with every artifact
+  and report as plain data, with a housekeeping block (framework and library versions, time,
+  identities). Reports and reproduction use only resolved configs, and `recipe_hash` covers it.
+  The config itself (the intent) is immutable once Target Factory has built the target, or at the
+  first EDA run for an upstream target: every later decision, by a person or a rule, is an
+  append-only entry in the decision audit log, and replaying the config plus entries 1–n gives a
+  run's resolved input; the log never changes the data definition
   (D-125; design in [config](components/config.md#decision-audit-log-d-125)).
 - Breaking a schema follows `CLAUDE.md` §2 (version bump + migration + test).
 
@@ -103,9 +111,13 @@ window. Inference months come after `v`. The full timeline, period by period, is
 [dataset](components/dataset.md#time-model).
 
 Features are as-of each observation month; targets look forward `(1, w)`. Validation is a single
-month for panel tasks (series tasks will need rolling validation). Checks that use labels see
-train-split clients within the window only; label-free comparisons may use later months except `v`
-(D-030). The window's effects on every
+month for panel tasks (series tasks will need rolling validation). EDA and Feature Checks use every
+client in the window, labels included, and label-based views never show months after it; the
+train/test client split happens after Feature Checks, and from Training on, fitting, automated
+selection, calibration and every choice use train-split clients only. Label-free comparisons may
+use later months except `v` (D-030). The cost, stated in the model results report: feature
+decisions in EDA and Feature Checks have seen test clients' labels, so `v` stays the one honest
+number. The window's effects on every
 stage are tabulated in [dataset](components/dataset.md).
 
 ## 5. Model lifecycle
@@ -115,33 +127,47 @@ production (or a pinned registered version); local models only in dev mode. Gate
 change-request path and the open questions are owned by [lifecycle](components/lifecycle.md).
 
 - **Identities** (D-052, D-088, D-094; the worked example is in [config](components/config.md)):
-  - config hash = the use-case definition after profile resolution, without `conf/local` and the
+  - config hash = the use-case definition after level resolution, without `conf/local` and the
     housekeeping block; decisions in the audit log leave it unchanged
   - `data_definition_hash` = entity, sources, eligibility, target spec, observation window and
-    candidates (the validation and inference months are run arguments)
+    candidates; the validation month is set in the config but sits outside this hash, and
+    changing it after the config freezes is an audit-log entry, refused when Feature Checks
+    compared that month; the inference month is a run argument (D-088)
   - resolved-input hash = the config plus entries 1–n of the audit log, resolved (D-125)
   - `run_id` = resolved-input hash + entity + timestamp (one per instance)
   - `feature_signature` = hash of the final feature list
-  - `recipe_hash` = frozen config + features + hyperparameters + encoder levels + calibration spec
+  - `recipe_hash` = resolved config + features + hyperparameters + encoder levels + calibration spec
   - `model_hash` = a hash over the bundle's per-part hashes (encoder, model, calibration with the
-    prior-shift offset, metadata); a retrain in production is one more fit of a recipe, with
-    `parent_run_id`
+    prior-shift offset, metadata); a retrain in production is one more fit of a recipe, linked to
+    its evaluated parent by `parent_run_id`
   - model key = (entity, domain, use case, split), with split = `all` in Phase 2
   - `scoring_batch_id`
   - code version = framework version + use-case repo commit
   - every hash is computed on the migrated canonical form and stored with a `hash_version`
-- **The model bundle is a versioned artifact:** every part as plain data, JSON where possible,
-  never pickle (D-051).
-- **Retraining in production** (promote the recipe, production retrains it): the shape is settled
-  (D-052). In Phase 2 it keeps the data definition: the same recipe, clients and window on
-  production's data, so the parameters differ only because production data differs from sandpit
-  data; refits on all clients or an extended window are on the Phase 3 wishlist (D-052). The
-  operational side is researched with the platform / MLOps team in M4 (OD-27).
+- **The model bundle is a versioned artifact:** every part as plain data, JSON where possible;
+  what is promoted is never pickle, while the sandpit (the local and registered tiers) may save any
+  format. `register` always writes the lossless plain-data model too, so every registered version
+  stays promotable without unpickling, and `promote` takes it (D-051).
+- **Retraining in production is the default deploy path in Phase 2** (D-033, D-052): `promote`
+  carries the recipe, and production refits it on the same data definition (neither more clients
+  nor a longer window) before it scores, so the parameters differ only because production data
+  differs from sandpit data; deploying the fitted model without a retrain is also allowed. A
+  Phase 2 production retrain keeps the window and the clients; only the inference month moves,
+  since inference always runs on the latest month. Before it scores, it passes the production
+  retrain check against its evaluated parent (label-free agreement on the inference month, its
+  test-split AUC and calibration per window month, and per-month rows and positive events against
+  the parent's EDA artifact, within tolerances declared in the config, never on the validation
+  month); failing
+  keeps whatever production model is current and is recorded, and at a first deploy the deploy
+  fails loud. There is no refit command in the
+  sandpit. Retraining on moved or extended data (later months, all clients, a longer window) is on
+  the Phase 3 wishlist. Whether production has the data and compute, determinism and what
+  "deployed" records stay open with the platform / MLOps team in M4 (OD-27).
 - **A DS session never writes to production** (D-033).
 - **Manifests** link a scoring batch to the models that produced it (`run_id` + `model_hash`).
   Reproduction verifies the hash before loading.
-- The bank-side layout is still evolving (OD-06), so path construction stays in the environment
-  adapter.
+- Production paths are separate from the sandpit (D-033, D-051); the folder layout per entity ×
+  domain is open (OD-06), so path construction stays in the environment adapter.
 
 ## 6. Baselines and monitoring
 
@@ -160,16 +186,17 @@ change-request path and the open questions are owned by [lifecycle](components/l
 
 ## 7. Run modes
 
-- **Manual:** guided notebooks, one per stage. They load the config, call the stage and display its
-  artifacts. Users may copy them and explore; production never depends on notebook code (D-039).
+- **Interactive:** guided notebooks, one per stage. They load the config, call the stage and display
+  its artifacts. Users may copy them and explore; production never depends on notebook code (D-039).
 - **Automated / production:** `python -m core_modelling run <config> [--stages …]` and the matching
   Python API, plus separate `register`, `promote` and `deploy` commands, and `decide`, which
   records a person's decision, the feature sign-off (D-031) included, as an audit-log entry
   (D-125). Scheduling, if any, calls the CLI.
 - **Experiment sweeps:** run one config with a single field varied (e.g. the observation window) and
   compare the variants on the same validation set. A sweep that picks a variant picks on train and
-  test metrics, weighted; the validation month is reported, never chosen on (D-083). The same
-  mechanism is what the LLM branch will later drive. Details: [run modes](components/run_modes.md),
+  test metrics, weighted; the validation month is reported, never chosen on (D-083): in Phase 2
+  reports show it everywhere, sweep tables included, and people are trusted not to choose on it.
+  The same mechanism is what the LLM branch will later drive. Details: [run modes](components/run_modes.md),
   [dataset](components/dataset.md).
 
 ## 8. Generality without frameworks
@@ -182,14 +209,16 @@ change-request path and the open questions are owned by [lifecycle](components/l
   entities (D-034).
 - **Scale:** Spark prunes and samples, training is single-node on the collected sample, and scoring
   runs in Spark ([dataset](components/dataset.md) explains when that stops being enough).
-- **Defaults:** profiles and the declared decision drive defaults explicitly; population size and
-  positive rate inform them, with no hidden magic.
+- **Defaults:** the automation level and the declared decision drive defaults explicitly;
+  population size and positive rate inform them, with no hidden magic.
 
 ## 9. Reports
 
-Every stage renders through one shared writer as self-contained HTML (pandas Styler tables + plotly
-with embedded plotly.js). Each report has a summary page with a choices block, then core views,
-extended views ("not available: reason" where a view is incompatible) and an appendix. Chart axes
+The stages that write reports (EDA, Feature Checks, the model results in Evaluation and Monitoring,
+plus the model card; D-036) render through one shared writer as self-contained HTML (pandas Styler
+tables + plotly with embedded plotly.js). Each report has a summary page with a choices block, then
+core views, extended views ("not available: reason" where a view is incompatible) and an appendix;
+the core views per task of the EDA, Feature Checks and Evaluation reports are OD-12. Chart axes
 follow the data. Details: [reporting](components/reporting.md), [evaluation](components/evaluation.md).
 
 ## 10. Environment adapter
@@ -212,8 +241,8 @@ synthetic dataset. See [environment](components/environment.md) and
   - `__init__.py`: version
   - `__main__.py`: CLI entry: `run`, `register`, `promote`, `deploy` and `decide` (§7;
     [run modes](components/run_modes.md) owns the list)
-  - `config/`: schema, loading (base+local merge), profiles, migrations, the decision audit log
-    (record, replay, `LOGGABLE_SETTINGS`)
+  - `config/`: schema, loading (base+local merge), automation levels, migrations, the decision
+    audit log (record, replay, `LOGGABLE_SETTINGS`)
   - `_compat.py`: numpy/PySpark compat shim, imported first by `__init__.py` (T1)
   - `environment.py`: Spark session, transport, paths, sources
   - `dataset.py`: observation window, eligibility, splits, sampling, collection
@@ -236,15 +265,18 @@ plain data, functions, checks), as `synthetic/` does (`CLAUDE.md` §1 rule 5, D-
 
 ## Public API
 
-Public = the stage functions, `run`, the CLI commands and the config schema (D-024). The shipped
-notebooks call only these, which a small test checks against the table below. Everything else is
-private (`_name`). Only what is listed here is public and covered by `CLAUDE.md` §2; the table is
-filled in as it is built.
+Public = the stage functions, `run`, the CLI commands, the config schema, the decision audit log's
+functions and the environment adapter's Spark-session function (D-024). The shipped notebooks call
+only these, which a small test checks against the table below. Everything else is
+private (`_name`). Only what is listed here is public and covered by `CLAUDE.md` §2: from release
+1.0 a public function's signature and return shape change only after one minor version of
+deprecation; in 0.x they change freely (D-007 (c)). The table is filled in as it is built.
 
 Planned, not built: one function per stage, `run`, the CLI commands (`run`, `register`, `promote`,
-`deploy`, `decide`), the config schema, and the decision audit log's `record_decision`,
-`show_decisions` and `resolve_config` (D-125;
-[config](components/config.md#decision-audit-log-d-125)).
+`deploy`, `decide`) and the config schema. Public from M2.1, when it builds the Public API: the
+decision audit log's `record_decision`, `show_decisions` and `resolve_config` (D-125;
+[config](components/config.md#decision-audit-log-d-125)), and the environment adapter's
+Spark-session function (today the private `_get_spark_session`, D-024).
 
 | Function | Module | Since |
 |---|---|---|

@@ -43,7 +43,7 @@ listed alongside.
 
 | Doc | Owns | Used by |
 |---|---|---|
-| [config](components/config.md) | The single-file use-case definition: profiles, decision, entities, sections | Every stage |
+| [config](components/config.md) | The use-case definition (one file unless it bloats) and its decision audit log: automation levels, decision, entities, sections | Every stage |
 | [dataset](components/dataset.md) | Observation window, train/test/validation split, sampling | Target Factory, EDA, Feature Checks, Training, Evaluation, Monitoring |
 | [feature_ledger](components/feature_ledger.md) | The per-feature trail from candidates to model | EDA, Feature Checks, Training, Evaluation |
 | [reporting](components/reporting.md) | HTML reports, chart rules, model card | EDA, Feature Checks, Evaluation, lifecycle, Monitoring |

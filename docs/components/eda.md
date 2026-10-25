@@ -1,7 +1,7 @@
 # EDA
 **Status:** legacy-only (major rethink) · **Legacy:** `src/feature_stats.py`, `src/plots.py`, `notebooks/EDA.ipynb`
 **Related:** [dataset](dataset.md) · [feature ledger](feature_ledger.md) · [feature checks](feature_checks.md) ·
-[reporting](reporting.md) (chart rules) · D-030, D-031, D-050 · OD-12
+[reporting](reporting.md) (chart rules) · D-023, D-030, D-031, D-036, D-050 · OD-12
 
 ## Purpose
 The first stage after the target exists, and it has to be worth running first. It gives a fast,
@@ -12,16 +12,17 @@ that the notebooks were run in reverse order. Phase 2 fixes the content, not the
 ## What belongs where
 - **EDA understands:** population, target, key features, segment differences. It computes the
   univariate ranking once and writes it to the feature ledger, where Feature Checks and key-feature
-  selection reuse it.
+  selection reuse it. Training's automated selection never does: it recomputes its statistics on the
+  train split (D-030).
 - **Feature Checks gates:** pass / flag per feature ([feature checks](feature_checks.md)).
 - **Training selects:** relevance-based selection on the train split only
   ([training](training.md)).
 
 ## Phase 2 requirements
-1. Runs alone from a config and produces an HTML report through [reporting](reporting.md). Hands-off
-   profiles run it automatically with the default content (D-031).
+1. Runs alone from a config and produces an HTML report through [reporting](reporting.md) (D-036).
+   The `autonomous` level runs it automatically with the default content (D-031).
 2. **Population and target:**
-   - sizes and the eligibility funnel per month;
+   - sizes and the eligibility funnel per month of the window;
    - base rate per month over every month up to the window's end (population level: seasonality,
      how representative the window is). Later months stay hidden, because their target windows
      overlap the validation month's (D-030);
@@ -31,7 +32,7 @@ that the notebooks were run in reverse order. Phase 2 fixes the content, not the
    - base rate by segment and by each stratification variable.
 
    Base-rate views, like the ranking statistic, come from the per-task spec (D-050).
-3. **Univariate ranking** of every candidate on train-split clients in the window. The statistic
+3. **Univariate ranking** of every candidate on every client in the window (D-030). The statistic
    comes from the per-task spec (D-050); binary: direction-agnostic AUC plus direction,
    missingness, number of levels. Written to the ledger. MI only above a prevalence
    threshold, or not at all.
@@ -50,13 +51,15 @@ that the notebooks were run in reverse order. Phase 2 fixes the content, not the
 7. **Iterative analysis:** notebook functions for styled pivots (rate / lift with counts and
    intervals, by any dimensions, with any filter), so analysts can play around without writing code.
    The report itself stays tight.
-8. **Train-split clients in the window only** for feature–target views (§4.4, D-030);
-   population-level rates may show every month up to the window's end.
+8. **Every client in the window**, labels included, for feature–target views (§4.4, D-030): EDA is
+   a product in its own right, and the notebooks' data-analysis tools need the whole population.
+   The train/test client split happens after Feature Checks. Label-based views never show months
+   after the window; population-level rates may show every month up to the window's end.
 9. **Fast at 2M+ rows per month:** aggregate in Spark or on declared samples, and say so in the report.
 
 ## Design constraints
 - Report content comes from functions; notebooks display it and add exploration.
-- Every number is reproducible from the frozen config and data-definition hash.
+- Every number is reproducible from the resolved config and the data-definition hash.
 
 ## Lessons from the crunch
 MI uselessness at 0.04–0.2% prevalence; the 30–40 min runtime; notebooks copied per product; charts
@@ -66,7 +69,7 @@ that showed nothing at low prevalence (T16); EDA run last because it gave no ins
 *(fill when built)*
 
 ## Open questions
-- Default number of key features per profile; exact report sections (structure agreed: summary page
-  + core + extended, see [reporting](reporting.md); content OD-12).
+- Default number of key features per automation level; exact report sections (structure agreed: summary page
+  + core + extended, see [reporting](reporting.md); the core views per task: OD-12).
 - Which pivot dimensions to pre-compute in the report vs leave to the notebook functions.
 - Ranking statistic and base-rate views for the second task type (regression, D-050, D-020).

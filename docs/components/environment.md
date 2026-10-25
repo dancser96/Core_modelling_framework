@@ -1,7 +1,7 @@
 # Environment adapter
 **Status:** built (partial: compat shim + local Spark session) · **Legacy:** `src/_compat.py`, `src/io.py` (`_read`), `src/inference.py` (`_put_file`, `_read_text`, `_fetch_dir`, `_is_hdfs`)
 **Related:** [`docs/context/environment.md`](../context/environment.md) · [lifecycle](lifecycle.md) (tier paths) ·
-[reporting](reporting.md) (theme) · [test harness](test_harness.md) (synthetic sources) · D-011, D-021 · OD-06, OD-26
+[reporting](reporting.md) (theme) · [test harness](test_harness.md) (synthetic sources) · D-011, D-021, D-024, D-079 · OD-06, OD-26
 
 ## Purpose
 The single seam between framework logic and wherever it runs (laptop vs bank). Framework code never
@@ -25,7 +25,11 @@ checks where it is running; it calls this module, and `conf/local/` decides.
 5. Source resolution: a logical source name in the use-case config maps to a physical Hive table or
    path in `conf/local/`. On a laptop it maps to the synthetic dataset in `data/01_raw/`. In the
    first release a source can also be the feature store, alone or next to other sources (D-021);
-   how is designed after the work stream that learns it (OD-26).
+   in Phase 2 that integration is limited to Stage 1 (M2.1 Foundation), where a use case's data
+   comes in, and no later stage knows about it (D-021); how is designed after the work
+   stream that learns it (OD-26). One use case config shows the three source settings (the
+   feature store, other sources, both); outside the bank only the other-sources setting runs, on
+   synthetic data, and the two feature-store settings ship commented out.
 6. The report theme location: a theme file in `conf/local/` (the mechanism in Phase 2; the corporate
    look it applies comes after internalisation).
 
@@ -38,7 +42,8 @@ checks where it is running; it calls this module, and `conf/local/` decides.
 T1–T5 (`docs/context/lessons.md`).
 
 ## Interface
-Built so far (M1 steps 0 and 7, D-011), all private until M2 lists them in the Public API:
+Built so far (M1 steps 0 and 7, D-011), all private today. The Spark-session function becomes
+public when M2.1 builds the Public API (D-024); the rest stays private unless M2 lists it there:
 - `core_modelling/_compat.py`: the `np.NaN` alias, applied on package import (T1). Verified
   2026-10-14: without it, `import pyspark.pandas` fails on the pinned numpy 2.3.5 + PySpark 3.4.3.
 - `environment._get_spark_session() -> SparkSession`: local defaults (`local[*]`, 2 GB driver,
@@ -56,5 +61,5 @@ Built so far (M1 steps 0 and 7, D-011), all private until M2 lists them in the P
   `SparkSession.builder.getOrCreate()`. Which arguments the bank needs (memory, executors, queue,
   extra conf…) is listed by the builder when M2 designs it. `conf/local/` also sets the bank's
   time zone (local default: UTC).
-- The bank-side folder layout for the registered/production tiers per entity × domain, and whether
-  permissions differ per entity (OD-06).
+- The bank-side folder layout for the registered/production tiers per entity × domain (OD-06).
+  Whether storage permissions differ per entity is the platform's (D-079).

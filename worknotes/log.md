@@ -2,6 +2,184 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-10-25 — Synthetic data: the LDS's to-dos reviewed and planned
+- 2026-10-25: the SDS asked for a review of the synthetic build and a plan for the LDS's
+  three to-dos (noise columns of several kinds, very low fill rates, every such column named like
+  the traps), given that the first target build and run-through is credit-card acquisition.
+  Findings: the to-dos were recorded for M4; on the card use case no column today tests
+  missingness, cardinality, the missingness-pattern leak, the time-alignment check or the process
+  leak (the last two sit on the personal loan, whose count-rise target is M4). Proposal: pull the
+  to-dos into Stage 1's major step 2 as a new minor step 2b (eight trap columns on in every
+  preset: a random flag, a 300-level categorical, a noisy copy of `casa_bal`, two low-fill
+  columns, a leak through missingness, card twins of the shifted and process-leak kinds; version
+  0.5.0; one regeneration with the holdings table and the `dev` preset; existing columns
+  byte-identical through a new `noise` stream), a 2c regenerate-and-document step, the trap
+  summary as the acceptance list for "the traps are flagged" (kind → Feature Checks step, kept
+  in the tests), and the `unstable` kind deferred to M4. Q379–Q386 with defaults.
+- The questions first landed at the end of the Stage 1 file, which another chat is working in;
+  the SDS objected, and they moved to their own file, `worknotes/synthetic_questions.md`, with
+  the Stage 1 file pointing at it.
+- 2026-10-25, answers: defaults throughout. Q380: the LDS meant a constant column ("one value");
+  the second reading, informative on its own but redundant given others, is kept. The catalogue
+  loses the noisy copy and gains two constant columns (string, numeric) and `relationship_months`
+  beside `relationship_days`: ten columns, 147 → 157. Q386: the SDS asked how a trap-name mapping
+  translates to real data; answer in the file: it is a test over synthetic data, the framework
+  flags name-blind (a code-rule guard asserts `_trap_` never appears in `src/core_modelling/`);
+  where the test runs inside the bank depends on whether `synthetic/` travels with the light
+  suite, unsettled (the package calls itself dev-only while the tests import it). Q387 added:
+  which chat builds 2b (default: this one, now; 2c once, after the Stage 1 chat's 2a).
+- Files: `worknotes/synthetic_questions.md` (new), `worknotes/README.md` (registered),
+  `worknotes/sync.md`, this log.
+- Still open: Q387; whether `synthetic/` goes into the bank with the light suite (D-014).
+
+### 2026-10-25 — Inconsistency questions closed
+- 2026-10-25: the SDS answered Q374 with the alternative: in Phase 2, `register` relies on the
+  per-family round-trip check of the plain-data model; re-scoring the stored test split with each
+  model's copy and failing loud on a difference is a Phase 3 wishlist question. With every
+  question answered, the SDS asked to delete `worknotes/inconsistency_questions.md`.
+- Files: `docs/decisions.md` (D-051 and its status), `docs/roadmap.md` (Phase 3 wishlist),
+  `docs/components/lifecycle.md` (register), `docs/UPDATES.md` (the log lines that pointed at the
+  file), `worknotes/README.md` (its row removed), `worknotes/sync.md`, this log;
+  `worknotes/inconsistency_questions.md` deleted.
+- Decisions / open decisions: D-051 extended.
+- Still open: MLflow's availability (OD-08).
+
+### 2026-10-25 — Stage 1 questions, round 2
+- 2026-10-25: the SDS answered round 1: defaults throughout, with a super slim synthetic holdings
+  table (Q352), Phase 3 references removed unless a Phase 3 requirement shapes how something is
+  built (Q353), combined and reusable eligibility expressions (Q355), `conf/local` only needs to
+  work on the laptop (Q362), and both source joins as left joins from a governing spine with
+  duplicate-key checks and match counts (Q373). Asked for explanations of Q358, Q364, Q365, Q367,
+  Q371, the training fields and the stage sections (Q354), and what top-N means (Q360).
+- Round 2, first draft: explanations in chat and an appendix, plus Q375–Q378; Q354's layout was
+  left unchanged. The SDS asked for a redo: unanswered questions are accepted defaults, and the
+  questions asked about are reframed in the file with context, with the SDS's points worked in.
+- Round 2, redo: the questions file is rewritten. Settled items are listed as settled with the
+  SDS's changes; Q375–Q378 are folded back into the questions they came from; six questions are
+  rewritten in place with context, an example, options and a default. Q354's YAML carries the
+  ordered sources with the governing spine, `define` / `filter` eligibility steps,
+  `data.model_input`, one `decision` block for everything declared before results, a shared
+  `strata` section and every stage section in full (the training section with families,
+  budgets, seeds, search ranges, selection, categoricals, calibration, sampling). Q365 maps the
+  crunch's saved model input onto the design, checked by the data-definition hash. Q371 sizes a
+  collect from a row count and bytes per row measured on a sample, against a budget in GB.
+- The full rewrite overwrote round 3 (written by a parallel session minutes earlier); it was
+  restored from that session's transcript, then moved by that session to
+  `worknotes/synthetic_questions.md`.
+- 2026-10-25, check after the move: the Stage 1 file matches the rewrite, and the synthetic
+  file matches round 3 (references fixed, "this stage" → "Stage 1"). The check against the
+  SDS's round-1 answers found details of accepted defaults dropped in the condensed settled
+  section; restored: the approved OD-25 mapping table and the level-move rule (Q360), the three
+  source settings and the refused `feature_store` format (Q352), the SDS's `== True` form (Q355),
+  one key naming across sources (Q357), the per-task contract checks (Q372), the target source's
+  role and the column-collision rule (Q373).
+- Files: `worknotes/m2_1_foundation/questions.md`, this log, `worknotes/sync.md`.
+- Still open: Q354 (a)–(c), Q358, Q364, Q365, Q367, Q371; then the plan.
+
+### 2026-10-23 — Stage 1 (M2.1 Foundation) kick-off: design questions
+- 2026-10-23: the SDS opened the Stage 1 build (config spine, environment adapter, Target Factory,
+  dataset): first the design questions, then a plan in major and minor steps (D-072 (a)). Three
+  first comments on Target Factory: optional but designed together with the dataset, so the
+  several-sources demonstration matters; Phase 2 has no feedback into the feature store (OD-26);
+  Phase 3 references leave the build docs and live only in the roadmap. New working rule: a
+  `worknotes/<stage>/` folder holds the stage's questions, plan and review guide and is deleted
+  when the stage is done.
+- Written: `worknotes/m2_1_foundation/questions.md`, Q349–Q373 in five sections (scope; config
+  spine; adapter; Target Factory; dataset) with defaults, a concrete YAML layout, a `conf/local`
+  environment file, the OD-25 level mapping as a table, and eleven assumptions (hash-enforced
+  immutability, migrations machinery, the target table, the `Frames` dataclass, tests). Numbering
+  continues after Q346–Q348, which another session added to the inconsistency file the same day.
+- Applied now: `docs/components/target_factory.md` (Purpose, requirement 2, design constraints,
+  Related and Open questions; status `designing` as in `UPDATES.md`); the OD-19 row in
+  `docs/roadmap.md` now holds the aggregation list that was in the doc; `worknotes/README.md`
+  registers the stage folder.
+- Files: `worknotes/m2_1_foundation/questions.md`, `docs/components/target_factory.md`,
+  `docs/roadmap.md`, `worknotes/README.md`, `worknotes/sync.md`, this log.
+- Decisions / open decisions: none yet; OD-25's proposed mapping is Q360.
+- Still open: Q349–Q373; the plan.
+
+### 2026-10-23 — Inconsistency answers applied
+- 2026-10-23, round 2 (closes the questions): Q306 no log of who signs off or approves in Phase 2,
+  a Phase 3 wishlist question instead (D-033); Q313 EDA and Feature Checks use all clients, the
+  client split comes after Feature Checks, from Training on everything is train-only, the cost
+  stated in the model results report (D-030 changed, `CLAUDE.md` §4.4 and the auditor agent
+  reworded); Q320 validation shown everywhere in Phase 2, people trusted, gating data a Phase 3
+  wishlist question (D-083); Q343 a Phase 2 production retrain keeps window and clients, only the
+  inference month moves (D-052, D-088; my reading of "all three changeable" was wrong); Q344
+  "limited to Target Factory" means limited to Stage 1, the M2.1 Foundation components where data
+  comes in (D-021); Q346 register always writes the plain-data model (D-051); Q347 the validation
+  month changes only through an audit-log entry, refused when Feature Checks compared that month
+  (D-088, `config.md`). Defaults taken: Q328 (pruning on the calibration folds; the gap's train side
+  unsampled; D-106), Q332 (OD-12 covers EDA, Feature Checks and Evaluation), Q342 (fail loud over
+  the budget; D-117), Q345 (MLflow's shape; D-111, OD-08), Q348 (the production retrain's check;
+  D-052). `worknotes/inconsistency_questions.md` closed, kept until the SDS says to delete it. MLflow
+  added to the plan's integration stage; the plan's feature-store stand-in replaced by the
+  commented-out settings.
+- 2026-10-23: the SDS answered Q302–Q332 of the inconsistency sweep; questions left unanswered took
+  their proposed default.
+- Answers: Q302 production retrains the recipe on the same data definition by default, not
+  retraining is allowed, extended data is Phase 3; Q303 the sandpit (local and registered on HDFS)
+  may hold any format, pickle only matters for the move to production; Q304 all three FLAML families
+  in M2, fewer would be less than the crunch; Q308 no sample weights in Phase 2; Q309 sampling only
+  when the config declares it, for a rare target or the budget; Q310 the feature store example in
+  three source settings, two commented out until inside the bank; Q312 withdrawn (D-128 doesn't
+  bake a retail rule in: the use case name is copied); Q316 a use case = config + audit log, several
+  per repo; Q319 train and validation months in the config, the inference month a run argument, all
+  three settable in a production retrain; Q327 MLflow in Phase 2 is the goal and shapes the build if
+  integrated, the feature store is limited to Target Factory, the data observability framework
+  shapes the build once seen in use; Q331 reports from EDA, Feature Checks, the model results
+  (Evaluation after FLAML training) and Monitoring.
+- Defaults taken: Q305 one sign-off gate after training; Q307 the interface is the function triple;
+  Q311 full tests by release 1.0; Q314 `CLAUDE.md` §4.12 reworded (prior shift or weights); Q315
+  docs stay live, D-072 (j) "design docs frozen until M4" dropped and (k), (l) re-lettered (j), (k);
+  Q317 `automation_level` from M2.1; Q318 the retail default as an example comment; Q321 no CLI level
+  override; Q322 the Public API adds the audit-log functions and the session function (public at
+  M2.1); Q323 "resolved config" replaces "frozen config"; Q324–Q326 backlog retagged, Target Factory
+  and Inference rows added; Q329 "interactive" run mode and level names; Q330 no sandpit refit;
+  Q333 the gap caveat; Q334 OD-12 to short-term (OD-08 stays short-term, given MLflow), statuses
+  "designing" where a design doc exists; Q335–Q341 docs aligned.
+- Restated, as the SDS asked: Q306, Q313, Q320, Q328, Q332. New follow-ups: Q342 (rows over the
+  budget with no sampling declared), Q343 (a production retrain on moved months vs the
+  data-definition hash and the EDA gate), Q344 (what "limited to Target Factory" covers), Q345 (how
+  MLflow shapes the build before it is confirmed).
+- Not in the plan yet: MLflow integration has no milestone in `worknotes/timeline_proposal.md`
+  (OD-01, OD-08).
+- Reviews of the applied answers: the ml-correctness-auditor (xhigh) and compat-guardian (high) ran
+  on the whole diff. Fixed directly: `CLAUDE.md` §4.12 tightened to "outcomes only through the row's
+  own label, one keep fraction for the whole train split, undone by the prior shift; anything else
+  needs weights" (the defaulted Q314 wording admitted per-month fractions), and the auditor agent's
+  paraphrase with it; `architecture.md` states that the Public API freezes from release 1.0;
+  `config.md` says unknown config keys fail loud (a leftover `profile:` can't fall back silently).
+  Turned into questions: production-retrain months and identities (Q343 sharpened), validation
+  looks before the sign-off and on moved validation months (Q320 widened), the train–test gap under
+  downsampling (Q328 (3)), `production.json` across major version 1 (Q345 sharpened), promoting
+  without a retrain (Q346), moving the validation month after Feature Checks (Q347), the production
+  retrain's check (Q348).
+- Work split: the decision rows, `CLAUDE.md`, the roadmap, `docs/UPDATES.md` and the worknotes on the
+  main thread; three subagents on the session model at high effort aligned the docs (glossary,
+  architecture and context docs; the config, lifecycle and operations docs; the modelling docs)
+  from one brief of the answers.
+- Files: `docs/decisions.md`, `CLAUDE.md` (§2, §3, §4.10, §4.12, §4.13, §5, §7), `docs/roadmap.md`,
+  `docs/UPDATES.md`, `docs/glossary.md`, `docs/architecture.md`, `docs/context/*`, `docs/components/*`,
+  `conf/base/README.md`, `notebooks/README.md`, `tests/README.md`, `README.md`, the worknotes.
+- Decisions / open decisions: D-006, D-014, D-021, D-023, D-024, D-031, D-033, D-036, D-037, D-040,
+  D-043, D-049, D-051, D-052, D-072, D-088, D-091, D-106, D-111, D-117, D-125 extended; OD-02, OD-06,
+  OD-08, OD-11, OD-12, OD-13, OD-17, OD-18, OD-25, OD-26, OD-27 updated.
+- 2026-10-23, review of round 2 (ml-correctness-auditor, xhigh): wording fixed so the docs match
+  the decisions: automated selection reads train-split statistics only, never EDA's all-client
+  ranking (a separate ledger statistic); the prior shift's true rate from the unsampled train split
+  (D-098); Training's count check on every client before the split; Feature Checks reads the
+  validation month only to leave it out; `CLAUDE.md` §4.4 "label-using automated selection";
+  pruning before calibration on the same folds; the bundle's audit-log slice includes a later
+  validation-month entry. Folded in: the production check also compares per-month rows and
+  positive events with the parent's EDA artifact, within tolerances, and names its months (D-052);
+  the validation-month check covers every Feature Checks run (D-088). Corrected my own Q328 default:
+  the gap's train side is the fitted rows, as AUC, since most rows of the unsampled split were never
+  fitted under sampling (D-106). Moving the validation month after it was shown went into the
+  Phase 3 gating question, per the Q320 answer. Asked: Q374 (register checks each model's
+  plain-data copy).
+- Still open: Q374; MLflow's availability (OD-08).
+
 ### 2026-10-22 — Decision log compacted; inconsistency sweep; LDS review list
 - 2026-10-22: the SDS asked for a holistic pass now that the key designs are in place: compact
   `docs/decisions.md` by merging very similar rows, sweep every doc for inconsistencies between

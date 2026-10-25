@@ -39,7 +39,7 @@ any code exists. A new component is a **major step** (`CLAUDE.md` §1 workflow s
    - the item in `docs/UPDATES.md` and in the `docs/roadmap.md` backlog;
    - public functions in `docs/architecture.md` → Public API;
    - new terms in `docs/glossary.md`;
-   - a guided notebook section if users run it manually.
+   - a guided notebook section if users run it interactively.
 6. Run the `simplicity-review` skill, the `code-reviewer` subagent, and `ml-correctness-auditor` if
    the component touches targets, data, features, training, evaluation or scoring.
 

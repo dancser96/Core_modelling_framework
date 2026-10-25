@@ -143,7 +143,7 @@ The 0.x pre-release promises nothing; shared formats freeze from release 1.0's f
 - **Every config carries `schema_version`.** A schema change means: bump the version, write a small
   migration function old → new, add a test that loads an old config. Old configs keep loading and
   emit a deprecation warning.
-- **Artifact formats are versioned the same way:** model bundle (D-051; never pickle),
+- **Artifact formats are versioned the same way:** model bundle (D-051; never pickle once promoted),
   model card, manifest, scores schema, feature ledger, drift reference, registry records,
   monitoring tables.
 - **Deprecate before removing:** keep the deprecated path for at least one minor version.
@@ -161,8 +161,9 @@ The 0.x pre-release promises nothing; shared formats freeze from release 1.0's f
 - **Notebooks are an interface for production work.** The framework's guided notebooks import, call
   and display; they define no functions and carry well-written instructions. Users may copy them and
   explore freely, but nothing a production run, registered model or report depends on may live in a
-  notebook. Reports come from frozen configs (D-039).
-- **A use case = one config file** (+ its notebook copies). Custom code goes only through the named
+  notebook. Reports come from resolved configs (D-039).
+- **A use case = one config file and its audit log** (+ its notebook copies); several similar use
+  cases may share a repo (D-006). Custom code goes only through the named
   extension points (mostly Target Factory). A use case with free-form code reverts to the bespoke,
   months-long pattern this framework replaces.
 - **Environment-specific things live only in the environment adapter + `conf/local/`** (gitignored):
@@ -179,12 +180,12 @@ The 0.x pre-release promises nothing; shared formats freeze from release 1.0's f
   entities it applies to (D-034).
 - **Standalone stages.** Target Factory, EDA, Feature Checks, Training, Evaluation, register /
   promote / deploy, Inference and Monitoring each run on their own from a config and write their own
-  artifacts and report.
+  artifacts; EDA, Feature Checks, Evaluation and Monitoring also write a report (D-036).
 - **Stepwise traceability.** Filters and selections are ordered steps in config, and each step logs
   what it removed or flagged and why. Every candidate feature's path (checks, human decisions,
   automated selection, use in the model) is recorded in the feature ledger.
 - **Guided, not guessed.** Every non-trivial choice (decision/metric, split, sampling, modelling path)
-  has documented options with when-to-use guidance. Profiles set the defaults, and reports open by
+  has documented options with when-to-use guidance. Automation levels set the defaults, and reports open by
   stating what was chosen (D-032).
 - **Lifecycle tiers: local → registered → production.** register, promote and deploy are explicit,
   gated steps, separate from inference. A DS session never writes to production: deploy runs through
@@ -201,12 +202,14 @@ The 0.x pre-release promises nothing; shared formats freeze from release 1.0's f
    target window does not overlap any training target window (`v ≥ tk + w`).
 3. **Baseline and metric (or the decision they derive from) are declared in config before any result
    is seen.**
-4. **Fit and select on the train split only.** No feature selection or fitted transform ever sees
+4. **Fit and select on the train split only.** No fitted transform or label-using automated selection ever sees
    test or validation data, and the validation (OOT) month never informs any choice. A choice among
    variants or tuning trials (window, sweep, trade-off point) weighs train and test metrics only
-   (D-083). Checks that use labels (EDA feature–target views and
-   ranking, leakage screens, stability of AUC) use train-split clients within the observation window.
-   Label-free comparisons (e.g. PSI) may use later months, except the validation month (D-030).
+   (D-083). EDA and Feature Checks use every client in the observation window, labels included; the
+   train/test client split happens after Feature Checks, and from Training on everything fits and
+   selects on train-split clients only. People's feature decisions in EDA and Feature Checks have
+   therefore seen test labels, which the model results report states (D-030). Label-free
+   comparisons (e.g. PSI) may use later months, except the validation month (D-030).
 5. **Checks wrap the engine.** The modelling engine sees only the vetted feature set; validation runs
    outside the engine.
 6. **Leakage screens flag, never auto-drop.** Columns used to build the target are excluded
@@ -217,17 +220,18 @@ The 0.x pre-release promises nothing; shared formats freeze from release 1.0's f
    out-of-fold predictions inside train, never on test or validation (D-049).
 8. **Contract checks run on the true population**, before any downsampling.
 9. **Eligibility is applied identically** to every month of train/test, validation and inference.
-10. **Everything is reproducible:** frozen config + config hash + data-definition hash + feature
+10. **Everything is reproducible:** resolved config + config hash + data-definition hash + feature
     signature + model hash + code version. Every score can be traced to its model and config. This
     assumes a source month never changes after it has been loaded.
 11. **Train and test are split by client.** They share the observation window, so no client appears in
     both, and any CV inside train is grouped by client too.
-12. **Sampling never depends on a client's outcomes unless weights undo it**, and it happens after the
-    client split.
+12. **Sampling depends on outcomes only through the row's own label, with one keep fraction for the
+    whole train split**, which the prior-shift offset undoes (D-049, D-117); any other
+    outcome-dependent sampling needs weights. It happens after the client split.
 13. **No model without data knowledge.** Training requires EDA and Feature Checks artifacts for the
-    same data-definition hash; hands-off profiles run them automatically (D-031). A person signs off
-    every feature before a model is registered, at every automation level; an LLM never passes this
-    gate (D-031).
+    same data-definition hash; the `autonomous` level runs them automatically (D-031). A person signs off
+    every feature, in one gate after training and before the model is registered, at every
+    automation level; an LLM never passes this gate (D-031).
 
 Run the **ml-correctness-auditor** subagent whenever you touch Target Factory, the dataset/splits,
 features, training, evaluation, calibration or inference.
@@ -248,7 +252,9 @@ features, training, evaluation, calibration or inference.
   - Prune columns and rows (and sample) in Spark before `toPandas()`.
   - No cwd-relative paths — roots come from config.
   - FLAML metric names are its own (`ap`, not `average_precision`).
-  - FLAML 2.7 + xgboost 3.2 and the Optuna 5.0 API are **unverified**.
+  - FLAML 2.7's `estimator_list` + `custom_hp` and its transformer behaviour are verified (D-020,
+    D-094); its group split (spike 1), the non-pickle round trips (spike 2, D-051), xgboost 3.2
+    under FLAML and the Optuna 5.0 API are **unverified**.
   - Assume no internet inside the bank: reports embed plotly.js, never load it from a CDN.
 - Use the **bank-parity-check** skill when adding imports/dependencies or touching IO.
 
@@ -271,8 +277,9 @@ to, but not exactly, the internal state. Crunch names differ: Data Creation → 
 - **Synthetic data** (`synthetic/`, dev-only) is the shared dataset for tests, notebooks and demos.
   It is generated once into `data/01_raw/` and read through `conf/local/` exactly like real data
   (`docs/components/test_harness.md`).
-- **Before migration into the bank (later):** every function tested, internal CI/CD and Sonar checks
-  passing. Don't build that yet — just don't write code that makes it hard.
+- **By release 1.0:** every function tested, internal CI/CD and Sonar checks passing; the December
+  pre-release moves into the bank with the light suite (D-014). Don't build that yet — just don't
+  write code that makes it hard.
 - Tests follow the same code-light rules. No mocks where real local Spark or real small data works.
 
 ---

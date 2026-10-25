@@ -14,26 +14,26 @@ Status values: `legacy-only` (exists only in legacy) · `designing` · `stub` (i
 |---|---|---|
 | Repo bootstrap (docs, skills, agents, requirements, package skeleton) | built | |
 | Design baseline (docs rebuilt after three review rounds + Lead DS notes) | built | 2026-10-12; milestone M0 |
-| Environment adapter (Spark session, compat shim, transport, paths, sources) | built | Partial: compat shim + local Spark session (M1 step 0, D-011); transport, paths, sources in M2. Traps T1–T5, T18 |
-| Config spine (single file, profiles, decision, entities, data-definition hash, migrations) | designing | `components/config.md`. Settled 2026-10-20: YAML (D-043), two automation levels (D-023), identities with a worked example (D-088), the shared-table rule (D-007), extension code in use-case repos (D-006); the decision audit log (D-125, 2026-10-22). Still open before M2.1: the level mapping (OD-25) |
+| Environment adapter (Spark session, compat shim, transport, paths, sources) | stub | Compat shim + local Spark session built (M1 step 0, D-011); transport, paths, sources in M2. Traps T1–T5, T18 |
+| Config spine (single file, automation levels, decision, entities, data-definition hash, migrations) | designing | `components/config.md`. Settled 2026-10-20: YAML (D-043), two automation levels in the `automation_level` field (D-023), identities with a worked example (D-088), the shared-table rule (D-007), extension code in use-case repos (D-006); the decision audit log (D-125, 2026-10-22). Still open before M2.1: the level mapping (OD-25) |
 | Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | tested | M1: steps 0–7 built (2026-10-17); the SDS's review round 1 applied (2026-10-19): role folders, slimmer `truth.json`, two new traps, exit rates, top-down spec with a code map. Feature mart (147 columns), traps on two products, oracle and `truth.json`, CLI, source mapping; every independent check row passes at 100k; approved by the SDS (2026-10-19); reviewed and accepted by the LDS (2026-10-21), with three future to-dos (noise and very-low-fill columns, named like the traps; `test_harness.md`). D-003, D-029, D-041, D-064 |
-| Target Factory (targets only, optional) | legacy-only | Renamed from Data Creation (D-029) |
+| Target Factory (targets only, optional) | designing | Renamed from Data Creation (D-029) |
 | Dataset: observation window, client-grouped split, OOT validation, sampling | designing | Big-ticket item (D-030); sampling kept simple in Phase 2, advanced sampling in Phase 3 (D-117); window ablation OD-17 |
-| EDA (worth running first; low-prevalence aware) | legacy-only | Major rethink |
-| Feature Checks (correctness and quality only) | legacy-only | Major rethink; selection moved to Training (D-028) |
+| EDA (worth running first; low-prevalence aware) | designing | Major rethink; EDA and Feature Checks use all clients, the client split comes after (D-030) |
+| Feature Checks (correctness and quality only) | designing | Major rethink; selection moved to Training (D-028) |
 | Feature ledger | designing | Sketch awaiting review (OD-11) |
-| Training (FLAML path; predefined + Optuna in Phase 3; selection, encoding, calibration) | legacy-only | FLAML only in Phase 2, predefined + Optuna in Phase 3 (D-020); no pickle, lossless formats per family (D-051); M2 offers `lgbm`, `xgboost` and `catboost` (D-037); own encoding before FLAML, the calibration chain and `model_hash` over parts (D-094) |
-| Evaluation (stratified metrics, compatibility table, comparison) | legacy-only | Core views OD-12 |
-| Reporting (self-contained HTML, plotly, chart rules) + model card | legacy-only | D-036 |
-| Lifecycle: register / promote / deploy, registry tables, inventory | designing | Evolves as built (D-073); "registered" settled (D-033); `recipe_hash` and the refit as production retraining (D-052); OD-06, OD-08, OD-14; retraining in production OD-27; who builds it OD-23, with the platform / MLOps team (D-079) |
-| Inference (batch-scoped, manifest, reinference) | legacy-only | Output ends at the framework's own scores table, the master layer; consumable tables are built outside (D-016); calibration a release requirement (D-049); path layout OD-18 |
+| Training (FLAML path; predefined + Optuna in Phase 3; selection, encoding, calibration) | designing | FLAML only in Phase 2, predefined + Optuna in Phase 3 (D-020); no pickle for what is promoted, lossless formats per family (D-051); M2 builds `lgbm`, `xgboost` and `catboost` with their round trips (D-037); own encoding before FLAML, the calibration chain and `model_hash` over parts (D-094) |
+| Evaluation (stratified metrics, compatibility table, comparison) | designing | Core views OD-12 |
+| Reporting (self-contained HTML, plotly, chart rules) + model card | designing | Reports from EDA, Feature Checks, Evaluation and Monitoring, plus the model card (D-036) |
+| Lifecycle: register / promote / deploy, registry tables, inventory | designing | Evolves as built (D-073); "registered" settled (D-033); `recipe_hash`, and production retraining on the same data definition as the default deploy path (D-052); MLflow in Phase 2 is the goal (OD-08); OD-06, OD-14; retraining in production OD-27; who builds it OD-23, with the platform / MLOps team (D-079) |
+| Inference (batch-scoped, manifest, reinference) | designing | Output ends at the framework's own scores table, the master layer; consumable tables are built outside (D-016); calibration a release requirement (D-049); path layout OD-18 |
 | Monitoring (four layers: frame deep, content light) | designing | Renamed from Tracking; frame vs content (D-040); the data observability integration OD-13; tooling and dashboards are the platform / MLOps team's (D-079); downstream design still largely open |
-| Feature store integration (upstream) | designing | First release (D-021); a work stream to learn the feature store comes first (OD-26) |
+| Feature store integration (upstream) | designing | First release, limited to Stage 1 (M2.1 Foundation) in Phase 2 (D-021); a work stream to learn the feature store comes first (OD-26) |
 | Data observability integration (monitoring) | designing | First release (D-021); a work stream to learn the framework comes first (OD-13) |
 | CLI / Python API / guided notebooks / experiment sweeps | designing | D-024, D-039 |
 | Second task type: regression | designing | D-020; its per-task spec (shapes only) was planned for M1 and is still to design, before EDA and Feature Checks are built (D-050) |
 | LLM-assisted modelling branch | designing | Phase 3 (D-017) |
-| Full test coverage + CI/Sonar readiness | designing | Before migration (M5) |
+| Full test coverage + CI/Sonar readiness | designing | By release 1.0 (M5b, D-014) |
 
 ## Open questions
 
@@ -42,11 +42,28 @@ together with the topics to raise with the Chief DS.
 
 ## Log (major changes only, newest first)
 
+- 2026-10-23 — Second round of answers closes the inconsistency questions: EDA and Feature Checks
+  use all clients and the client split comes after them (D-030, `CLAUDE.md` §4.4 changed); a Phase 2
+  production retrain keeps the window and clients, only the inference month moves, and passes a
+  check against its parent (D-052); no sign-off log in Phase 2 (D-033); validation shown everywhere,
+  people trusted (D-083); register always writes the plain-data model (D-051); MLflow's shape
+  settled, in M4 once confirmed (D-111). Two Phase 3 wishlist questions added. The review's one
+  question (Q374) was answered on 10-25: Phase 2 relies on the per-family check of the plain-data
+  model, a per-model check is a Phase 3 question (D-051); the questions file is deleted.
+- 2026-10-23 — The SDS answered the inconsistency questions; the rest took their defaults. Main
+  changes: production retraining on the same data definition is the default deploy path, not
+  retraining is allowed (D-033, D-052); the sandpit may hold any format, pickle only matters for the
+  move to production (D-051); all three FLAML families in M2 (D-037); one sign-off gate after
+  training (D-031); sampling only when the config declares it (D-117); no sample weights in Phase 2;
+  MLflow in Phase 2 is the goal (D-111, OD-08); the validation month moves into the config (D-088);
+  `automation_level` from M2.1 (D-023); "resolved config" replaces "frozen config" (D-125); docs
+  stay live (D-072); `CLAUDE.md` §4.12 tightened after the ML-correctness review. Twelve questions
+  remained (five restated, seven new: Q342–Q348).
 - 2026-10-22 — Decision log compacted from 128 to 58 rows, in a high-impact and a low-impact table;
   a superseding decision now replaces the original row in place (D-072 (g)); about 1,000 references
   remapped across the current-state docs. **D-numbers in the entries below this line predate the
   compaction**; the old → new mapping is in `worknotes/log.md` (entry of 2026-10-22). The
-  inconsistency sweep that followed is `worknotes/inconsistency_questions.md`; the LDS's reading
+  inconsistency sweep that followed was answered on 10-23 and 10-25 (its file deleted); the LDS's reading
   list of the twenty most impactful decisions is `worknotes/decisions_LDS_review.md`.
 - 2026-10-22 — The planning thread is closed: the Phase 2 plan is the working assumption (D-124;
   OD-01 open until the LDS's review and stakeholder buy-in); the decision audit log is designed into `config.md`

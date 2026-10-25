@@ -1,7 +1,7 @@
 # Monitoring
 **Status:** designing · **Legacy:** none (score/outcome logging was prepared in the crunch) · earlier name: Tracking
 **Related:** [inference](inference.md) · [lifecycle](lifecycle.md) · [reporting](reporting.md) · [dataset](dataset.md)
-(drift baselines) · [training](training.md) (drift reference) · [target factory](target_factory.md) (labels) · D-009, D-016, D-021, D-040, D-054, D-079 · OD-13, OD-14
+(drift baselines) · [training](training.md) (drift reference) · [target factory](target_factory.md) (labels) · D-007, D-009, D-016, D-021, D-040, D-054, D-079 · OD-13, OD-14
 
 ## Purpose
 Keep every production model honest. Is it running? Are its inputs and scores stable? Once outcomes
@@ -12,9 +12,10 @@ model after its builder moves on, are for the platform / MLOps team to handle (D
 ## Layers and Phase 2 depth
 
 Phase 2 builds the frame properly and keeps the content light (D-040). The frame is
-all four layers present, their tables with `schema_version` and flags, where they are written, and
-the seam to the data observability framework. The content is a few health and drift measures with
-flags; little usage is expected before Phase 3.
+all four layers present, their tables with `schema_version`, `framework_version` (D-007 (b)) and
+flags, where they are written, and the seam to the data observability framework, whose needs shape
+the tables only once we have seen it in use (D-021, OD-13). The content is a few health and drift
+measures with flags; little usage is expected before Phase 3.
 
 | Layer | What | Phase 2 depth |
 |---|---|---|
@@ -25,14 +26,16 @@ flags; little usage is expected before Phase 3.
 
 ## Phase 2 requirements
 1. Monitoring tables (one row per model × scoring batch × metric, keyed by metric name, D-016),
-   each with `schema_version` and flags and written where the adapter resolves; an HTML report per
-   use case; and a cross-model view.
+   each with `schema_version`, `framework_version` and flags and written where the adapter
+   resolves; and an HTML report per use case. The cross-model view belongs to the model inventory
+   (OD-14), not to monitoring.
 2. Thresholds raise flags; there is no alerting in Phase 2. A retrain policy declared in config (e.g.
    maximum age, drift threshold) sets a "retrain recommended" flag.
 3. The outcome join is keyed by `scoring_batch_id` and model hash, and is built and tested on synthetic
    data, so it works the day labels exist.
 4. Monitoring outputs are integrated with the **data observability framework** (D-021). How is
-   designed after the work stream that learns it (OD-13).
+   designed after the work stream that learns it; its needs shape the monitoring tables only once
+   we have seen it in use (OD-13).
 
 ## Design constraints
 - Performance monitoring is label-gated. Its absence before labels mature is correct, not a gap.

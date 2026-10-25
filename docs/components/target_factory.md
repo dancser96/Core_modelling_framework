@@ -1,13 +1,21 @@
 # Target Factory
-**Status:** legacy-only · **Legacy:** `src/rollups.py`, `notebooks/Data_Creation.ipynb` (crunch name: Data Creation)
-**Related:** [config](config.md) · [dataset](dataset.md) · [feature checks](feature_checks.md) (lineage
-exclusion) · [monitoring](monitoring.md) (labels) · [LLM assist](llm_assist.md) · D-020, D-021, D-029, D-050, D-054 · OD-19, OD-26
+**Status:** designing (Stage 1 / M2.1 build starts 2026-10-26) · **Legacy:** `src/rollups.py`, `notebooks/Data_Creation.ipynb` (crunch name: Data Creation)
+**Related:** [config](config.md) · [dataset](dataset.md) · [environment](environment.md) (source
+resolution) · [feature checks](feature_checks.md) (lineage exclusion) · [monitoring](monitoring.md)
+(labels) · D-020, D-021, D-029, D-050, D-054, D-091 · OD-26
 
 ## Purpose
 Builds targets. This is the one piece of data work the framework keeps: it links upstream data
 engineering with modelling, and target construction is where time leakage starts. The stage is
 **optional**: if a target already exists upstream, the use case points at that column and skips it.
-Features come from upstream, and the stage asks nothing extra of upstream (D-029).
+It is designed together with the [dataset](dataset.md), though: targets are built from one source,
+features come from one or more others (the feature store, a mart, or both, D-021), and the dataset
+joins them on unit and month. Showing how a use case reads several sources this way is a Stage 1
+deliverable. The stage asks nothing extra of upstream (D-029). In Phase 2 the feature store
+integration is limited to Stage 1 (M2.1 Foundation), where a use case's data comes in; no later
+stage knows about it.
+The framework only **reads** from the feature store, as one more source behind the environment
+adapter; nothing is written back (D-021, OD-26).
 
 ## Phase 2 requirements
 1. **One declarative target spec** in config: source, unit and month keys, forward window and target
@@ -15,8 +23,7 @@ Features come from upstream, and the stage asks nothing extra of upstream (D-029
 2. **Two modes from the same spec:**
    - **Notebook mode:** build, inspect, save. Later stages read the saved table.
    - **Config mode:** build and hand the result straight to the next stage in memory. The spec's hash
-     is recorded, so the run stays reproducible without a saved table. This is also the shape a
-     future LLM loop would drive.
+     is recorded, so the run stays reproducible without a saved table.
 3. **Target builders by `task`** through the per-task spec (D-050):
    - binary is a rule on a forward window (e.g. adoption, activation, reactivation): a threshold on
      a forward sum, or a flag or count going up. "Going up" means in any month of the window (a
@@ -24,8 +31,8 @@ Features come from upstream, and the stage asks nothing extra of upstream (D-029
      end: end-of-window rules miss events that reverse inside the window and, for loans, openings
      hidden by a maturity. Acquisition is one target whether the client never held the product or
      churned (D-041); build it from the flag, not the status column, so lineage exclusion keeps the
-     status's churned signal. M2 builds this flag rule with lineage; count rises, thresholds on
-     sums and leavers-as-negatives follow in M3 (D-091);
+     status's churned signal. M2 builds this flag rule with lineage; the other rule families
+     (count rises, thresholds on sums, leavers as negatives) follow by release 1.0 (M4, D-091);
    - regression is the second task in Phase 2 (D-020).
 4. Forward windows exclude the current month `(1, w)` (T8). Windows come only from config (T13).
 5. **Panel-edge guard:** the target is null where the full forward window is missing, per client:
@@ -49,7 +56,9 @@ Features come from upstream, and the stage asks nothing extra of upstream (D-029
 - Spark only (no `toPandas`). One read, one write per build.
 - Owns invariant §4.1 (time separation) for targets.
 - Eligibility is not materialised here. It is an ordered config step applied when the dataset is built
-  ([dataset](dataset.md)).
+  ([dataset](dataset.md)). Targets are therefore built over every row of the target source (the
+  forward window reads a client's later months whatever their eligibility), and the dataset
+  selects the eligible rows afterwards.
 
 ## Lessons from the crunch
 T8, T11, T12, T13.
@@ -58,10 +67,7 @@ T8, T11, T12, T13.
 *(fill when built)*
 
 ## Open questions
-- Features come from upstream: the feature store, other sources, or both (D-021, OD-26).
-- Whether Target Factory's targets are enrolled in the feature store, and how that work splits with
-  the feature store team (OD-26).
-- Whether the Phase 3 LLM loop needs a feature-aggregation spec (OD-19); only its shape is kept in
-  mind. The aggregation list agreed as a starting point for such a spec: sum / mean / max / min / std
-  over windows, count of non-zero months, months since last non-zero, ratios between windows, and
-  trend.
+- How a use case reads from the feature store, and how that work splits with the feature store
+  team (OD-26).
+- The Stage 1 design questions (target spec shape, saved vs in-memory targets, the regression
+  builder's shape) are in `worknotes/m2_1_foundation/questions.md` until answered.
