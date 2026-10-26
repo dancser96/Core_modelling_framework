@@ -1,7 +1,7 @@
 # Feature Checks
 **Status:** legacy-only (major rethink) · **Legacy:** `src/leakage.py`, `src/feature_stats.py` (`signal_persistence`), `notebooks/Feature_Checks.ipynb`
 **Related:** [feature ledger](feature_ledger.md) · [EDA](eda.md) · [training](training.md) (automated selection) ·
-[target factory](target_factory.md) (lineage) · [dataset](dataset.md) · D-023, D-028, D-029, D-030, D-031, D-050, D-088, D-125 · OD-12, OD-25
+[target factory](target_factory.md) (lineage) · [dataset](dataset.md) · D-023, D-028, D-029, D-030, D-031, D-050, D-088, D-125, D-132 · OD-12
 
 ## Purpose
 The correctness and data-quality gate between candidates and model inputs. It is a standalone unit
@@ -11,7 +11,7 @@ split only (D-028).
 
 ## Two automation levels
 The checks are the same at both levels; only who decides differs (D-023; per decision point:
-OD-25).
+D-132).
 - **`assisted`:** the stage ends in a review of its flags. People's decisions (exclude, or keep
   despite a flag, with reasons) are entries in the decision audit log that later runs replay, never
   config content (D-031, D-125, `config.md`). This review is not the sign-off.

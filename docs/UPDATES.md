@@ -14,11 +14,11 @@ Status values: `legacy-only` (exists only in legacy) · `designing` · `stub` (i
 |---|---|---|
 | Repo bootstrap (docs, skills, agents, requirements, package skeleton) | built | |
 | Design baseline (docs rebuilt after three review rounds + Lead DS notes) | built | 2026-10-12; milestone M0 |
-| Environment adapter (Spark session, compat shim, transport, paths, sources) | stub | Compat shim + local Spark session built (M1 step 0, D-011); transport, paths, sources in M2. Traps T1–T5, T18 |
-| Config spine (single file, automation levels, decision, entities, data-definition hash, migrations) | designing | `components/config.md`. Settled 2026-10-20: YAML (D-043), two automation levels in the `automation_level` field (D-023), identities with a worked example (D-088), the shared-table rule (D-007), extension code in use-case repos (D-006); the decision audit log (D-125, 2026-10-22). Still open before M2.1: the level mapping (OD-25) |
-| Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | tested | M1: steps 0–7 built (2026-10-17); the SDS's review round 1 applied (2026-10-19): role folders, slimmer `truth.json`, two new traps, exit rates, top-down spec with a code map. Feature mart (147 columns), traps on two products, oracle and `truth.json`, CLI, source mapping; every independent check row passes at 100k; approved by the SDS (2026-10-19); reviewed and accepted by the LDS (2026-10-21), with three future to-dos (noise and very-low-fill columns, named like the traps; `test_harness.md`). D-003, D-029, D-041, D-064 |
-| Target Factory (targets only, optional) | designing | Renamed from Data Creation (D-029) |
-| Dataset: observation window, client-grouped split, OOT validation, sampling | designing | Big-ticket item (D-030); sampling kept simple in Phase 2, advanced sampling in Phase 3 (D-117); window ablation OD-17 |
+| Environment adapter (Spark session, compat shim, transport, paths, sources) | built (partial) | Compat shim + local Spark session built (M1 step 0, D-011); transport, paths, sources in M2. Traps T1–T5, T18 |
+| Config spine (single file, automation levels, decision, entities, data-definition hash, migrations) | built | `components/config.md`. Settled 2026-10-20: YAML (D-043), two automation levels in the `automation_level` field (D-023), identities with a worked example (D-088), the shared-table rule (D-007), extension code in use-case repos (D-006); the decision audit log (D-125, 2026-10-22). The Stage 1 design is settled (D-129–D-133) and major step 1 is built (2026-10-26, under the SDS's review): the schema and template, levels, migrations machinery, hashes, the audit log with `decide`; plan in `worknotes/m2_1_foundation/plan.md` |
+| Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | tested | M1: steps 0–7 built (2026-10-17); the SDS's review round 1 applied (2026-10-19): role folders, slimmer `truth.json`, two new traps, exit rates, top-down spec with a code map. Feature mart (157 columns from 0.5.0), traps on two products, oracle and `truth.json`, CLI, source mapping; every independent check row passes at 100k; approved by the SDS (2026-10-19); reviewed and accepted by the LDS (2026-10-21). Its to-dos (noise and very-low-fill columns, named like the traps) became 0.5.0's ten trap columns (2026-10-25, Stage 1; `unstable` waits for M4); the `dev` (20k) and canonical datasets and the notebook are at 0.5.0, all 1,309 check rows passing at 100k; the package goes into the bank as code, never as data (D-041). D-003, D-029, D-041, D-064 |
+| Target Factory (targets only, optional) | designing | Renamed from Data Creation (D-029); Stage 1 builds it thin (major step 2 of `worknotes/m2_1_foundation/plan.md`) |
+| Dataset: observation window, client-grouped split, OOT validation, sampling | designing | Stage 1 builds it thin with the model input (D-131, major step 3 of the Stage 1 plan); big-ticket item (D-030); sampling kept simple in Phase 2, advanced sampling in Phase 3 (D-117); window ablation OD-17 |
 | EDA (worth running first; low-prevalence aware) | designing | Major rethink; EDA and Feature Checks use all clients, the client split comes after (D-030) |
 | Feature Checks (correctness and quality only) | designing | Major rethink; selection moved to Training (D-028) |
 | Feature ledger | designing | Sketch awaiting review (OD-11) |
@@ -42,6 +42,21 @@ together with the topics to raise with the Chief DS.
 
 ## Log (major changes only, newest first)
 
+- 2026-10-26 — Stage 1, major step 1 built: the config spine (schema, template, levels,
+  migrations, hashes, the decision audit log, `decide`) and the environment adapter (the
+  environment file, `get_spark_session`, sources per entity, local paths), reviewed by three
+  reviewers and fixed; the synthetic package writes a slim `holdings` table (0.5.1). Under the
+  SDS's review; the plan is `worknotes/m2_1_foundation/plan.md`.
+- 2026-10-26 — Stage 1 (M2.1 Foundation) design settled and the build started: the config layout,
+  the environment file, the model input, the automation-level mapping (OD-25 closed) and the collect
+  printout (D-129–D-133); the plan in three major steps is `worknotes/m2_1_foundation/plan.md`.
+- 2026-10-25 — Synthetic data 0.5.0: the LDS's to-dos built as ten trap columns, on in every
+  preset (a random flag, a 300-level code, two constants, a redundant tenure column, two low-fill
+  columns, a leak through missingness, card twins of the shifted and process-leak kinds), with
+  every existing column byte-identical at the same seed; a code rule keeps `_trap_` names out of
+  the framework; the `unstable` kind waits for M4 (D-064). A 20k `dev` preset; the datasets and
+  the notebook regenerated, every check row passing at 100k. The package goes into the bank as
+  code, never as data: tests generate their data from a seed (D-041, closes OD-29).
 - 2026-10-23 — Second round of answers closes the inconsistency questions: EDA and Feature Checks
   use all clients and the client split comes after them (D-030, `CLAUDE.md` §4.4 changed); a Phase 2
   production retrain keeps the window and clients, only the inference month moves, and passes a

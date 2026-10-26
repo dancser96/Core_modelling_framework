@@ -6,7 +6,7 @@ D-037, D-049, D-050, D-051, D-052, D-054, D-082, D-083, D-088, D-094, D-100, D-1
 
 ## Purpose
 Fit a model on the train split of the observation window, using only vetted features, through the
-modelling path (FLAML in Phase 2; a predefined path joins in Phase 3, D-020). Write a local-tier
+modelling path (AutoML with FLAML, D-020; a predefined path joins later). Write a local-tier
 run with the resolved config, hashes and training metadata. Training writes artifacts only; the
 model results report comes from [evaluation](evaluation.md) (D-036).
 
@@ -19,8 +19,8 @@ model results report comes from [evaluation](evaluation.md) (D-036).
    D-100 (a)), producing the model bundle (encoder + model + calibration); explainers such as SHAP
    get the booster (D-037). Phase 2 builds the AutoML path only, as plain
    functions per family behind a dict of family → functions, shaped so a `Protocol` can wrap them
-   unchanged when the predefined path and its trade-off chart arrive in Phase 3 (D-020, D-100;
-   [below](#phase-3-the-predefined-path)).
+   unchanged when the predefined path and its trade-off chart arrive later (D-020, D-100;
+   [below](#the-predefined-path-later)).
    - **AutoML:** FLAML.
      - Estimator list, and a trial budget (`max_iter`) plus seeds by default; a time budget is
        optional and labelled (requirement 10, D-094). Per-learner budgets, so one cheap learner
@@ -36,8 +36,7 @@ model results report comes from [evaluation](evaluation.md) (D-036).
        group split (verified in FLAML 2.7.0, `decide_split_type` in
        `flaml/automl/task/generic_task.py`). If the group split fails (spike 1), a client-grouped
        holdout built from the same fold assignment goes in as
-       `X_val` / `y_val` instead. An own client-grouped CV loop around the tuner is on the
-       Phase 3 wishlist (D-106).
+       `X_val` / `y_val` instead.
      - The framework encodes categoricals to integer codes before FLAML sees the frame, so FLAML's
        hidden transformer (it drops constant columns, fills `__NAN__` and recodes categoricals;
        verified on 2.7.0) is the identity. Inference calls the saved booster directly, never
@@ -49,8 +48,7 @@ model results report comes from [evaluation](evaluation.md) (D-036).
 4. **Overfitting guard:** the train–test gap (in-time, unseen clients) is reported for every run,
    as AUC (a rank metric that downsampling leaves unbiased), its train side on the rows the model
    was fitted on, and used only by a sweep that picks,
-   together with the test metric (D-083, D-106); penalising FLAML's trials by it waits for the
-   Phase 3 trade-off chart. The validation (OOT) set is never used to choose anything (§4.4).
+   together with the test metric (D-083, D-106). The validation (OOT) set is never used to choose anything (§4.4).
 5. **Automated feature selection** (by rule, at every level): relevance pruning on the train split only.
    The rule comes from the per-task spec (D-050) and reads train-split statistics only, never EDA's
    all-client ranking (D-030). Binary examples: a univariate AUC floor of ~0.515 recomputed on the
@@ -113,18 +111,17 @@ model results report comes from [evaluation](evaluation.md) (D-036).
     within tolerances declared in the config before the run, never on the validation month.
     Failing keeps whatever production model is current and is recorded; at a first deploy the
     deploy fails loud (D-052). Whether production has the data and compute, determinism and what "deployed" records
-    stay open (OD-27, M4). Retraining on moved or extended data (later months, all clients, a
-    longer window) is on the Phase 3 wishlist.
+    stay open (OD-27, M4).
 
 ## Design constraints
 - The engine never sees the raw feature universe; evaluation happens outside it (§4.5).
 - No hidden retries or silent fallbacks.
-- Phase 2's model interface is plain functions (D-037, D-100 (a)); from Phase 3 a model-interface
-  `Protocol` may wrap them (`CLAUDE.md` §1 rule 2, D-100).
+- The model interface is plain functions (D-037, D-100 (a)); a model-interface
+  `Protocol` may wrap them later (`CLAUDE.md` §1 rule 2, D-100).
 - Training is single-node, on a sample built in Spark ([dataset](dataset.md)). A Spark-native engine
   would be another entry behind the interface; it is not built in Phase 2.
 
-## Phase 3: the predefined path
+## The predefined path (later)
 A named model family (e.g. LightGBM, CatBoost, XGBoost) tuned with Optuna (D-020), behind the same
 interface:
 - bounded, regularisation-friendly search spaces per family; early stopping; pruning;
@@ -142,12 +139,11 @@ T9, T14; downsampling, calibration and FLAML-search lessons in `docs/context/les
 - Verify FLAML 2.7 + xgboost 3.2 before enabling xgboost by default.
 - Spike 1: verify FLAML 2.7's group split on the synthetic data (no sample weights in Phase 2,
   D-117); the fallback is in requirement 2 (D-106).
-- Verify the Optuna 5.0 API (multi-objective, pruning) when first used (Phase 3).
-- The default pick rule on the trade-off chart at the `autonomous` level (Phase 3).
+- Verify the Optuna 5.0 API (multi-objective, pruning) when first used.
+- The default pick rule on the trade-off chart at the `autonomous` level.
 - Calibration under uniform negative downsampling ([dataset](dataset.md)): one keep fraction for
   the whole window, so one prior-shift offset from the sampled vs true rate holds for every month
-  (D-117). Verify it against the synthetic oracle (reliability curves). Weighted sampling, whose
-  offset is zero (D-049), is on the Phase 3 wishlist (D-117).
+  (D-117). Verify it against the synthetic oracle (reliability curves).
 - A lossless non-pickle format per model family on the pinned versions (D-051), all unverified
   until spike 2 and all three needed in M2 (D-037): XGBoost's JSON; LightGBM's text model (its
   JSON dump may not load back); CatBoost's `.cbm` or its JSON (which one round-trips losslessly is spike 2's question). Scikit-learn's forests (FLAML `rf`, `extra_tree`) have none

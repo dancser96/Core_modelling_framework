@@ -47,7 +47,7 @@ here once agreed (OD-01).
 | # | Milestone | Dates (working assumption) | Status |
 |---|---|---|---|
 | M0 | Design baseline | to 10-12 | Done 2026-10-12 |
-| M1 | Synthetic data + local Spark harness | 10-13 – 10-21 | Done: accepted by the LDS 2026-10-21, three future to-dos (backlog); regression chosen (D-020), its per-task spec still to design (D-050) |
+| M1 | Synthetic data + local Spark harness | 10-13 – 10-21 | Done: accepted by the LDS 2026-10-21; its to-dos built in M2.1 (0.5.0) except the `unstable` kind (M4); regression chosen (D-020), its per-task spec still to design (D-050) |
 | M2 | Round 1a: walking skeleton, stages M2.1–M2.4 | 10-26 – 11-20 | — |
 | M3 | Round 1b: exit points and calibration | 11-23 – 12-08 | — |
 | M5a | Run-through 1 → pre-release (internal repo, not production) | 12-09 – 12-18 | — |
@@ -58,11 +58,15 @@ here once agreed (OD-01).
 
 **Phase 2** (milestone in brackets; detail lives in the component docs):
 - Synthetic data: sticky holdings and usage, 24 months, traps, oracle (M1) — `test_harness.md`.
-  Future to-dos from the LDS's review (2026-10-21), before Feature Checks goes deep: more noise
-  columns of several kinds, columns with very low fill rates, each named for what it is like the
-  traps (`_trap_<kind>`)
+  The LDS's to-dos (2026-10-21: noise columns of several kinds, very-low-fill columns, each named
+  like the traps) are built in M2.1 (2026-10-25, version 0.5.0), except the `unstable` kind, which
+  waits for M4 with Feature Checks' stability
 - Dataset: observation window, client-grouped split, OOT validation, Spark-side sampling, row
   budget (M2 thin, M4 deep) — `dataset.md`
+- Identities before anything is kept inside the bank (by M5a, the pre-release): whether hashes
+  leave out values at their schema default, so an added optional field doesn't change every
+  digest, and a `definition.json` beside each audit-log folder so a recipe change can re-key it
+  (the SDS, Q390, 2026-10-26) — `config.md` → Open questions
 - Window ablation, "does a multi-month window beat a single month?" (a nice to have in M4) —
   design in `dataset.md`
 - Target Factory: one binary rule family with lineage (M2 thin), the other rule families and
@@ -102,12 +106,13 @@ here once agreed (OD-01).
   Foundation; feedback mechanisms are Phase 3); the data observability framework shapes the monitoring tables only once
   we have seen it in use; MLflow shapes the registry build if it is integrated in Phase 2
 - Config spine: YAML, two automation levels, identities and the shared-table rule are settled
-  (D-007, D-023, D-043, D-088), and so is the decision audit log (D-125); still open before M2.1: the
-  level-by-decision-point mapping (OD-25) — `config.md`
+  (D-007, D-023, D-043, D-088), and so are the decision audit log (D-125), the level mapping (D-132), the
+  layout, the environment file and the model input (D-129–D-131); being built in M2.1 from
+  `worknotes/m2_1_foundation/plan.md` — `config.md`
 - Artifact inventory: one table in `architecture.md` (artifact, owner doc, version field, writer,
   readers, compatibility rule) at M2.1 (D-007)
-- A `dev` preset of about 20k clients in `synthetic/` for daily work on the skeleton (M2.1) —
-  D-091, `test_harness.md`
+- A `dev` preset of 20k clients in `synthetic/` for daily work on the skeleton: built (M2.1,
+  2026-10-25), written to `data/01_raw/synthetic_dev/` — D-091, `test_harness.md`
 - Lossless non-pickle model formats for what is promoted, researched per model family before it is
   offered (D-051): `lgbm`, `xgboost` and `catboost` all verified in M2 (D-037; spike 2, due
   11-09) — `training.md`
@@ -181,14 +186,13 @@ direction or needs people outside the team.
 
 | ID | Question | Current leaning / proposal | Decided by / forum | Detail |
 |---|---|---|---|---|
-| OD-01 | **Scope:** the Phase 2 plan: dates, M2's stages and the depth per component (full / deep / thin / stub) at the pre-release and release 1.0; level wording to review | Working assumption D-022 (`worknotes/timeline_proposal.md`): build on it now; the LDS is still reviewing, and stakeholder buy-in comes next week | SDS + LDS, then stakeholders | `worknotes/timeline_proposal.md` |
+| OD-01 | **Scope:** the Phase 2 plan: dates, M2's stages and the depth per component (full / deep / thin / stub) at the pre-release and release 1.0; level wording to review | Working assumption D-022 (`worknotes/timeline_proposal.md`): build on it now; the LDS is still reviewing, and stakeholder buy-in comes in the week of 10-26 | SDS + LDS, then stakeholders | `worknotes/timeline_proposal.md` |
 | OD-06 | **Lifecycle:** folder layout per entity × domain: keep the current folder structure that emulates the permission barriers (separate parent folders), or not? Are storage permissions actually separate per entity? | Production paths are separate from the sandpit (D-033, D-051), and permissions are the platform's, not the framework's (D-079); the question is only how the framework lays out its own outputs per entity × domain. Ours to decide (D-073) | SDS + LDS; permission facts from the platform / MLOps team | `components/lifecycle.md` |
 | OD-08 | **Lifecycle:** MLflow for the registry and experiment tracking in Phase 2: is it available inside the bank? | The shape is settled (D-111): M2.4's own records map one-to-one onto MLflow; MLflow goes in with the other integrations in M4 once confirmed; `production.json` stays the pointer through major version 1, MLflow a store beside the own records. Its default flavors pickle, which is fine in the sandpit but not for what is promoted (D-051). Confirm availability at the platform learn session (by 11-06). MLflow fits the registry and experiment tracking better than monitoring (OD-13) | SDS + LDS, with the platform / MLOps team (D-079, OD-23) | `components/lifecycle.md` |
 | OD-11 | **Features:** feature ledger: review the sketch | Not urgent; decided when the ledger is built (M2.2). Leaning: two parts, one per data definition keyed by the data-definition hash (EDA + checks) and one per run keyed by `run_id` (selection + use), joined on feature name; human decisions are the audit-log entries the run replayed (D-125) | SDS | `components/feature_ledger.md` |
 | OD-12 | **Reporting:** the mandatory "core" views per task of the EDA, Feature Checks and Evaluation reports | Structure agreed and shared by the three reports (summary page + core + extended, D-036). Needed when EDA (M2.2) and Evaluation (M2.3) are built; proposal for binary in `evaluation.md` → Open questions | SDS + LDS | `components/evaluation.md`, `components/eda.md` |
 | OD-18 | **Inference:** separate manifests from score files? | The format part is settled (D-016): the framework writes its own traceable scores table, the master layer, and consumable tables are built outside it. Still open: whether manifests sit beside or inside the score files; leaning: separate them, since manifests beside the score files break a Hive table over the scores (`inference.md`), with the layout from the LDS; designed with Inference (round 1a) | SDS + LDS | `components/inference.md` |
 | OD-23 | **Lifecycle:** who builds the registry and deployment, and at what point they join the project | The CDS routes downstream questions to the platform / MLOps team (D-079); to agree with that team whether they build these or advise. Until then, register / promote / deploy are thin but real (D-033). The original plan had a part-time ML engineering lane for registration, the deployment path and drift alerting (`docs/reference/`) | SDS + LDS, with the platform / MLOps team | `components/lifecycle.md` |
-| OD-25 | **Config:** automation levels (D-023): what `autonomous` and `assisted` each decide by rule and by a person at each decision point of `config.md`'s inventory, and how a move to another level is recorded (after the config freezes, an audit-log entry, which needs `automation_level` on `LOGGABLE_SETTINGS` and a rule for which stages rerun) | The mapping is written when the config spine is built (M2.1); budgets are separate fields with defaults per level, and a move is a config edit or an audit-log entry, never a CLI override (D-023) | SDS + LDS | `components/config.md` |
 
 ### Medium-term
 
@@ -216,8 +220,8 @@ the team, or he asked to see it. Results are shown at check-ins.
 | Feature store integration: a use case on the feature store, on other sources, and on both | The work stream has a design | D-021, OD-26 |
 | Data observability integration | The work stream has a design | D-021, OD-13 |
 | Retraining in production; models without pickle | Research results per model family | OD-27, D-051 |
-| The Phase 2 plan: the December pre-release, release 1.0 and the dates | After the LDS's review and the stakeholder buy-in next week | D-022, `worknotes/timeline_proposal.md` |
-| Automation levels (two in Phase 2), and how a use case moves between them | The config spine is designed (M2) | D-023, OD-25 |
+| The Phase 2 plan: the December pre-release, release 1.0 and the dates | After the LDS's review and the stakeholder buy-in in the week of 10-26 | D-022, `worknotes/timeline_proposal.md` |
+| Automation levels (two in Phase 2), and how a use case moves between them | The config spine is built (M2.1); the mapping is D-132 | D-023, D-132 |
 | Config format: YAML, and the decision audit log, both decided (information items, with the reasoning) | Next check-in | D-043, D-125 |
 | Who builds and runs the downstream (platform / MLOps team) | If that team can't take it on | D-079, OD-23 |
 | LLM-assisted modelling (he is keen) | Planning Phase 3 | D-021, `components/llm_assist.md` |

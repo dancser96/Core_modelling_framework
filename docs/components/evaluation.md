@@ -38,14 +38,12 @@ practical set of metrics and charts, produced reliably for every model family.
    supports, labelled with the method used.
 6. **Failure policy** (D-035): a view the table declares compatible must work, and a failure is an
    error. Incompatible views are skipped by design and shown as "not available: reason".
-7. **Model comparison is first-class.** Several runs (challenger vs champion, window variants;
-   AutoML vs predefined from Phase 3) are shown on the identical validation set, overlaid and side
+7. **Model comparison is first-class.** Several runs (challenger vs champion, window variants) are shown on the identical validation set, overlaid and side
    by side. Where the rows match, differences come from a **paired bootstrap** over validation
    clients, which gives much tighter intervals than comparing two separate ones. The window ablation's design is owned by
    [dataset](dataset.md). A sweep picks on train and test metrics; the validation month is
-   reported for every variant and never chooses (D-083). In Phase 2 reports show validation
-   everywhere, sweep tables included, and people are trusted not to choose on it; whether to gate
-   data against the validation month's use is a Phase 3 wishlist question (D-083).
+   reported for every variant and never chooses (D-083). Reports show validation
+   everywhere, sweep tables included, and people are trusted not to choose on it (D-083).
 8. Results are structured data first; plots and reports are rendered from them. Evaluation writes
    the model results report, after FLAML training; Training itself writes artifacts only (D-036).
 

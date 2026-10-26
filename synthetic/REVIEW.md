@@ -1,11 +1,13 @@
 # Synthetic data — review guide
 
-The review guide for the synthetic data generator (M1, D-003), version 0.4.0. Approved by the SDS
-on 2026-10-19; the LDS reviews it next (summary on `worknotes/sync.md`). The spec and code map are
+The review guide for the synthetic data generator (M1, D-003), version 0.5.2. Approved by the SDS
+on 2026-10-19 and accepted by the LDS on 2026-10-21 (summary on `worknotes/sync.md`); 0.5.0 adds
+the ten trap columns from the LDS's to-dos (2026-10-25); 0.5.1 also writes a slim `holdings` table
+(the client key and the six holding flags, copied from the mart) beside the mart (2026-10-26); 0.5.2 tags the holdings' months with their last day, the mart's with their first (D-129). The spec and code map are
 in `docs/components/test_harness.md`; history is in `docs/UPDATES.md` and D-003, D-011, D-029, D-033, D-041, D-043, D-050, D-064, D-072, D-083.
 
 ## 1. What it is
-- A retail book of 100k clients over 24 months, written as an upstream-style feature mart: 147
+- A retail book of 100k clients over 24 months, written as an upstream-style feature mart: 157
   columns, one row per client per month.
 - The code is in four role folders under `synthetic/src/synthetic/` (32 modules, D-003):
   - `spec/`: the rules, as plain data;
@@ -16,8 +18,10 @@ in `docs/components/test_harness.md`; history is in `docs/UPDATES.md` and D-003,
   per-target oracle metrics and the dirty-data record.
 - Traps of two kinds:
   - **Trap columns** (`trap_column` true), named `<column>_trap_<kind>`: two leaks (one strong,
-    one moderate), the upstream target, the process leak (applications) and a column shifted one
-    month ahead.
+    one moderate), the upstream target, a leak in a missingness pattern (an offer code), a process
+    leak (applications) and a column shifted one month ahead for each of the two products, a
+    redundant column (tenure in months), null controls, two constants, a high-cardinality code,
+    a near-constant, an all-null and two very-low-fill columns.
   - **Traps in real columns**, which keep their real names: age's inverted U, nationality's rare
     level, income's eligibility gap, logins' Simpson effect and drift.
 - **The book is in steady state.** Monthly exits are 0.7 / 0.8 / 0.9 / 1.1% (Private → Mass),
@@ -27,11 +31,12 @@ in `docs/components/test_harness.md`; history is in `docs/UPDATES.md` and D-003,
 ## 2. Regenerate and check
 ```bash
 source .venv/bin/activate
+python -m synthetic --preset dev --out data/01_raw/synthetic_dev            # 20k, daily work
 python -m synthetic --preset canonical --out data/01_raw/synthetic_canonical --checks
 pytest                 # fast suite, ≈ 3 min
 pytest -m slow         # canonical size, each check family in its own process, ≈ 15–20 min
 ```
-- Generation takes about 6 minutes at 100k. `--checks` then runs each family in its own process
+- Generation takes about 6 minutes at 100k and about a minute at 20k. `--checks` then runs each family in its own process
   (10–15 minutes on a quiet Mac) and exits with an error if any row fails. Close memory-heavy apps
   first.
 - The output folder must be new or empty. `load_truth` refuses a dataset written by another
@@ -40,7 +45,7 @@ pytest -m slow         # canonical size, each check family in its own process, �
 ## 3. The review, in order
 ### 3.1 The notebook (`notebooks/00_synthetic_data.ipynb`, committed with outputs)
 A visual tour first (sections 1–8, following Level 2 of the spec), then an appendix with the check
-tables and the tables behind each chart. Its first cell prints the check status: 1,263 of 1,263
+tables and the tables behind each chart. Its first cell prints the check status: 1,309 of 1,309
 rows pass in 8 families.
 
 | Section | What right looks like |
@@ -50,7 +55,7 @@ rows pass in 8 families.
 | 3 Amounts | Tails on the log–log chart straight far out and parallel to the dotted slope −2 (every subsegment); UM and MM overlap; card limits fall in tier bands that rise with income; revolvers mostly at 0.3–0.9 utilisation; outflow and card-spend mixes more extreme for Private than for Mass |
 | 4 Time | Travel spend up in July–August, least for Mass; balances dip in summer; bills spike in September, January and April; mobile logins jump at 2026-01 |
 | 5 The mart | Nulls only in the null rule's columns; a joiner's rollups start once their window fits; clear blocks near 1 in the correlation heatmap |
-| 6 Traps | Real columns below the oracle line, the trap columns above it, null controls at 0.5; Simpson: the card chance rises with logins within each onboarding channel and falls when pooled |
+| 6 Traps | Real columns below the oracle line, the trap columns above it, null controls at 0.5; the 0.5.0 columns: constants and the new null control flat, the missingness-pattern leak and the card twins above the oracle line on their own window (w = 3 and w = 1); Simpson: the card chance rises with logins within each onboarding channel and falls when pooled |
 | 7 The ceiling | The oracle's gains curve above every real ranking and below the leak's; calibration points on the diagonal; realised spend mostly inside the oracle's band |
 | 8 Client stories | Balances persist month to month, card spend varies, hidden traits drift slowly |
 | Appendix A1–A7 | `failed` 0 in every family; the booking identity exact (0.0000); `<NA>` a true null (`Int64` in pandas, `int64` with nulls in parquet); oracle AUCs as in §4; no single column near the oracle on an activation target |

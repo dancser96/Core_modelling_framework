@@ -1,17 +1,30 @@
 # Stage 1 (M2.1 Foundation): design questions
-_Written 2026-10-23 for the SDS, rewritten 2026-10-25 after round 1 · Q349–Q373
-(Q374 was the inconsistency file's; the synthetic to-dos, Q379–Q386, are in `worknotes/synthetic_questions.md`) · cited decisions are summarised in brackets (D-072 (k)) · outcomes go to
-`docs/` with the build plan, and this folder is deleted when the stage is done_
+_Written 2026-10-23 for the SDS, rewritten 2026-10-25 after round 1, closed 2026-10-26 · Q349–Q373
+(Q374 and Q379–Q386 were other files', both deleted) · cited decisions are summarised in brackets
+(D-072 (k)) · outcomes are in `docs/` and in `plan.md` beside this file; the folder is deleted when
+the stage is done_
 
-**Where it stands.** Round 1 is answered. Every question you didn't comment on took its default;
-they are listed under "Settled in round 1", with your changes worked in. The LDS's synthetic
-to-dos (Q379–Q386) are a separate file, `worknotes/synthetic_questions.md`. Six round 1
-questions stay open, each rewritten below with its context: Q354 (the config layout, now with your points in it), Q358,
-Q364, Q365, Q367 and Q371. Q354 and Q365 belong together: Q365 answers how the crunch's saved
-model input works in this design, and Q354 shows where it sits in the config.
+**Where it stands (2026-10-26): every question is answered.** The plan is `plan.md`. Round 2's
+answers (defaults where not named):
+- Q354: all defaults, (a)–(c) included: the layout below is the schema Stage 1 builds.
+- Q358: default (A), the environment file with its own schema.
+- Q364: default (A), `w` in `time`.
+- Q365: (A), the saved model input named in the config, for your reason too: a source holding
+  only targets will probably never exist; a use case imports one, two or three real sources, which
+  may or may not carry the target, and (A) is the easiest shape for all of those. Assumption A4
+  (a separate targets table) falls away.
+- Q367: (A), and nothing is built for it: the leakage screen shows it, and no use case has ever
+  looked like this (nobody predicts loan maturities). The requirement is reworded to guidance.
+- Q371: (A) for the estimate, but **as a printout, not a stop**: the numbers (rows, columns, the
+  estimated size, the budget) are printed on every collect, in the notebook and from a function
+  call alike, and when the estimate exceeds the budget the printout becomes a callout saying what
+  to do: declare sampling, or raise the budget and the Spark settings. Inside the bank one simply
+  raises the Spark settings, so a hard stop would be in the way. The collect proceeds. The adapter
+  therefore does not derive `spark.driver.maxResultSize` from the budget; the callout names it.
 
-**How to answer.** By number; "default" accepts the proposal. The build plan (major and minor
-steps) follows these six and the synthetic file's Q379–Q386.
+Stage 1's synthetic step shrank while the questions were open: the other chat built the `dev`
+preset and the LDS's trap columns (synthetic 0.5.0, both datasets regenerated), so major step 2's
+synthetic part is the holdings table only (Q352).
 
 **Stage 1 as planned** (`worknotes/timeline_proposal.md`, D-022 (the Phase 2 plan: skeleton
 first, two rounds)): 10-26 – 11-02, six days. Done when one config gives the frames, with

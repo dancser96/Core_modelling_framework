@@ -2,9 +2,13 @@
 
 `write_mart` drives the month loop (`generate`) and writes each month as it comes, so memory holds
 about one month: `<out>/mart/snapshot_month=YYYY-MM-01/part-0.parquet`, the oracle likewise under
-`<out>/oracle/`, and `<out>/truth.json` last, so a folder without a truth file is an incomplete
-dataset. The truth's oracle part (the oracle's metrics) is computed once every month is on disk
-and the simulation's state is gone, from the columns it needs read back (one target's at a time,
+`<out>/oracle/`, the slim `holdings` table (the client key and the six holding flags, copied from
+the final mart frame) under `<out>/holdings/`, and `<out>/truth.json` last, so a folder without a
+truth file is an incomplete dataset. The holdings tag each month with its last day
+(`snapshot_month=YYYY-MM-28/29/30/31`), the mart and oracle with its first: bank sources tag either
+day, so the two sources exercise the framework's month conversion on reading (D-129). The
+truth's oracle part (the oracle's metrics) is computed once every month is on disk and the
+simulation's state is gone, from the columns it needs read back (one target's at a time,
 `oracle.target_columns`).
 
 The month is a partition column, never stored inside the files; Spark infers it as a date from the
@@ -17,6 +21,7 @@ written by another generator version or another numpy or scipy minor version (th
 mapping depends on them), so stale data fails loud.
 """
 
+import calendar
 import datetime as dt
 import json
 from pathlib import Path
@@ -35,8 +40,17 @@ from synthetic.spec.presets import PRESETS
 from synthetic.truth.oracle import BINARY_TARGETS, target_columns, target_metrics
 from synthetic.truth.truth_file import build_truth, complete_truth, with_oracle
 
-TABLES = ("mart", "oracle")
+TABLES = ("mart", "oracle", "holdings")
 PARTITION = "snapshot_month"
+HOLDINGS_COLUMNS = [
+    "client_id",
+    "casa_flag",
+    "cc_flag",
+    "td_flag",
+    "wealth_digital_flag",
+    "wealth_trad_flag",
+    "ebanking_flag",
+]
 
 
 def write_mart(
@@ -133,7 +147,7 @@ def _with_written_oracle(out_dir: str, truth: dict) -> dict:
 def read_output(
     out_dir: str, table: str, columns: list[str] | None = None, client_sample: int | None = None
 ) -> pd.DataFrame:
-    """One table ("mart" or "oracle") in month order, with `snapshot_month` as dates.
+    """One table ("mart", "oracle" or "holdings") in month order, with `snapshot_month` as dates.
 
     `columns` reads only those (in that order); None reads every column, keys first.
     `client_sample` n keeps only the clients whose id is a multiple of n, in every month: a fixed
@@ -195,23 +209,38 @@ def _read_month(path: Path, columns: list[str] | None, client_sample: int | None
 def _write_months(
     out: Path, frames: list[tuple[pd.DataFrame, pd.DataFrame]], products: list[str]
 ) -> None:
-    """Write each (mart, oracle) month into its partition folder of each table; the mart with
-    its explicit schema (`products`: the spec's product keys, to parse the column names)."""
-    for frame_pair in frames:
-        for table, frame in zip(TABLES, frame_pair, strict=True):
+    """Write each (mart, oracle) month, and the holdings derived from its mart, into its partition
+    folder of each table; the mart and holdings with the mart's explicit schema (`products`: the
+    spec's product keys, to parse the column names)."""
+    for mart, oracle in frames:
+        for table, frame in zip(TABLES, (mart, oracle, _holdings_frame(mart)), strict=True):
             months = frame[PARTITION].unique()
             if len(months) != 1:
                 raise ValueError(f"a {table} frame must hold one month, not {len(months)}")
             folder = out / table / f"{PARTITION}={months[0].isoformat()}"
             folder.mkdir(parents=True)  # an existing folder raises: a month written twice
             stored = pa.Table.from_pandas(frame.drop(columns=PARTITION), preserve_index=False)
-            if table == "mart":
+            if table != "oracle":
                 schema = arrow_schema(stored.column_names, products)
-                # The pandas metadata stays, so the mart reads back with its in-memory dtypes.
+                # The pandas metadata stays, so the table reads back with its in-memory dtypes.
                 stored = stored.cast(schema.with_metadata(stored.schema.metadata))
             pq.write_table(stored, folder / "part-0.parquet")
 
 
+def _holdings_frame(mart: pd.DataFrame) -> pd.DataFrame:
+    """The holdings table's month: the client key, the month (as its last day) and the holding
+    flags of the final mart frame (`HOLDINGS_COLUMNS` with the partition column second)."""
+    holdings = mart[[*HOLDINGS_COLUMNS[:1], PARTITION, *HOLDINGS_COLUMNS[1:]]].copy()
+    holdings[PARTITION] = holdings[PARTITION].map(_last_day)
+    return holdings
+
+
+def _last_day(month: dt.date) -> dt.date:
+    """The last day of a month's date (`2025-03-01` → `2025-03-31`)."""
+    return month.replace(day=calendar.monthrange(month.year, month.month)[1])
+
+
 def _folder_month(folder: Path) -> dt.date:
-    """The month of a partition folder (`snapshot_month=YYYY-MM-01`)."""
+    """The date a partition folder is tagged with (`snapshot_month=YYYY-MM-DD`: the first day of
+    the month for the mart and oracle, the last for the holdings)."""
     return dt.date.fromisoformat(folder.name.removeprefix(f"{PARTITION}="))

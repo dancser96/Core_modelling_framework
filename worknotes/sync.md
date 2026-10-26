@@ -1,34 +1,42 @@
 # Sync page
-_For the SDS and the LDS · last updated: 2026-10-25 (the synthetic to-dos answered, Q379–Q386; Stage 1 round 2) · last sync: 2026-10-22_
+_For the SDS and the LDS · last updated: 2026-10-26 (briefing for the sync) · last sync: 2026-10-26_
 
-**New or extended decisions in the last 2 days:** 10-25, extended: D-051 (Phase 2 relies on the per-family check of the plain-data model). 10-23, changed: D-030 (EDA and Feature Checks use all clients; `CLAUDE.md` §4.4 reworded). 10-23, extended by the SDS's answers: D-006, D-014, D-021, D-023, D-024, D-031, D-033, D-036, D-037, D-040, D-043, D-049, D-051, D-052, D-072, D-083, D-088, D-091, D-106, D-111, D-117, D-125 (each status names what changed). 10-22: D-072 (g) (two tables; a superseding decision replaces its row in place); the log was compacted from 128 to 58 rows, so IDs you knew may have moved (mapping in `worknotes/log.md`, entry of 2026-10-22)
+**In short (10-23 to 10-26):** The inconsistency sweep and the Stage 1 design questions are all
+answered, and Stage 1 is being built. The biggest rule change: EDA and Feature Checks now look at
+all clients, so people's feature choices have seen test labels, and the validation month is the
+honest number. Stage 1's design is settled: the config's layout, a separate file for environment
+facts, one saved model input that every later stage reads, what the two automation levels change,
+and a size check before data leaves Spark. Its first build step, the config and the environment
+adapter, is built and reviewed, the SDS's remarks are applied, and Target Factory is being built.
+Your synthetic to-dos are built as ten new trap columns. The Phase 2 plan needs your review this
+week, before the stakeholder buy-in.
 
-Detail behind each item: `worknotes/log.md`. Open decisions (OD-nn): `docs/roadmap.md`. How this
-page is written: `worknotes/README.md`.
+Detail behind each item: `worknotes/log.md`. How this page is written: `worknotes/README.md`.
 
 ## For the LDS: to review (most important first, then newest)
-Tags per D-072 (h): **needs decision** (at most five) or **for information**.
-- [ ] **The decision audit log, built into the config doc** (needs decision) —
-      `docs/components/config.md` → Decision audit log — feedback wanted: do the closed list of
-      operations, the maintained list of settings a decision may change, the replay rules and the
-      verbosity controls answer your concern about verbosity and the step from entries to code?
-- [ ] **The twenty decisions that shape the framework** (needs decision) —
-      `worknotes/decisions_LDS_review.md`, in reading order, each with why it matters and what
-      feedback is wanted; the rows themselves are in `docs/decisions.md` (high-impact table) —
-      feedback wanted: per row, as listed there. Start with the frame (rows 1–7), then the ML rules.
-- [ ] **The SDS's answers to the inconsistency sweep** (needs decision) — `docs/decisions.md`, the
-      rows changed or extended on 10-23 — feedback wanted, most important first: EDA and Feature
-      Checks on all clients, so people's feature decisions see test labels (D-030, `CLAUDE.md`
-      §4.4); production retraining on the same window and clients as the default deploy path, with
-      a check against the parent (D-033, D-052); one sign-off gate after training (D-031);
-      validation shown everywhere in Phase 2, people trusted (D-083); sampling only when the config
-      declares it (D-117); MLflow's shape (D-111, OD-08).
-- [ ] **Your synthetic to-dos, as planned** (for information) — `worknotes/synthetic_questions.md`
-      → The catalogue — ten trap columns, built in Stage 1 — feedback wanted: "univariate" is read
-      as a column with a single value (a constant); is that right, and is a kind missing?
-- [ ] **The Phase 2 plan** (needs decision) — `worknotes/timeline_proposal.md` — the working
-      assumption we build on (D-022): dates, M2's stages, depth per component. Feedback wanted:
-      your review before the stakeholder buy-in next week (OD-01).
+**Decisions needed from you: the short-term open decisions** in `docs/roadmap.md` → Open decisions:
+OD-01 first (the Phase 2 plan, `worknotes/timeline_proposal.md`, before this week's stakeholder
+buy-in), then OD-06, OD-08, OD-11, OD-12, OD-18, OD-23. Everything below is for review and feedback.
+- [ ] **Stage 1's design** — D-129–D-133 in `docs/decisions.md`, the full YAML in
+      `docs/components/config.md` — feedback wanted: the config layout (D-129), the saved model
+      input (D-131) and what the two automation levels change (D-132).
+- [ ] **Stage 1, major step 1 as built** — `conf/base/TEMPLATE.yml`, `conf/base/cc_acquisition.yml`,
+      then `worknotes/m2_1_foundation/review_guide.md` → Major step 1 (not ML-critical: sample it)
+      — feedback wanted: does the template read well as a DS's first contact with the framework?
+- [ ] **The decision audit log** — `docs/components/config.md` → Decision audit log — feedback
+      wanted: do the closed list of operations, the settings a decision may change, the replay
+      rules and the verbosity controls answer your concern about verbosity and the step from
+      entries to code?
+- [ ] **The twenty decisions that shape the framework** — `worknotes/decisions_LDS_review.md`, in
+      reading order, with the feedback wanted per row; start with the frame (rows 1–7).
+- [ ] **The SDS's answers to the inconsistency sweep** — the rows changed on 10-23 in
+      `docs/decisions.md` — feedback wanted, most important first: EDA and Feature Checks on all
+      clients (D-030); production retrains by default, checked against its parent (D-033, D-052);
+      one sign-off gate (D-031); validation shown everywhere (D-083); sampling only when declared
+      (D-117).
+- [ ] **Your synthetic to-dos, built** — `docs/components/test_harness.md` → Trap summary,
+      `synthetic/REVIEW.md` §1 — feedback wanted: is "univariate" right as a constant column, and
+      is a kind missing? The notebook's section 6 shows them against the oracle.
 
 ## Questions for the LDS
 - **Example notebooks:** beyond running as a pipeline and through notebooks, anything more you want
@@ -39,77 +47,51 @@ Tags per D-072 (h): **needs decision** (at most five) or **for information**.
 
 | Question | Context | Current leaning | Needs |
 |---|---|---|---|
-| Automation levels: what `autonomous` and `assisted` each decide by rule and by a person at each decision point (OD-25) | Needed in M2.1; it uses the same inventory of decision points as the audit log's list of settings a decision may change (D-125) | Written when the config spine is built, with reversible defaults | SDS + LDS |
 | Is MLflow available inside the bank (OD-08)? | MLflow in Phase 2 is the goal; its shape is settled (D-111): M2.4's records map onto it, it goes in with the integrations in M4 | Ask at the platform learn session, by 11-06 | SDS + LDS, with the platform / MLOps team |
 
-## Last 2 days
-- **Inconsistency questions closed (10-25):** the last one, Q374, is answered: in Phase 2 a
-  model's plain-data copy is trusted on its family's verified round trip, and whether `register`
-  should re-score each model's copy on the stored test split is a Phase 3 wishlist question
-  (D-051). The questions file is deleted; every outcome is in `docs/decisions.md`, the roadmap
-  and the docs. — look at: D-051 in `docs/decisions.md`
-- **Your synthetic to-dos, planned and answered (10-25):** noise columns of several kinds, very
-  low fill rates, named like the traps. Built now, in Stage 1's synthetic step rather than M4, as
-  ten trap columns on in every preset: a random flag, a 300-level categorical, two constant
-  columns (your "univariate", read as one value), a redundant column (informative alone, nothing
-  given its source), two low-fill columns, a leak through missingness, and card twins of the
-  loan-only shifted and process-leak kinds, so the credit-card run-through meets every
-  trap-column kind; the `unstable` kind waits for M4. The trap list also becomes the acceptance
-  test for "the traps are flagged": a test over synthetic data, the framework stays name-blind
-  (Q386). Open: which chat builds it (Q387). — look at: `worknotes/synthetic_questions.md`
-- **Stage 1 questions, round 2 (10-25):** round 1 is answered (defaults, a slim synthetic
-  holdings table, left joins from a governing spine); six questions stay open, rewritten with
-  context: the full config layout (Q354), the environment file (Q358), where `w` lives (Q364),
-  the crunch's saved model input in this design (Q365), degenerate targets (Q367) and the
-  collect budget (Q371). The plan follows the answers. — look at:
-  `worknotes/m2_1_foundation/questions.md`
-- **Stage 1 (M2.1 Foundation) kicked off (10-23):** the design questions for the config spine,
-  environment adapter, Target Factory and dataset are in `worknotes/m2_1_foundation/questions.md`
-  (Q349–Q373, each with a default, plus the assumptions the build rests on); the build plan in
-  major and minor steps follows the SDS's answers. Already applied: `target_factory.md` is designed
-  together with the dataset, shows several sources (targets from one, features from others, joined
-  on unit and month), says Phase 2 only reads from the feature store, and has no Phase 3
-  references. The stage folder rule: one `worknotes/<stage>/` at a time, deleted when the stage is
-  done. — look at: `worknotes/m2_1_foundation/questions.md`, `docs/components/target_factory.md`
-- **Inconsistency answers applied (10-23):** the SDS answered the sweep and the rest took their
-  defaults; 21 decision rows extended, and `CLAUDE.md`, the roadmap and the docs brought in line.
-  What changes for you: production retrains the recipe by default (deploying the fitted model stays
-  possible); the sandpit may hold any format, only the move to production must avoid pickle; all
-  three FLAML families in M2; one sign-off gate after training; sampling only when the config
-  declares it; MLflow in Phase 2 is the goal; the validation month moves into the config;
-  `automation_level` from M2.1; "resolved config" replaces "frozen config"; docs stay live. An
-  ML-correctness and a compatibility review of the answers found gaps, which a second round of
-  answers closed the same day. The rule change: EDA and Feature Checks use all clients, and the
-  client split comes after them, so people's feature decisions see test labels; the validation
-  month stays the honest number (D-030, `CLAUDE.md` §4.4). Also: a Phase 2 production retrain keeps
-  the window and clients and passes a check against its parent; no sign-off log in Phase 2;
-  validation shown everywhere, people trusted; register always writes the plain-data model. A
-  review of round 2 fixed wording (automated selection and the prior shift read train-split
-  numbers only) and left one question (Q374, answered 10-25). — look at: `docs/decisions.md`
-- **Decision log compacted and reviewed (10-22):** 128 rows → 58, split into a high-impact table
-  (42 rows, read in full) and a low-impact one (16, sample); merged rows name the IDs they absorbed;
-  a superseding decision now replaces its row in place (D-072 (g)). Four reviewers then swept every
-  doc for inconsistencies: 40 questions, each with a default, now all answered
-  (block A = decisions disagreeing with each other, block B = doc vs decision design points, block
-  C = docs lagging settled decisions). Your reading list: `worknotes/decisions_LDS_review.md`. — look
-  at: `docs/decisions.md`, `worknotes/decisions_LDS_review.md`
-- **The planning thread is closed** (10-22). The plan is the working assumption, still under
-  review: M2 in four stages (M2.1–M2.4) to 11-20, M3 to 12-08, the pre-release by 12-18, M4 to
-  02-05, release 1.0 by 02-19 (D-022; stakeholder buy-in next week). The decision audit log is built into `config.md` from the accepted
-  structure, including the resolved config saved as one file and a registered bundle that carries
-  its run's slice of the log as one file (D-125). Phase 2 retraining keeps the clients and the
-  window (D-052); the Public API is the short list (D-024); product and activity come from the use
-  case's name, as in the crunch (D-128). `worknotes/holistic_review.md` is deleted; the questions
-  file is closed. — look at: `worknotes/timeline_proposal.md`, `docs/components/config.md`
+## Last 2 working days (10-23 to 10-26)
+- **Stage 1 (M2.1 Foundation): designed, planned, step 1 built (10-23 → 10-26).** Stage 1
+  builds the config spine, the environment adapter, Target Factory and the dataset, in three
+  major steps, each ending in the SDS's review. Its design questions (10-23, round 2 on 10-25)
+  are all answered: the config layout, the environment file, the model input, the level mapping
+  and the collect printout. Step 1 is built: the schema and template, level defaults,
+  migrations, the hashes, the decision audit log with its `decide` command, and the environment
+  adapter. Three reviewers found two real traps (an `hdfs://` root reaching `pathlib`; a level
+  move not moving the level defaults), both fixed. From the SDS's review: the template shows
+  every default, a level move no longer overwrites a person's setting, more settings may change
+  through the log, and a month is held as its last day, whichever day a source tags. The synthetic data
+  gained a slim second table, so the skeleton reads two sources. Target Factory (major step 2)
+  is being built. — look at: D-129–D-133, `worknotes/m2_1_foundation/plan.md`, `review_guide.md`,
+  `review_answers.md`
+- **Inconsistency sweep answered and closed (10-23 → 10-25).** 21 decision rows extended, and
+  `CLAUDE.md`, the roadmap and the docs brought in line. The rule change: EDA and Feature Checks
+  use all clients and the client split comes after them, so people's feature decisions see test
+  labels; the validation month stays the honest number (D-030, `CLAUDE.md` §4.4). Also:
+  production retrains the recipe by default on the same window and clients, checked against its
+  parent; only the move to production must avoid pickle; all three FLAML families in M2; one
+  sign-off gate after training; sampling only when the config declares it; the validation month
+  moves into the config; in Phase 2 a model's plain-data copy is trusted on its family's
+  verified round trip (D-051). — look at: the rows changed on 10-23 in `docs/decisions.md`
+- **Your synthetic to-dos, built (10-25).** Ten trap columns, on in every preset: a random flag, a
+  300-level categorical, two constants (your "univariate"), a redundant column, two low-fill
+  columns, a leak through missingness, and card twins of the shifted and process-leak kinds, so
+  the credit-card run-through meets every kind; `unstable` waits for M4. The trap list is the
+  acceptance test for "the traps are flagged", and the framework stays blind to the names. Every
+  existing column is unchanged at the same seed, and every check passes. The package goes into
+  the bank as code; tests generate their data from a seed. — look at:
+  `docs/components/test_harness.md` → Trap summary; D-064, D-041
 
 ## Demo next
-- The compacted decision log's two tables and the reading list (`worknotes/decisions_LDS_review.md`),
-  then the Phase 2 plan (`worknotes/timeline_proposal.md`) and the decision audit log's worked
-  example (`docs/components/config.md`).
+- Stage 1's config spine: the template's reading key (`conf/base/TEMPLATE.yml:1`) and the worked
+  example `conf/base/cc_acquisition.yml`; then the audit log's worked example replayed,
+  `pytest tests/test_audit_log.py -q` (20 tests, under a second; `tests/test_audit_log.py:134`),
+  and a decision from the command line, `python -m core_modelling decide --help`.
+- The Phase 2 plan (`worknotes/timeline_proposal.md`) if not shown yet.
 
-## Last 7 days
-- 10-22 — **Decision log compacted; inconsistency sweep; LDS reading list** — `docs/decisions.md`,
-  `worknotes/decisions_LDS_review.md`
+## Last 7 working days (10-16 to 10-22)
+- 10-22 — **Decision log compacted; inconsistency sweep; LDS reading list**: 128 rows → 58 in a
+  high-impact and a low-impact table, so IDs may have moved (mapping in `worknotes/log.md`) —
+  `docs/decisions.md`, `worknotes/decisions_LDS_review.md`
 - 10-22 — **Planning thread closed**: plan as working assumption, audit log in `config.md`;
   D-022, D-024, D-052, D-125, D-128 — `worknotes/timeline_proposal.md`, `docs/components/config.md`
 - 10-22 — **Fourth answers; plan adjusted**: registry records (D-111), monitoring frame (D-040),

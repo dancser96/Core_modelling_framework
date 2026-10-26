@@ -1,0 +1,90 @@
+# cc_acquisition: the walking skeleton's use case on the synthetic dev dataset (Stage 1).
+# Every option is explained in TEMPLATE.yml. `null` = the automation level's default (D-023).
+schema_version: 1
+task: binary
+use_case: cc_acquisition                 # <product>_<activity> (D-128)
+domain: retail
+automation_level: assisted               # autonomous | assisted
+
+decision:                                # declared before any result; never changed through the audit log
+  type: probability                      # scores compared across products (D-049)
+  n: null
+  metric: null                           # derived from the decision type
+  gate_metric: null
+  baselines: [population_base_rate]
+
+entities:                                # only the entities this use case applies to (D-034)
+  entity_a:
+    sources:
+      features: [retail_mart]            # the first entry is the governing spine
+      # features: [feature_store]        # the feature store, alone (not implemented until OD-26)
+      # features: [feature_store, retail_mart]   # the feature store as the spine, the mart joined
+      targets: retail_holdings           # left-joined to the spine; contributes only the target
+
+data:
+  keys: {unit_id: client_id, month: snapshot_month}   # renamed to unit_id, month at load
+  model_input: cc_acquisition_input      # the saved model input's logical name
+  eligibility:                           # ordered Spark SQL; each step logs rows in -> out
+    - {name: has_income, define: "income IS NOT NULL"}
+    - {name: non_holders, filter: "cc_flag = 0", reason: "acquisition is scored for clients without a card"}
+    - {name: income_known_or_salaried, filter: "has_income OR salary_transfer_flag = 1",
+       reason: "card rules need a known income"}
+  target:
+    rule: flag_in_window                 # the flag turns 1 inside months t+1 … t+w
+    column: cc_flag                      # excluded from the candidates (lineage)
+    leavers: null                        # null | negative
+  split: {test_share: 0.3, seed: 42}     # by client, seeded hash; applied from Training on
+  rate_band: {max: 0.5}                  # contract check on the true population
+
+time:
+  train_months: {first: 2025-03-01, last: 2025-08-01}   # the observation window t1 … tk
+  target_window_months: 3                               # w: months t+1 … t+w
+  validation_month: 2025-11-01                          # v >= tk + w
+
+features:
+  candidates: {include: ["*"], exclude: []}             # glob patterns over the feature sources' columns
+
+strata:
+  variables: [segment, onboarding_channel]
+  max_levels: 10
+  min_events: 50
+
+eda:
+  key_features: {top_n: null, include: []}   # top-N by univariate ranking plus the listed ones
+  chart_sample_share: null
+
+feature_checks:
+  steps:                                 # ordered; each flags and logs, never drops
+    - {name: quality, params: {}}
+    - {name: leakage, params: {}}
+    - {name: time_alignment, params: {}}
+    - {name: eligibility_constant, params: {}}
+    - {name: stability, params: {psi_max: 0.25}}
+    - {name: redundancy, params: {}}
+
+training:
+  path: automl
+  estimator_list: [lgbm, xgboost, catboost]
+  max_iter: null                         # the trial budget: a rerun gives the same model
+  time_budget_s: null
+  seed: 42
+  search_space: {}
+  selection: {univariate_floor: 0.515, importance_floor: null}
+  categoricals: {min_level_count: 50}
+  calibration: {method: platt}           # on for probability decisions (D-049)
+  sampling: null                         # the synthetic dev target is not rare
+
+evaluation:
+  slices: {top_pct: [0.01, 0.10], top_n: [10000]}
+  views: []
+
+lifecycle:
+  promotion_gate: {min: null}            # set when the lifecycle stage is built
+
+inference:
+  model: production
+
+monitoring:
+  drift: {psi_max: 0.25}
+  outcome_join: true
+  retrain_policy: {max_age_months: null, psi_flags: null}

@@ -15,7 +15,7 @@ Phase 2 builds the frame properly and keeps the content light (D-040). The frame
 all four layers present, their tables with `schema_version`, `framework_version` (D-007 (b)) and
 flags, where they are written, and the seam to the data observability framework, whose needs shape
 the tables only once we have seen it in use (D-021, OD-13). The content is a few health and drift
-measures with flags; little usage is expected before Phase 3.
+measures with flags.
 
 | Layer | What | Phase 2 depth |
 |---|---|---|
@@ -44,7 +44,6 @@ measures with flags; little usage is expected before Phase 3.
 ## Open questions
 - Tooling and dashboards: the platform / MLOps team's to handle (D-079). The data observability
   integration is ours, designed after the work stream (D-021, OD-13). MLflow suits the registry and experiment tracking better than tracking
-  decay over time. Richer content (more measures, deeper realised performance and impact) waits
-  for Phase 3 (D-040).
+  decay over time.
 - How monitoring feeds the model inventory (OD-14).
 - Retraining automation and retirement policy (recorded as policy first, automation later).

@@ -39,7 +39,7 @@ them in order (D-028).
 
 | Stage | Consumes | Produces | Doc |
 |---|---|---|---|
-| **target_factory** (optional) | Source table(s) or the feature store | Targets + target lineage (saved, or passed on in memory); labels for scored months, for monitoring | [target_factory](components/target_factory.md) |
+| **target_factory** (optional) | The target source (or a feature source's column) | Targets + target lineage, passed on in memory or saved with the frames as the model input (D-131); labels for scored months, for monitoring (M4) | [target_factory](components/target_factory.md) |
 | **eda** | Data definition (entity, sources, eligibility, target spec, observation window, candidates) | EDA report; ledger columns (univariate ranking, key features) | [eda](components/eda.md) |
 | **feature_checks** | Same + EDA ledger | Check log, flags, proposed decisions, ledger columns, report | [feature_checks](components/feature_checks.md) |
 | **training** | Resolved features + train split | Local-tier run: model bundle, selection in the ledger, training metadata, drift reference (no refit on more data in Phase 2, D-052) | [training](components/training.md) |
@@ -52,7 +52,7 @@ them in order (D-028).
 
 **Cross-cutting pieces:**
 - [config](components/config.md)
-- [dataset](components/dataset.md): observation window, splits, sampling
+- [dataset](components/dataset.md): observation window, frames, the model input, splits, sampling
 - [feature ledger](components/feature_ledger.md)
 - [reporting](components/reporting.md)
 - [environment adapter](components/environment.md)
@@ -73,8 +73,10 @@ only once we have seen it in use (OD-13); both thin.
 
 - **One config file per use case** (unless it bloats, D-043), plus its decision audit log (D-006),
   written in YAML and validated by Pydantic v2; the Pydantic model is the programmatic API. It
-  carries `schema_version`, `task`, `automation_level` and `decision`. Shared sections (entities,
-  data, time, features) plus one section per stage. Details: [config](components/config.md).
+  carries `schema_version`, `task`, `automation_level` and `decision`. Shared sections
+  (`decision`, `entities`, `data`, `time`, `features`, `strata`) plus one section per stage, every
+  section validated from Stage 1 with the level's defaults (D-129). Details:
+  [config](components/config.md).
 - **Shared tables** (registry, scores, monitoring, model cards, labels) are written and read by
   many pinned versions at once (D-047), so they follow one rule (D-007): every row carries
   `schema_version` and `framework_version`; within a major version columns are only added
@@ -84,13 +86,20 @@ only once we have seen it in use (OD-13); both thin.
   bundles, other artifacts) stays similar and readable, while internals change freely. The 0.x
   pre-release writes only to sandpit and local paths; shared formats freeze from the first row
   release 1.0 writes inside the bank.
-- **`conf/base/`** is committed and holds framework defaults and generic use-case configs.
-  **`conf/local/`** is gitignored and holds environment-specific values (tables, paths, Spark, theme).
-  They merge base → local at load.
-- **Automation levels** (`autonomous` / `assisted`; `manual` in Phase 3) set defaults for every
+- **`conf/base/`** is committed and holds the use-case configs, the template and the environment
+  file's example. **`conf/local/environment.yml`** is gitignored and holds the environment facts
+  only, under its own schema (Spark settings, roots, the physical sources per entity, the collect
+  budget, the theme). It is loaded beside the config, never merged into it, and sits outside every
+  hash (D-130; [environment](components/environment.md)).
+- **The model input:** one saved table per instance, named in the config (`data.model_input`) and
+  written from Target Factory's notebook: the frames' source for every later stage, checked by its
+  data-definition hash; without the field the frames are built in memory (D-131;
+  [dataset](components/dataset.md#model-input-d-131)).
+- **Automation levels** (`autonomous` / `assisted`; `manual` later) set defaults for every
   stage (D-023); a level changes through a config edit or an audit-log entry, never a CLI
-  override; what each level decides by rule and by a person is OD-25. The **decision** drives the
-  metric, the gates and what reports emphasise (D-032).
+  override; what each level decides by rule and by a person is D-132 (the table in
+  [config](components/config.md)). The **decision** drives the metric, the gates and what reports
+  emphasise (D-032).
 - **Stepwise sections:** eligibility and feature checks are ordered lists of named steps, and each
   step logs rows/columns in → out and the reason. The feature ledger carries the per-feature trail.
 - **Resolved config:** the config with the audit-log entries replayed, saved with every artifact
@@ -127,8 +136,8 @@ production (or a pinned registered version); local models only in dev mode. Gate
 change-request path and the open questions are owned by [lifecycle](components/lifecycle.md).
 
 - **Identities** (D-052, D-088, D-094; the worked example is in [config](components/config.md)):
-  - config hash = the use-case definition after level resolution, without `conf/local` and the
-    housekeeping block; decisions in the audit log leave it unchanged
+  - config hash = the use-case definition after level resolution, without the environment file
+    and the housekeeping block; decisions in the audit log leave it unchanged
   - `data_definition_hash` = entity, sources, eligibility, target spec, observation window and
     candidates; the validation month is set in the config but sits outside this hash, and
     changing it after the config freezes is an audit-log entry, refused when Feature Checks
@@ -160,8 +169,8 @@ change-request path and the open questions are owned by [lifecycle](components/l
   month); failing
   keeps whatever production model is current and is recorded, and at a first deploy the deploy
   fails loud. There is no refit command in the
-  sandpit. Retraining on moved or extended data (later months, all clients, a longer window) is on
-  the Phase 3 wishlist. Whether production has the data and compute, determinism and what
+  sandpit. Retraining on moved or extended data (later months, all clients, a longer window) comes
+  later (D-052). Whether production has the data and compute, determinism and what
   "deployed" records stay open with the platform / MLOps team in M4 (OD-27).
 - **A DS session never writes to production** (D-033).
 - **Manifests** link a scoring batch to the models that produced it (`run_id` + `model_hash`).
@@ -226,37 +235,49 @@ follow the data. Details: [reporting](components/reporting.md), [evaluation](com
 One module owns:
 - the Spark session
 - the compat shim
-- the transport (filesystem vs `hdfs dfs`)
+- the transport (filesystem vs `hdfs dfs`; M2.4)
 - path construction, per tier and entity
-- table resolution (logical source → physical table, or the feature store: OD-26)
+- source resolution per entity (logical source → a parquet path or table, or the feature store:
+  OD-26)
 - the report theme location
 
-Framework code calls only its functions. On a laptop, `conf/local/` points the logical sources at the
-synthetic dataset. See [environment](components/environment.md) and
+Everything it needs comes from the environment file, `conf/local/environment.yml`, loaded beside
+the config under its own schema (D-130). Framework code calls only its functions. On a laptop the
+environment file points the logical sources at the synthetic dataset. See
+[environment](components/environment.md) and
 [`docs/context/environment.md`](context/environment.md).
 
-## 11. Proposed package layout (to confirm as components get built)
+## 11. Package layout
+
+Stage 1 (M2.1) builds the first part; the rest is proposed and confirmed as each component is
+built.
 
 - `src/core_modelling/`
   - `__init__.py`: version
-  - `__main__.py`: CLI entry: `run`, `register`, `promote`, `deploy` and `decide` (§7;
-    [run modes](components/run_modes.md) owns the list)
-  - `config/`: schema, loading (base+local merge), automation levels, migrations, the decision
-    audit log (record, replay, `LOGGABLE_SETTINGS`)
+  - `__main__.py`: CLI entry: `run` and `decide` (Stage 1); `register`, `promote`, `deploy` later
+    (§7; [run modes](components/run_modes.md) owns the list)
   - `_compat.py`: numpy/PySpark compat shim, imported first by `__init__.py` (T1)
-  - `environment.py`: Spark session, transport, paths, sources
-  - `dataset.py`: observation window, eligibility, splits, sampling, collection
-  - `target_factory/`: target builders by task (extension point), lineage
+  - `environment.py`: the environment file's schema, `get_spark_session`, source reading, paths
+  - `config/`: `schema.py` (the Pydantic models, one per section), `levels.py` (`LEVEL_DEFAULTS`),
+    `migrations.py`, `identities.py` (the hashes), `audit_log.py` (entries, `record_decision`,
+    `show_decisions`, `resolve_config`, replay)
+  - `tasks.py`: `TASK_SPECS`, the per-task spec (target rules and contract checks in Stage 1)
+  - `target_factory.py`: `build_targets`, `target_lineage`, `run_target_factory`
+  - `dataset/`: `panel.py` (sources joined, eligibility, the target attached, candidates
+    resolved), `split.py` (the client split and sampling), `contract.py` (the contract checks),
+    `frames.py` (`Frames`, the collect with its printout, the model input saved and read)
+  - `run.py`: `run`, `STAGES`
   - `eda/`: population/target profile, univariate ranking, key features, pivots
   - `feature_checks/`: check steps, stability, lineage guard
   - `ledger.py`: feature ledger (create, append, resolve the final feature list)
-  - `training/`: model interface, AutoML path (FLAML), predefined path (Optuna, Phase 3), automated
-    selection, categorical encoding, calibration
+  - `training/`: model interface, AutoML path (FLAML), automated selection, categorical encoding,
+    calibration; the predefined path (Optuna) later
   - `evaluation/`: metrics by task, stratified metrics, baselines, view slots, comparison
   - `lifecycle/`: register, promote, deploy, registry records
   - `inference/`: scoring, batch outputs, manifests
   - `monitoring/`: health, drift, outcome joins, impact vs baselines
   - `reporting/`: HTML writer, plotly charts, styled tables, model card, themes
+- `conf/base/`: `cc_acquisition.yml`, `TEMPLATE.yml`, `environment.example.yml`
 - `synthetic/`: dev-only synthetic data package (top level; not part of `core_modelling`)
 
 A folder becomes a single module file when it only needs one. Don't create empty sub-packages ahead
@@ -273,10 +294,14 @@ private (`_name`). Only what is listed here is public and covered by `CLAUDE.md`
 deprecation; in 0.x they change freely (D-007 (c)). The table is filled in as it is built.
 
 Planned, not built: one function per stage, `run`, the CLI commands (`run`, `register`, `promote`,
-`deploy`, `decide`) and the config schema. Public from M2.1, when it builds the Public API: the
-decision audit log's `record_decision`, `show_decisions` and `resolve_config` (D-125;
-[config](components/config.md#decision-audit-log-d-125)), and the environment adapter's
-Spark-session function (today the private `_get_spark_session`, D-024).
+`deploy`, `decide`) and the config schema. Stage 1 (M2.1) makes these public (D-024):
+`load_config`, `get_spark_session`, `run_target_factory`, `build_frames`, `save_model_input`,
+`record_decision`, `show_decisions`, `resolve_config`, `read_resolved_config` and `run`, plus the
+CLI commands `run` and `decide`. Signatures: [config](components/config.md#interface),
+[environment](components/environment.md#interface),
+[target factory](components/target_factory.md#interface), [dataset](components/dataset.md#interface).
+The frames and the model input are what a DS explores in a notebook copy, which is why
+`build_frames` and `save_model_input` are public.
 
 | Function | Module | Since |
 |---|---|---|

@@ -26,10 +26,9 @@ so users can see and debug what happens under the hood.
    window ablation, whose design that doc owns). Each variant changes only that field (same
    eligibility, candidates, budget, seeds, sampling rule). The comparison report comes from
    [evaluation](evaluation.md). A sweep that picks a variant picks on train and test metrics,
-   weighted; the validation month is reported, never chosen on (D-083). In Phase 2 the reports,
-   sweep tables included, show the validation metric and people are trusted not to choose on it;
-   whether to gate data against the validation month's use is a Phase 3 wishlist question. The name
-   is still to be decided.
+   weighted; the validation month is reported, never chosen on (D-083). The reports,
+   sweep tables included, show the validation metric and people are trusted not to choose on it.
+   The name is still to be decided.
 4. **Guided notebooks, one per stage.** Each opens with what the stage is for, what to look at, which
    decisions to record in the decision audit log (`record_decision`, D-125), and links to the
    docs. Then: load config → call the stage → display the artifacts. Written as instructions, not

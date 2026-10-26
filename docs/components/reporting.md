@@ -21,16 +21,14 @@ artifacts only.
    and retraining in production regenerates them anyway (D-036).
 2. **Every report has the same structure:**
    1. A one-page summary for business and governance readers. It opens with a **choices block**:
-      what was chosen (automation level, decision, metric, sampling; modelling path from Phase 3,
-      D-020), the alternatives, and
+      what was chosen (automation level, decision, metric, sampling), the alternatives, and
       rule-based warnings (e.g. few positive events, pooled AUC far above within-segment AUC, a
       choice among variants made on test metrics, D-083).
    2. Core views.
    3. Extended views, or "not available: reason".
    4. A technical appendix.
 3. **Theme:** neutral in the repo. A theme file in `conf/local/` (palette, fonts, logo path) is
-   the Phase 2 mechanism; the corporate look it applies inside the bank comes after
-   internalisation (Phase 3).
+   the mechanism.
 4. **Model card = structured facts only**, with a versioned schema (§2). It covers:
    - config summary, data definition and lineage, dates, eligibility;
    - sampling, calibration (prior shift and any calibration step);
@@ -39,8 +37,7 @@ artifacts only.
    - unresolved flags, human decisions and the feature sign-off (D-031);
    - for a refit: the parent run and its evaluation metrics (D-052).
 
-   It is designed so a later generator can map it onto the internal model documentation standard
-   (Phase 3).
+   It is designed so a later generator can map it onto the internal model documentation standard.
 
 ## Chart rules (a living rule set — extend it whenever a chart is reviewed)
 1. **Axes follow the data.** For rates use `(0, 1.25 × max plotted value)`. Zoom reliability curves to

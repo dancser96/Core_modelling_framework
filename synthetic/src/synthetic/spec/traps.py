@@ -1,8 +1,9 @@
 """Trap spec of the synthetic retail book: every trap, as plain data.
 
 Traps sit on two products, credit-card acquisition and personal-loan opening, so a test of either
-target meets every kind (D-064); a few traps concern no product (null controls, quality, drift,
-dirty data, extra columns). `trap_column` tells the two sorts apart:
+target meets every kind (D-064); a few traps concern no product (null controls, quality: near
+constant, all null, constant, high cardinality, low fill; drift, dirty data, extra columns).
+`trap_column` tells the two sorts apart:
 - True: a trap column, added only to test the framework; its name ends in `_trap_<kind>`;
 - False: the trap sits in real columns: an ordinary column (or several, or none in particular)
   whose realistic behaviour is the trap. These keep their real names: the framework meets the
@@ -48,6 +49,21 @@ TRAPS = [
     dict(kind="decimal_type", trap_column=False, product="cc", target=None,
          column="cc_limit", parameters={"type": "decimal(18,2)"},
          expected="Spark reads a decimal; pandas gets Python objects unless it casts"),
+    dict(kind="missing_leak", trap_column=True, product="cc", target="cc_acquire",
+         column="cc_offer_code_trap_missing_leak",
+         parameters={"w": 3, "fill_acquirers": 0.8, "fill_others": 0.01, "codes": 20, "prefix": "OFR"},
+         expected="filled for 80% of non-holders who take the card within 3 months, 1% of the other non-holders, never for holders: the missingness is the leak, the codes mean nothing"),
+    dict(kind="process_leak", trap_column=True, product="cc", target="cc_acquire",
+         column="application_cc_cnt_trap_process_leak",
+         parameters={"precede_chance": 0.8, "declined_share": 0.3},
+         expected="beats the oracle for acquisitions in the next month"),
+    dict(kind="shifted", trap_column=True, product="cc", target="cc_acquire",
+         column="cc_limit_trap_shifted", parameters={"months": 1},
+         expected="holds next month's cc_limit: beats the oracle for acquisitions next month; null where the client has no next month"),
+    dict(kind="redundant", trap_column=True, product="cc", target="cc_acquire",
+         column="relationship_months_trap_redundant",
+         parameters={"of": "relationship_days", "days_per_month": 30.44},
+         expected="a monotone transform of relationship_days (rank correlation 1): carries the onboarding wave twice; the redundancy check flags the pair"),
     # --- Personal loan: opening (`loan_personal_cnt` rises within the window) ---
     dict(kind="process_leak", trap_column=True, product="loan_personal", target="loan_personal_open",
          column="application_loan_personal_cnt_trap_process_leak",
@@ -90,6 +106,30 @@ TRAPS = [
     dict(kind="all_null", trap_column=True, product=None, target=None,
          column="legacy_risk_grade_trap_all_null", parameters={"type": "string"},
          expected="flagged by the quality checks"),
+    dict(kind="null_control", trap_column=True, product=None, target=None,
+         column="marketing_consent_flag_trap_null_control",
+         parameters={"share_one": 0.4, "persistent": True},
+         expected="univariate AUC ≈ 0.5 for every target; a balanced flag, so not near-constant"),
+    dict(kind="high_cardinality", trap_column=True, product=None, target=None,
+         column="referral_branch_code_trap_high_cardinality",
+         parameters={"levels": 300, "exponent": 1.1, "prefix": "BR", "persistent": True},
+         expected="flagged by the quality checks (300 levels, a long Zipf tail); no level stands out for any target"),
+    dict(kind="constant", trap_column=True, product=None, target=None,
+         column="booking_country_trap_constant", parameters={"value": "UAE"},
+         expected="flagged by the quality checks"),
+    dict(kind="constant", trap_column=True, product=None, target=None,
+         column="statement_cycle_days_trap_constant", parameters={"value": 30},
+         expected="flagged by the quality checks"),
+    dict(kind="low_fill", trap_column=True, product=None, target=None,
+         column="loyalty_points_bal_trap_low_fill",
+         parameters={"fill_share": 0.01, "persistent": True, "distribution": "lognormal",
+                     "median": 5000, "sigma": 1.0},
+         expected="filled for 1% of clients, in every one of their months; flagged by the quality checks"),
+    dict(kind="low_fill", trap_column=True, product=None, target=None,
+         column="complaint_category_trap_low_fill",
+         parameters={"fill_share": 0.003, "persistent": False,
+                     "levels": ["fees", "card", "service", "digital", "branch", "other"]},
+         expected="filled in 0.3% of rows, at random; flagged by the quality checks"),
     dict(kind="drift", trap_column=False, product=None, target=None,
          column="login_digital_mobile_cnt",
          parameters={"from": "seasons.drift"},

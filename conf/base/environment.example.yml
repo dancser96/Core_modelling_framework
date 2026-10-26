@@ -1,0 +1,30 @@
+# The environment file (D-130): where the framework runs, never what the model is. Copy it to
+# conf/local/environment.yml (gitignored), replace every /ABSOLUTE/PATH with your checkout's path,
+# and point the framework at it with the path argument or the CORE_MODELLING_ENVIRONMENT variable.
+# Inside the bank the same keys hold the cluster's settings, hdfs:// roots and Hive tables. A key not
+# listed here is refused, so a modelling setting can't hide in this file.
+schema_version: 1              # the schema this file follows; older files migrate at load
+spark:
+  master: "local[*]"         # local[*] on a laptop; the cluster master inside the bank
+  driver_memory: 2g          # the driver's memory; the collect budget below must fit in it
+  shuffle_partitions: 8      # spark.sql.shuffle.partitions: small on a laptop
+  time_zone: UTC             # spark.sql.session.timeZone; the bank sets its own
+  extra: {}                  # any other spark.* setting, key and value verbatim
+roots:
+  data: /ABSOLUTE/PATH/data  # the layers of data/README.md (01_raw … 08_reporting) hang off it
+  registered: null           # the registered tier's root: set when M2.4 builds register / promote
+  production: null           # the production tier's root: M2.4
+sources:                     # entity → logical name (as the use-case config says it) → physical
+  entity_a:
+    # format: parquet → path: a folder of month-partitioned parquet, absolute or a URI (hdfs://…);
+    # a relative path is refused. The synthetic dev dataset comes from `python -m synthetic --preset dev`.
+    retail_mart:          {format: parquet, path: /ABSOLUTE/PATH/data/01_raw/synthetic_dev/mart}
+    retail_holdings:      {format: parquet, path: /ABSOLUTE/PATH/data/01_raw/synthetic_dev/holdings}
+    # the saved model input of the cc_acquisition use case (save_model_input writes it here)
+    cc_acquisition_input: {format: parquet, path: /ABSOLUTE/PATH/data/05_model_input/cc_acquisition/entity_a}
+    # Inside the bank a source is usually a Hive table:
+    # retail_mart:        {format: table, table: database.table}
+    # A feature_store format arrives with OD-26; until then it is refused at load:
+    # retail_features:    {format: feature_store}
+collect_budget_gb: 1.5       # above this estimated size, collecting a frame to pandas prints the callout
+theme: null                  # the report theme file in conf/local, after internalisation

@@ -1,6 +1,7 @@
 """Synthetic data on disk: what is written reads back as generated, stale data fails loud, the
 command line writes a dataset, and the canonical dataset fits its time and memory budget."""
 
+import calendar
 import json
 import subprocess
 import sys
@@ -8,8 +9,9 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from pyspark.sql import SparkSession
 
-from synthetic.output import load_truth, read_output, write_mart
+from synthetic.output import HOLDINGS_COLUMNS, load_truth, read_output, write_mart
 
 
 def test_written_dataset_reads_back_as_generated(
@@ -25,6 +27,25 @@ def test_written_dataset_reads_back_as_generated(
     assert truth == memory_truth == load_truth(out_dir)
     flags = [c for c in written.columns if c.endswith("_flag")]
     assert flags and (written[flags].dtypes == "int32").all()
+
+
+def test_holdings_are_the_marts_flags_on_the_same_keys(
+    spark: SparkSession,
+    unit_output: tuple[str, dict],
+    unit: tuple[pd.DataFrame, pd.DataFrame, dict],
+) -> None:
+    """The holdings table is the mart's key and six flags for every month, each month tagged with
+    its last day (the mart's with its first), and Spark reads the flags as int and the month as a
+    date."""
+    mart = unit[0]
+    expected = mart[[*HOLDINGS_COLUMNS[:1], "snapshot_month", *HOLDINGS_COLUMNS[1:]]].copy()
+    expected["snapshot_month"] = [
+        m.replace(day=calendar.monthrange(m.year, m.month)[1]) for m in expected["snapshot_month"]
+    ]
+    pd.testing.assert_frame_equal(read_output(unit_output[0], "holdings"), expected)
+    types = dict(spark.read.parquet(f"{unit_output[0]}/holdings").dtypes)
+    assert {types[c] for c in HOLDINGS_COLUMNS[1:]} == {"int"}
+    assert types["snapshot_month"] == "date"
 
 
 def test_client_sample_reads_every_month_of_a_fixed_sample(

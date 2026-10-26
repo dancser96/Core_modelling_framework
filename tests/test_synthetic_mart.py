@@ -47,9 +47,41 @@ def test_names_parse_into_their_parts() -> None:
     assert parse_column("months_since_last_fx", products)["of"]["kind"] == "vol"
     assert parse_column("casa_bal_0_2_vs_3_5_months_ratio", products)["base"] == "casa_bal"
     assert parse_column("extra_0001_trap_weak", products)["kind"] == "weak"
+    trap = parse_column("loyalty_points_bal_trap_low_fill", products)
+    assert [trap[k] for k in ("group", "name", "kind")] == [
+        "trap",
+        "loyalty_points_bal",
+        "low_fill",
+    ]
     for name in ("cc_flagg", "spend_xx_vol", "casa_bal_0_2_months_mean", "months_since_last_x"):
         with pytest.raises(ValueError):
             parse_column(name, products)
+
+
+# Each trap column's Spark type, in the snapshot's order: scores and counts bigint, amounts double,
+# codes and categories string, flags int; the all-null grade is written as a string.
+TRAP_SPARK_TYPES = {
+    "cc_preapproval_score_trap_leak": "bigint",
+    "cc_campaign_response_score_trap_leak": "bigint",
+    "cc_acquire_next_3_months_flag_trap_upstream_target": "bigint",
+    "application_loan_personal_cnt_trap_process_leak": "bigint",
+    "loan_personal_bal_trap_shifted": "double",
+    "cc_offer_code_trap_missing_leak": "string",
+    "application_cc_cnt_trap_process_leak": "bigint",
+    "cc_limit_trap_shifted": "double",
+    "insurance_premium_vol_trap_null_control": "double",
+    "branch_visit_cnt_trap_null_control": "bigint",
+    "preferred_language_trap_null_control": "string",
+    "paper_statement_flag_trap_near_constant": "int",
+    "legacy_risk_grade_trap_all_null": "string",
+    "marketing_consent_flag_trap_null_control": "int",
+    "referral_branch_code_trap_high_cardinality": "string",
+    "booking_country_trap_constant": "string",
+    "statement_cycle_days_trap_constant": "bigint",
+    "relationship_months_trap_redundant": "bigint",
+    "loyalty_points_bal_trap_low_fill": "double",
+    "complaint_category_trap_low_fill": "string",
+}
 
 
 def test_spark_reads_the_written_types(spark: SparkSession, unit_output: tuple[str, dict]) -> None:
@@ -67,11 +99,8 @@ def test_spark_reads_the_written_types(spark: SparkSession, unit_output: tuple[s
     ]
     assert {types[c] for c in counters} == {"bigint"}
     assert (types["casa_bal_0_5_months_std"], types["td_status"]) == ("double", "string")
-    # Two leaks, upstream target, process leak, shifted balance, the 3 null controls,
-    # near-constant flag, all-null.
-    traps = [types[c] for c in snapshot_columns() if "_trap_" in c]
-    expected = ["bigint"] * 4 + ["double", "double", "bigint", "string", "int", "string"]
-    assert traps == expected
+    traps = {c: types[c] for c in snapshot_columns() if "_trap_" in c}
+    assert traps == TRAP_SPARK_TYPES
 
 
 def _months(first: int, last: int) -> WindowSpec:

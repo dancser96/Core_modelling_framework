@@ -10,9 +10,11 @@ while fewer than b + 1 months are on the book (a ratio needs 6); a utilisation r
 month of its window had a card, a ratio also when its 3–5 average is 0. A "since last" column is
 null until a first non-zero month since joining. Earlier months come from
 `events.values_at`; where the history a case needs lies before the mart's first month (the
-burn-in), only what the visible months decide is checked. Rollup values are left to the Spark
-recompute in the tests. Every row is a rule (tolerance 0). The family reads every mart column
-(`MART_COLUMNS = None`) and only the oracle's keys, which it doesn't use.
+burn-in), only what the visible months decide is checked. Columns filled at random (missing
+income, the low-fill traps, the missing-value leak) have no null rule here: the traps family checks
+their fill shares. Rollup values are left to the Spark recompute in the tests. Every row is a rule
+(tolerance 0). The family reads every mart column (`MART_COLUMNS = None`) and only the oracle's
+keys, which it doesn't use.
 """
 
 import re
@@ -52,9 +54,27 @@ STRING_COLUMNS = (
     "emirate",
     "onboarding_channel",
     "preferred_language",
+    "booking_country",
+    "referral_branch_code",
+    "complaint_category",
+    "cc_offer_code",
 )
-INTEGER_COLUMNS = ("age", "relationship_days", "residence_days", "days_since_last_login_digital")
-ANY_NULLS = ("income",)  # missing income has no rule: not at random, plus a little at random
+INTEGER_COLUMNS = (
+    "age",
+    "relationship_days",
+    "residence_days",
+    "days_since_last_login_digital",
+    "statement_cycle_days",
+    "relationship_months",
+)
+# Filled at random, so no null rule: income (not at random, plus a little at random) and the traps
+# whose fill shares the traps family checks.
+ANY_NULLS = (
+    "income",
+    "loyalty_points_bal_trap_low_fill",
+    "complaint_category_trap_low_fill",
+    "cc_offer_code_trap_missing_leak",
+)
 
 
 def check_mart(mart: pd.DataFrame, oracle: pd.DataFrame, truth: dict) -> pd.DataFrame:
@@ -205,7 +225,7 @@ def _since_last_case(
 
 def _state_cases(mart: pd.DataFrame, spec: dict) -> dict[str, tuple[str, np.ndarray]]:
     """Nulls set by a state: utilisation without a card, months to maturity without an account,
-    residence, the upstream target for holders and in the panel's last months, the shifted column
+    residence, the upstream target for holders and in the panel's last months, each shifted column
     without a next month, the all-null trap."""
     no_card = (_numbers(mart, "cc_flag") == 0).astype(float)
     cases = {"cc_utilisation_ratio": ("null iff no card", no_card)}

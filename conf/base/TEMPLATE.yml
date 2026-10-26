@@ -1,0 +1,128 @@
+# Use-case config template: copy to <product>_<activity>.yml and fill it in. Unknown keys fail at
+# load. Design and every field's description: docs/components/config.md.
+# How to read a line:
+#   `# required`        no default: the line must stay; fill the <angle brackets>, a plain value
+#                       is the common choice
+#   a plain value       the default: deleting the line gives exactly this value
+#   null · level: …     the automation level fills it; the comment names both levels' values
+#                       (D-132); for a key inside {…}, the comment names the key first
+#   any other null      off, or derived as the comment says
+#   # key: …            a commented-out alternative to the line above it
+# A comment line above a key explains its options. The resolved config records every value a run
+# used, defaults included.
+schema_version: 1                        # required · the schema this file follows; older files migrate
+task: binary                             # required · binary (a 0/1 outcome) | regression (an amount)
+use_case: <product>_<activity>           # required · lowercase snake_case; the last token is the activity
+domain: <domain>                         # required · retail | sme | corporate …: a label, never code
+# autonomous: rules decide, a first model fast | assisted: a person reviews each stage
+automation_level: assisted               # required
+
+decision:                                # required · set before any result, never changed later (§4.3)
+  # top_n: a fixed-size list | threshold: act above a cut | ranking: order only |
+  # probability: a calibrated score, comparable across products (D-049)
+  type: probability                      # required · how the scores are used
+  n: null                                # top_n only, and required there: the list size
+  metric: null                           # null: derived from the type; else a FLAML name (T9)
+  gate_metric: null                      # null: derived from the type; the promotion gate's metric
+  # add previous_model (a successor model), historic_predicted_rate (a rate already in use)
+  baselines: [population_base_rate]
+
+# only the entities this use case applies to; data is never merged across them (D-034)
+entities:                                # required
+  <entity>:
+    sources:                             # required
+      # ordered logical names: the first is the spine, the rest left-join to it
+      features: [<feature_source>]       # required
+      # features: [feature_store]        # the feature store alone (not implemented until OD-26)
+      # features: [feature_store, <feature_source>]   # the feature store as the spine
+      targets: null                      # null: the target is a column of a feature source
+      # targets: <target_source>         # a source left-joined to the spine for the target only
+
+data:                                    # required
+  keys: {unit_id: <unit_id_column>, month: <month_column>}   # required · the same in every source
+  model_input: null                      # null: the frames are built in memory on every run
+  # saved once, every later stage reads it; saving freezes the config (D-131):
+  # model_input: <product>_<activity>_input
+  eligibility: []                        # []: every row of the spine is eligible
+  # ordered Spark SQL; a define names a condition, a filter keeps rows and says why:
+  # eligibility:
+  #   - {name: has_income, define: "income IS NOT NULL"}
+  #   - {name: <step_name>, filter: "<spark_sql>", reason: "<reason>"}
+  target:                                # required
+    # the upstream target, or the column a rule reads; excluded from the candidates
+    column: <target_column>              # required
+    rule: null                           # null: `column` is an upstream target, used as is
+    # rule: flag_in_window               # built: the flag turns 1 inside months t+1 … t+w
+    # built target only · null: a client leaving inside the window gets a null target |
+    # negative: counts as 0
+    leavers: null
+    lineage: []                          # upstream only: the columns it was built from, excluded
+  split: {test_share: 0.3, seed: 42}     # the client split, a seeded hash; smaller for few clients
+  rate_band: {max: 0.5}                  # the target rate's ceiling; above it the data is suspect
+
+time:                                    # required
+  # a month is written as its first or its last day and held as its last
+  train_months: {first: <first_month>, last: <last_month>}   # required
+  target_window_months: 3                # required · w: months t+1 … t+w; longer for slow outcomes
+  validation_month: <validation_month>   # required · the out-of-time month, ≥ w after the last
+
+features:
+  # glob patterns over the feature sources' columns; exclude known non-features
+  candidates: {include: ["*"], exclude: []}
+
+strata:                                  # required · reported by every stage (D-038)
+  variables: [<strata_variable>]         # required · categorical columns for metrics and drift
+  max_levels: 10                         # rarer levels are pooled as other
+  min_events: 50                         # fewer positives in a stratum: shown as insufficient
+
+eda:
+  # the deep dives: the top-N by univariate ranking plus the listed ones
+  key_features: {top_n: null, include: []}   # top_n null · level: autonomous 10 · assisted 20
+  chart_sample_share: null               # null: every client; a share for a large window, reported
+
+feature_checks:
+  steps:                                 # ordered; each flags and logs, never drops (§4.6)
+    - {name: quality, params: {}}        # null share, constants, cardinality
+    - {name: leakage, params: {}}        # features that know the target
+    - {name: time_alignment, params: {}} # features that move with the target window
+    - {name: eligibility_constant, params: {}}   # constant on the eligible population
+    - {name: stability, params: {psi_max: 0.25}}   # drift across the window's months
+    - {name: redundancy, params: {}}     # near-duplicates
+
+training:
+  path: automl                           # FLAML, the only path in Phase 2
+  estimator_list: [lgbm, xgboost, catboost]   # one entry fixes the family (D-037)
+  # the trial budget: a rerun gives the same model; raise it when the metric still rises
+  max_iter: null                         # null · level: autonomous 50 · assisted 200
+  # an optional wall-clock cap; with it a rerun reproduces the recipe, not the model
+  time_budget_s: null                    # null: no cap
+  seed: 42
+  search_space: {}                       # {}: FLAML's own ranges; the override format is set with Training
+  selection:                             # automated selection by rule, on the train split only
+    univariate_floor: 0.515              # drop below this univariate statistic; binary: AUC
+    importance_floor: null               # null: off · drop below this importance share
+  categoricals: {min_level_count: 50}    # rarer and unseen levels become __other__
+  # platt: a few parameters, robust | isotonic: flexible, needs many rows | none
+  calibration: {method: platt}
+  sampling: null                         # null: no sampling; never on the framework's own (D-117)
+  # a rare binary target, keep every positive:
+  # sampling: {method: negative_downsampling, keep_fraction: 0.1, seed: 42}
+  # a common target or regression, fewer clients:
+  # sampling: {method: client_sample, share: 0.3, seed: 42}
+
+evaluation:
+  # metrics at the top of the ranking; top_n e.g. [10000]; either list may be empty
+  slices: {top_pct: null, top_n: []}     # top_pct null · level: autonomous [0.01, 0.1] · assisted [0.01, 0.05, 0.1]
+  views: []                              # extended views to add; the core views always render
+
+lifecycle:
+  promotion_gate: {min: null}            # null: no minimum until the stage is built
+
+inference:
+  model: production                      # production | a registered run_id, to pin one version
+
+monitoring:
+  drift: {psi_max: 0.25}                 # PSI above it flags a feature or the score
+  outcome_join: true                     # join matured labels to the scores (D-054)
+  # "retrain recommended" after this age or this many flags
+  retrain_policy: {max_age_months: null, psi_flags: null}   # null: not set

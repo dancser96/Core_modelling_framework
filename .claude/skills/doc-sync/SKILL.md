@@ -32,10 +32,11 @@ a doc); this skill applies them.
 5. **Style.** Edit text in place (integrate; don't append "update" sections). Verdict first,
    concise. Mark unverified claims as unverified. Roles, not names; no bank identifiers.
 6. **Worknotes (shared with the Lead DS).** Refresh `worknotes/sync.md` following the rules in
-   `worknotes/README.md` → "Writing `sync.md` for the LDS": new decisions by reference at the top,
-   review list most important first then newest, "last 2 days" and a terse "last 7 days" recap, each
-   at most one page and only the important changes (one bullet per topic, no info dump, no tooling or
-   setup noise).
+   `worknotes/README.md` → "Writing `sync.md` for the LDS": "In short" at the top in plain words
+   without references, one line pointing to the short-term open decisions above an untagged review
+   list (most important first, then newest), "last 2 working days" (soft ceiling 40 lines, hard 50)
+   and a terse "last 7 working days" recap (at most one page), only the important changes (one
+   bullet per topic, no info dump, no tooling or setup noise).
    Add to `worknotes/log.md`, merging into the existing entry when the same topic was updated the
    same or a neighbouring day (each update keeps its date). This happens every time, not only for big changes.
 7. **Docs guide.** If a doc was added, renamed or deleted, update `docs/README.md` (reading order,

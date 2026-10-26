@@ -6,8 +6,8 @@
 It prints the size of what it wrote and how long it took; `--checks` also runs every check family
 (each in its own process), saves the tables in `<out>/checks/`, which the checking notebook reads,
 prints each family's pass count and exits with status 1 if any row fails. The output folder must
-not hold a dataset already; `conf/local/sources.yml` then points the logical source at
-`<out>/mart`.
+not hold a dataset already; the environment file `conf/local/environment.yml` then maps
+the sources to `<out>/mart` and `<out>/holdings`.
 """
 
 import argparse

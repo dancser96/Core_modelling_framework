@@ -117,8 +117,8 @@ change request (D-021).
 
 ## Environment adapter (the seam)
 
-All of the following live in one place (the `environment` component) and are driven by
-`conf/local/`:
+All of the following live in one place (the `environment` component) and are driven by the
+environment file `conf/local/environment.yml` (D-130):
 - Spark session creation and settings (including Arrow)
 - The compat shim
 - The read/write transport (filesystem vs `hdfs dfs`)

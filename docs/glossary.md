@@ -12,8 +12,12 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Domain:** a business line (retail, SME, corporate). It is configuration, never a name in code.
 - **Segment:** a client group *within* a population (e.g. a value tier), used for stratified metrics
   and segment comparisons. Not a domain.
-- **Source:** an input dataset (table and schema) that a use case reads. A domain has several, and
-  different use cases often read different sources.
+- **Source:** an input dataset (table and schema) that a use case reads, named in the config by a
+  logical name that the environment file maps to a physical table or path per entity (D-130). A
+  domain has several, and different use cases often read different sources.
+- **Governing spine:** the first of a use case's ordered feature sources per entity. Its rows are
+  the population; the other feature sources and the target source are left-joined to it on the
+  keys (D-129).
 - **Feature mart:** a source with one row per unit per month, holding the unit's description,
   current-month values and backward rollups. What retail use cases read inside the bank, and what
   the synthetic data mimics (D-041).
@@ -42,7 +46,7 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Target window (`w`):** the forward months `(t+1 … t+w)` that a target looks at. It excludes the
   current month.
 - **Backward window:** the months a rolled-up feature looks back over, including the current one.
-  Default ≤ 6 months.
+  Upstream's business; the framework doesn't check it (D-129).
 - **OOT validation month (`v`):** the out-of-time month the model is judged on. `v ≥ tk + w`, so its
   target window never overlaps a training target window. Set in the config; changing it after the
   config freezes is an audit-log entry, refused when Feature Checks compared that month (D-088).
@@ -61,6 +65,20 @@ Whether this glossary is also published to the wider unit is part of the open do
   selection, calibration and every choice use train-split clients only (D-030).
 - **Eligibility:** the population a use case models and scores. It is defined by ordered config
   steps and applied identically to train, test, validation and inference.
+- **Define / filter step:** the two kinds of eligibility entry, both Spark SQL (D-129). A
+  `define` names a boolean condition that later entries reuse by name and is dropped before the
+  candidates are resolved; a `filter` keeps the rows where its condition is true (a null counts
+  as false), with a required reason, and logs rows in → out.
+- **Frames:** what the dataset hands a stage: `Frames(window, train, test, validation, log,
+  meta)`. The window frame (every eligible unit-month in the observation window, every client,
+  labels included) serves EDA and Feature Checks; train / test / validation serve Training on
+  (D-030; `docs/components/dataset.md`).
+- **Model input:** one saved table per instance, named in the config (`data.model_input`) and
+  written by `save_model_input` from the Target Factory notebook: the governing spine's rows with
+  the candidate columns, `target` and `split`, eligibility applied, beside a `metadata.json` with
+  its hashes and logs. Every later stage reads it and fails loud when its data-definition hash
+  differs from the config's; saving it freezes the config; inference reads the sources instead
+  (D-131).
 - **Contract checks:** checks on the true population before any sampling: unique unit per month,
   a non-degenerate target, a plausible rate band. Which apply comes from the per-task spec
   (`docs/components/dataset.md`, `CLAUDE.md` §4.8).
@@ -74,16 +92,19 @@ Whether this glossary is also published to the wider unit is part of the open do
   window and candidates (D-088). Its hash keys the EDA and Feature Checks artifacts that training
   requires; the validation month sits outside it: EDA never reads it, and Feature Checks reads it only
   to leave it out of its comparisons.
-- **Row budget:** the maximum number of rows collected from Spark for training. When the training
-  rows exceed it and the config declares no sampling, the dataset step fails loud, naming the row
-  count, the budget and the two sampling options (D-117).
-- **Learning-curve check:** training on 25 / 50 / 100% of the row budget and comparing the
-  results, to tell whether the cap costs accuracy (`docs/components/dataset.md`).
+- **Collect budget / collect printout:** `collect_budget_gb` in the environment file is the
+  memory a collected frame may take in the Python process. Before any frame leaves Spark the
+  dataset prints its rows, columns, the estimated size (rows × measured bytes per row × 2) and
+  the budget; above the budget the printout becomes a callout naming the two ways out (declare
+  sampling, or raise the budget and the Spark settings), and the collect proceeds (D-133). "Row
+  budget" is the retired name.
+- **Learning-curve check:** training on 25 / 50 / 100% of the sampled rows and comparing the
+  results, to tell whether sampling costs accuracy (`docs/components/dataset.md`).
 - **Downsampling:** train-only sampling (of negative rows or of clients), only when the config
   declares it; the framework never samples on its own (D-117). It is always recorded, and the
   prior-shift offset undoes any change it makes to the class balance.
 - **Recency weighting:** sample weights that give the later months of the observation window more
-  weight; not in Phase 2, on the Phase 3 wishlist (D-117).
+  weight; not in Phase 2 (D-117).
 
 ## Features
 
@@ -109,7 +130,7 @@ Whether this glossary is also published to the wider unit is part of the open do
   production (D-033). Separate from the feature sign-off, and from the CR process that runs
   `deploy`. Phase 2 builds no log of who signs off or approves a model: approvals stay in the PR
   and the change request, outside the framework; which source of people logs to build in is a
-  Phase 3 wishlist question (D-033). The feature sign-off is an audit-log entry that `register`
+  later question (D-033). The feature sign-off is an audit-log entry that `register`
   checks (D-031, D-125).
 - **Automated selection:** relevance pruning inside Training, on the train split only; its
   importance pruning reuses the calibration step's client-grouped out-of-fold folds (D-106).
@@ -129,23 +150,29 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Housekeeping block:** the part of the resolved config that records the framework and key-library
   versions, when the run was made and the run's identities. The config hash excludes it
   (`docs/components/config.md` req. 2, D-088).
-- **Base / local config:** `conf/base/` (committed, generic) merged with `conf/local/` (gitignored,
-  environment-specific).
+- **Environment file:** `conf/local/environment.yml` (gitignored), the one file of environment
+  facts: Spark settings, roots, the physical sources per entity by logical name, the collect
+  budget, the theme. It has its own schema (an unknown key fails loud), is loaded beside the
+  config by a path argument or `CORE_MODELLING_ENVIRONMENT`, is never merged into it and sits
+  outside every hash (D-130). `conf/base/` holds the committed use-case configs, the template and
+  the environment file's example. "Base / local config" and the merge are retired.
 - **Profile:** the retired name of the automation level and its config field (D-023). In the
   synthetic data spec (`docs/components/test_harness.md`), "profile" means a client tier (Private,
   Priority, Affluent, Mass), not this field.
 - **Automation level:** the config field `automation_level`, which sets the defaults for every
   stage and says how much of a run is decided by rules and how much by a person: Phase 2 has
-  `autonomous` (formerly `quick`) and `assisted` (formerly `standard`); `manual` comes in Phase 3.
+  `autonomous` (formerly `quick`) and `assisted` (formerly `standard`); `manual` comes later.
   Every level runs the same checks; the difference is human time, and a higher-value use case
-  brings more people and inputs that shape its choices. A level changes through a config edit or
-  an audit-log entry, never a CLI override (D-023). Not a lifecycle tier.
+  brings more people and inputs that shape its choices. What each level decides by rule and by a
+  person at each decision point is the mapping D-132 (`docs/components/config.md`). A level
+  changes through a config edit before the config freezes and a `set` entry in the audit log
+  after it, never a CLI override (D-023). Not a lifecycle tier.
 - **Decision audit log:** the append-only record of every decision taken after Target Factory, by
   a person or a rule; the config itself never changes (D-125). Replaying the config plus entries
   1–n gives the **resolved config**, a run's one input; it can be saved as one file. The feature
   ledger is its per-feature part (`docs/components/config.md`).
 - **Decision point / pathway:** a decision point is a place in a run where something is chosen, by
-  a rule or a person (draft inventory in `docs/components/config.md`); a run's pathway is the
+  a rule or a person (the table in `docs/components/config.md`, D-132); a run's pathway is the
   chain of decision points it passed and what was chosen at each, read from the decision audit log.
 - **Decision (business decision):** how the scores will be used (e.g. top-N list, threshold, ranking,
   probability). It drives the optimisation metric, the gates and what reports emphasise.
@@ -156,19 +183,20 @@ Whether this glossary is also published to the wider unit is part of the open do
 
 - **Target Factory:** the optional stage that builds targets (crunch name: Data Creation).
 - **Notebook mode / config mode:** Target Factory's two ways of running one spec: build, inspect
-  and save a table that later stages read, or hand the result to the next stage in memory with
-  the spec's hash recorded (`docs/components/target_factory.md`).
+  and save the model input that later stages read, or hand the result to the next stage in memory
+  with the spec's hash recorded (`docs/components/target_factory.md`, D-131).
 - **EDA**, **Feature Checks**, **Training**, **Evaluation**, **Inference**, **Monitoring** (earlier
   name: Tracking): the stages, in run order with the lifecycle steps between Evaluation and
   Inference.
 - **Due-diligence gate:** Training refuses to run unless EDA and Feature Checks artifacts exist for
   the same data-definition hash; the `autonomous` level runs them first (`CLAUDE.md` §4.13, D-031).
 - **Modelling path:** `automl` (FLAML, the only path in Phase 2) or `predefined` (a named model
-  family tuned with Optuna; Phase 3, D-020).
+  family tuned with Optuna; later, D-020).
 - **Model interface:** the small `fit` / `predict` / `describe` contract every model family
-  follows: plain functions per family in Phase 2, wrapped in a `Protocol` once the predefined path
-  exists (Phase 3, D-100).
-- **Trade-off chart:** (Phase 3) tuning trials plotted as in-time metric vs train–test gap; it
+  follows: plain functions per family in Phase 2, written so a `Protocol` can wrap them unchanged
+  once the predefined path exists (D-100), which is why the shape is fixed now.
+- **Trade-off chart:** (later, with the predefined path) tuning trials plotted as in-time metric
+  vs train–test gap; it
   weighs train and test metrics, never validation (D-083). The user (or a level's rule) picks the
   point.
 - **Calibration (prior shift):** a log-odds offset that undoes the class-balance change caused by
@@ -182,8 +210,8 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Refit:** one more fit of the same recipe, linked to its evaluated parent by `parent_run_id`
   (D-052). In Phase 2 it is the production retrain, on the same data definition, which keeps the
   window and the clients and moves only the inference month; there is no refit command in the
-  sandpit. Refits on moved or extended data (later months, all clients, a longer window) are on the
-  Phase 3 wishlist.
+  sandpit. Refits on moved or extended data (later months, all clients, a longer window) come
+  later (D-052).
 - **Per-task spec:** the plain dict, one entry per task, that holds every task-specific hook
   (target builder, ranking statistic, metrics, baselines, calibration, output columns…) (D-050).
 - **Window ablation:** the same config trained on windows of different lengths; the choice between

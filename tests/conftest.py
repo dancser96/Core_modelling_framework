@@ -19,15 +19,24 @@ import pandas as pd
 import pytest
 from pyspark.sql import SparkSession
 
-from core_modelling.environment import _get_spark_session
+from core_modelling.environment import (
+    EnvironmentConfig,
+    Roots,
+    Source,
+    get_spark_session,
+)
 from synthetic.generate import generate_mart
 from synthetic.output import load_truth, write_mart
 
 
 @pytest.fixture(scope="session")
-def spark() -> Iterator[SparkSession]:
-    """A local Spark session shared by the whole test run, stopped at the end."""
-    session = _get_spark_session()
+def spark(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SparkSession]:
+    """A local Spark session shared by the whole test run, built through the adapter with its local
+    defaults and stopped at the end."""
+    env = EnvironmentConfig(
+        schema_version=1, roots=Roots(data=str(tmp_path_factory.mktemp("data")))
+    )
+    session = get_spark_session(env)
     yield session
     session.stop()
 
@@ -43,6 +52,21 @@ def unit_output(tmp_path_factory: pytest.TempPathFactory) -> tuple[str, dict]:
     """The unit preset with seed 0 written to a temporary folder: (out_dir, truth)."""
     out_dir = str(tmp_path_factory.mktemp("unit_output"))
     return out_dir, write_mart(out_dir, preset="unit", seed=0)
+
+
+@pytest.fixture(scope="session")
+def unit_env(
+    unit_output: tuple[str, dict], tmp_path_factory: pytest.TempPathFactory
+) -> EnvironmentConfig:
+    """An environment whose `entity_a` sources are the written unit mart and holdings, with the
+    local Spark defaults and a temporary data root."""
+    mart = Source(format="parquet", path=unit_output[0] + "/mart")
+    holdings = Source(format="parquet", path=unit_output[0] + "/holdings")
+    return EnvironmentConfig(
+        schema_version=1,
+        roots=Roots(data=str(tmp_path_factory.mktemp("data"))),
+        sources={"entity_a": {"retail_mart": mart, "retail_holdings": holdings}},
+    )
 
 
 @pytest.fixture(scope="session")

@@ -1,16 +1,20 @@
 # conf/base — committed configuration
 
-Framework defaults (including the `autonomous` / `assisted` level defaults) and use-case configs.
+The use-case configs and the examples a new use case starts from:
+- `cc_acquisition.yml`: the walking skeleton's use case, card acquisition on entity A;
+- `TEMPLATE.yml`: every option with a one-line when-to-use;
+- `environment.example.yml`: the environment file's example with placeholder paths; copy it to
+  `conf/local/environment.yml` and fill it in (`docs/components/environment.md`, D-130).
+
 A use case is **one config file** (unless it bloats) and its decision audit log (D-006, D-043). The
-config holds the intent: the candidates, the rules and the settings. People's keep / exclude
-decisions are audit-log entries the run replays, never config content (D-125,
-`docs/components/config.md`). Values here are **generic**: logical source names, relative layouts,
-modelling settings. Physical, environment-specific values (Hive tables, HDFS roots, Spark settings,
-report theme) belong in `conf/local/`, which is merged on top at load time.
+config holds the intent: the entities and their logical sources, the data definition, the
+candidates, the rules and the settings; the level defaults fill what it leaves out
+(`docs/components/config.md`, D-129). People's keep / exclude decisions are audit-log entries the
+run replays, never config content (D-125). Nothing in `conf/base/` is physical: sources are logical
+names, and the physical tables, paths, Spark settings, collect budget and report theme live only
+in the environment file, which is loaded beside the config and never merged into it (D-130).
 
-The config schema is being redesigned in Phase 2 (`docs/components/config.md`). The template lists
-every option with a one-line when-to-use. The crunch-era schema and template live in
-`legacy/propensity_crunch/configs/` for reference.
-
-Rules: every config has `schema_version` and `task`; no bank identifiers or entity/domain names
-beyond generic placeholders; breaking changes follow `CLAUDE.md` §2.
+Rules: every config has `schema_version` and `task`; no bank identifiers, and no entity or domain
+names beyond generic placeholders; an unknown key fails loud at load; breaking changes follow
+`CLAUDE.md` §2. The crunch-era schema and template live in `legacy/propensity_crunch/configs/` for
+reference.

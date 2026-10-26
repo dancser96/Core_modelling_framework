@@ -17,3 +17,16 @@ def test_every_function_has_a_docstring() -> None:
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and not ast.get_docstring(node)
     ]
     assert not missing, "functions without a docstring:\n" + "\n".join(missing)
+
+
+def test_framework_code_never_reads_trap_names() -> None:
+    """The synthetic mart's planted columns carry `_trap_<kind>` names so people and tests can tell
+    them apart; the framework must find them from their statistics alone, since real data has no
+    such names."""
+    root = Path(__file__).resolve().parents[1]
+    offenders = [
+        str(path.relative_to(root))
+        for path in sorted((root / "src/core_modelling").rglob("*.py"))
+        if "_trap_" in path.read_text()
+    ]
+    assert not offenders, "framework code mentions trap names:\n" + "\n".join(offenders)

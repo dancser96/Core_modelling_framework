@@ -31,6 +31,7 @@ from synthetic.mechanisms.clients import (
     draw_subsegments,
     latent_means,
     months_on_book,
+    relationship_days,
     step_latents,
     subsegment_medians,
 )
@@ -41,6 +42,8 @@ from synthetic.mechanisms.traps import (
     extra_columns,
     finalize_lookahead,
     lookahead_months,
+    noise_columns,
+    start_noise_state,
     start_trap_state,
     trap_columns,
 )
@@ -61,6 +64,8 @@ STREAMS = (
     "extras",
     "regression",
     "attributes",  # hidden client attributes, so amounts' draws never move holdings
+    "noise",  # the noise, high-cardinality and low-fill trap columns (0.5.0)
+    "card_leaks",  # the card twins' and the offer code's look-ahead draws (0.5.0)
 )
 WEALTH = LATENTS.index("wealth")
 DESCRIPTION_COLUMNS = [
@@ -224,9 +229,10 @@ def _join_month(
 def finish_simulation(sim: dict) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
     """The months still buffered when the panel ends, oldest first, their look-ahead columns
     from the months that follow inside the panel (truncated windows)."""
-    buffer, rng = sim["buffer"], sim["rngs"]["leaks"]
+    spec, buffer, rngs = sim["spec"], sim["buffer"], sim["rngs"]
+    leaks, card = rngs["leaks"], rngs["card_leaks"]
     return [
-        (finalize_lookahead(sim["spec"], buffer[start:], rng), buffer[start][1])
+        (finalize_lookahead(spec, buffer[start:], leaks, card), buffer[start][1])
         for start in range(len(buffer))
     ]
 
@@ -240,7 +246,7 @@ def _new_clients(
     first_id: int,
 ) -> dict:
     """Clients of the given subsegments with their hidden traits, income, hidden attributes, ids
-    and persistent trap values (`traps.start_trap_state`).
+    and persistent trap values (`traps.start_trap_state`, `traps.start_noise_state`).
 
     The wealth base (hidden) is the subsegment's median income × exp(wealth loading × the wealth
     trait's deviation): no employment multiplier, so a retired Private client has small flows but
@@ -263,6 +269,7 @@ def _new_clients(
     n = len(clients)
     clients.insert(0, "client_id", np.arange(first_id, first_id + n))
     trap_state = start_trap_state(spec, n, rngs["traps"])
+    trap_state |= start_noise_state(spec, n, rngs["noise"])
     return {"clients": clients, "means": means, "z": z, "next_id": first_id + n,
             "trap_state": trap_state}  # fmt: skip
 
@@ -307,13 +314,15 @@ def buffer_month(
 
     Returns the simulation with its new buffer and the months now final (none or one).
     """
-    spec, rngs = sim["spec"], sim["rngs"]
-    traps = trap_columns(spec, sim["trap_state"], rngs["traps"])
+    spec, rngs, state = sim["spec"], sim["rngs"], sim["trap_state"]
+    traps = trap_columns(spec, state, rngs["traps"])
+    days = relationship_days(sim["clients"], sim["month"])
+    traps |= noise_columns(spec, state, days, rngs["noise"])
     traps |= extra_columns(spec, sim["n_extra_columns"], sim["z"], rngs["extras"])
     buffer = [*sim["buffer"], month_rows(sim, chances, mart_amounts, oracle_values, traps)]
     if len(buffer) <= lookahead_months(spec):
         return sim | {"buffer": buffer}, []
-    final = (finalize_lookahead(spec, buffer, rngs["leaks"]), buffer[0][1])
+    final = (finalize_lookahead(spec, buffer, rngs["leaks"], rngs["card_leaks"]), buffer[0][1])
     return sim | {"buffer": buffer[1:]}, [final]
 
 
@@ -329,7 +338,7 @@ def month_rows(
     `mart_amounts` are the month's mart amounts (`amounts.step_amounts`), `oracle_values` its
     other oracle columns (scores and lapse chances from `holdings.step_holdings`, the amounts'
     hidden columns, the regression oracle), `traps` its trap and extra columns
-    (`traps.trap_columns`, `traps.extra_columns`).
+    (`traps.trap_columns`, `traps.noise_columns`, `traps.extra_columns`).
     """
     clients, month = sim["clients"], sim["month"]
     month_end = (month + 1).astype("datetime64[D]").astype(int) - 1
@@ -344,7 +353,7 @@ def month_rows(
             **{col: clients[col].to_numpy() for col in DESCRIPTION_COLUMNS},
             "age": client_age(clients, month),
             "residence_days": (month_end - clients["residence_start"]).astype("Int64").array,
-            "relationship_days": month_end - clients["relationship_start"].to_numpy(),
+            "relationship_days": relationship_days(clients, month),
             **mart_holdings,
             **mart_amounts,
             **history_columns(sim["history"], months_on_book(clients, month), month.astype(int)),

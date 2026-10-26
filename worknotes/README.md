@@ -6,12 +6,11 @@ are **never loaded at session start**; they are read only when asked (`CLAUDE.md
 
 | File | Purpose | Written | Read |
 |---|---|---|---|
-| `sync.md` | The sync page: new decisions, what the LDS should review, questions, what changed in the last 2 and 7 days | Refreshed at the end of every turn that changed files, settled something or produced a finding | Before each sync; `/brief` |
+| `sync.md` | The sync page: what happened in short, what the LDS should review and decide, questions, what changed in the last 2 and 7 working days | Refreshed at the end of every turn that changed files, settled something or produced a finding | Before each sync; `/brief` |
 | `log.md` | The verbose trail, newest first: what changed, why, files, decisions | Appended at the same moments as `sync.md` | When the detail behind a sync item is needed |
 | `handovers/<topic>.md` | A chat handover, one file per topic, so several topics can run in parallel | `/handover <topic>` (overwrites that topic's file) | Only via `/resume <topic>` |
 | `decisions_LDS_review.md` | The twenty decisions the LDS should read first, in reading order, with why each matters and what feedback is wanted; rows leave once reviewed, new high-impact decisions join | By the SDS's request (2026-10-22); maintained by Claude as decisions land and reviews finish | The LDS, between syncs |
 | `<stage>/` (now `m2_1_foundation/`) | The folder of the stage being built: its design questions with defaults, the agreed build plan, the review guide. One folder at a time; deleted when the stage is done (the SDS, 2026-10-23) | At the start of each stage, updated through it | The SDS answers the questions and approves the plan; the LDS reads the review guide |
-| `synthetic_questions.md` | The LDS's synthetic to-dos (noise, low fill, naming) and the credit-card run-through: Q379–Q386 with defaults and the amendment to Stage 1's major step 2 | Once, 2026-10-25; deleted once the answers have landed in `docs/` and the Stage 1 plan | The SDS answers; the LDS for information |
 | `holistic_review_questions.md`, `timeline_proposal.md` | What is left of the planning-session set of 2026-10-20: the closed questions file, and the Phase 2 plan, the working assumption under review (D-022, OD-01). The review itself was deleted on 2026-10-22, its outcomes being in `docs/` | Once, by request; deleted when the SDS says | When the plan is shared with the CDS |
 
 **Rules**
@@ -23,21 +22,30 @@ are **never loaded at session start**; they are read only when asked (`CLAUDE.md
 
 **Writing `sync.md` for the LDS.** The SDS works on the framework about 6 hours a day; the LDS spends
 30–60 minutes, and only reads (code and markdown) and reviews, never writes or runs anything.
-- **New decisions first, by reference only:** one line at the top, e.g. "D-129–D-131". The LDS reads
-  them in `docs/decisions.md`; the sync page never restates them.
-- **Review list: most important first, then newest.** Every item is tagged **needs decision** or
-  **for information**, and at most five "needs decision" items are open at once (D-072). The LDS
-  reviews design docs and the ML-critical code (dataset, Target Factory, training, calibration,
-  evaluation) in full and samples the rest. An item stays until the SDS says the LDS has
-  finished it (that news usually arrives a day later), or the SDS drains the list.
-- **Last 2 days and last 7 days are each at most one page, and focus on what matters.** Only
-  important changes and updates that change the LDS's picture (design, scope, findings, something
-  ready to review, a blocker), never an info dump: pick, don't list everything. No tooling,
-  package versions, machine setup or "notes recorded" items; the detail stays in `log.md`.
-- **Last 2 days:** one bullet per topic, merging same-day and same-topic updates. A bullet older
-  than two days moves down into the 7-day recap as one line.
-- **Last 7 days: a terse recap kept for circling back**, for days 3–7. One line per topic (date or
-  date range, what, where to look). Lines older than seven days are removed.
+- **Windows count working days (Monday to Friday).** The 2-day window opens at the start of the
+  second-to-last working day up to today and runs to now, so weekend work always falls inside it
+  (on a Monday: Friday to Monday). The 7-day window opens at the seventh-to-last working day.
+  Each section heading carries its dates.
+- **"In short" first: what actually happened, in plain words.** Three to eight lines on the 2-day
+  window: what was done, settled or found, and what it means for the LDS. Context only: no D-, OD-
+  or Q-numbers and no paths; the references sit in the bullets below.
+- **Review list: most important first, then newest, without tags.** One bold line above the list
+  points to the decisions the LDS must take: the short-term open decisions in `docs/roadmap.md`,
+  by OD-number. A decision never appears as a review item or a tag; the items are things to read,
+  each short (about three lines): what, where, the feedback wanted. The LDS reviews design docs and
+  the ML-critical code (dataset, Target Factory, training, calibration, evaluation) in full and
+  samples the rest. An item stays until the SDS says the LDS has finished it (that news usually
+  arrives a day later), or the SDS drains the list.
+- **The two recent-changes sections focus on what matters.** Only important changes and updates
+  that change the LDS's picture (design, scope, findings, something ready to review, a blocker),
+  never an info dump: pick, don't list everything. No tooling, package versions, machine setup or
+  "notes recorded" items; the detail stays in `log.md`.
+- **Last 2 working days: a soft ceiling of 40 lines and a hard ceiling of 50** (lines of the file,
+  heading included; count them before finishing). One bullet per topic, merging same-topic updates
+  across the window. A bullet that leaves the window moves down into the 7-day recap as one line.
+- **Last 7 working days: a terse recap kept for circling back**, for working days 3–7, at most one
+  page. One line per topic (date or date range, what, where to look). Lines that leave the window
+  are removed.
 
 **Writing `log.md`.** Verbose and log-like, newest first. Updates on the same topic from the same
 or neighbouring days share one entry: the title carries the date range, each update keeps its date
@@ -50,10 +58,11 @@ as a sub-bullet, and the entry sits where its latest update falls.
 # Sync page
 _For the SDS and the LDS · last updated: YYYY-MM-DD · last sync: YYYY-MM-DD_
 
-**New or extended decisions in the last 2 days:** D-nnn–D-nnn (`docs/decisions.md`)
+**In short (MM-DD to MM-DD):** <three to eight lines in plain words: what happened, what it means for the LDS; no references>
 
 ## For the LDS: to review (most important first, then newest)
-- [ ] **<what to review>** (needs decision | for information) — <path> — feedback wanted: <the specific question>
+**Decisions needed from you: the short-term open decisions** in `docs/roadmap.md` → Open decisions (OD-nn, OD-nn, …)
+- [ ] **<what to review>** — <path> — feedback wanted: <the specific question>
 
 ## Questions for the LDS
 - <question> (OD-nn) — <one line of context; our leaning>
@@ -63,13 +72,13 @@ _For the SDS and the LDS · last updated: YYYY-MM-DD · last sync: YYYY-MM-DD_
 |---|---|---|---|
 | <question> (OD-nn) | <one line> | <leaning> | <who decides / forum> |
 
-## Last 2 days
-- **<topic>**: <what changed and why it matters to the LDS> — look at: <path>
+## Last 2 working days (MM-DD to MM-DD)
+- **<topic> (MM-DD(→ MM-DD))**: <what changed and why it matters to the LDS> — look at: <path / D-nnn>
 
 ## Demo next
 - <what to show> — `<command or notebook cell>` · `<path:line>`
 
-## Last 7 days
+## Last 7 working days (MM-DD to MM-DD)
 - MM-DD(–MM-DD) — **<topic>**: <one line> — <D-nnn / OD-nn / path>
 ~~~
 

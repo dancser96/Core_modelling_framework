@@ -1,6 +1,6 @@
 # Timeline proposal
 _Written 2026-10-20; reshaped 2026-10-21 and 10-22. The working assumption (D-022): we build on
-it now, while the LDS still reviews it and stakeholder buy-in comes next week. Once agreed, the
+it now, while the LDS still reviews it and stakeholder buy-in comes in the week of 10-26. Once agreed, the
 dates and the depth per component move to `docs/roadmap.md` (OD-01), and the plan goes to the CDS
 (D-022). Settled with it: milestones with dates per stage, not a task board, and December as a
 pre-release with two purposes (D-022); release 1.0 as the first change request, framework only
@@ -75,7 +75,7 @@ they are the first cut. Stage 5 (integrations and release) runs in M4 and both r
 | 2 | Feature Checks | thin (quality, leakage, time alignment, lineage) | deep (stability) | — |
 | 2 | Feature ledger | thin | deep (joined with the audit log) | — |
 | 2 | Reporting | thin (HTML, embedded plotly, styled tables) | deep (theme file) | — |
-| 2 | Synthetic data | as accepted (M1) | plus noise and very-low-fill columns (the LDS's to-dos) | — |
+| 2 | Synthetic data | as accepted (M1) plus the LDS's noise, constant, redundant and very-low-fill columns (0.5.0) | plus the `unstable` kind | — |
 | 3 | Training (FLAML) | thin; client groups (D-106); calibration chain right (D-049); bundle shape final | deep (categoricals, automated selection; retraining keeps the data definition, D-052) | — |
 | 3 | Evaluation | thin (core views, reliability among them) | deep (comparison, stratified) | Window ablation and the sweep function |
 | 3 | Model card | shape final | deep | — |
@@ -123,7 +123,7 @@ they are the first cut. Stage 5 (integrations and release) runs in M4 and both r
 
 ## How each block ends (D-072)
 - Each stage M2.1–M2.4 and round 1b ends in the SDS's review and the LDS's review with a review guide
-  (D-003). At most five "needs decision" items on the sync page.
+  (D-003). The decisions the LDS must take are the short-term open decisions in the roadmap.
 - The LDS reviews design docs and the ML-critical code in full (dataset, Target Factory, training,
   calibration, evaluation) and samples the rest.
 - A fresh-context holistic review closes each round, before its run-through.
@@ -135,7 +135,7 @@ they are the first cut. Stage 5 (integrations and release) runs in M4 and both r
 
 | Risk | Trigger | Response |
 |---|---|---|
-| Review backlog grows | More than five "needs decision" items for a week | The LDS reviews designs and ML-critical code only; the SDS reviews with review guides |
+| Review backlog grows | More than five items on the sync page's review list for a week | The LDS reviews designs and ML-critical code only; the SDS reviews with review guides |
 | Round 1a slips | M2.4 not done by 11-20 | Round 1b keeps the exit points; calibration depth and the presentable report move to round 2 |
 | Round 1b is short | The lost week of 11-30 | The exit points come first; the presentable report is the first item to move to round 2 |
 | An exit point's shape changes after the pre-release | A downstream team or the data observability session needs a different shape | Cheap until release 1.0's first shared row (D-007); collect the changes in run-through 1 |

@@ -8,9 +8,27 @@ import pytest
 from synthetic.checks.suite import run_checks
 from synthetic.generate import generate_mart
 from synthetic.mechanisms.mart import DERIVED_COLUMNS
-from synthetic.mechanisms.traps import APPLICATION, CAMPAIGN, LEAK, SHIFTED, UPSTREAM
+from synthetic.mechanisms.traps import (
+    APPLICATION,
+    CAMPAIGN,
+    CC_APPLICATION,
+    CC_SHIFTED,
+    LEAK,
+    OFFER_CODE,
+    SHIFTED,
+    UPSTREAM,
+)
 
-LOOKAHEAD_COLUMNS = [LEAK, CAMPAIGN, UPSTREAM, APPLICATION, SHIFTED]  # read up to 3 months ahead
+LOOKAHEAD_COLUMNS = [  # the trap columns that read up to 3 months ahead
+    LEAK,
+    CAMPAIGN,
+    UPSTREAM,
+    APPLICATION,
+    SHIFTED,
+    OFFER_CODE,
+    CC_APPLICATION,
+    CC_SHIFTED,
+]
 
 
 def test_population_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:

@@ -255,6 +255,12 @@ def client_age(clients: pd.DataFrame, month: np.datetime64) -> np.ndarray:
     return (month.astype(int) - clients["birth_month"].to_numpy()) // 12
 
 
+def relationship_days(clients: pd.DataFrame, month: np.datetime64) -> np.ndarray:
+    """Days since the relationship start at the end of `month`."""
+    month_end = (month + 1).astype("datetime64[D]").astype(int) - 1
+    return month_end - clients["relationship_start"].to_numpy()
+
+
 def months_on_book(clients: pd.DataFrame, month: np.datetime64) -> np.ndarray:
     """Monthly steps a client has lived by the end of `month`, the join month included."""
     days = clients["relationship_start"].to_numpy().astype("datetime64[D]")

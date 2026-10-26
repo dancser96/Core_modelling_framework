@@ -247,7 +247,9 @@ RETAIL = {
     "traps": TRAPS,
 }
 
+# unit: the tests; dev: daily work on the skeleton (D-091); canonical: demos and the slow tests.
 PRESETS = {
     "unit": {"spec": RETAIL, "n_clients": 5_000, "n_months": 24},
+    "dev": {"spec": RETAIL, "n_clients": 20_000, "n_months": 24},
     "canonical": {"spec": RETAIL, "n_clients": 100_000, "n_months": 24},
 }

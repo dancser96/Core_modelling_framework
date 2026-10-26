@@ -21,7 +21,7 @@ Three tiers in order, each with the step(s) that move a model on to the next:
      (D-125; [config](config.md#decision-audit-log-d-125)). It always writes the lossless
      plain-data model too (any other format may sit beside it), so every registered version stays
      promotable without unpickling (D-051). That copy is trusted on its family's verified round
-     trip; re-scoring each model's copy is a Phase 3 wishlist question.
+     trip.
 2. **REGISTERED**: immutable, content-hashed, versioned per model key.
    - `promote`: picks the production candidate among the registered versions (D-033); the approved
      PR is the sign-off. Builds a verified bundle (model, resolved config, the audit-log slice read
@@ -39,8 +39,7 @@ Three tiers in order, each with the step(s) that move a model on to the next:
      EDA artifact; each within tolerances declared in the config, never on the validation month.
      Failing keeps whatever production model is current and is recorded; at a first deploy the
      deploy fails loud (D-052).
-3. **PRODUCTION**: one version per model key in Phase 2 (D-111); shadow challengers are on the
-   Phase 3 wishlist.
+3. **PRODUCTION**: one version per model key (D-111).
 
 - **A DS session never writes to production.** Production changes go through change requests (CR),
   which need pre-agreed windows and platform and security approval (how long they take: see
@@ -52,10 +51,9 @@ Three tiers in order, each with the step(s) that move a model on to the next:
   from the sandpit to production is never pickle. The folder layout per entity × domain is OD-06.
 - **Sign-offs, kept apart:** the **feature sign-off** (D-031) gates `register` and is
   recorded with the run; the **promotion sign-off** is the approved PR (code review by the project
-  owner/lead) behind `promote`; the CR process approves and runs `deploy`. Phase 2 builds no log
+  owner/lead) behind `promote`; the CR process approves and runs `deploy`. The framework builds no log
   of who signs off or approves a model: the PR and CR approvals stay in the PR and the change
-  request, outside the framework. Which source of people logs the framework should build in is a
-  Phase 3 wishlist question (D-033). The feature sign-off stays an audit-log entry that `register`
+  request, outside the framework. The feature sign-off stays an audit-log entry that `register`
   checks (D-031, D-125).
 - **Model key** = (entity, domain, use case, split). split = `all` in Phase 2; it is reserved for
   per-segment models later.
@@ -114,8 +112,7 @@ Promote-on-inference coupling; hash verification; manifest reproduction; T2–T4
   it scores (see `deploy` above); `model_hash` and `parent_run_id` identify what scored. In Phase 2 a production retrain
   on the same data definition (neither more clients nor a longer window) is the default deploy path: the
   parameters differ only because production data differs from sandpit data, and only the inference
-  month moves. There is no refit command in the sandpit. Retraining on moved or extended data
-  (later months, all clients, a longer window) is on the Phase 3 wishlist (D-052). Still open with the platform
+  month moves. There is no refit command in the sandpit. Still open with the platform
   / MLOps team (M4): whether production has the data and compute to train, determinism, and what
   "deployed" then records.
 - Not to solve now: the code version of a run made from uncommitted code, and which repo's PR is

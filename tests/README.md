@@ -20,8 +20,10 @@
   standard errors on positive events). On the `unit` preset it stays under two minutes; the
   canonical run is nightly or on request (D-100).
 
-Tests import the dev-only `synthetic` package. The `unit` preset keeps them fast; the `canonical`
-dataset is for notebooks and demos.
+Tests import the dev-only `synthetic` package and generate their data from its seed when they run
+(the `unit` preset, 5k clients), so they never read a stored dataset. The package goes into the
+bank with the tests as code, never as data (D-041). The `dev` dataset (20k) is for daily work and
+the `canonical` one (100k) for the slow tests, notebooks and demos, outside the bank.
 
 **By release 1.0:** every function tested, internal CI/CD and Sonar checks passing (D-014). Tests
 are a milestone criterion, not part of a depth level.

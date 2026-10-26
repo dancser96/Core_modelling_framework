@@ -2,7 +2,170 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
-### 2026-10-25 — Synthetic data: the LDS's to-dos reviewed and planned
+### 2026-10-26 — Briefing for the LDS sync
+- 2026-10-26: `/brief` for the sync; every commit up to `0fec6de` (10-25) is covered by this
+  log; the work since (Stage 1 major step 1, synthetic 0.5.0–0.5.1, the sync-page rules) is
+  uncommitted.
+- Sync page refreshed: the summary now says step 1 is built and reviewed, with the SDS's remarks
+  being applied; the Phase 2 plan left the review list for the pointer line, as OD-01 first,
+  since a decision is never a review item and the stakeholder buy-in falls this week (the list
+  is six items); step 1's review item cut to three lines; the 2-day section trimmed to 32 lines
+  (package versions dropped); the demo checked (`pytest tests/test_audit_log.py -q`: 20 passed;
+  `decide --help` runs); `last sync` set to 10-26.
+- "Next week" for the stakeholder buy-in, written on 10-22, made absolute (the week of 10-26) in
+  `docs/roadmap.md` (OD-01, Chief DS topics) and `worknotes/timeline_proposal.md`.
+- Files: `worknotes/{sync.md, timeline_proposal.md}`, `docs/roadmap.md`, this log.
+- Still open: the review list is above five items; the timeline's backlog risk fires if it stays
+  so for a week.
+
+### 2026-10-26 — Stage 1, major step 1: the SDS's review answered
+- 2026-10-26: the SDS reviewed major step 1 with six remarks: `include`'s scope, why the loggable
+  settings stop where they do, months tagged on the first or the last day, defaults on display in
+  the template, what `HASH_VERSION` does, where the audit log is stored. Answers in
+  `worknotes/m2_1_foundation/review_answers.md`.
+- Changed: `conf/base/TEMPLATE.yml` rewritten under a header key (`# required`; a plain value is
+  the default; `null · level:` names both levels' values; commented lines are alternatives), with
+  the non-default examples moved to commented alternatives; `test_template_shows_every_field_with_its_default`
+  walks the schema against it (five planted drifts caught). `training.calibration` defaults (it
+  was required while its one field defaulted).
+- Bug found while answering: a person's `set training.max_iter` 200 → 300 followed by a level
+  move came back as 50 (D-132 says explicit values stay). Fixed: a `set` takes its path off
+  `housekeeping.level_filled` (`levels.unmark_level_filled`, from `replay._apply_set`); test
+  `test_level_move_keeps_a_persons_set`.
+- Checked on local Spark 3.4.3 for the month remark: `add_months` keeps the day number (02-29 + 1
+  = 03-29), and a last-day month falls outside a first-day `BETWEEN` window.
+- Docs: `config.md` (include feature by feature; a `set` makes a level path explicit; the template
+  key; two Feature Checks open questions; the hash-churn note), `dataset.md` (`hash_version` in the
+  model input's metadata), `review_guide.md`.
+- Asked: Q388 (widen the loggable settings), Q389 (months on the first or last day: normalise to
+  the first in the config and per source), Q390 (`HASH_VERSION` kept as a label until its first
+  reader).
+- Code review (strong, fresh context): approved, nothing blocking; eleven suggestions, all
+  taken. The two that mattered: the template test skipped any placeholder, so an uncommented
+  alternative (`targets: <target_source>`) passed (now only required fields may carry one), and
+  the section branch of the fix (`set eda.key_features`) had no test (now parametrized). Also: a
+  `set` on a section fixing its level paths is documented; required sections are checked for
+  `# required`; level values are checked on their own line; long option lists moved above their
+  key; the undefined `search_space` example dropped; a test for a config without `training:`.
+- Verified: full suite 111 passed, 9 deselected (2 min 52 s) before the follow-ups; config,
+  identity, audit-log and code-rule tests 59 passed after them; `ruff check .` clean.
+- 2026-10-26, answers: Q388 yes, with the exclusions as proposed; Q389 the default, but months at
+  the END of the month (read as part 2, the data's move; the config stores the last day too so
+  both agree); Q390 option A. Applied: `LOGGABLE_SETTINGS` widened to 21 paths, leaves wherever a
+  section holds independent settings (`eda.key_features` split into `top_n` and `include`), the
+  never-loggable test extended (`training.seed`, `lifecycle`, `inference`, `monitoring`); `Month`
+  accepts the first or the last day and stores the last; the example's data-definition digest
+  re-pinned, `HASH_VERSION` left at 1 until the pre-release (`config.md` → Identities); D-129 and
+  D-125 extended; trap T19 (`add_months` keeps the day number); `dataset.md`'s month rule; the
+  identities item on the roadmap backlog; plan amended (2.1b holdings on last-day months, 0.5.2;
+  2.2 gains `sources.py::read_keyed_source` and `load_targets`; 3.1 reads through both). Config,
+  audit-log, identity and code-rule tests: 61 passed.
+- Major step 2 started: 2.1b (sonnet, high) and 2.2 (strong, high) running in parallel.
+
+### 2026-10-26 — Sync page rules: plain summary, decision pointer, working-day windows
+- 2026-10-26: the SDS reviewed the sync page: the top line was mostly D-numbers with little
+  context; review items were tagged "needs decision" where no decision was needed; the "last 2
+  days" section was too long again (70 lines) and still held 10-22 bullets.
+- New rules (`worknotes/README.md` → "Writing `sync.md` for the LDS", template updated): an
+  "In short" summary at the top, three to eight lines in plain words, no D-, OD- or Q-numbers and
+  no paths; one bold line above the review list pointing to the short-term open decisions in the
+  roadmap, by OD-number, and no tags on review items (about three lines each); windows count
+  working days, the 2-day window opening at the second-to-last working day so weekend work falls
+  inside it; "last 2 working days" has a soft ceiling of 40 lines and a hard one of 50, heading
+  included; "last 7 working days" stays at most one page.
+- D-072 (h) replaced in place. The paraphrases in `/brief`, the `doc-sync` skill and the
+  timeline's review-backlog risk (now: more than five review items for a week) brought in line.
+- Sync page rewritten: the summary; Stage 1's design added as a review item (it was a "for you"
+  note inside a bullet); the 2-day section from 70 to 26 lines, three bullets for 10-23 → 10-26,
+  the 10-22 bullets left to the 7-day recap, which gained the note that decision IDs moved on 10-22.
+- Files: `worknotes/{README.md, sync.md, timeline_proposal.md}`, this log, `docs/decisions.md`,
+  `.claude/commands/brief.md`, `.claude/skills/doc-sync/SKILL.md`.
+- Decisions / open decisions: D-072 (h) replaced.
+- Still open: the Stage 1 chat may refresh the sync page in the old format before it picks up
+  the new rules.
+
+### 2026-10-26 — Stage 1, major step 1 built and reviewed; the holdings table
+- 2026-10-26: minor steps 1.1–1.5 landed from five agents (docs: strong, high; the Phase 3
+  sweep: sonnet, medium; schema, identities, environment, audit log: strong, high), each read in
+  full on the main thread. The docs agent's seven open points were settled here: the validation
+  month is loggable (stage `evaluation`), `run --stages target_factory` saves the model input,
+  the source-month check runs when the frames are built (D-129 reworded), `automation_level`
+  reruns from EDA. Three Interface sections moved from planned to built; `conf/local/README.md`,
+  `docs/context/environment.md` and `test_harness.md` lost their last `sources.yml` references.
+- The audit log's open points: a `set` may write null (sampling off); the worked example's
+  `max_iter` runs 200 → 300 (the level default); `record_decision` has no `by` parameter (rule
+  and stage writers come with their stages).
+- Reviews on the merged state (code-reviewer, silent-failure-hunter, compat-guardian; strong,
+  high): 3 blocking + 13 suggestions, 2 critical + 5 high + 6 medium, 9 compatibility points.
+  Two findings came from all three: an `hdfs://` data root reached `pathlib` and read an empty
+  log; a logged level move didn't move the level defaults. One fix agent (strong, high) applied
+  26 accepted items: the URI guard until M2.4, the level move re-filling the level-filled paths
+  (`housekeeping.level_filled`), process-wide session detection (`getActiveSession` is
+  thread-local), no retry on a write clash, a config file refused when it carries replay-written
+  fields (`read_resolved_config` reads a saved one), operand checks per op, `hash_version` on
+  entries, the entry version checked before parsing, a golden-hash test and the `HASH_VERSION`
+  rule, a dummy-migration test, `schema_version` on the environment file with the migration loop
+  shared, the feature store and a wrong locator refused at load, `extra` kept off the fixed Spark
+  keys, typed lists for three validators, `selection.auc_floor` → `univariate_floor`,
+  `calibration.method` a schema default, UTC timestamps, `fnmatchcase`. Declined with reasons in
+  `worknotes/m2_1_foundation/review_guide.md` (the adapter's own strict base; paths vs models in
+  the signatures; `rate_band` binary-only; `target.rule` a plain string; `schema.py` at 424
+  lines). `candidate_names` (always None) removed; the typo gap closes with the model input (3.4).
+- Minor step 2.1 (sonnet, high) in parallel: the synthetic package writes a slim `holdings`
+  table (the client key and six holding flags) beside the mart, version 0.5.1; `dev` and
+  `canonical` regenerated (71 s and 356 s; every check row passes at 100k, the four known
+  size-bound rows fail at 20k); the 0.5.0 folders kept beside them as `*_0.5.0` until the SDS
+  says to delete them (about 2.2 GB).
+- Verified on the main thread: `pytest -q` and `ruff check .` on the merged state (the tails in
+  the SDS report). Docs: `config.md` (the HASH_VERSION rule, the rename convention for loggable
+  paths, storage without retry, `hash_version`, `level_filled`, two open questions),
+  `environment.md` (`schema_version`, `extra`, the feature store refused at load, process-wide
+  detection), `architecture.md` (the Stage 1 public list), D-088, D-125 and D-130 extended, the
+  review guide's findings section, the plan (3.4 closes the typo gap).
+- Files: `src/core_modelling/{config/*, environment.py, __main__.py}`, `conf/base/{cc_acquisition.yml,
+  TEMPLATE.yml, environment.example.yml}`, `conf/local/environment.yml`, `tests/{test_config_schema,
+  test_identities, test_audit_log, test_environment, conftest, test_synthetic_output}.py`,
+  `synthetic/src/synthetic/{output.py, __init__.py, __main__.py}`, the docs above.
+- Decisions / open decisions: D-088, D-125, D-130 extended; two open questions in `config.md`.
+- Still open: the SDS's review of major step 1; then 2.2 (Target Factory).
+
+### 2026-10-26 — Stage 1 (M2.1 Foundation): design settled, plan written, build started
+- 2026-10-26: the SDS answered round 2 (Q354 all defaults; Q358, Q364 defaults; Q365 (A), the
+  saved model input named in the config, since a targets-only source will probably never exist;
+  Q367 (A) with nothing built for it; Q371 (A) but as a printout and callout, never a stop, since
+  inside the bank one raises the Spark settings) and asked for the plan and to start building.
+- Records: D-129 (the config layout), D-130 (the environment file), D-131 (the model input), D-132
+  (the automation-level mapping; OD-25 closed and deleted from the roadmap), D-133 (the collect
+  printout; degenerate targets as guidance); D-024 extended (the Public API gains `build_frames`,
+  `save_model_input`, `run_target_factory`, `get_spark_session`), D-091 extended (test share 0.3,
+  both sampling options and the regression forward-sum builder in Stage 1). `docs/UPDATES.md`
+  statuses and a log line; the `OD-25` references in `project.md`, D-023 and the LDS review list.
+- `worknotes/synthetic_questions.md` deleted and its README row removed: the other chat built the
+  `dev` preset and the trap columns (synthetic 0.5.0, both datasets regenerated) and said the file
+  could go once this chat knew; Stage 1's synthetic step is the holdings table only.
+- Plan: `worknotes/m2_1_foundation/plan.md`: ground rules, the holistic review (verdict: proceed),
+  six facts checked on PySpark 3.4.3 by a fact-check agent (sonnet, high; `xxhash64` has no seed
+  argument and needs `pmod`, `maxResultSize` applies to Arrow collects, dynamic partition
+  overwrite works, `getOrCreate` reuses a session and overwrites runtime settings, a missing
+  column in a filter string fails at call time, Arrow returns dates as `datetime.date`), the
+  package layout, three major steps with their minor steps, signatures, tests and reviewers, what
+  is left out, and the day plan.
+- Build started, major step 1: four agents in parallel with disjoint files: 1.1 the owner docs
+  (strong, high: config, dataset, environment, target_factory, architecture, glossary, data and
+  conf READMEs, with the Phase 3 sweep in them), 1.1b the Phase 3 sweep of the other eleven
+  component docs (sonnet, medium), 1.2 the schema, levels, migrations, loader, example and template
+  (strong, high), 1.4 the environment adapter (strong, high). 1.3 (identities) and 1.5 (the audit
+  log and `decide`) follow 1.2.
+- Files: `docs/decisions.md`, `docs/roadmap.md`, `docs/UPDATES.md`, `docs/context/project.md`,
+  `worknotes/{m2_1_foundation/plan.md, m2_1_foundation/questions.md, README.md,
+  decisions_LDS_review.md, sync.md}`, this log; `worknotes/synthetic_questions.md` deleted.
+- Decisions / open decisions: D-129–D-133 new; D-024, D-091 extended; OD-25 closed.
+- Still open: the agents' results; 1.3, 1.5, 1.6; major steps 2 and 3.
+
+### 2026-10-25 → 2026-10-26 — Synthetic data: the LDS's to-dos reviewed and planned
+- 2026-10-26: handover rewritten for the current state (`worknotes/handovers/synthetic_build.md`;
+  the M1 build plan it held is history in git); the sync page's pointer to the deleted questions
+  file now points at D-064 and D-041.
 - 2026-10-25: the SDS asked for a review of the synthetic build and a plan for the LDS's
   three to-dos (noise columns of several kinds, very low fill rates, every such column named like
   the traps), given that the first target build and run-through is credit-card acquisition.
@@ -28,9 +191,56 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   where the test runs inside the bank depends on whether `synthetic/` travels with the light
   suite, unsettled (the package calls itself dev-only while the tests import it). Q387 added:
   which chat builds 2b (default: this one, now; 2c once, after the Stage 1 chat's 2a).
-- Files: `worknotes/synthetic_questions.md` (new), `worknotes/README.md` (registered),
-  `worknotes/sync.md`, this log.
-- Still open: Q387; whether `synthetic/` goes into the bank with the light suite (D-014).
+- 2026-10-25, build (the SDS: "start building it right now"): minor step 2b delegated as four
+  disjoint pieces from one fixed catalogue (names, types, constructions, column order): the
+  generator core (strong model, high), the check rows (strong, high), the tests and snapshot
+  (sonnet, high), the docs (strong, high); D-064, UPDATES, sync and log on the main thread. The
+  generator agent stopped on its stop rule: drawing the new look-ahead values from the `leaks`
+  stream shifted that stream for every later month, changing three 0.4.0 columns; fixed by giving
+  the look-ahead draws their own stream. Integration: one stale test expectation fixed (the Spark
+  types of the trap columns, now a name-keyed table); the full suite passes (47 tests, slow ones
+  deselected); a 30k-client run passes every traps-family row (103) and every mart and oracle row
+  (the three failures elsewhere are the known small-sample rows the doc says need 100k).
+  Reviews: simplicity review clean; the code reviewer approved with suggestions, four taken (Zipf
+  and lognormal helpers now that each has two callers, a separate `card_leaks` stream so `noise`
+  no longer means three things, a shifted-suffix constant, a comment on the categorical list) and
+  three declined (descriptive spec parameters the code doesn't read follow the existing rows;
+  `relationship_days` computed twice a month costs nothing and saves a parameter; the two modules
+  past ~300 lines are one concept each and split with the next trap batch); the ML auditor found
+  nothing blocking, two low findings taken (a rule that no application comes from a holder or the
+  last month; the offer code's tells in the trap summary). Measured on 30k clients: the missingness
+  leak's is-filled AUC 0.89 against the oracle's 0.85 at w = 3; the card process leak 0.90 and the
+  card shifted limit 1.00 against 0.87 at w = 1; the redundant column's AUC equals its source's to
+  0.0001; both new null controls at 0.5 on every target.
+- Files: `synthetic/src/synthetic/{spec/traps.py, spec/presets.py, mechanisms/traps.py,
+  mechanisms/clients.py, generate.py, __init__.py, checks/traps.py, checks/mart.py}`,
+  `notebooks/00_synthetic_data.ipynb`, `tests/README.md`, `conf/base/sources.example.yml`, `tests/{test_synthetic_population.py,
+  test_synthetic_mart.py, test_code_rules.py, data/synthetic_mart_columns.txt}`,
+  `docs/components/test_harness.md`, `synthetic/REVIEW.md`, `docs/roadmap.md`,
+  `worknotes/timeline_proposal.md`, `docs/decisions.md` (D-064), `docs/UPDATES.md`,
+  `worknotes/synthetic_questions.md` (new), `worknotes/README.md`, `worknotes/sync.md`, this log.
+- Decisions / open decisions: D-064 and D-041 extended; OD-29 opened and closed the same day.
+- 2026-10-25, the SDS's answers: move everything to 0.5.0 with a 20k `dev`; the package goes into
+  the bank as code, never as data, and tests may rely on seeds, preferably at 5k or 20k (closes
+  OD-29, D-041 extended); no split of the trap modules. Done: the `dev` preset (20k × 24, one line
+  in `spec/presets.py`, so the Stage 1 chat's 2a is now the holdings table only); `dev` written in
+  68 s (1,301 of 1,305 rows pass: the four failures are size-bound rows, the 100k event floors for
+  auto and home loans, the digital share rise and a Private-profile login ratio); `canonical`
+  written in 328 s into a fresh folder, all 1,309 of 1,309 rows passing, then swapped in for the
+  0.4.0 one; the notebook's section 6 now screens the categorical trap columns by whether they are
+  filled and explains the card twins, and the notebook was rerun with `jupyter_client` (no
+  `nbconvert` in the venv) in VS Code's layout: no errors, the same output types, its first cell
+  at 1,309 of 1,309. Section 6 at 100k, card acquisition in 3 months: the upstream target 1.00,
+  the preapproval leak 0.97, the offer code filled 0.90, the campaign leak 0.87 above the oracle's
+  0.84; the card twins 0.70 and 0.67 below it, as built for next month. The low-fill amount shows
+  0.56 on the 20% sample's ≈ 190 filled clients and 0.47 on all 100k: noise, said so in the
+  text. Why the seeds can be relied on: the tests generate their data in the test run and check
+  it against the spec and the oracle, never against stored values, and the same seed gives the
+  same data (tested); across machines that needs the same numpy and scipy major.minor, which the
+  bank pins match (numpy 2.3.5, scipy 1.16.2), and `load_truth` refuses data from other versions.
+  `conf/local` and its example now point at `dev`.
+- Still open: nothing in this topic; the questions file goes once the Stage 1 chat has seen that
+  its 2a shrank to the holdings table.
 
 ### 2026-10-25 — Inconsistency questions closed
 - 2026-10-25: the SDS answered Q374 with the alternative: in Phase 2, `register` relies on the

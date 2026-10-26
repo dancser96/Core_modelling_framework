@@ -20,10 +20,11 @@ memory, so it works in a fresh chat.
      context each, plus our current leaning).
    - **Risks / needs a decision:** anything blocked, unverified or drifting from the goals.
 4. Refresh `sync.md` following the rules in `worknotes/README.md` → "Writing `sync.md` for the LDS":
-   new decisions by reference at the top, review list by importance then recency (tick or remove only
-   items the user says the LDS finished), "last 2 days" and "last 7 days" pruned to the important
-   changes and at most one page each, the
-   open-questions table and "Demo next" updated, and `last sync` set. Don't commit anything; the user
+   "In short" at the top in plain words without references, one line pointing to the short-term
+   open decisions above an untagged review list by importance then recency (tick or remove only
+   items the user says the LDS finished), "last 2 working days" (soft ceiling 40 lines, hard 50) and
+   "last 7 working days" (at most one page) pruned to the important changes, the open-questions
+   table and "Demo next" updated, and `last sync` set. Don't commit anything; the user
    commits and pushes.
 
 Keep it skimmable: the user reads it right before a one-hour meeting. Roles only, no names; no bank
