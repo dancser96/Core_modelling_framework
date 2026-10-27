@@ -110,12 +110,14 @@ class Keys(StrictModel):
 
 
 class EligibilityStep(StrictModel):
-    """One ordered eligibility entry: a named `define` condition or a `filter` with a reason."""
+    """One ordered eligibility entry: a named `define` condition, or a `filter` with a reason that
+    drops its rows `before` EDA or before modelling."""
 
     name: str
     define: str | None = None
     filter: str | None = None
     reason: str | None = None
+    before: Literal["eda", "model"] | None = None
 
     @model_validator(mode="after")
     def _check_define_or_filter(self) -> "EligibilityStep":
@@ -126,6 +128,19 @@ class EligibilityStep(StrictModel):
             raise ValueError(f"eligibility filter {self.name!r} needs a reason")
         return self
 
+    @model_validator(mode="after")
+    def _check_before_goes_with_a_filter(self) -> "EligibilityStep":
+        """A `filter` says when it applies; a `define` drops nothing, so it takes no `before`."""
+        if self.filter is not None and self.before is None:
+            raise ValueError(
+                f"eligibility filter {self.name!r} needs `before` (eda: its rows are dropped "
+                "before EDA; model: its rows stay for EDA, tagged by the step's name, and are "
+                "dropped before modelling)"
+            )
+        if self.define is not None and self.before is not None:
+            raise ValueError(f"eligibility define {self.name!r} takes no `before`")
+        return self
+
 
 class Target(StrictModel):
     """The target spec: a rule over `column` (built), or an upstream `column` alone. The rule name
@@ -133,16 +148,19 @@ class Target(StrictModel):
 
     column: str
     rule: str | None = None
+    null_as: int | float | None = None
     leavers: Literal["negative"] | None = None
     lineage: list[str] = []
 
     @model_validator(mode="after")
-    def _check_leavers_need_a_rule(self) -> "Target":
-        """Leaver handling is part of building the target; an upstream target brings its own."""
-        if self.leavers is not None and self.rule is None:
-            raise ValueError(
-                "`leavers` applies to a built target; an upstream target has `column` alone"
-            )
+    def _check_built_only_fields_need_a_rule(self) -> "Target":
+        """Null and leaver handling are part of building the target; an upstream target brings its
+        own."""
+        for field in ("null_as", "leavers"):
+            if self.rule is None and getattr(self, field) is not None:
+                raise ValueError(
+                    f"`{field}` applies to a built target; an upstream target has `column` alone"
+                )
         return self
 
 

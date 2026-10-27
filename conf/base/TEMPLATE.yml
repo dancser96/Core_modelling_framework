@@ -44,15 +44,23 @@ data:                                    # required
   # saved once, every later stage reads it; saving freezes the config (D-131):
   # model_input: <product>_<activity>_input
   eligibility: []                        # []: every row of the spine is eligible
-  # ordered Spark SQL; a define names a condition, a filter keeps rows and says why:
+  # ordered Spark SQL; a define names a condition, a filter keeps rows and says why. A filter's
+  # before: eda drops its rows before EDA | model keeps them for EDA, tagged by the step's name,
+  # and drops them before modelling:
   # eligibility:
   #   - {name: has_income, define: "income IS NOT NULL"}
-  #   - {name: <step_name>, filter: "<spark_sql>", reason: "<reason>"}
+  #   - {name: income_known, filter: "has_income OR salary_transfer_flag = 1",
+  #      reason: "card rules need a known income", before: eda}
+  #   - {name: <step_name>, filter: "<spark_sql>", reason: "<reason>", before: model}
   target:                                # required
     # the upstream target, or the column a rule reads; excluded from the candidates
     column: <target_column>              # required
     rule: null                           # null: `column` is an upstream target, used as is
-    # rule: flag_in_window               # built: the flag turns 1 inside months t+1 … t+w
+    # built: the flag is 1 in some month of t+1 … t+w and 0 at t (acquisition, activation); the
+    # count and amount rules come later:
+    # rule: flag_goes_up
+    # built target only · null: a null never counts · e.g. 0 when a null in the column means 0
+    null_as: null
     # built target only · null: a client leaving inside the window gets a null target |
     # negative: counts as 0
     leavers: null

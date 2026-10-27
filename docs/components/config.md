@@ -77,13 +77,15 @@ data:
   model_input: cc_acquisition_input      # optional: the saved model input's logical name (D-131); omit = build in memory
   eligibility:                           # ordered; `define` names a condition, `filter` keeps rows; each logs rows in → out
     - {name: has_income, define: "income IS NOT NULL"}
-    - {name: non_holders, filter: "cc_flag = 0", reason: "acquisition is scored for clients without a card"}
+    - {name: non_holders, filter: "cc_flag = 0", reason: "acquisition is scored for clients without a card",
+       before: model}                    # before: model: the rows stay for EDA, tagged `non_holders`; dropped before modelling
     - {name: income_known_or_salaried, filter: "has_income OR salary_transfer_flag = 1",
-       reason: "card rules need a known income"}
+       reason: "card rules need a known income", before: eda}   # before: eda: the rows are dropped before EDA
   target:                                # the target spec (target_factory.md)
-    rule: flag_in_window                 # the M2 rule family (D-091); an upstream target gives only `column`
+    rule: flag_goes_up                   # the Stage 1 rule (D-029 (c)); count and amount rules later (D-091); an upstream target gives only `column`
     column: cc_flag                      # the column the rule reads; excluded from the candidates (lineage)
     leavers: null                        # null (default) | negative: what a client leaving inside the window gets
+    null_as: null                        # built target only; the value a null in `column` stands for (e.g. 0); null: a null never counts
   split: {test_share: 0.3, seed: 42}     # by client, seeded hash; applied from Training on (D-030)
   rate_band: {max: 0.5}                  # contract check on the true population; no floor
 
@@ -196,7 +198,11 @@ field the same frames are built in memory. What it holds, its hash check and whe
    produces a log entry (rows/cols in → out, reason). An eligibility entry is Spark SQL, either a
    `define` (a named boolean condition that later entries reuse by name, dropped before the
    candidates are resolved) or a `filter` with a required `reason`; a null condition counts as
-   false in a filter (D-129).
+   false in a filter (D-129). A filter is one of two kinds: `before: eda` drops its rows before
+   EDA (clients the analysis shouldn't see at all, e.g. new clients); `before: model` keeps its
+   rows for EDA, tagged by the step's name as a 0/1 column, and drops them before modelling (e.g.
+   current holders of the product, whom the analysis compares with the non-holders). The tag is a
+   stratification column for EDA ([dataset](dataset.md), [eda](eda.md)).
 7. **Features:** candidates are explicit lists or patterns. Human decisions go both ways: `exclude`
    and `keep_despite_flag` (which also protects against automated pruning). They are entries in the
    decision audit log, one per group with one required reason, never edits to the config (D-043,
@@ -589,9 +595,11 @@ functions)); the CLI command `decide` in `core_modelling/__main__.py`.
 - `load_config(path: str | Path) -> UseCaseConfig` (public): YAML → `migrate` →
   `apply_level_defaults` (fills nulls only) → `UseCaseConfig.model_validate`, with `extra="forbid"`
   on every model. One validator per rule: the name split (D-128), the time rules (req. 8),
-  `decision.type: top_n` needs `n`, an eligibility entry has exactly one of `define` / `filter`
-  and a `filter` has a `reason`, `target` has `rule` + `column` or `column` alone, `sampling` with
-  its parameters, `metric` in FLAML's names when set (T9), `test_share` in (0, 1).
+  `decision.type: top_n` needs `n`, an eligibility entry has exactly one of `define` / `filter`,
+  a `filter` has a `reason` and a `before` (`eda` / `model`) and a `define` has no `before`,
+  `target` has `rule` + `column` (with `null_as` and `leavers` only then) or `column` alone,
+  `sampling` with its parameters, `metric` in FLAML's names when set (T9), `test_share` in
+  (0, 1).
 - `LEVEL_DEFAULTS: dict[str, dict[str, dict]]` (path → {autonomous, assisted}), `MIGRATIONS:
   dict[int, Callable[[dict], dict]]` (empty at `schema_version: 1`; a version above the current
   one fails loud).
@@ -620,6 +628,8 @@ functions)); the CLI command `decide` in `core_modelling/__main__.py`.
   stages; replay already accepts them.
 
 ## Open questions
+- `training.calibration.method` defaults to `platt` for every task; regression needs its own
+  default (likely `none`) through the per-task spec, decided when Training is built (M2.3).
 - Feature Checks (M2.2): how a rerun with a changed threshold supersedes the step's earlier
   `exclude` entry (a rule-written `include`, or a step's latest outcome replacing its earlier
   one), and whether a person may overrule a quality rule for one feature (a rare flag that is

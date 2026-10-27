@@ -19,11 +19,11 @@ from core_modelling.config.replay import set_at
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "conf/base/cc_acquisition.yml"
 ENTITY = "entity_a"
-# The example's digests under HASH_VERSION 1 (re-pinned 2026-10-26 when months moved to their last
-# day); test_golden_hashes_of_the_example says what a change means.
+# The example's digests under HASH_VERSION 1 (re-pinned 2026-10-27 when eligibility steps gained
+# `before` and the target `null_as`); test_golden_hashes_of_the_example says what a change means.
 GOLDEN = {
-    "data_definition": "bacd75a51815a33effe5d36949d783bf07146e6cfb8dfd2c8895dfa2809c762b",
-    "target_spec": "d3cdc76b292e540fbf1facfaf1f080f6e7c48abed76983caee404bbfe57d5654",
+    "data_definition": "00f1681b1c1b87c95e896dc7698f2e5ebd5f65fa9bb587db6e0dfeb4aa5e85cb",
+    "target_spec": "7f103317bde4946a3d7017c151a8803c1b6f2c8557583a37cbd1caaa4da0f3fe",
 }
 
 

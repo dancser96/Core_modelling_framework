@@ -87,7 +87,99 @@ default under a header key, enforced by a test; `training.calibration` defaults.
 answering and fixed: a level move overwrote a person's `set` on a level-filled setting.
 
 ## Major step 2: Target Factory and the holdings table
-_(written when the step ends)_
+_Status: built and reviewed (10-26), for the SDS's review; the LDS reads it in full._
+
+### Read in this order
+1. `docs/components/target_factory.md` → Interface: what each function does and refuses. What
+   "right" looks like: every refusal is named there, and nothing describes code that doesn't
+   exist.
+2. `src/core_modelling/tasks.py`: the two rules, the two column checks and the summary, one dict
+   by task (D-050). The rule is the label: read `_flag_goes_up` against D-029 (c).
+3. `src/core_modelling/target_factory.py`: `build_targets` (the forward window, the one place
+   §4.1 lives), then the checks `load_targets` runs before building, then `run_target_factory`.
+4. `src/core_modelling/sources.py`: one reader for every source (keys renamed, months at their
+   last day, the refusals). Target Factory uses it now, the dataset and Inference later.
+5. `tests/test_target_factory.py`: hand-made panels first (the window bounds, gaps, leavers, the
+   null semantics with and without `null_as`, the column refusals), then the comparison with the
+   oracle on the `unit` preset; then `tests/test_sources.py`.
+6. `synthetic/src/synthetic/output.py::_holdings_frame`: the holdings tag the last day, the mart
+   the first, so every run converts one of them (0.5.2).
+
+### What "right" looks like
+- The rule compares the observation month with the forward months, t+1 … t+w by calendar
+  month: 1 when some forward flag exceeds the flag at t, else 0. A holder at t gets 0; who is in
+  the population is eligibility's business (`before: model`), never the rule's.
+- A missing forward row (a leaver, a gap) gives a null target. A null value follows SQL: it never
+  counts as an event; the target is null only when nothing can be compared, and the summary's
+  `null_value_share` shows how often a window held one.
+- The built targets equal the oracle's on every non-holder row of the `unit` preset, nulls
+  included.
+- A source tagged on the first day and one tagged on the last key alike; a bad month, key, column
+  type or value, a short source and an upstream target with values in its last w months all fail
+  loud, naming the source.
+- The summary never shows a label rate outside the observation window.
+
+### Reviewers' findings
+Four reviewers ran on the built step (code-reviewer, silent-failure-hunter, compat-guardian:
+strong, high; ml-correctness-auditor: strong, xhigh), then one fix agent (strong, high) and a
+focused re-audit of the fixes (ml-correctness-auditor, high).
+
+**Reverted by the SDS's review (10-27), see below:**
+- The ML audit's "null unless the flag at t is 0" precondition: a holder at t is an eligibility
+  matter, and the rule compares t with the forward months (a holder gets 0).
+- The ML audit's "any null value in the window gives a null target": too strict for a column
+  that isn't filled; nulls follow SQL semantics and their share is shown.
+
+**Taken (the fix pass):**
+- The summary showed label rates for months after the window, the validation month included:
+  label columns are now for the observation window only (ML audit; `CLAUDE.md` §4.4, D-030).
+- A string flag (`'Y'`/`'N'`) gave an all-zero target, a flag of 2 counted as 0, a string amount
+  summed partly: each task now checks its target column's type and values before building (code
+  review, silent-failure audit).
+- A TimestampType month written at midnight in another time zone shifted the whole source a
+  month: a timestamp month must be at 00:00 in the session time zone (silent-failure audit, ML
+  audit).
+- A source with a missing month, or ending before `v + w`, gave null targets without a word:
+  `load_targets` now checks the months it needs (silent-failure audit).
+- An upstream target had no §4.1 protection: one with values in the source's last w months is
+  refused, and the doc says §4.1 is owned for built targets (ML audit).
+- Replay applied a `set` on any path, so a hand-edited entry could change `decision` or the seed:
+  replay now refuses a path that isn't loggable (compat review).
+- Smaller: null unit ids are refused and named before duplicates; empty and null-month sources
+  get separate messages; `read_keyed_source` takes its arguments in the public order; a missing
+  target column names the source; test comparisons survive nulls.
+
+**Justified, not taken:**
+- `_regression_summary` stays a named function rather than registering `_summarise` directly:
+  the dict reads the same for both tasks.
+- `forward_sum` keeps Spark's own sum type; the contract check (step 3) sees the target.
+
+**Deferred, with a row:**
+- `training.calibration` defaults to Platt for regression too: decided with Training (M2.3),
+  `config.md` → Open questions.
+- A use case's laptop audit log is orphaned when the data-definition hash changes: the
+  `definition.json` question, before the December pre-release (roadmap backlog).
+- For step 3 (plan 3.1): never filter the target source to the window before building; assert
+  targets exist at `train_months.last`; log the target source's forward coverage of the spine.
+- The oracle's loan-opening kind uses month-on-month steps; the count rule (M4) compares with
+  t, so the oracle is aligned when that rule is built (D-029 (c)).
+
+**Re-audit of the fixes** (ml-correctness-auditor, high): all five label findings fixed, each with
+a test that fails without its fix; two test gaps closed on the main thread (an upstream tail one
+month short, a time zone west of UTC) and the tail test checked by breaking the code.
+
+**The single failed run.** During the build, one combined test run failed two tests (one of them
+`test_forward_sum_matches_the_oracle`) while both step 2 agents ran Spark at once on the 8 GB
+machine; its error text was lost. Three sequential reruns then passed, and so did every run
+since. Load is the likely cause, unconfirmed.
+
+### The SDS's review (10-27)
+Three conceptual points, all taken (`review_answers.md`): the rule compares the observation month
+with the forward months (`flag_goes_up`; a holder at t gets 0; the count and amount rules are
+separate rules for M4); nulls follow SQL semantics with `null_value_share` shown and an optional
+`data.target.null_as`; eligibility filters split into `before: eda` (dropped) and `before: model`
+(tagged, so EDA keeps the current holders as a reference group). D-029 (c), D-129 and D-131
+extended; the dataset step amended.
 
 ## Major step 3: dataset, `run`, the notebook
 _(written when the step ends)_

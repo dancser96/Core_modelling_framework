@@ -213,6 +213,9 @@ def replay(cfg: UseCaseConfig, entries: list[Entry]) -> dict:
     for entry in entries:
         if entry.op in INPUT_FEATURE_OPS:
             check_candidates(cfg, entry.features, f"entry {entry.seq} is stale")
+        # A hand-edited or old entry must not change the data definition, `decision` or the seed.
+        if entry.op == "set" and entry.path not in LOGGABLE_SETTINGS:
+            raise ValueError(f"entry {entry.seq} is stale: {entry.path} is not a loggable setting")
         raw = APPLY_BY_OP[entry.op](raw, entry)
         if entry.op == "set":
             validate_raw(raw, f"entry {entry.seq} is stale: set {entry.path} = {entry.to_value!r}")

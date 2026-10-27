@@ -295,20 +295,24 @@ Agent (strong, high; §4 code). Files: `tasks.py`, `sources.py`, `target_factory
   not a date or timestamp fails loud naming its type); duplicate `(unit_id, month)` after the move
   fail loud naming the source and up to five keys; the log: the source, its distinct months and
   how they were tagged (first day, last day or other days).
-- `tasks.py`: `TASK_SPECS = {"binary": {"target_rules": {"flag_in_window": _flag_in_window},
-  "summarise_targets": _binary_summary}, "regression": {"target_rules": {"forward_sum":
-  _forward_sum}, "summarise_targets": _regression_summary}}`; `contract_checks` joins in 3.3.
+- `tasks.py`: `TASK_SPECS = {"binary": {"target_rules": {"flag_goes_up": _flag_goes_up},
+  "check_target_column": _check_flag_column, "summarise_targets": _binary_summary},
+  "regression": {"target_rules": {"forward_sum": _forward_sum}, "check_target_column":
+  _check_amount_column, "summarise_targets": _regression_summary}}`; `contract_checks` joins in
+  3.3. A rule takes `(value: Column, forward: WindowSpec, w)` with `null_as` applied to `value`:
+  `flag_goes_up` = `max(value over the window) > value` (SQL semantics: a null never counts, the
+  target is null only when nothing can be compared); `forward_sum` = the sum of the known values.
+  The count and amount rules are separate rules for M4 (D-029 (c), the SDS's review of step 2).
 - `target_factory.py`:
   - `build_targets(source: DataFrame, cfg: UseCaseConfig) -> DataFrame`: on a keyed source; a
     contiguous month index `year × 12 + month`, never `add_months` (T19); the rule from
     `TASK_SPECS[cfg.task]` (an unknown rule fails naming the task's rules); the forward window
     `(1, w)` (T8); null unless all `w` later months are present for the unit (panel edge,
     leavers); `leavers: negative` fails loud as not implemented (M4, D-091). Columns: `unit_id`,
-    `month`, `target`.
+    `month`, `target`, `null_in_window` (the raw column null at t or in the window).
   - `load_targets(cfg, entity, env, spark) -> tuple[DataFrame, dict]`: the target source (the
     spine when `targets` is omitted) read keyed; the rule built, or the upstream `column` taken
     as `target`; with the source's log. `load_panel` (3.1) joins its result.
-  - `_flag_in_window(df, column, w) -> Column` (the max of the flag over the window), `_forward_sum`.
   - `target_lineage(cfg) -> list[str]`: `[column]` plus the config's `lineage`.
   - `run_target_factory(cfg, entity, env, spark) -> pd.DataFrame` (public): `load_targets`, then
     the task's summary per month plus an `all` row, printed and returned: rows, the null share,
@@ -337,10 +341,17 @@ Agent (strong, high; §4 code). Files: `dataset/__init__.py`, `dataset/panel.py`
 - `load_panel(cfg, entity, env, spark) -> tuple[DataFrame, list[dict]]`: every source read with
   `read_keyed_source` (2.2: keys renamed, months at their last day, duplicate keys refused), the
   spine first; the other feature sources left-joined on the keys; a non-key column in two feature
-  sources fails loud; `load_targets` (2.2) left-joined as `target`; months restricted to `train_months.first` … the spine's last month; the
-  join log: per source, distinct units per month and the share of spine rows matched.
-- `apply_eligibility(df, steps) -> tuple[DataFrame, list[dict]]`: `define` → `withColumn`;
-  `filter` → `filter` with rows in → out per month; the define columns dropped at the end.
+  sources fails loud; `load_targets` (2.2) left-joined as `target`; never filter the target source to the
+  window's months before `build_targets` (the forward windows need the later months); assert
+  that the targets at `train_months.last` are not all null, and log the share of spine rows the
+  target source covers forward (the ML audit of 2.2, finding F); `null_in_window`'s share logged
+  per month, the column dropped; months restricted to `train_months.first` … the spine's last
+  month; the join log: per source, distinct units per month and the share of spine rows matched.
+- `apply_eligibility(df, steps) -> tuple[DataFrame, list[dict]]`: `define` → `withColumn`; a
+  `before: eda` filter → `filter` with rows in → out per month; a `before: model` filter → a 0/1
+  column named after the step (1 = passes), rows kept, the would-be drops per month in the log;
+  `eligible` = every pre-model filter passes; the define columns dropped at the end; a step name
+  that is a column of the panel fails loud (D-129, the SDS's review of step 2).
 - `resolve_candidates(columns: list[str], cfg, lineage: list[str]) -> list[str]`: `fnmatch`
   include then exclude, minus the keys, `target`, the lineage and the define names.
 - Reviews: code-reviewer, simplicity, silent-failure-hunter, ml-correctness-auditor (xhigh, with
@@ -362,14 +373,16 @@ tests; the agent owns a separate `tests/test_split.py` instead, to keep the file
 Agent (sonnet, high; the spec rows are given). Files: `dataset/contract.py`, `tasks.py` (the
 `contract_checks` entries), `tests/test_contract.py`.
 - `check_contract(window: DataFrame, cfg) -> list[dict]`: runs `TASK_SPECS[task]["contract_checks"]`
-  on the eligible window before any sampling (§4.8): binary = unique `(unit_id, month)`, a
+  on the eligible rows (`eligible = 1`) of the window before any sampling (§4.8): binary = unique `(unit_id, month)`, a
   non-constant target, the pooled rate ≤ `rate_band.max` (reported per month); regression =
   unique keys, a non-constant and finite target. A failure raises with the numbers.
 
 ### 3.4 Frames, the collect printout, the model input (after 3.1–3.3)
 Agent (strong, high; §4 code). Files: `dataset/frames.py`, `tests/test_frames.py`.
-- `@dataclass Frames`: `window`, `train`, `test`, `validation` (pandas, or None when the stage
-  didn't ask for them), `log: list[dict]`, `meta: dict`.
+- `@dataclass Frames`: `window` (every row after the pre-EDA filters, with the pre-model tags and
+  `eligible`), `train`, `test`, `validation` (eligible rows only; pandas, or None when the stage
+  didn't ask for them), `log: list[dict]`, `meta: dict`. The model input holds the window's rows
+  with the tags (D-131).
 - `estimate_collect(df, spark) -> dict`: the exact row count; bytes per row from a 10,000-row
   sample's `memory_usage(deep=True)`; the estimate × 2 for the conversion peak.
 - `collect_frame(df, name: str, env) -> pd.DataFrame`: prints rows, columns, the estimate and the

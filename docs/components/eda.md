@@ -22,7 +22,12 @@ that the notebooks were run in reverse order. Phase 2 fixes the content, not the
 1. Runs alone from a config and produces an HTML report through [reporting](reporting.md) (D-036).
    The `autonomous` level runs it automatically with the default content (D-031).
 2. **Population and target:**
-   - sizes and the eligibility funnel per month of the window;
+   - sizes and the eligibility funnel per month of the window: the pre-EDA filters' drops and,
+     per pre-model filter, the rows it tags (D-129);
+   - **reference groups:** each pre-model tag (e.g. current holders vs non-holders) is a
+     stratification column, so the excluded group's behaviour is compared with the modelling
+     population's on the strata and the key features; which views show tagged rows is settled
+     when EDA is built (M2.2);
    - base rate per month over every month up to the window's end (population level: seasonality,
      how representative the window is). Later months stay hidden, because their target windows
      overlap the validation month's (D-030);
@@ -52,7 +57,8 @@ that the notebooks were run in reverse order. Phase 2 fixes the content, not the
    intervals, by any dimensions, with any filter), so analysts can play around without writing code.
    The report itself stays tight.
 8. **Every client in the window**, labels included, for feature–target views (§4.4, D-030): EDA is
-   a product in its own right, and the notebooks' data-analysis tools need the whole population.
+   a product in its own right, and the notebooks' data-analysis tools need the whole population,
+   the pre-model-tagged rows included (the pre-EDA filters alone remove rows, D-129).
    The train/test client split happens after Feature Checks. Label-based views never show months
    after the window; population-level rates may show every month up to the window's end.
 9. **Fast at 2M+ rows per month:** aggregate in Spark or on declared samples, and say so in the report.

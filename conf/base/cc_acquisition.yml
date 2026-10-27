@@ -26,11 +26,12 @@ data:
   model_input: cc_acquisition_input      # the saved model input's logical name
   eligibility:                           # ordered Spark SQL; each step logs rows in -> out
     - {name: has_income, define: "income IS NOT NULL"}
-    - {name: non_holders, filter: "cc_flag = 0", reason: "acquisition is scored for clients without a card"}
+    - {name: non_holders, filter: "cc_flag = 0", reason: "acquisition is scored for clients without a card",
+       before: model}                    # rows stay for EDA, tagged non_holders; dropped before modelling
     - {name: income_known_or_salaried, filter: "has_income OR salary_transfer_flag = 1",
-       reason: "card rules need a known income"}
+       reason: "card rules need a known income", before: eda}   # rows dropped before EDA
   target:
-    rule: flag_in_window                 # the flag turns 1 inside months t+1 … t+w
+    rule: flag_goes_up                   # the flag is 1 in some month of t+1 … t+w and 0 at t
     column: cc_flag                      # excluded from the candidates (lineage)
     leavers: null                        # null | negative
   split: {test_share: 0.3, seed: 42}     # by client, seeded hash; applied from Training on

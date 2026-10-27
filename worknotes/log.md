@@ -18,6 +18,71 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
 - Still open: the review list is above five items; the timeline's backlog risk fires if it stays
   so for a week.
 
+### 2026-10-27 — Stage 1, major step 2 reworked after the SDS's review: the rule, nulls, two kinds of eligibility
+- 2026-10-27, the SDS's answers: eligibility filters split into pre-EDA (rows dropped) and
+  pre-model (rows tagged; the tag columns serve as strata, e.g. holders vs non-holders), which
+  answers Q394; the rule compares the current month with any forward month, so `[0, null, 1, 1]`
+  is 1 and `[1, 0, 1, 1]` is 0; Q392 yes, named `flag_goes_up`, with count and amount rules kept
+  separate; Q393 (A); `review_answers.md` holds the current review only, never a growing history
+  (saved as a memory rule).
+- Code (one agent, strong, high; the main thread read the diff): `flag_goes_up` =
+  `max(forward) > value at t` cast to int (SQL null semantics; a holder at t gets 0);
+  `forward_sum` = the sum of the known values; `data.target.null_as` (coalesced in the column's
+  type, so a boolean flag works too; refused without a rule, and for a flag unless 0 or 1);
+  `build_targets` returns `null_in_window` as a fourth column and the summary shows
+  `null_value_share`; `EligibilityStep.before: eda | model` (a filter needs it, a define takes
+  none); `cc_acquisition.yml` shows one filter of each kind; the template explains both and
+  `null_as`; golden digests re-pinned (both change: eligibility and target gained fields). Tests:
+  one parametrized test over the SDS's series, forward_sum with nulls, the refusals, a hand-made
+  summary with `null_value_share` ≠ `null_share`, three schema tests; the precondition and
+  strict-null tests removed. The oracle comparison holds on the non-holders (`cc_flag == 0`).
+- Docs on the main thread: `config.md` (layout, requirement 6: the two kinds), `dataset.md`
+  (purpose, frames, model input, requirement 1), `eda.md` (funnel, reference groups), the
+  glossary, `target_factory.md` (requirements 3 and 5, Interface), D-029 (c), D-129, D-131,
+  `UPDATES.md`, the plan (3.1 `apply_eligibility` tags or drops; 3.3 on `eligible = 1`; 3.4
+  frames; the precondition items removed), `review_guide.md` (reverted findings, the SDS's
+  review), `review_answers.md` rewritten to the current review.
+### 2026-10-26 — Stage 1, major step 2 built and reviewed: Target Factory, keyed sources, holdings on last days
+- 2026-10-26: 2.1b (sonnet, high) moved the synthetic holdings to last-day months (0.5.2; mart and
+  oracle unchanged). Both datasets regenerated beside the old ones: dev 68 s, canonical 344 s;
+  canonical passes every check row; dev fails the same 4 sample-size rows as at 0.5.1 (e.g. "fewest
+  openings in a 6-month window" needs 200 at 20,000 clients). Mart and oracle files byte-identical
+  to 0.5.1. The 0.5.1 folders kept as `synthetic_{dev,canonical}_0.5.1`, beside the 0.5.0 ones.
+- 2.2 (strong, high): `tasks.py` (`TASK_SPECS`: rules, column checks, summaries), `sources.py`
+  (`read_keyed_source`), `target_factory.py` (`build_targets`, `load_targets`, `target_lineage`,
+  `run_target_factory`). One combined test run failed two tests while both agents ran Spark at
+  once (error text lost); three sequential reruns and every run since passed: load is the likely
+  cause, unconfirmed. Main thread added: null unit ids refused; the summary labelled as before
+  eligibility.
+- Reviews (code-reviewer, silent-failure-hunter, compat-guardian: strong, high;
+  ml-correctness-auditor: strong, xhigh). Taken through one fix agent (strong, high): the rule
+  enforces D-029 (c) (null unless the flag at t is 0; any null in the window gives null, so no
+  label-dependent row loss); target-column type and value checks per task; a TimestampType month
+  must be at midnight in the session zone; the target source must cover `train_months.first` …
+  `v + w`; an upstream target with values in the last w months is refused; the summary shows
+  label columns for the observation window only; replay refuses a non-loggable `set`;
+  `read_keyed_source(cfg, entity, name, env, spark)`. Re-audit (high): all fixed and tested; two
+  test gaps closed on the main thread (an upstream tail one month short, a zone west of UTC), the
+  tail test checked by breaking the code.
+- The oracle comparison now holds on every row of the unit preset (the oracle nulls holders too).
+- Docs: `target_factory.md` (status, Interface, §4.1 scope, D-029 (c) citation, T19),
+  `dataset.md`, `architecture.md` (layout, the Public API table filled for Stage 1),
+  `decisions.md` (D-088 carve-out), `config.md` (calibration open question), `UPDATES.md`, the
+  plan (step 3 musts), `review_guide.md` → Major step 2, the template's rule warning.
+- Verified: full suite 152 passed, 9 deselected (3 min 6 s) after the fix pass; the step 2 files
+  rerun after the last two tests; `ruff check .` clean. 21 warnings: py4j's unclosed sockets.
+- Asked: Q391 (rename `flag_in_window` to `flag_goes_up`).
+- 2026-10-27, the SDS's review of step 2 (conceptual, before reading the code in full): the
+  any-null-in-the-window rule is too strict given the month-coverage check (coverage strict, the
+  rule relaxed); holders are an eligibility criterion, never nulled by the rule, and EDA must not
+  lose the current clients; the rule must catch any rise (0 → 1, 1 → 2, 1 → 3), not 0 → 1 only;
+  Q391 yes; delete the old datasets (done: 0.5.0 and 0.5.1 folders removed, 0.5.2 stays).
+  Answered in `review_answers.md` → Major step 2: the crunch's shape (a panel of every client,
+  eligibility a config filter, the rule blind to eligibility); `goes_up` for flags and counts
+  (Q392), nulls under SQL semantics with `null_value_share` and an optional `null_as` (Q393), and
+  for EDA: mark eligibility in the model input instead of dropping rows (Q394, A/B/C). Code
+  unchanged until the answers; then the fixes, then the SDS reviews again.
+
 ### 2026-10-26 — Stage 1, major step 1: the SDS's review answered
 - 2026-10-26: the SDS reviewed major step 1 with six remarks: `include`'s scope, why the loggable
   settings stop where they do, months tagged on the first or the last day, defaults on display in

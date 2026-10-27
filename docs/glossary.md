@@ -64,18 +64,24 @@ Whether this glossary is also published to the wider unit is part of the open do
   included; the client split happens after Feature Checks, and from Training on, fitting,
   selection, calibration and every choice use train-split clients only (D-030).
 - **Eligibility:** the population a use case models and scores. It is defined by ordered config
-  steps and applied identically to train, test, validation and inference.
+  steps and applied identically to train, test, validation and inference. A filter is applied
+  `before: eda` (its rows are dropped) or `before: model` (its rows stay for EDA, tagged by the
+  step's name as a 0/1 column, and are dropped before modelling; the tag is a stratum, e.g.
+  current holders vs non-holders). `eligible` marks the rows every pre-model filter passes
+  (D-129).
 - **Define / filter step:** the two kinds of eligibility entry, both Spark SQL (D-129). A
   `define` names a boolean condition that later entries reuse by name and is dropped before the
   candidates are resolved; a `filter` keeps the rows where its condition is true (a null counts
   as false), with a required reason, and logs rows in → out.
 - **Frames:** what the dataset hands a stage: `Frames(window, train, test, validation, log,
-  meta)`. The window frame (every eligible unit-month in the observation window, every client,
-  labels included) serves EDA and Feature Checks; train / test / validation serve Training on
+  meta)`. The window frame (every unit-month in the observation window after the pre-EDA
+  filters, the pre-model tags as columns, every client, labels included) serves EDA and Feature
+  Checks; train / test / validation serve Training on
   (D-030; `docs/components/dataset.md`).
 - **Model input:** one saved table per instance, named in the config (`data.model_input`) and
   written by `save_model_input` from the Target Factory notebook: the governing spine's rows with
-  the candidate columns, `target` and `split`, eligibility applied, beside a `metadata.json` with
+  the candidate columns, `target`, `split`, the pre-model tags and `eligible` (the pre-EDA
+  filters applied), beside a `metadata.json` with
   its hashes and logs. Every later stage reads it and fails loud when its data-definition hash
   differs from the config's; saving it freezes the config; inference reads the sources instead
   (D-131).

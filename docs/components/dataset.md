@@ -8,10 +8,13 @@ D-082, D-083, D-088, D-091, D-098, D-106, D-117, D-129, D-130, D-131, D-133 · O
 ## Purpose
 Builds the frames every stage works on, from one data definition: the governing spine and the
 other sources joined, eligibility applied, the target attached, the client split assigned, then
-collected from Spark with a printout of what is about to leave it. Two frame shapes come from the
-same definition (D-030): the **window frame** (every eligible unit-month in the observation
-window, every client, labels included) for EDA and Feature Checks, and **train / test /
-validation** from Training on. The frames can be built in memory on every call or read from the
+collected from Spark with a printout of what is about to leave it. Eligibility has two kinds of
+filter (D-129): `before: eda` drops its rows; `before: model` keeps them, tagged by the step's
+name, so EDA can compare the excluded group (e.g. current holders) with the modelling
+population, and drops them before modelling. Two frame shapes come from the same definition
+(D-030): the **window frame** (every unit-month in the observation window after the pre-EDA
+filters, the pre-model tags as columns, every client, labels included) for EDA and Feature
+Checks, and **train / test / validation** (eligible rows only) from Training on. The frames can be built in memory on every call or read from the
 saved **model input** that Target Factory's notebook writes (D-131). Training on a window of
 months instead of a single month is a Phase 2 big-ticket item (D-030). This doc owns its
 downstream effects.
@@ -54,8 +57,10 @@ The periods, earliest to latest:
 ## Frames (D-030, D-131)
 `Frames(window, train, test, validation, log, meta)`, built by `build_frames(cfg, entity, env,
 spark, stage)`, which collects only what the stage asks for:
-- `window`: every eligible unit-month in the observation window with `target`, for EDA and
-  Feature Checks (`stage` `eda` / `feature_checks`). Every client, labels included (D-030).
+- `window`: every unit-month in the observation window after the pre-EDA filters, with
+  `target`, the pre-model tag columns and `eligible` (every pre-model filter passed), for EDA and
+  Feature Checks (`stage` `eda` / `feature_checks`). Every client, labels included (D-030); EDA's
+  population views use every row and the tags as strata, Feature Checks the eligible rows.
 - `train` and `test`: the window split by client; `validation`: every eligible unit at `v`, with
   the `split` column so Evaluation can also show test clients only (`stage` `training` /
   `evaluation`). Rows with a null target are dropped from these modelling frames, with the share
@@ -78,7 +83,8 @@ Feature Checks also reads the gap months and the latest month, label-free, from 
   framework's one month convention, so a source tagged on the first day joins one tagged on the
   last. A month column that is not a date or timestamp fails loud naming its type (a format
   setting waits for a real source that needs one). The join log says how each source tagged its
-  months (D-129).
+  months (D-129). Every source is read this way through `read_keyed_source` (`sources.py`, built
+  with Target Factory), which also refuses a null unit id and a repeated key.
 - Duplicate keys in any source fail loud, naming the source and a few keys; the check runs after
   the month move, so a source carrying both tags for one month fails it. A non-key column
   present in two feature sources fails loud (renamed upstream, or by a per-source alias later).
@@ -90,7 +96,8 @@ Feature Checks also reads the gap months and the latest month, label-free, from 
 One saved table per instance, named in the config by logical name (`data.model_input`) and mapped
 to a path or table by the environment file. It holds the governing spine's rows from the window's
 first month to the spine's last, the candidate columns of every feature source, `target` and
-`split`, eligibility applied and the `define` columns dropped. Beside it, `metadata.json` holds
+`split`, the pre-EDA filters applied, one 0/1 column per pre-model filter (named after the step)
+plus `eligible`, and the `define` columns dropped. Beside it, `metadata.json` holds
 the data-definition and target-spec hashes with their `hash_version`, the lineage, the resolved candidates, the join,
 eligibility and null-target logs, the framework version and when it was built.
 - `save_model_input` writes it, from the Target Factory notebook or `run --stages
@@ -101,15 +108,19 @@ eligibility and null-target logs, the framework version and when it was built.
   with the same logs.
 - No separate targets table: the model input carries the target. Labels for scored months (M4)
   build their own.
-- Inference reads the **sources**, never the model input, and applies the model's own eligibility
-  to the inference month (§4.9).
+- Inference reads the **sources**, never the model input, and applies the model's own eligibility,
+  both kinds, to the inference month (§4.9): it scores the eligible units.
 
 ## Phase 2 requirements
 1. Eligibility (ordered config steps, each a `define` or a `filter` in Spark SQL, D-129) is
-   applied identically to every month of train/test, validation and inference (§4.9). Each
-   `filter` logs rows in → out per month with its reason; a `define` adds a named boolean column
-   for later steps and is dropped before the candidates are resolved; a null condition counts as
-   false.
+   applied identically to every month of train/test, validation and inference (§4.9). A
+   `before: eda` filter drops its rows and logs rows in → out per month with its reason; a
+   `before: model` filter keeps its rows, adds a 0/1 column named after the step (1 = the row
+   passes) and logs how many it would drop per month; `eligible` is 1 where every pre-model
+   filter passes, and the contract checks, Feature Checks, Training, Evaluation and Inference use
+   those rows only. A `define` adds a named boolean column for later steps and is dropped before
+   the candidates are resolved; a null condition counts as false. A step named like a source
+   column fails loud.
 2. Keep every eligible unit-month row in the window. Report both **positive rows** and **positive
    events**, because one conversion is positive in up to `w` consecutive months. Every rule that
    uses a count of positives as evidence (minimum support per stratum, standard errors, the AUC

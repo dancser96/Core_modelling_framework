@@ -325,6 +325,17 @@ def test_stale_entry_fails_naming_its_seq(config_path: Path, env: EnvironmentCon
         resolve_config(cfg, ENTITY, env)
 
 
+@pytest.mark.parametrize("path, value", [("training.seed", 7), ("data.target.column", "age")])
+def test_set_entry_outside_the_loggable_settings_is_stale(
+    cfg: UseCaseConfig, env: EnvironmentConfig, path: str, value: object
+) -> None:
+    """A hand-written `set` on a path that is not loggable stops the replay, never applied."""
+    _write_json(cfg, env, 1, by={"kind": "person", "id": "someone"}, stage="training", op="set",
+                path=path, to=value)  # fmt: skip
+    with pytest.raises(ValueError, match=f"entry 1 is stale: {path} is not a loggable setting"):
+        resolve_config(cfg, ENTITY, env)
+
+
 def test_refusals_of_record_decision(
     config_path: Path, env_path: Path, cfg: UseCaseConfig, env: EnvironmentConfig
 ) -> None:

@@ -261,8 +261,11 @@ built.
   - `config/`: `schema.py` (the Pydantic models, one per section), `levels.py` (`LEVEL_DEFAULTS`),
     `migrations.py`, `identities.py` (the hashes), `audit_log.py` (entries, `record_decision`,
     `show_decisions`, `resolve_config`, replay)
-  - `tasks.py`: `TASK_SPECS`, the per-task spec (target rules and contract checks in Stage 1)
-  - `target_factory.py`: `build_targets`, `target_lineage`, `run_target_factory`
+  - `tasks.py`: `TASK_SPECS`, the per-task spec (target rules, the target summary and, from step
+    3, the contract checks in Stage 1)
+  - `sources.py`: `read_keyed_source`, a logical source with its keys renamed and its months at
+    their last day; Target Factory, the dataset and Inference all read through it (D-129)
+  - `target_factory.py`: `build_targets`, `load_targets`, `target_lineage`, `run_target_factory`
   - `dataset/`: `panel.py` (sources joined, eligibility, the target attached, candidates
     resolved), `split.py` (the client split and sampling), `contract.py` (the contract checks),
     `frames.py` (`Frames`, the collect with its printout, the model input saved and read)
@@ -293,11 +296,11 @@ private (`_name`). Only what is listed here is public and covered by `CLAUDE.md`
 1.0 a public function's signature and return shape change only after one minor version of
 deprecation; in 0.x they change freely (D-007 (c)). The table is filled in as it is built.
 
-Planned, not built: one function per stage, `run`, the CLI commands (`run`, `register`, `promote`,
-`deploy`, `decide`) and the config schema. Stage 1 (M2.1) makes these public (D-024):
-`load_config`, `get_spark_session`, `run_target_factory`, `build_frames`, `save_model_input`,
-`record_decision`, `show_decisions`, `resolve_config`, `read_resolved_config` and `run`, plus the
-CLI commands `run` and `decide`. Signatures: [config](components/config.md#interface),
+Stage 1 (M2.1) makes these public (D-024): `load_config`, `get_spark_session`,
+`run_target_factory`, `build_frames`, `save_model_input`, `record_decision`, `show_decisions`,
+`resolve_config`, `read_resolved_config` and `run`, plus the CLI commands `run` and `decide`; the
+table lists those built so far. Planned beyond Stage 1: one function per later stage and the CLI
+commands `register`, `promote` and `deploy`. Signatures: [config](components/config.md#interface),
 [environment](components/environment.md#interface),
 [target factory](components/target_factory.md#interface), [dataset](components/dataset.md#interface).
 The frames and the model input are what a DS explores in a notebook copy, which is why
@@ -305,7 +308,11 @@ The frames and the model input are what a DS explores in a notebook copy, which 
 
 | Function | Module | Since |
 |---|---|---|
-| *(none yet)* | | |
+| `load_config`, `UseCaseConfig` | `core_modelling.config` | 0.2.0 (Stage 1) |
+| `get_spark_session` | `core_modelling.environment` | 0.2.0 (Stage 1) |
+| `record_decision`, `show_decisions`, `resolve_config`, `read_resolved_config` | `core_modelling.config.audit_log` | 0.2.0 (Stage 1) |
+| CLI `decide` | `python -m core_modelling decide` | 0.2.0 (Stage 1) |
+| `run_target_factory` | `core_modelling.target_factory` | 0.2.0 (Stage 1) |
 
 ## Data folders
 

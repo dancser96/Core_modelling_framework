@@ -279,6 +279,20 @@ def test_eligibility_filter_needs_a_reason(tmp_path: Path, raw: dict) -> None:
     assert "needs a reason" in _error(tmp_path, raw)
 
 
+def test_eligibility_filter_needs_before(tmp_path: Path, raw: dict) -> None:
+    """A filter says whether its rows go before EDA or before modelling; the message explains."""
+    del raw["data"]["eligibility"][1]["before"]
+    message = _error(tmp_path, raw)
+    assert "filter 'non_holders' needs `before`" in message
+    assert "tagged by the step's name" in message
+
+
+def test_eligibility_define_takes_no_before(tmp_path: Path, raw: dict) -> None:
+    """A define names a condition and drops nothing."""
+    raw["data"]["eligibility"][0]["before"] = "eda"
+    assert "define 'has_income' takes no `before`" in _error(tmp_path, raw)
+
+
 def test_eligibility_names_unique(tmp_path: Path, raw: dict) -> None:
     """Two steps with the same name would make the log ambiguous."""
     raw["data"]["eligibility"].append(copy.deepcopy(raw["data"]["eligibility"][1]))
@@ -286,13 +300,15 @@ def test_eligibility_names_unique(tmp_path: Path, raw: dict) -> None:
 
 
 def test_upstream_target_is_column_without_rule(tmp_path: Path, raw: dict) -> None:
-    """An upstream target gives only the column, optionally with its lineage; leaver handling
-    belongs to a built target."""
+    """An upstream target gives only the column, optionally with its lineage; leaver and null
+    handling belong to a built target."""
     raw["data"]["target"] = {"column": "cc_target", "lineage": ["cc_flag"]}
     target = _load(tmp_path, raw).data.target
     assert target.rule is None and target.lineage == ["cc_flag"]
     raw["data"]["target"]["leavers"] = "negative"
     assert "`leavers` applies to a built target" in _error(tmp_path, raw)
+    raw["data"]["target"] = {"column": "cc_target", "null_as": 0}
+    assert "`null_as` applies to a built target" in _error(tmp_path, raw)
 
 
 def test_sampling_parameter_must_match_method(tmp_path: Path, raw: dict) -> None:

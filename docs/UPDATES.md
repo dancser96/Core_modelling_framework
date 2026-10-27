@@ -17,7 +17,7 @@ Status values: `legacy-only` (exists only in legacy) · `designing` · `stub` (i
 | Environment adapter (Spark session, compat shim, transport, paths, sources) | built (partial) | Compat shim + local Spark session built (M1 step 0, D-011); transport, paths, sources in M2. Traps T1–T5, T18 |
 | Config spine (single file, automation levels, decision, entities, data-definition hash, migrations) | built | `components/config.md`. Settled 2026-10-20: YAML (D-043), two automation levels in the `automation_level` field (D-023), identities with a worked example (D-088), the shared-table rule (D-007), extension code in use-case repos (D-006); the decision audit log (D-125, 2026-10-22). The Stage 1 design is settled (D-129–D-133) and major step 1 is built (2026-10-26, under the SDS's review): the schema and template, levels, migrations machinery, hashes, the audit log with `decide`; plan in `worknotes/m2_1_foundation/plan.md` |
 | Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | tested | M1: steps 0–7 built (2026-10-17); the SDS's review round 1 applied (2026-10-19): role folders, slimmer `truth.json`, two new traps, exit rates, top-down spec with a code map. Feature mart (157 columns from 0.5.0), traps on two products, oracle and `truth.json`, CLI, source mapping; every independent check row passes at 100k; approved by the SDS (2026-10-19); reviewed and accepted by the LDS (2026-10-21). Its to-dos (noise and very-low-fill columns, named like the traps) became 0.5.0's ten trap columns (2026-10-25, Stage 1; `unstable` waits for M4); the `dev` (20k) and canonical datasets and the notebook are at 0.5.0, all 1,309 check rows passing at 100k; the package goes into the bank as code, never as data (D-041). D-003, D-029, D-041, D-064 |
-| Target Factory (targets only, optional) | designing | Renamed from Data Creation (D-029); Stage 1 builds it thin (major step 2 of `worknotes/m2_1_foundation/plan.md`) |
+| Target Factory (targets only, optional) | built (thin) | Stage 1 major step 2 (2026-10-26, under the SDS's review): `flag_goes_up` and `forward_sum` through the per-task spec (the rule compares t with the forward months; nulls under SQL semantics, `null_as`), the keyed source reader (months at their last day, D-129), the target-column and month-coverage checks, `run_target_factory`; tested against the oracle on the `unit` preset. The SDS's review (2026-10-27) split eligibility into `before: eda` (dropped) and `before: model` (tagged) filters (D-129); the dataset builds it in major step 3. `components/target_factory.md` |
 | Dataset: observation window, client-grouped split, OOT validation, sampling | designing | Stage 1 builds it thin with the model input (D-131, major step 3 of the Stage 1 plan); big-ticket item (D-030); sampling kept simple in Phase 2, advanced sampling in Phase 3 (D-117); window ablation OD-17 |
 | EDA (worth running first; low-prevalence aware) | designing | Major rethink; EDA and Feature Checks use all clients, the client split comes after (D-030) |
 | Feature Checks (correctness and quality only) | designing | Major rethink; selection moved to Training (D-028) |
@@ -42,6 +42,12 @@ together with the topics to raise with the Chief DS.
 
 ## Log (major changes only, newest first)
 
+- 2026-10-26 — Stage 1, major step 2 built and reviewed: Target Factory (the flag and forward-sum
+  rules, the target summary), one keyed reader for every source that holds months at their last
+  day (D-129, from the SDS's review of step 1), and the synthetic holdings on last-day months
+  (0.5.2, both datasets regenerated). Four reviewers found label risks (a holder at t, nulls in
+  the window, label rates after the window, bad column types, time-zone shifts), all fixed.
+  Also from the SDS's review: more settings loggable (D-125), D-088's pre-release carve-out.
 - 2026-10-26 — Stage 1, major step 1 built: the config spine (schema, template, levels,
   migrations, hashes, the decision audit log, `decide`) and the environment adapter (the
   environment file, `get_spark_session`, sources per entity, local paths), reviewed by three

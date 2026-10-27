@@ -1,5 +1,5 @@
 # Sync page
-_For the SDS and the LDS · last updated: 2026-10-26 (briefing for the sync) · last sync: 2026-10-26_
+_For the SDS and the LDS · last updated: 2026-10-27 (major step 2 reworked after the SDS's review; second review pending) · last sync: 2026-10-26_
 
 **In short (10-23 to 10-26):** The inconsistency sweep and the Stage 1 design questions are all
 answered, and Stage 1 is being built. The biggest rule change: EDA and Feature Checks now look at
@@ -7,7 +7,7 @@ all clients, so people's feature choices have seen test labels, and the validati
 honest number. Stage 1's design is settled: the config's layout, a separate file for environment
 facts, one saved model input that every later stage reads, what the two automation levels change,
 and a size check before data leaves Spark. Its first build step, the config and the environment
-adapter, is built and reviewed, the SDS's remarks are applied, and Target Factory is being built.
+adapter, is built and reviewed; the second, Target Factory, is built and with the SDS for review.
 Your synthetic to-dos are built as ten new trap columns. The Phase 2 plan needs your review this
 week, before the stakeholder buy-in.
 
@@ -23,6 +23,9 @@ buy-in), then OD-06, OD-08, OD-11, OD-12, OD-18, OD-23. Everything below is for 
 - [ ] **Stage 1, major step 1 as built** — `conf/base/TEMPLATE.yml`, `conf/base/cc_acquisition.yml`,
       then `worknotes/m2_1_foundation/review_guide.md` → Major step 1 (not ML-critical: sample it)
       — feedback wanted: does the template read well as a DS's first contact with the framework?
+- [ ] **Stage 1, major step 2 as built: Target Factory** — `worknotes/m2_1_foundation/review_guide.md`
+      → Major step 2, read in full (it builds every model's label) — feedback wanted: do the rule
+      and its refusals match how you'd define card acquisition, and is anything missing?
 - [ ] **The decision audit log** — `docs/components/config.md` → Decision audit log — feedback
       wanted: do the closed list of operations, the settings a decision may change, the replay
       rules and the verbosity controls answer your concern about verbosity and the step from
@@ -50,19 +53,23 @@ buy-in), then OD-06, OD-08, OD-11, OD-12, OD-18, OD-23. Everything below is for 
 | Is MLflow available inside the bank (OD-08)? | MLflow in Phase 2 is the goal; its shape is settled (D-111): M2.4's records map onto it, it goes in with the integrations in M4 | Ask at the platform learn session, by 11-06 | SDS + LDS, with the platform / MLOps team |
 
 ## Last 2 working days (10-23 to 10-26)
-- **Stage 1 (M2.1 Foundation): designed, planned, step 1 built (10-23 → 10-26).** Stage 1
-  builds the config spine, the environment adapter, Target Factory and the dataset, in three
-  major steps, each ending in the SDS's review. Its design questions (10-23, round 2 on 10-25)
-  are all answered: the config layout, the environment file, the model input, the level mapping
-  and the collect printout. Step 1 is built: the schema and template, level defaults,
-  migrations, the hashes, the decision audit log with its `decide` command, and the environment
-  adapter. Three reviewers found two real traps (an `hdfs://` root reaching `pathlib`; a level
-  move not moving the level defaults), both fixed. From the SDS's review: the template shows
-  every default, a level move no longer overwrites a person's setting, more settings may change
-  through the log, and a month is held as its last day, whichever day a source tags. The synthetic data
-  gained a slim second table, so the skeleton reads two sources. Target Factory (major step 2)
-  is being built. — look at: D-129–D-133, `worknotes/m2_1_foundation/plan.md`, `review_guide.md`,
-  `review_answers.md`
+- **Stage 1 (M2.1 Foundation): designed, planned, steps 1 and 2 built (10-23 → 10-26).** Stage 1
+  builds the config spine, the environment adapter, Target Factory and the dataset in three major
+  steps, each ending in the SDS's review. The design questions are all answered. Step 1 (the
+  schema and template, level defaults, migrations, the hashes, the decision audit log and the
+  environment adapter) is built and reviewed by the SDS: the template now shows every default,
+  more settings may change through the log, and a month is held as its last day, whichever day a
+  source tags. **Step 2 is built (10-26):** Target Factory builds the card-acquisition and
+  card-spend targets and matches the synthetic truth on every row, and one reader serves every
+  source. Four reviewers found label risks (a client already holding the card at t, gaps in the
+  data, label rates shown after the window, wrongly typed columns, time-zone shifts), all fixed.
+  The SDS's review (10-27) reset two of those: the rule must catch any rise in a holding count,
+  not only 0 → 1, and whether a client already holds the product is an eligibility criterion, not
+  the rule's; nulls in the window are handled leniently. Open: how EDA keeps the current holders
+  in view: settled by splitting eligibility into filters applied before EDA (rows dropped) and
+  before modelling (rows kept and tagged, so holders and non-holders can be compared). The fixes
+  are in and with the SDS for a second review; then the dataset (step 3). — look at: D-129–D-133, `worknotes/m2_1_foundation/plan.md`,
+  `review_guide.md`
 - **Inconsistency sweep answered and closed (10-23 → 10-25).** 21 decision rows extended, and
   `CLAUDE.md`, the roadmap and the docs brought in line. The rule change: EDA and Feature Checks
   use all clients and the client split comes after them, so people's feature decisions see test
