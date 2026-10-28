@@ -102,6 +102,18 @@ def _month_log(raw: DataFrame, name: str, month_column: str) -> dict:
     return {"source": name, "months": sorted({_last_day(day) for day in days}), "month_tag": tag}
 
 
+def month_number(day: date) -> int:
+    """`day`'s month as an integer, consecutive months consecutive (never adding days, T19)."""
+    return day.year * 12 + day.month - 1
+
+
+def missing_months(months: list[date], first: date, last: date) -> list[str]:
+    """The months from `first` to `last` (as `YYYY-MM`) that `months` lacks."""
+    present = {month_number(month) for month in months}
+    wanted = range(month_number(first), month_number(last) + 1)
+    return [f"{n // 12}-{n % 12 + 1:02d}" for n in wanted if n not in present]
+
+
 def _last_day(day: date) -> date:
     """The last day of `day`'s month."""
     return day.replace(day=calendar.monthrange(day.year, day.month)[1])

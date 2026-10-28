@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-from pyspark.sql import SparkSession
+from pyspark.sql import DataFrame, SparkSession
 
 from core_modelling.config import UseCaseConfig, load_config
 from core_modelling.environment import (
@@ -75,6 +75,55 @@ def cc_config() -> UseCaseConfig:
     """The walking skeleton's config, `conf/base/cc_acquisition.yml`, loaded; tests derive
     variants from its dump, re-validated, and never change it."""
     return load_config(Path(__file__).resolve().parents[1] / "conf/base/cc_acquisition.yml")
+
+
+@pytest.fixture(scope="session")
+def variant(cc_config: UseCaseConfig) -> Callable[..., UseCaseConfig]:
+    """A function giving `cc_config` with sections changed and re-validated: each keyword is a
+    section (`time`, `data`, …) whose dict merges into it, nested dicts merging too, and any
+    other value replaces it (`task="regression"`)."""
+
+    def make(**sections: object) -> UseCaseConfig:
+        """The changed config, validated."""
+        data = cc_config.model_dump()
+        for name, change in sections.items():
+            data[name] = _merged(data[name], change) if isinstance(change, dict) else change
+        return UseCaseConfig.model_validate(data)
+
+    return make
+
+
+def _merged(base: dict, change: dict) -> dict:
+    """`base` with `change` merged in, dict values merged one level deeper."""
+    out = dict(base)
+    for key, value in change.items():
+        nested = isinstance(value, dict) and isinstance(out.get(key), dict)
+        out[key] = _merged(out[key], value) if nested else value
+    return out
+
+
+@pytest.fixture
+def write_sources(spark: SparkSession, tmp_path: Path) -> Callable[..., EnvironmentConfig]:
+    """A function writing keyed panels (`unit_id`, `month`, …) to parquet under the config's key
+    names (`client_id`, `snapshot_month`) as `entity_a`'s sources of a new environment on the
+    test's folder; other keywords are environment settings (`collect_budget_gb=…`)."""
+
+    def write(panels: dict[str, DataFrame], **settings: object) -> EnvironmentConfig:
+        """The environment whose sources are the panels written."""
+        sources = {}
+        for name, panel in panels.items():
+            path = str(tmp_path / name)
+            raw = panel.withColumnRenamed("unit_id", "client_id")
+            raw.withColumnRenamed("month", "snapshot_month").write.parquet(path)
+            sources[name] = Source(format="parquet", path=path)
+        return EnvironmentConfig(
+            schema_version=1,
+            roots=Roots(data=str(tmp_path)),
+            sources={"entity_a": sources},
+            **settings,
+        )
+
+    return write
 
 
 @pytest.fixture(scope="session")

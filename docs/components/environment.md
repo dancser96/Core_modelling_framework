@@ -72,7 +72,8 @@ is refused (T5). Credentials references, if any, also live here and never in the
 5. Source resolution per entity: `entities.<e>.sources` in the use-case config names logical
    sources, and `sources.<entity>.<name>` in the environment file maps each to a parquet path or a
    table. The example maps three for `entity_a`: `retail_mart` (the governing spine),
-   `retail_holdings` (the target source) and `cc_acquisition_input` (the model input). On a
+   `retail_holdings` (the target source) and `cc_acquisition_input` (the model input, a parquet
+   source whose path stays local until the transport of M2.4, like the audit log's). On a
    laptop they point at the synthetic dataset in `data/01_raw/` and `data/05_model_input/`. In
    the first release a source can also be the feature store, alone or next to other sources
    (D-021); a `feature_store` format is refused at load until OD-26 is settled, since the
@@ -105,8 +106,9 @@ functions and their YAML source mapping.
   driver_memory, shuffle_partitions, time_zone, extra), `roots: Roots` (data, registered,
   production), `sources: dict[str, dict[str, Source]]` (entity → logical name → `{format, path |
   table}`), `collect_budget_gb: float`, `theme: str | None`.
-- `load_environment(path: str | None = None) -> EnvironmentConfig`: the argument, else
-  `CORE_MODELLING_ENVIRONMENT`, else fail loud naming both.
+- `load_environment(path: str | None = None) -> EnvironmentConfig` (public, D-024: the
+  notebooks' setup cell calls it): the argument, else `CORE_MODELLING_ENVIRONMENT`, else fail
+  loud naming both.
 - `get_spark_session(env: EnvironmentConfig) -> SparkSession` (public, D-024): req. 1.
 - `read_source(spark, env, entity: str, name: str) -> DataFrame`: parquet by path or a table.
 - `data_path(env, layer: str, *parts: str) -> str`; `audit_log_dir(env, use_case, entity,

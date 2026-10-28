@@ -59,7 +59,8 @@ data:                                    # required
     # built: the flag is 1 in some month of t+1 … t+w and 0 at t (acquisition, activation); the
     # count and amount rules come later:
     # rule: flag_goes_up
-    # built target only · null: a null never counts · e.g. 0 when a null in the column means 0
+    # built target only · null: a null is never an event, and the target is null when nothing can
+    # be compared · e.g. 0: a null in the column means 0
     null_as: null
     # built target only · null: a client leaving inside the window gets a null target |
     # negative: counts as 0

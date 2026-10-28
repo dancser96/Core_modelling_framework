@@ -44,6 +44,7 @@ from core_modelling.config.replay import (
     write_resolved,
 )
 from core_modelling.config.schema import UseCaseConfig
+from core_modelling.dataset.model_input import saved_candidates
 from core_modelling.environment import EnvironmentConfig, audit_log_dir, load_environment
 
 __all__ = [
@@ -213,12 +214,34 @@ def _check_includable(entries: list[Entry], current: dict, features: list[str]) 
 
 
 def _feature_fields(
-    cfg: UseCaseConfig, current: dict, entries: list[Entry], op: str, features: object
+    cfg: UseCaseConfig,
+    entity: str,
+    env: EnvironmentConfig,
+    current: dict,
+    entries: list[Entry],
+    op: str,
+    features: object,
 ) -> dict:
-    """A feature op's entry fields, every feature checked against the candidates."""
+    """A feature op's entry fields, every feature checked against the saved model input's
+    candidate list when the config names one, else against the candidate patterns."""
     if not isinstance(features, list) or not features:
         raise ValueError(f"{op} needs a non-empty list of feature names, got {features!r}")
-    check_candidates(cfg, features, f"{op} refused")
+    candidates = saved_candidates(cfg, entity, env)
+    if candidates is None:
+        check_candidates(cfg, features, f"{op} refused")
+        why = (
+            "the config names no model input"
+            if cfg.data.model_input is None
+            else (f"the model input {cfg.data.model_input!r} is not saved yet")
+        )
+        print(f"checked against the candidate patterns only: {why}")
+    else:
+        unknown = [feature for feature in features if feature not in candidates]
+        if unknown:
+            raise ValueError(
+                f"{op} refused: {unknown} are not candidates of the model input "
+                f"{cfg.data.model_input!r}; its candidates: {candidates}"
+            )
     if op == "include":
         _check_includable(entries, current, features)
     return {"features": features, "stage": "feature_checks"}
@@ -284,11 +307,7 @@ def record_decision(
     if op == "set":
         fields = _set_fields(cfg, current, operand)
     else:
-        fields = _feature_fields(cfg, current, entries, op, operand)
-        print(
-            "checked against the candidate patterns only; the resolved candidate list arrives "
-            "with the model input"
-        )
+        fields = _feature_fields(cfg, entity, env, current, entries, op, operand)
     default_stage = fields.pop("stage")
     entry = Entry(
         seq=len(entries) + 1,

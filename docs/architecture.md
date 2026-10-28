@@ -261,14 +261,15 @@ built.
   - `config/`: `schema.py` (the Pydantic models, one per section), `levels.py` (`LEVEL_DEFAULTS`),
     `migrations.py`, `identities.py` (the hashes), `audit_log.py` (entries, `record_decision`,
     `show_decisions`, `resolve_config`, replay)
-  - `tasks.py`: `TASK_SPECS`, the per-task spec (target rules, the target summary and, from step
-    3, the contract checks in Stage 1)
+  - `tasks.py`: `TASK_SPECS`, the per-task spec (the target rules, the target-column check, the
+    target summary and the contract checks in Stage 1)
   - `sources.py`: `read_keyed_source`, a logical source with its keys renamed and its months at
     their last day; Target Factory, the dataset and Inference all read through it (D-129)
   - `target_factory.py`: `build_targets`, `load_targets`, `target_lineage`, `run_target_factory`
   - `dataset/`: `panel.py` (sources joined, eligibility, the target attached, candidates
-    resolved), `split.py` (the client split and sampling), `contract.py` (the contract checks),
-    `frames.py` (`Frames`, the collect with its printout, the model input saved and read)
+    resolved, the panel built), `split.py` (the client split and sampling), `contract.py` (the
+    contract checks), `frames.py` (`Frames`, the collect with its printout), `model_input.py`
+    (the model input saved and read)
   - `run.py`: `run`, `STAGES`
   - `eda/`: population/target profile, univariate ranking, key features, pivots
   - `feature_checks/`: check steps, stability, lineage guard
@@ -296,10 +297,10 @@ private (`_name`). Only what is listed here is public and covered by `CLAUDE.md`
 1.0 a public function's signature and return shape change only after one minor version of
 deprecation; in 0.x they change freely (D-007 (c)). The table is filled in as it is built.
 
-Stage 1 (M2.1) makes these public (D-024): `load_config`, `get_spark_session`,
-`run_target_factory`, `build_frames`, `save_model_input`, `record_decision`, `show_decisions`,
-`resolve_config`, `read_resolved_config` and `run`, plus the CLI commands `run` and `decide`; the
-table lists those built so far. Planned beyond Stage 1: one function per later stage and the CLI
+Stage 1 (M2.1) makes these public (D-024): `load_config`, `load_environment`,
+`get_spark_session`, `run_target_factory`, `build_frames`, `save_model_input`,
+`record_decision`, `show_decisions`, `resolve_config`, `read_resolved_config` and `run`, plus the
+CLI commands `run` and `decide`; the table lists them all (Stage 1 is built, 2026-10-27). Planned beyond Stage 1: one function per later stage and the CLI
 commands `register`, `promote` and `deploy`. Signatures: [config](components/config.md#interface),
 [environment](components/environment.md#interface),
 [target factory](components/target_factory.md#interface), [dataset](components/dataset.md#interface).
@@ -309,10 +310,29 @@ The frames and the model input are what a DS explores in a notebook copy, which 
 | Function | Module | Since |
 |---|---|---|
 | `load_config`, `UseCaseConfig` | `core_modelling.config` | 0.2.0 (Stage 1) |
-| `get_spark_session` | `core_modelling.environment` | 0.2.0 (Stage 1) |
+| `load_environment`, `get_spark_session` | `core_modelling.environment` | 0.2.0 (Stage 1) |
 | `record_decision`, `show_decisions`, `resolve_config`, `read_resolved_config` | `core_modelling.config.audit_log` | 0.2.0 (Stage 1) |
 | CLI `decide` | `python -m core_modelling decide` | 0.2.0 (Stage 1) |
 | `run_target_factory` | `core_modelling.target_factory` | 0.2.0 (Stage 1) |
+| `build_frames`, `save_model_input`, `Frames` | `core_modelling.dataset` | 0.2.0 (Stage 1) |
+| `run` | `core_modelling.run` | 0.2.0 (Stage 1) |
+| CLI `run` | `python -m core_modelling run` | 0.2.0 (Stage 1) |
+
+## Artifact inventory
+
+Every artifact a version writes, with its version field, who writes and reads it and the
+compatibility rule (D-007 (d)); each carries its version field from its first version. Built
+rows are Stage 1's; the rest join as their stages are built (the formats are in their owner
+docs).
+
+| Artifact | Owner doc | Version field | Written by | Read by | Rule |
+|---|---|---|---|---|---|
+| Use-case config | [config](components/config.md) | `schema_version` | the DS | every stage | migrated `dict → dict` at load; an older version loads with a warning, a newer one fails loud |
+| Environment file | [environment](components/environment.md) | `schema_version` | the platform / the DS | every stage | as the config |
+| Audit log entry | [config](components/config.md) | `log_schema_version`, `hash_version` | `record_decision`, later the stages | `resolve_config`, `show_decisions` | append-only; another version fails naming the file; an entry under another data definition fails |
+| Resolved config | [config](components/config.md) | `schema_version` (the config's) + `housekeeping.hash_version` | `resolve_config` | every stage after Target Factory, the reports | read back as is through `read_resolved_config` |
+| Model input (`_model_input.json` + the parquet table) | [dataset](components/dataset.md) | `schema_version` (`MODEL_INPUT_SCHEMA_VERSION`), `hash_version` | `save_model_input` (Target Factory) | every later stage, the audit log's feature decisions | another version, data definition or split: rebuild with `save_model_input` (the migration until 1.0) |
+| Model bundle, model card, manifest, scores, feature ledger, drift reference, registry records, monitoring tables | their owner docs | `schema_version` (+ `framework_version` on shared-table rows) | their stages (M2.2–M2.4, M4) | later stages, monitoring | D-007 (b): rows only gain nullable columns within a major version |
 
 ## Data folders
 

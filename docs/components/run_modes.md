@@ -1,5 +1,5 @@
 # Run modes: CLI, Python API, guided notebooks
-**Status:** designing · **Legacy:** `run_product.py`, `notebooks/`
+**Status:** built thin (Stage 1, 2026-10-27: `run` with its one stage, the CLI `run` and `decide`, the first guided notebook) · **Legacy:** `run_product.py`, `notebooks/`
 **Related:** [config](config.md) · [environment](environment.md) · [dataset](dataset.md) (experiment sweeps) ·
 `notebooks/README.md` · D-006, D-022, D-024, D-039, D-047, D-083, D-125 · OD-02, OD-04
 
@@ -43,6 +43,23 @@ so users can see and debug what happens under the hood.
 ## Design constraints
 - No logic in `__main__.py` beyond parsing arguments and calling the API.
 - No HTTP / scheduler layer. Scheduling, if any, calls the CLI.
+
+## Interface
+Built in Stage 1 (2026-10-27), in `core_modelling/run.py`, `core_modelling/__main__.py` and
+`notebooks/01_target_factory.ipynb`.
+- `run(config_path, env_path=None, stages=None, entity=None) -> dict` (public, D-024): the
+  stages (default: every built one, in `STAGES` order) for the entities of the config (default:
+  all it lists); per entity and stage what the stage returned. An unknown stage or entity fails
+  before anything runs. `STAGES` is the dict stage name → function `(cfg, entity, env, spark)`;
+  Stage 1 holds `target_factory`: `run_target_factory`, then `save_model_input` when the config
+  names a model input (D-131). The later stages take the resolved config (D-125) and join as they
+  are built.
+- CLI: `python -m core_modelling run <config> [--stages …] [--entity …] [--env …]` and `decide`
+  ([config](config.md)); `__main__` parses and calls.
+- `notebooks/01_target_factory.ipynb`: the guide cell, the setup cell (`load_environment`,
+  `get_spark_session`, `load_config`), `run_target_factory`, `save_model_input`,
+  `build_frames(stage="eda")` with the funnel and the frame's head. `tests/test_run.py` checks
+  it imports from the Public API only and defines nothing.
 
 ## Open questions
 - Where use cases live and how users get the notebooks (OD-02). Leaning: one repo per entity ×

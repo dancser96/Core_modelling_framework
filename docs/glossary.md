@@ -80,8 +80,9 @@ Whether this glossary is also published to the wider unit is part of the open do
   (D-030; `docs/components/dataset.md`).
 - **Model input:** one saved table per instance, named in the config (`data.model_input`) and
   written by `save_model_input` from the Target Factory notebook: the governing spine's rows with
-  the candidate columns, `target`, `split`, the pre-model tags and `eligible` (the pre-EDA
-  filters applied), beside a `metadata.json` with
+  the candidate columns, `target` (known in the window and at the validation month only),
+  `split`, the pre-model tags and `eligible` (the pre-EDA
+  filters applied), with a `_model_input.json` holding
   its hashes and logs. Every later stage reads it and fails loud when its data-definition hash
   differs from the config's; saving it freezes the config; inference reads the sources instead
   (D-131).

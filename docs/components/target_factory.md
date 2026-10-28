@@ -1,5 +1,5 @@
 # Target Factory
-**Status:** built thin (M2.1, 2026-10-26; under the SDS's review) · **Legacy:** `src/rollups.py`, `notebooks/Data_Creation.ipynb` (crunch name: Data Creation)
+**Status:** built thin (M2.1, 2026-10-26; for the SDS's review with the dataset) · **Legacy:** `src/rollups.py`, `notebooks/Data_Creation.ipynb` (crunch name: Data Creation)
 **Related:** [config](config.md) (the target spec) · [dataset](dataset.md) (frames, the model input) ·
 [environment](environment.md) (source resolution) · [feature checks](feature_checks.md) (lineage exclusion, the
 leakage screen) · [monitoring](monitoring.md) (labels) · D-020, D-021, D-029, D-050, D-054, D-091, D-129, D-131,
@@ -111,14 +111,16 @@ Built in Stage 1's major step 2 (2026-10-26; under the SDS's review), in
   index (`year × 12 + month`, never `add_months`, T19), so a missing month is a gap; null unless
   all `w` months are present (panel edge, leavers, gaps); an unknown rule fails naming the task's
   rules; `leavers: negative` raises until M4 (D-091). Columns: `unit_id`, `month`, `target`,
-  `null_in_window` (the raw column was null at t or in the window; the dataset logs its share
-  and drops it).
+  `null_in_window` (for a complete window: the raw column was null at t or in the window; the
+  dataset logs its share and drops it).
 - `load_targets(cfg, entity, env, spark) -> tuple[DataFrame, dict]`: the target source (the spine
   when `targets` is omitted) read keyed and checked before anything is built: the target column
   exists and passes the task's check, and the source has every month from `train_months.first`
   to `validation_month + w` (a gap would null w targets; a short source would leave the
   validation labels immature). Then the rule is built, or the upstream `column` taken as
-  `target`, refused when it has values in the source's last `w` months. Returns the targets and
+  `target`, refused when it has values in the source's last `w` months (immature labels filled,
+  or a shorter window than `w`) or none in the month before them (a longer window than `w`,
+  whose target windows would overlap the validation month's, §4.2). Returns the targets and
   the source's log; the dataset joins them (step 3).
 - `target_lineage(cfg) -> list[str]`: `column`, then the config's `lineage`, without repeats.
 - `run_target_factory(cfg, entity, env, spark) -> pd.DataFrame` (public, D-024): the task's
@@ -127,8 +129,9 @@ Built in Stage 1's major step 2 (2026-10-26; under the SDS's review), in
   for an upstream target); the mean target and, for binary, the positive rows and the positive
   events (distinct units, D-082) for the observation window's months only, so no later month's
   label rate, the validation month's among them, is shown (`CLAUDE.md` §4.4). It covers every
-  row of the target source before eligibility, and says so. Writes nothing. The notebook `01_target_factory` calls
-  it, then `save_model_input` ([dataset](dataset.md)).
+  row of the target source before eligibility, and says so. Writes nothing. The notebook
+  `01_target_factory` and `run --stages target_factory` call it, then `save_model_input`
+  ([dataset](dataset.md), [run modes](run_modes.md)).
 - Tested against the oracle on the `unit` preset: `flag_goes_up` on the holdings equals the
   oracle's `cc_acquire` on the non-holders at t (the oracle's own eligibility), nulls included,
   and `forward_sum` on the mart equals its next-3-month card spend for holders. Hand-made

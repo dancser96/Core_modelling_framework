@@ -48,7 +48,7 @@ here once agreed (OD-01).
 |---|---|---|---|
 | M0 | Design baseline | to 10-12 | Done 2026-10-12 |
 | M1 | Synthetic data + local Spark harness | 10-13 – 10-21 | Done: accepted by the LDS 2026-10-21; its to-dos built in M2.1 (0.5.0) except the `unstable` kind (M4); regression chosen (D-020), its per-task spec still to design (D-050) |
-| M2 | Round 1a: walking skeleton, stages M2.1–M2.4 | 10-26 – 11-20 | — |
+| M2 | Round 1a: walking skeleton, stages M2.1–M2.4 | 10-26 – 11-20 | M2.1 Foundation built 2026-10-27 (version 0.2.0), under the SDS's review; M2.2 next |
 | M3 | Round 1b: exit points and calibration | 11-23 – 12-08 | — |
 | M5a | Run-through 1 → pre-release (internal repo, not production) | 12-09 – 12-18 | — |
 | M4 | Round 2: depth and integrations | 01-04 – 02-05 | — |
@@ -63,6 +63,9 @@ here once agreed (OD-01).
   waits for M4 with Feature Checks' stability
 - Dataset: observation window, client-grouped split, OOT validation, Spark-side sampling, row
   budget (M2 thin, M4 deep) — `dataset.md`
+- A migration hook for the model input's sidecar (`_model_input.json`), like the config's
+  `migrate`, once a saved model input must outlive a framework version inside the bank; until
+  then its migration is a rebuild from the sources (M5a at the earliest) — `dataset.md`
 - Identities before anything is kept inside the bank (by M5a, the pre-release): whether hashes
   leave out values at their schema default, so an added optional field doesn't change every
   digest, and a `definition.json` beside each audit-log folder so a recipe change can re-key it

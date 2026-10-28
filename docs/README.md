@@ -30,7 +30,7 @@ listed alongside.
 
 | # | Stage | Main doc | Also uses | Status |
 |---|---|---|---|---|
-| 1 | Target Factory (optional) | [target_factory](components/target_factory.md) | config, dataset | legacy-only |
+| 1 | Target Factory (optional) | [target_factory](components/target_factory.md) | config, dataset | built (thin) |
 | 2 | EDA | [eda](components/eda.md) | dataset, feature ledger, reporting | legacy-only |
 | 3 | Feature Checks | [feature_checks](components/feature_checks.md) | feature ledger, dataset, reporting | legacy-only |
 | 4 | Training | [training](components/training.md) | dataset, feature ledger, config | legacy-only |

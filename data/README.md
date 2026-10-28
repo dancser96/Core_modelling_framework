@@ -10,7 +10,7 @@ builds every path under it, and code never hardcodes them.
 | `02_intermediate` | Cleaned / typed panels |
 | `03_primary` | Unused for now: the model input carries the target, so there is no separate targets table (D-131); where labels for scored months (M4) go is set when they are built |
 | `04_feature` | Per instance and data definition, `<use_case>/<entity>/<data_definition_hash>/`: the decision audit log (`decisions/<seq>.json`) and, from M2.2, the EDA and Feature Checks artifacts and the feature ledger |
-| `05_model_input` | The **model input** (D-131): the saved table every stage after Target Factory reads, beside its `metadata.json`; its exact path is the environment file's source entry for `data.model_input`, e.g. `<use_case>/<entity>` |
+| `05_model_input` | The **model input** (D-131): the saved table every stage after Target Factory reads, with its `_model_input.json`; its exact path is the environment file's source entry for `data.model_input`, e.g. `<use_case>/<entity>` |
 | `06_models` | **Local tier** training runs (`<use_case>/<entity>/<run_id>/`; the bank-side layout per entity × domain is OD-06) |
 | `07_model_output` | Scoring batches (`<scoring_batch_id>/…`; layout of scores vs manifests under review, OD-18) |
 | `08_reporting` | HTML reports (EDA, feature checks, model performance, comparison, monitoring), model cards |

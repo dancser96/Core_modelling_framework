@@ -178,6 +178,15 @@ def test_flag_goes_up_compares_t_with_the_window(
     assert _targets(targets, "null_in_window") == {"a": [held_null, False, False, False]}
 
 
+def test_fractional_null_as_widens_an_integer_amount(
+    spark: SparkSession, cc_config: UseCaseConfig
+) -> None:
+    """A fractional `null_as` on an integer column is kept in the sum, never truncated."""
+    cfg = _variant(cc_config, task="regression", rule="forward_sum", column="value", null_as=0.5)
+    targets = build_targets(_panel(spark, {"a": [0, 1, None, 2]}), cfg)
+    assert _targets(targets)["a"][0] == 3.5
+
+
 def test_forward_sum_skips_nulls(spark: SparkSession, cc_config: UseCaseConfig) -> None:
     """The sum over t+1 … t+w, nulls skipped, null when the whole window is; t's own never
     enters."""
@@ -387,6 +396,18 @@ def test_upstream_target_known_in_the_last_w_months_is_refused(
         r"\(2026-07-31 … 2026-09-30\).*fills immature labels or uses another window",
     ):
         load_targets(cfg, "entity_a", unit_env, spark)
+
+
+def test_upstream_target_with_a_longer_window_is_refused(
+    spark: SparkSession, tmp_path: Path, cc_config: UseCaseConfig
+) -> None:
+    """An upstream column null in the last w + 1 months was built with a longer window than
+    `w`: its target windows would overlap the validation month's (§4.2)."""
+    upstream = _panel(spark, {"a": [0, 0, 0, 0, None, None, None, None]})
+    env = _env_of(spark, tmp_path, {"retail_holdings": upstream})
+    cfg = _variant(cc_config, time=SHORT_TIME, rule=None, column="value")
+    with pytest.raises(ValueError, match=r"no value in 2025-03-31.*seems longer than"):
+        load_targets(cfg, "entity_a", env, spark)
 
 
 def test_upstream_value_in_the_first_of_the_last_w_months_is_refused(

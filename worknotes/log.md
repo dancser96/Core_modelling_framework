@@ -2,6 +2,70 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-10-27 — Stage 1, major step 3 built: the dataset, `run`, the notebook (version 0.2.0)
+- 2026-10-27, the SDS: build step 3 now and review steps 2 and 3 together; the review guide
+  combines both. Built on the main thread (the pieces depend on each other; one Spark job at a
+  time on the 8 GB machine), the four reviews delegated in parallel.
+- Code: `dataset/panel.py` (`load_panel`: every source through `read_keyed_source`, the spine
+  checked for `first … v`, the other feature sources and the targets left-joined with a marker
+  each, months from the window's first to the spine's last, one rollup for the join log and the
+  window-month-without-target refusal; `apply_eligibility`: a define reused and dropped, a
+  `before: eda` filter dropping with rows per month, a `before: model` filter tagging 0/1,
+  `eligible`, a condition resolved against the sources' columns and earlier defines only, boolean
+  required; `resolve_candidates`), `dataset/split.py` (`assign_split`, `sample_train` with the
+  two options, the hashes salted `'split'` / `'sample'`, T20), `dataset/contract.py`
+  (`check_contract`: unique keys, the task's checks, the null callout), `tasks.py`
+  (`contract_checks` per task: both classes and the rate band; a finite, non-constant amount),
+  `dataset/frames.py` (`Frames`, `build_frames` for the four stages, `_modelling_rows` with the
+  null-target share per month, `estimate_collect`, `collect_frame` with the printout and the
+  callout, `save_model_input` partitioned by month with `_model_input.json`, T21;
+  `read_model_input_metadata` refusing another definition, split, schema or hash version;
+  `saved_candidates` for the audit log), `run.py` (`STAGES`, `run`), `__main__.py` (`run`),
+  `schema.py` (`negative_downsampling` needs a binary task), `audit_log.py` (a feature decision
+  checked against the saved model input's candidates, else the patterns, saying so),
+  `sources.py` (`month_number` shared), `notebooks/01_target_factory.ipynb`, version 0.2.0.
+- Tests: `test_dataset.py` (the join and its log, a shared column, a spine gap, a target source
+  matching nothing, replayed names, every eligibility rule, the candidates), `test_split.py`
+  (by client, stable, near the share; the positives kept; whole clients at the share with equal
+  seeds; the identity), `test_contract.py` (each refusal with its numbers, ineligible rows never
+  counted, the callout), `test_frames.py` (end to end on the unit preset: the window, the
+  modelling frames, the model input round trip equal to the in-memory frames, the stale-input
+  refusals, the callout, regression with client sampling), `test_run.py` (the CLI run, the
+  notebook's imports), a schema test; `conftest.py` gained `variant` and `write_sources`.
+- Timings on the unit preset: the window frame 12 s, the modelling frames 7 s, the model input
+  saved 5 s, read back 2 s; the new tests 60 passed in 86 s.
+- Docs: `dataset.md` (status, requirements 1, 3, 9, the model input, the frames' meta, the
+  Interface, two open questions), `target_factory.md`, `run_modes.md` (status, Interface),
+  `environment.md` (`load_environment` public; the model input's path local until M2.4),
+  `config.md` (status; the feature decisions' check), `architecture.md` (Public API rows),
+  `glossary.md`, D-131, `data/README.md`, `lessons.md` (T20, T21), `notebooks/README.md`,
+  `docs/README.md`, `UPDATES.md`, the roadmap's M2 row; `review_guide.md` (one reading order
+  for steps 2 and 3, the deviations), `review_answers.md` (step 2's table kept; Q395–Q398), the
+  plan's status and timeline.
+- Reviews (four in parallel, read-only while the suite ran): code review (strong, high)
+  approved, 11 suggestions; silent-failure audit (strong, high) 2 high, 5 medium; compat review
+  (strong, high) non-breaking, 7 items; ML audit (strong, xhigh) safe, 1 medium, hardening. The
+  fix pass on the main thread, every item re-tested (`review_guide.md` → Reviewers' findings,
+  step 3): the model input's folder rewritten whole instead of a dynamic partition overwrite
+  that left stale months; a missing model-input mapping fails loud and the pattern-check
+  fallback says why; `split` / `eligible` refused as step names; a star in a call, a subquery
+  and a window function refused in eligibility SQL; labels nulled outside the window and the
+  validation month (Q399); months without eligible rows refused by the contract; null
+  conditions counted per month; `step: eligibility` + `name` in the log; the split compared in
+  JSON mode and `month` cast on read; the artifact inventory (D-007 (d)) in `architecture.md`;
+  `dataset/model_input.py` split out of `frames.py`; `missing_months` shared; the smaller items.
+  Justified: the notebook's repo-derived path (an editable install; a use case writes its own);
+  the contract not re-run on the read path (`dataset.md` → Open questions). Deferred: a sidecar
+  migration hook (roadmap backlog).
+- Verified before the reviews: `ruff check .` clean, every file formatted; the full suite 203
+  passed, 9 slow deselected, in 4 min 4 s (one Spark job, nothing else running). After the fix
+  pass: the affected files 99 passed, the panel tests 19 passed, then the full suite 207
+  passed, 9 slow deselected, in 4 min 5 s. The notebook's code cells run
+  as a script on the `dev` dataset through `conf/local/environment.yml` in 32 s: the summary,
+  the join and eligibility lines (64% non-holders tagged, 6% dropped before EDA), the model
+  input saved under `data/05_model_input/`, the window frame 116,998 rows × 160 columns
+  (≈ 0.47 GB at the peak against the 1.5 GB budget).
+
 ### 2026-10-26 — Briefing for the LDS sync
 - 2026-10-26: `/brief` for the sync; every commit up to `0fec6de` (10-25) is covered by this
   log; the work since (Stage 1 major step 1, synthetic 0.5.0–0.5.1, the sync-page rules) is
@@ -42,6 +106,23 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   `UPDATES.md`, the plan (3.1 `apply_eligibility` tags or drops; 3.3 on `eligible = 1`; 3.4
   frames; the precondition items removed), `review_guide.md` (reverted findings, the SDS's
   review), `review_answers.md` rewritten to the current review.
+- Verified: full suite 163 passed, 9 deselected (3 min 14 s), `ruff check .` clean. Code review
+  (strong, high): approved; four suggestions taken (the unused `w` dropped from the rule
+  signature; `null_as` cast only for a boolean column, numerics widen, with a test; the window
+  count named; the `null_as` wording and the printed caption). After them: Target Factory, schema
+  and code-rule tests 67 passed.
+- ML audit of the rework (strong, high): safe, nothing blocking; every invariant traced through
+  the eight series and the oracle. Taken: an upstream target built with a longer window than `w`
+  passed the tail check (the month before the tail must now hold a value, with a test); the
+  `null_in_window` docstring (false for incomplete windows). Into the plan (step 3): eligibility
+  SQL may reference source columns and define names only; both kinds applied to the validation
+  month; tags and helper columns out of the candidates; join misses logged; a contract callout
+  when `null_value_share` > 0 without `null_as` (would-be negatives dropped as nulls). For M2.2:
+  the time-alignment screen on define and tag columns (`feature_checks.md`), a label-free
+  comparison for a tag that is the rule's precondition (`eda.md`). The SDS committed the rework
+  as `81df5dd` before these last edits.
+- Verified after the ML audit's guard: Target Factory and code-rule tests 37 passed, `ruff check .`
+  clean, every file formatted.
 ### 2026-10-26 — Stage 1, major step 2 built and reviewed: Target Factory, keyed sources, holdings on last days
 - 2026-10-26: 2.1b (sonnet, high) moved the synthetic holdings to last-day months (0.5.2; mart and
   oracle unchanged). Both datasets regenerated beside the old ones: dev 68 s, canonical 344 s;

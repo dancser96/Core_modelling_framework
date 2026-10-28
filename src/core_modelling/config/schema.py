@@ -412,6 +412,17 @@ class UseCaseConfig(StrictModel):
     monitoring: Monitoring = Monitoring()
     housekeeping: dict[str, object] | None = None
 
+    @model_validator(mode="after")
+    def _check_sampling_suits_task(self) -> "UseCaseConfig":
+        """`negative_downsampling` keeps the positives of a binary target; regression has none."""
+        sampling = self.training.sampling
+        if self.task != "binary" and sampling and sampling.method == "negative_downsampling":
+            raise ValueError(
+                f"training.sampling.method 'negative_downsampling' needs a binary target; task "
+                f"{self.task!r} samples clients (client_sample, D-117)"
+            )
+        return self
+
     @field_validator("use_case")
     @classmethod
     def _check_use_case_name(cls, value: str) -> str:

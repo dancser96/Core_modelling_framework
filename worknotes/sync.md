@@ -1,15 +1,15 @@
 # Sync page
-_For the SDS and the LDS · last updated: 2026-10-27 (major step 2 reworked after the SDS's review; second review pending) · last sync: 2026-10-26_
+_For the SDS and the LDS · last updated: 2026-10-27 (Stage 1 built end to end; steps 2 and 3 with the SDS for review) · last sync: 2026-10-26_
 
-**In short (10-23 to 10-26):** The inconsistency sweep and the Stage 1 design questions are all
-answered, and Stage 1 is being built. The biggest rule change: EDA and Feature Checks now look at
-all clients, so people's feature choices have seen test labels, and the validation month is the
-honest number. Stage 1's design is settled: the config's layout, a separate file for environment
-facts, one saved model input that every later stage reads, what the two automation levels change,
-and a size check before data leaves Spark. Its first build step, the config and the environment
-adapter, is built and reviewed; the second, Target Factory, is built and with the SDS for review.
-Your synthetic to-dos are built as ten new trap columns. The Phase 2 plan needs your review this
-week, before the stakeholder buy-in.
+**In short (10-26 to 10-27):** Stage 1 is built end to end, two days ahead of its plan. The
+config spine was reviewed by the SDS and its remarks applied. Target Factory was reviewed too and
+reworked: the rule now catches any rise of the holding flag after the observation month, nulls in
+the data are handled leniently and shown, and whether a client already holds the product is an
+eligibility matter, split into filters applied before the analysis (rows dropped) and before
+modelling (rows kept and tagged, so holders and non-holders can be compared). The dataset is
+built on top: the sources joined, eligibility, the client split, the contract checks, a saved
+model input every later stage reads, and the first guided notebook. The SDS reviews Target
+Factory and the dataset together now; then they are yours to read in full.
 
 Detail behind each item: `worknotes/log.md`. How this page is written: `worknotes/README.md`.
 
@@ -23,9 +23,10 @@ buy-in), then OD-06, OD-08, OD-11, OD-12, OD-18, OD-23. Everything below is for 
 - [ ] **Stage 1, major step 1 as built** — `conf/base/TEMPLATE.yml`, `conf/base/cc_acquisition.yml`,
       then `worknotes/m2_1_foundation/review_guide.md` → Major step 1 (not ML-critical: sample it)
       — feedback wanted: does the template read well as a DS's first contact with the framework?
-- [ ] **Stage 1, major step 2 as built: Target Factory** — `worknotes/m2_1_foundation/review_guide.md`
-      → Major step 2, read in full (it builds every model's label) — feedback wanted: do the rule
-      and its refusals match how you'd define card acquisition, and is anything missing?
+- [ ] **Stage 1, major steps 2 and 3 as built: Target Factory and the dataset** (after the SDS's
+      review) — `worknotes/m2_1_foundation/review_guide.md` → Major steps 2 and 3, read in full
+      (they build every model's label and frames) — feedback wanted: do the rule, the two kinds
+      of eligibility and the frames match how you'd define and model card acquisition?
 - [ ] **The decision audit log** — `docs/components/config.md` → Decision audit log — feedback
       wanted: do the closed list of operations, the settings a decision may change, the replay
       rules and the verbosity controls answer your concern about verbosity and the step from
@@ -52,50 +53,48 @@ buy-in), then OD-06, OD-08, OD-11, OD-12, OD-18, OD-23. Everything below is for 
 |---|---|---|---|
 | Is MLflow available inside the bank (OD-08)? | MLflow in Phase 2 is the goal; its shape is settled (D-111): M2.4's records map onto it, it goes in with the integrations in M4 | Ask at the platform learn session, by 11-06 | SDS + LDS, with the platform / MLOps team |
 
-## Last 2 working days (10-23 to 10-26)
-- **Stage 1 (M2.1 Foundation): designed, planned, steps 1 and 2 built (10-23 → 10-26).** Stage 1
-  builds the config spine, the environment adapter, Target Factory and the dataset in three major
-  steps, each ending in the SDS's review. The design questions are all answered. Step 1 (the
-  schema and template, level defaults, migrations, the hashes, the decision audit log and the
-  environment adapter) is built and reviewed by the SDS: the template now shows every default,
-  more settings may change through the log, and a month is held as its last day, whichever day a
-  source tags. **Step 2 is built (10-26):** Target Factory builds the card-acquisition and
-  card-spend targets and matches the synthetic truth on every row, and one reader serves every
-  source. Four reviewers found label risks (a client already holding the card at t, gaps in the
-  data, label rates shown after the window, wrongly typed columns, time-zone shifts), all fixed.
-  The SDS's review (10-27) reset two of those: the rule must catch any rise in a holding count,
-  not only 0 → 1, and whether a client already holds the product is an eligibility criterion, not
-  the rule's; nulls in the window are handled leniently. Open: how EDA keeps the current holders
-  in view: settled by splitting eligibility into filters applied before EDA (rows dropped) and
-  before modelling (rows kept and tagged, so holders and non-holders can be compared). The fixes
-  are in and with the SDS for a second review; then the dataset (step 3). — look at: D-129–D-133, `worknotes/m2_1_foundation/plan.md`,
-  `review_guide.md`
-- **Inconsistency sweep answered and closed (10-23 → 10-25).** 21 decision rows extended, and
-  `CLAUDE.md`, the roadmap and the docs brought in line. The rule change: EDA and Feature Checks
-  use all clients and the client split comes after them, so people's feature decisions see test
-  labels; the validation month stays the honest number (D-030, `CLAUDE.md` §4.4). Also:
-  production retrains the recipe by default on the same window and clients, checked against its
-  parent; only the move to production must avoid pickle; all three FLAML families in M2; one
-  sign-off gate after training; sampling only when the config declares it; the validation month
-  moves into the config; in Phase 2 a model's plain-data copy is trusted on its family's
-  verified round trip (D-051). — look at: the rows changed on 10-23 in `docs/decisions.md`
-- **Your synthetic to-dos, built (10-25).** Ten trap columns, on in every preset: a random flag, a
-  300-level categorical, two constants (your "univariate"), a redundant column, two low-fill
-  columns, a leak through missingness, and card twins of the shifted and process-leak kinds, so
-  the credit-card run-through meets every kind; `unstable` waits for M4. The trap list is the
-  acceptance test for "the traps are flagged", and the framework stays blind to the names. Every
-  existing column is unchanged at the same seed, and every check passes. The package goes into
-  the bank as code; tests generate their data from a seed. — look at:
-  `docs/components/test_harness.md` → Trap summary; D-064, D-041
+## Last 2 working days (10-26 to 10-27)
+- **Stage 1 (M2.1 Foundation) built end to end, version 0.2.0 (10-26 → 10-27).** Three major
+  steps, each reviewed by four fresh-context reviewers before the SDS. **Step 1** (the config
+  schema and template, level defaults, the hashes, the decision audit log, the environment
+  adapter) was reviewed by the SDS on 10-26: the template now shows every default, more settings
+  may change through the log, and a month is held as its last day whichever day a source tags.
+  **Step 2** (Target Factory) was reviewed on 10-27 and reworked on three points: the rule
+  compares the observation month with any later month of the window (`flag_goes_up`); nulls
+  follow SQL semantics and their share is shown, with an optional value a null stands for; and
+  a client already holding the product is an eligibility matter, not the rule's, so eligibility
+  filters now come in two kinds: before EDA (rows dropped) and before modelling (rows kept,
+  tagged, usable as strata). **Step 3** (the dataset, 10-27): every source read the same way and
+  joined to the governing spine, eligibility of both kinds applied to every month alike, the
+  client split and the two declared sampling options, contract checks on the eligible window
+  before any sampling (with a callout when nulls may hide negatives), the frames collected with a
+  size printout against a budget, and the model input saved with its hashes and read back by
+  every later stage, refused when stale. Also `run` with its CLI and the first guided notebook.
+  Two traps found on the way and ruled: a sampling hash must not share the split's input, and a
+  sidecar file in a parquet folder must not be named `_metadata…`. The full suite passes (203
+  tests, 4 minutes). The SDS reviews steps 2 and 3 together next. — look at: D-129–D-133,
+  `worknotes/m2_1_foundation/review_guide.md` → Major steps 2 and 3; `docs/components/dataset.md`
 
 ## Demo next
-- Stage 1's config spine: the template's reading key (`conf/base/TEMPLATE.yml:1`) and the worked
-  example `conf/base/cc_acquisition.yml`; then the audit log's worked example replayed,
-  `pytest tests/test_audit_log.py -q` (20 tests, under a second; `tests/test_audit_log.py:134`),
-  and a decision from the command line, `python -m core_modelling decide --help`.
+- Stage 1 end to end on the synthetic dev data: `notebooks/01_target_factory.ipynb` (the target
+  summary, the join and eligibility lines, the model input saved, the window frame), or from the
+  command line `python -m core_modelling run conf/base/cc_acquisition.yml --env conf/local/environment.yml`.
+- The config spine: the template's reading key (`conf/base/TEMPLATE.yml:1`) and the audit log's
+  worked example replayed, `pytest tests/test_audit_log.py -q`.
 - The Phase 2 plan (`worknotes/timeline_proposal.md`) if not shown yet.
 
-## Last 7 working days (10-16 to 10-22)
+## Last 7 working days (10-19 to 10-23)
+- 10-23 → 10-25 — **Inconsistency sweep answered and closed**: 21 decision rows extended; EDA and
+  Feature Checks use all clients and the client split comes after them (D-030, `CLAUDE.md` §4.4);
+  production retrains the recipe by default, checked against its parent (D-033, D-052); one
+  sign-off gate (D-031); sampling only when declared (D-117); the validation month in the config
+  (D-088) — the rows changed on 10-23 in `docs/decisions.md`
+- 10-25 — **Your synthetic to-dos built as ten trap columns** (0.5.0), on in every preset; the
+  package goes into the bank as code, tests generate their data from a seed (D-041, D-064) —
+  `docs/components/test_harness.md` → Trap summary
+- 10-23 → 10-26 — **Stage 1 designed and planned**: the config layout, the environment file, the
+  model input, the automation-level mapping, the collect printout (D-129–D-133; OD-25 closed) —
+  `worknotes/m2_1_foundation/plan.md`
 - 10-22 — **Decision log compacted; inconsistency sweep; LDS reading list**: 128 rows → 58 in a
   high-impact and a low-impact table, so IDs may have moved (mapping in `worknotes/log.md`) —
   `docs/decisions.md`, `worknotes/decisions_LDS_review.md`
@@ -104,20 +103,16 @@ buy-in), then OD-06, OD-08, OD-11, OD-12, OD-18, OD-23. Everything below is for 
 - 10-22 — **Fourth answers; plan adjusted**: registry records (D-111), monitoring frame (D-040),
   sampling kept simple (D-117), the Phase 3 wishlist — `docs/roadmap.md`
 - 10-21 — **Third answers; plan reshaped; synthetic data accepted by the LDS**: the master layer
-  (D-016), calibration a release requirement (D-049), outputs-only compatibility (D-007); two
-  build rounds with a run-through after each — `worknotes/timeline_proposal.md`
+  (D-016), calibration a release requirement (D-049), outputs-only compatibility (D-007) —
+  `worknotes/timeline_proposal.md`
 - 10-21 — **No pickle only at promotion**: D-051 — `worknotes/pickle_summary.md`
 - 10-21 — **Holistic review, second answers**: per-month evaluation (D-098), trial budgets (D-094),
   M2 engineering shape (D-100); doc-hygiene pass — `docs/decisions.md`
 - 10-20 — **Holistic review answered**: positive events (D-082), choices on train and test (D-083),
-  YAML and the config spine (D-043, D-088), identities, the sign-off view (D-031); `CLAUDE.md`
-  §4.4 and the speed claim (D-023) reworded — `docs/decisions.md`
-- 10-20 — **Holistic review and planning set**: verdict, top risks, 49 questions with defaults, a
-  timeline (the review was deleted on 10-22; its outcomes are in `docs/decisions.md`)
+  YAML and the config spine (D-043, D-088), identities, the sign-off view (D-031) —
+  `docs/decisions.md`
 - 10-20 — **CDS meeting outcomes**: design left to us; feature store and data observability in
   the first release; feature sign-off; no pickle; binary + regression, FLAML only — D-020, D-021,
   D-023, D-031, D-051, D-073, D-079, D-081; OD-25–OD-27
 - 10-19 — **Working rules and doc structure**: plans in major/minor steps, commits only on
   request, three-level docs without flowcharts, open decisions split by horizon — D-072
-- 10-17–19 — **Synthetic data generator (M1)**: built, reviewed by the SDS, approved; accepted by
-  the LDS on 10-21 — `synthetic/REVIEW.md`

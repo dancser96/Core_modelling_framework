@@ -1,6 +1,6 @@
-"""The CLI: `python -m core_modelling decide <config> --entity E --reason R ...` appends one
-decision to the audit log (D-125). Parsing only; the logic is `record_decision`. The `run`
-command arrives with the dataset stage (plan, minor step 3.5).
+"""The CLI (D-024): `python -m core_modelling run <config> [--stages …] [--entity …]` runs the
+stages, and `decide <config> --entity E --reason R …` appends one decision to the audit log
+(D-125). Parsing only; the logic is `run` and `record_decision`.
 """
 
 import argparse
@@ -8,6 +8,7 @@ import argparse
 import yaml
 
 from core_modelling.config.audit_log import record_decision
+from core_modelling.run import STAGES, run
 
 
 def _parse_setting(text: str) -> dict[str, object]:
@@ -19,9 +20,14 @@ def _parse_setting(text: str) -> dict[str, object]:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """The parser: one subcommand, `decide`."""
+    """The parser: the subcommands `run` and `decide`."""
     parser = argparse.ArgumentParser(prog="python -m core_modelling")
     commands = parser.add_subparsers(dest="command", required=True)
+    runner = commands.add_parser("run", help="run the stages of a use case")
+    runner.add_argument("config", help="the use-case config file")
+    runner.add_argument("--stages", nargs="+", choices=list(STAGES), help="default: all built")
+    runner.add_argument("--entity", help="default: every entity the config lists")
+    runner.add_argument("--env", help="the environment file (else $CORE_MODELLING_ENVIRONMENT)")
     decide = commands.add_parser("decide", help="append one decision to the audit log")
     decide.add_argument("config", help="the use-case config file")
     decide.add_argument("--entity", required=True)
@@ -37,8 +43,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Parse the arguments and record the decision; prints the entry's number."""
+    """Parse the arguments and run the stages, or record the decision (its number printed)."""
     args = _build_parser().parse_args(argv)
+    if args.command == "run":
+        out = run(args.config, env_path=args.env, stages=args.stages, entity=args.entity)
+        for entity, stages in out.items():
+            print(f"{entity}: ran {', '.join(stages)}")
+        return
     entry = record_decision(
         args.config,
         args.entity,

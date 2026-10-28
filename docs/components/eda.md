@@ -27,7 +27,9 @@ that the notebooks were run in reverse order. Phase 2 fixes the content, not the
    - **reference groups:** each pre-model tag (e.g. current holders vs non-holders) is a
      stratification column, so the excluded group's behaviour is compared with the modelling
      population's on the strata and the key features; which views show tagged rows is settled
-     when EDA is built (M2.2);
+     when EDA is built (M2.2). A tag whose filter is the rule's own precondition (current holders
+     under `flag_goes_up`) has a target rate of 0 by construction, so its comparison is
+     label-free;
    - base rate per month over every month up to the window's end (population level: seasonality,
      how representative the window is). Later months stay hidden, because their target windows
      overlap the validation month's (D-030);

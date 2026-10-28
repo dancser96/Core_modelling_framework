@@ -67,5 +67,8 @@ automated selection in [training](training.md).
 *(fill when built)*
 
 ## Open questions
+- The time-alignment screen also runs on the eligibility `define` columns and the pre-model
+  tags (T11; the ML audit of Stage 1's Target Factory), since eligibility SQL can select on the
+  outcome outside the screens.
 - Exact step catalogue and thresholds: set low (D-031), the same at every automation level (D-023).
 - The core views of its report per task (OD-12).

@@ -392,3 +392,13 @@ def test_missing_entities_refused(tmp_path: Path, raw: dict) -> None:
     """A use case lists at least one entity (D-034)."""
     raw["entities"] = {}
     assert "entities" in _error(tmp_path, raw)
+
+
+def test_negative_downsampling_needs_a_binary_target(tmp_path: Path, raw: dict) -> None:
+    """Regression has no positives to keep: it samples clients (D-117)."""
+    raw["task"] = "regression"
+    raw["data"]["target"] = {"rule": "forward_sum", "column": "spend_cc_vol"}
+    raw["training"]["sampling"] = {"method": "negative_downsampling", "keep_fraction": 0.2}
+    assert "needs a binary target" in _error(tmp_path, raw)
+    raw["training"]["sampling"] = {"method": "client_sample", "share": 0.5}
+    assert _load(tmp_path, raw).training.sampling.share == 0.5

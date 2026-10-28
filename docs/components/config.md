@@ -1,5 +1,5 @@
 # Config spine
-**Status:** building (M2.1, from 2026-10-26) · **Legacy:** `configs/_schema.py`, `configs/_TEMPLATE.yaml`
+**Status:** built (M2.1, 2026-10-26; for the SDS's review) · **Legacy:** `configs/_schema.py`, `configs/_TEMPLATE.yaml`
 **Related:** [dataset](dataset.md) (time model, frames, the model input) · [feature ledger](feature_ledger.md) ·
 [lifecycle](lifecycle.md) · [run modes](run_modes.md) · [environment](environment.md) (the environment file) ·
 [target factory](target_factory.md) (the target spec) · D-006, D-007, D-020, D-021, D-023, D-024, D-030,
@@ -127,7 +127,7 @@ training:
     importance_floor: null
   categoricals: {min_level_count: 50}    # rarer and unseen levels → __other__ (D-037)
   calibration: {method: platt}           # platt | isotonic | none; on by default for probability decisions (D-049)
-  sampling: null                         # null | {method: negative_downsampling, keep_fraction: 0.1, seed: 42}
+  sampling: null                         # null | {method: negative_downsampling, keep_fraction: 0.1, seed: 42}  (binary only)
                                          #      | {method: client_sample, share: 0.3, seed: 42}  (D-117)
 
 evaluation:
@@ -304,19 +304,26 @@ its stage. Planned (Stage 1):
 
 ```python
 LOGGABLE_SETTINGS = {
-    "automation_level": "eda",   # a level move reruns every stage from EDA (D-132)
-    "strata.variables": "eda", "strata.max_levels": "eda", "strata.min_events": "eda",
-    "eda.key_features.top_n": "eda", "eda.key_features.include": "eda",
+    "automation_level": "eda",  # a level move reruns every stage from EDA (D-132)
+    "strata.variables": "eda",
+    "strata.max_levels": "eda",
+    "strata.min_events": "eda",
+    "eda.key_features.top_n": "eda",
+    "eda.key_features.include": "eda",
     "eda.chart_sample_share": "eda",
     "feature_checks.steps": "feature_checks",
-    "training.estimator_list": "training", "training.max_iter": "training",
-    "training.time_budget_s": "training", "training.search_space": "training",
+    "training.estimator_list": "training",
+    "training.max_iter": "training",
+    "training.time_budget_s": "training",
+    "training.search_space": "training",
     "training.selection.univariate_floor": "training",
     "training.selection.importance_floor": "training",
     "training.categoricals.min_level_count": "training",
-    "training.calibration.method": "training", "training.sampling": "training",
-    "time.validation_month": "evaluation",   # refused once a Feature Checks run compared it (D-088)
-    "evaluation.slices.top_pct": "evaluation", "evaluation.slices.top_n": "evaluation",
+    "training.calibration.method": "training",
+    "training.sampling": "training",
+    "time.validation_month": "evaluation",  # refused once a Feature Checks run compared it (D-088)
+    "evaluation.slices.top_pct": "evaluation",
+    "evaluation.slices.top_n": "evaluation",
     "evaluation.views": "evaluation",
 }
 ```
@@ -349,10 +356,16 @@ from the new resolved input.
 
 ```python
 APPLY_BY_OP = {
-    "exclude": _apply_exclude, "include": _apply_include,
-    "keep_despite_flag": _apply_keep, "set": _apply_set,
-    "flag": _leave_unchanged, "dropped": _leave_unchanged, "sign_off": _leave_unchanged,
-    "register": _leave_unchanged, "promote": _leave_unchanged, "run": _leave_unchanged,
+    "exclude": _apply_exclude,
+    "include": _apply_include,
+    "keep_despite_flag": _apply_keep,
+    "set": _apply_set,
+    "flag": _leave_unchanged,
+    "dropped": _leave_unchanged,
+    "sign_off": _leave_unchanged,
+    "register": _leave_unchanged,
+    "promote": _leave_unchanged,
+    "run": _leave_unchanged,
 }
 
 for entry in entries[:upto]:
@@ -439,7 +452,8 @@ below. Writing an entry is one call in a notebook, or the same through `decide`:
 
 ```python
 record_decision(
-    "conf/base/cc_acquisition.yml", entity="entity_a",
+    "conf/base/cc_acquisition.yml",
+    entity="entity_a",
     exclude=["cc_preapproval_score_trap_leak", "cc_campaign_response_score_trap_leak"],
     reason="Set after the offer, so not known at scoring time",
     evidence=["#4", "feature_checks report: Leakage"],
@@ -611,8 +625,9 @@ functions)); the CLI command `decide` in `core_modelling/__main__.py`.
 - The audit log (public, D-024): `record_decision(config_path, entity, *, exclude=None,
   include=None, keep_despite_flag=None, set=None, reason, evidence=(), stage=None,
   env_path=None) -> Entry` (the writer is the current user id; rule and stage entries get their
-  own writers with their stages; a feature op says it was checked against the candidate patterns
-  only, until the model input brings the resolved list); `read_resolved_config(path) ->
+  own writers with their stages; a feature op checks its names against the saved model input's
+  candidate list when the config names one and it is saved, else against the candidate patterns,
+  saying so); `read_resolved_config(path) ->
   UseCaseConfig` reads a saved resolved config back as is (no level defaults, its replayed lists
   and housekeeping kept), which `load_config` refuses, since a config file carries intent only; `resolve_config(cfg, entity, env, upto=None, save_to=None) ->
   UseCaseConfig`; `show_decisions(cfg, entity, env) -> pd.DataFrame`; the CLI command `decide`.
@@ -643,9 +658,6 @@ functions)); the CLI command `decide` in `core_modelling/__main__.py`.
   every digest; hashing only values that differ from the schema default would leave them alone,
   at the price of a version bump for every changed default. Decide both before the December
   pre-release, when logs and artifacts start being kept inside the bank.
-- Until the model input exists (major step 3), `record_decision` checks a feature name against
-  the candidate patterns only, so a misspelt name passes; the dataset then fails loud when a
-  name in `features.excluded` or `kept_despite_flags` is not a column.
 - Extension functions live in the use case's repo and are referenced by import path; the resolved
   config records the path and a source hash (D-006). The exact fields are set when a use case
   first needs one; the walking skeleton's examples need none.

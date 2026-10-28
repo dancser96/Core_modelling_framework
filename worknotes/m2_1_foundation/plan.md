@@ -335,6 +335,11 @@ Main thread: suite, reviewers, `doc-sync` (`target_factory.md` Interface, `test_
 
 Ends in the SDS's review and the LDS's review of the dataset code in full.
 
+_Status (10-27): 3.1–3.5 built, ahead of the timeline, on the main thread rather than by parallel
+agents (the pieces depend on each other and the machine takes one Spark job at a time); the
+deviations from the sub-steps below are listed in `review_guide.md` → Deviations. The SDS
+reviews steps 2 and 3 together; 3.6's LDS review and the folder's deletion remain._
+
 ### 3.1 The panel (after major step 2)
 Agent (strong, high; §4 code). Files: `dataset/__init__.py`, `dataset/panel.py`,
 `tests/test_dataset.py` (its panel tests).
@@ -351,9 +356,15 @@ Agent (strong, high; §4 code). Files: `dataset/__init__.py`, `dataset/panel.py`
   `before: eda` filter → `filter` with rows in → out per month; a `before: model` filter → a 0/1
   column named after the step (1 = passes), rows kept, the would-be drops per month in the log;
   `eligible` = every pre-model filter passes; the define columns dropped at the end; a step name
-  that is a column of the panel fails loud (D-129, the SDS's review of step 2).
+  that is a column of the panel fails loud (D-129, the SDS's review of step 2). An expression
+  may reference only the sources' columns and earlier define names: `month`, `target`, `split`,
+  `eligible`, `null_in_window` and another filter's tag are refused (eligibility SQL is a leakage
+  surface outside the screens, the ML audit of the rework); a left-join miss on a non-spine column
+  makes a unit ineligible through a null condition, so the drops per month are logged next to the
+  join log.
 - `resolve_candidates(columns: list[str], cfg, lineage: list[str]) -> list[str]`: `fnmatch`
-  include then exclude, minus the keys, `target`, the lineage and the define names.
+  include then exclude, minus the keys, `target`, `split`, `eligible`, `null_in_window`, the
+  pre-model tags, the lineage and the define names.
 - Reviews: code-reviewer, simplicity, silent-failure-hunter, ml-correctness-auditor (xhigh, with
   3.2–3.4 together).
 
@@ -373,9 +384,13 @@ tests; the agent owns a separate `tests/test_split.py` instead, to keep the file
 Agent (sonnet, high; the spec rows are given). Files: `dataset/contract.py`, `tasks.py` (the
 `contract_checks` entries), `tests/test_contract.py`.
 - `check_contract(window: DataFrame, cfg) -> list[dict]`: runs `TASK_SPECS[task]["contract_checks"]`
-  on the eligible rows (`eligible = 1`) of the window before any sampling (§4.8): binary = unique `(unit_id, month)`, a
+  on the eligible rows (`eligible = 1`) of the window before any sampling (§4.8), after the
+  ordered steps, both kinds, were applied to the validation month exactly as to the window
+  (null → false; Inference does the same to the inference month, M2.4): binary = unique `(unit_id, month)`, a
   non-constant target, the pooled rate ≤ `rate_band.max` (reported per month); regression =
-  unique keys, a non-constant and finite target. A failure raises with the numbers.
+  unique keys, a non-constant and finite target. A failure raises with the numbers. One callout,
+  never a stop: a `null_value_share` above 0 in the window while `null_as` is unset (would-be
+  negatives may be nulls, dropped from the modelling frames; the ML audit of the rework).
 
 ### 3.4 Frames, the collect printout, the model input (after 3.1–3.3)
 Agent (strong, high; §4 code). Files: `dataset/frames.py`, `tests/test_frames.py`.
@@ -400,7 +415,8 @@ Agent (strong, high; §4 code). Files: `dataset/frames.py`, `tests/test_frames.p
   collect train (sampled), test and validation; null-target rows dropped from the modelling frames
   with the share logged.
 - `save_model_input(cfg, entity, env, spark) -> str` (public): the eligible panel with the
-  candidates, `target` and `split`, partitioned by `month` with dynamic partition overwrite, to the
+  candidates, `target` and `split`, partitioned by `month` (built: the folder rewritten whole;
+  the dynamic overwrite left stale months behind, the reviewers of 10-27), to the
   path `conf/local` maps for `data.model_input`, plus `metadata.json` (schema version, the
   data-definition and target-spec hashes, the lineage, the resolved candidates, the logs, the
   framework version, when).
@@ -451,9 +467,9 @@ is long. Then this folder is deleted once the SDS and the LDS have reviewed.
 |---|---|
 | 10-26 | 1.1, 1.2, 1.4 in parallel; 1.3 after 1.2 |
 | 10-27 | 1.5; 1.6 (integration, reviews, review guide); the SDS reviews major step 1 |
-| 10-28 | 2.1 and 2.2 in parallel; 2.3; the SDS reviews major step 2 |
-| 10-29 | 3.1, 3.2, 3.3 in parallel; 3.4 |
-| 10-30 | 3.5; 3.6; the SDS reviews major step 3; the LDS's review guide out |
+| 10-28 | 2.1 and 2.2 in parallel; 2.3; the SDS reviews major step 2 (done 10-26; reworked 10-27) |
+| 10-29 | 3.1, 3.2, 3.3 in parallel; 3.4 (done 10-27, on the main thread) |
+| 10-30 | 3.5; 3.6; the SDS reviews major step 3; the LDS's review guide out (3.5 done 10-27; the SDS reviews steps 2 and 3 together) |
 | 11-02 | Buffer: the LDS's findings, fixes, `doc-sync`, the folder deleted |
 
 Risks: 1.5 is the most design-heavy step (the worked example is the test, so drift shows up at

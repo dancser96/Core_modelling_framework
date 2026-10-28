@@ -66,7 +66,12 @@ def config_path(tmp_path: Path) -> Path:
 def env_path(tmp_path: Path) -> Path:
     """An environment file whose data root is the test folder."""
     path = tmp_path / "environment.yml"
-    path.write_text(yaml.safe_dump({"schema_version": 1, "roots": {"data": str(tmp_path)}}))
+    # The example config names a model input; mapped but never saved here, so feature decisions
+    # are checked against the candidate patterns.
+    model_input = {"format": "parquet", "path": str(tmp_path / "model_input")}
+    sources = {"entity_a": {"cc_acquisition_input": model_input}}
+    content = {"schema_version": 1, "roots": {"data": str(tmp_path)}, "sources": sources}
+    path.write_text(yaml.safe_dump(content))
     return path
 
 
