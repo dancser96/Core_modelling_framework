@@ -15,10 +15,10 @@ Status values: `legacy-only` (exists only in legacy) · `designing` · `stub` (i
 | Repo bootstrap (docs, skills, agents, requirements, package skeleton) | built | |
 | Design baseline (docs rebuilt after three review rounds + Lead DS notes) | built | 2026-10-12; milestone M0 |
 | Environment adapter (Spark session, compat shim, transport, paths, sources) | built (partial) | Stage 1 (2026-10-26): the environment file, `load_environment`, `get_spark_session`, sources per entity, local paths; the `hdfs dfs` transport and the tier roots in M2.4. Traps T1–T5, T18 |
-| Config spine (single file, automation levels, decision, entities, data-definition hash, migrations) | built | `components/config.md`. Settled 2026-10-20: YAML (D-043), two automation levels in the `automation_level` field (D-023), identities with a worked example (D-088), the shared-table rule (D-007), extension code in use-case repos (D-006); the decision audit log (D-125, 2026-10-22). Stage 1 (D-129–D-133) built 2026-10-26: the schema and template, levels, migrations machinery, hashes, the audit log with `decide`; reviewed by the SDS on 10-26 (Q388–Q390 applied). A feature decision checks its names against the saved model input's candidates (10-27) |
+| Config spine (single file, automation levels, decision, entities, data-definition hash, migrations) | built | `components/config.md`. Settled 2026-10-20: YAML (D-043), two automation levels in the `automation_level` field (D-023), identities with a worked example (D-088), the shared-table rule (D-007), extension code in use-case repos (D-006); the decision audit log (D-125, 2026-10-22). Stage 1 (D-129–D-133) built 2026-10-26: the schema and template, levels, migrations machinery, hashes, the audit log with `decide`; reviewed by the SDS on 10-26 (Q388–Q390 applied). A feature decision checks its names against the saved model input's candidates (10-27). From the SDS's review of 10-28: eligibility as two lists (`analysis`, `modelling`), the target spec without `null_as` and `leavers`, the template's comment rule. Stage 1 addendum (10-28): the unit of analysis as `time.period` (month, week, day) with the key column `period` and the `time` fields renamed (`observation_window`, `target_window`, `validation_period`), one `periods.PERIODS` dict for the arithmetic; `revert` in the audit log |
 | Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | tested | M1: steps 0–7 built (2026-10-17); the SDS's review round 1 applied (2026-10-19): role folders, slimmer `truth.json`, two new traps, exit rates, top-down spec with a code map. Feature mart (157 columns from 0.5.0), traps on two products, oracle and `truth.json`, CLI, source mapping; every independent check row passes at 100k; approved by the SDS (2026-10-19); reviewed and accepted by the LDS (2026-10-21). Its to-dos (noise and very-low-fill columns, named like the traps) became 0.5.0's ten trap columns (2026-10-25, Stage 1; `unstable` waits for M4); the `dev` (20k) and canonical datasets and the notebook are at 0.5.0, all 1,309 check rows passing at 100k; the package goes into the bank as code, never as data (D-041). D-003, D-029, D-041, D-064 |
-| Target Factory (targets only, optional) | built (thin) | Stage 1 major step 2 (2026-10-26; reworked after the SDS's review on 10-27, for the second review with the dataset): `flag_goes_up` and `forward_sum` through the per-task spec (the rule compares t with the forward months; nulls under SQL semantics, `null_as`), the keyed source reader (months at their last day, D-129), the target-column and month-coverage checks, `run_target_factory`; tested against the oracle on the `unit` preset. `components/target_factory.md` |
-| Dataset: observation window, client-grouped split, OOT validation, sampling | built (thin) | Stage 1 major step 3 (2026-10-27, for the SDS's review): the panel (sources joined, eligibility in two kinds, the candidates), the client split and the two sampling options, the contract checks with the null callout, the frames with the collect printout, the model input saved and read back with its hash checks (D-131, D-133). Advanced sampling in Phase 3 (D-117); window ablation OD-17. `components/dataset.md` |
+| Target Factory (targets only, optional) | built (thin) | Stage 1 major step 2 (2026-10-26; reworked after the SDS's reviews of 10-27 and 10-28): `flag_goes_up` and `forward_sum` through the per-task spec (the rule compares t with the forward months; nulls under SQL semantics, filled upstream when they mean a value), the keyed source reader (periods at their last day, the id cast to string, D-129), the target-column check and the one period-coverage check shared with the dataset, `run_target_factory` per config; every period with a complete forward window is labelled, on month, week or day data through the period spec (addendum, 10-28); `null_in_window` null where the window is incomplete, its share stored per use case; tested against the oracle on the `unit` preset. `components/target_factory.md` |
+| Dataset: observation window, client-grouped split, OOT validation, sampling | built (thin) | Stage 1 major step 3 (2026-10-27; the SDS's review of 10-28 applied): the panel (sources joined, eligibility as two ordered lists, `analysis` dropping rows before EDA and `modelling` tagging them until Feature Checks, the candidates), the client split and the two sampling options as one salted hash draw, the contract checks with the null callout, the frames with the collect printout (EDA the window, Feature Checks its eligible rows), labels in every period that has them (D-131, D-133). Stage 1 addendum (10-28): the model input is the sources joined plus one target column per use case (`target_<use_case>`), saved for one config or a list (`save_model_input(cfgs)`, `run a.yml b.yml --stages target_factory`); eligibility, candidates, contract and split are derived on read from the reader's config, so a changed eligibility no longer forces a rebuild; sidecar schema 3, keyed by the shared sources, keys and period plus each use case's target-spec hash. Advanced sampling in Phase 3 (D-117); window ablation OD-17. `components/dataset.md` |
 | EDA (worth running first; low-prevalence aware) | designing | Major rethink; EDA and Feature Checks use all clients, the client split comes after (D-030) |
 | Feature Checks (correctness and quality only) | designing | Major rethink; selection moved to Training (D-028) |
 | Feature ledger | designing | Sketch awaiting review (OD-11) |
@@ -42,6 +42,38 @@ together with the topics to raise with the Chief DS.
 
 ## Log (major changes only, newest first)
 
+- 2026-10-28 — The SDS's review of Stage 1's steps 2 and 3 applied: labels kept in every month
+  Target Factory can build (an upstream target would look the same; the framework doesn't
+  police a DS); `data.target.null_as` and `leavers` removed (nulls are filled upstream);
+  eligibility as two ordered lists, `analysis` (rows dropped before EDA) and `modelling` (rows
+  tagged, dropped before Feature Checks, which now runs on the eligible rows); the split and the
+  sampling as one plain hash draw in [0, 1); one month-coverage check for the spine and the
+  target source; the template's comment rule. The model input's sidecar is at `schema_version`
+  2 (the log entries' keys, the labelled months and the split's draw changed), so a model input
+  saved before 10-28 is refused by name; the config shape and the hash inputs changed without a
+  migration (0.x, D-007 (c)): configs, resolved configs, model inputs and audit-log folders from
+  before 10-28 are stale and are rebuilt or re-recorded, none exists inside the bank. The
+  version stays 0.2.0, Stage 1's label until its sign-off.
+- 2026-10-28 — Stage 1 addendum built from the SDS's second-round answers (Q400–Q406): the
+  unit of analysis as `time.period` (month, week or day; the key column `period`, the `time`
+  fields `observation_window`, `target_window`, `validation_period`; one `periods.PERIODS`
+  dict for the arithmetic in Python and Spark; `unit_id` cast to string at load so the split's
+  hash draw survives an upstream type change, T22); the model input reshaped to the sources
+  joined plus one target column per use case, nothing else, with eligibility, candidates,
+  contract and split derived on read from the reader's config (one table serves several use
+  cases; a changed eligibility no longer forces a rebuild; sidecar schema 3; D-125's freeze
+  point narrowed to the data part); `revert` in the audit log. 0.x: the renamed config
+  fields get no migration (D-007 (c)): a config with `train_months`, `target_window_months`,
+  `validation_month` or `keys.month` fails naming the key, and every model input saved
+  before this change is refused by name; the data-definition hash moved again (`period`,
+  the renamed fields, `task`), so audit-log folders and resolved configs written earlier on
+  10-28 are orphaned too. Four reviews on the merged state (code, silent failures,
+  compatibility, ML audit): no invariant violated; taken: `task` in both hashes, a feature
+  source matching no spine row refused (was printed), a source column named like a key or a
+  helper column refused at read, a reader whose validation period outruns the saved target
+  source refused, another use case's upstream target column dropped on read, the audit
+  log's `include` judged over the effective entries so a `revert` cannot launder a rule's
+  exclude, eligibility in its own module. D-088, D-125, D-129, D-131 extended.
 - 2026-10-27 — Stage 1 built end to end (version 0.2.0), for the SDS's review of major steps 2
   and 3 together: the dataset (the panel from the joined sources with eligibility in two kinds,
   the client split and declared sampling, the contract checks with the null callout, the frames

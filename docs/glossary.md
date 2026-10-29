@@ -26,8 +26,8 @@ Whether this glossary is also published to the wider unit is part of the open do
   alone or with other sources; no later stage knows about it (D-021).
 - **Data observability framework:** the existing framework for watching data, with its own team.
   Monitoring integrates with it in the first release (D-021).
-- **Unit:** what one row describes at one point in time (client, account, card, merchant…). Shapes
-  say `unit_id`; the client is the usual unit.
+- **Unit:** what one row describes in one period (client, account, card, merchant…). Shapes say
+  `unit_id`, held as a string whatever the source's type; the client is the usual unit.
 - **Use case:** one modelling problem (e.g. one product's acquisition propensity), defined by one
   config and its decision audit log; a repo may hold several similar use cases (D-006).
 - **Product / activity:** the two parts of a use case's name, `<product>_<activity>` (e.g.
@@ -41,64 +41,82 @@ Whether this glossary is also published to the wider unit is part of the open do
 
 ## Time
 
-- **Observation month (`obs_date`):** features are as-of this month.
-- **Observation window:** the training months `t1 … tk`. Every eligible unit-month in it is a row.
-- **Target window (`w`):** the forward months `(t+1 … t+w)` that a target looks at. It excludes the
-  current month.
-- **Backward window:** the months a rolled-up feature looks back over, including the current one.
-  Upstream's business; the framework doesn't check it (D-129).
-- **OOT validation month (`v`):** the out-of-time month the model is judged on. `v ≥ tk + w`, so its
-  target window never overlaps a training target window. Set in the config; changing it after the
-  config freezes is an audit-log entry, refused when Feature Checks compared that month (D-088).
-- **Inference month:** the month being scored.
-- **Panel edge:** months near either end of the data where a full window is missing. Targets there
-  are null.
-- **Gap months:** the months between the observation window and the validation month. Their labels
-  are never used; their features may be used for label-free checks (D-030).
+- **Period:** the unit of analysis, `time.period`: a calendar month, an ISO week (Monday to
+  Sunday) or a day. A panel has one row per unit per period, the key column is `period`, and a
+  period is held as its last day (a month's last day, a week's Sunday, the day itself); a config
+  writes a month as its first or its last day, a week as any of its days, a day as itself.
+  Steps between periods go through the period index (`periods.PERIODS`), never date arithmetic
+  (D-129, T19). "Month" means a calendar month only.
+- **Observation period:** features are as-of this period; the target looks forward from it.
+- **Observation window:** the training periods `t1 … tk` (`time.observation_window`). Every
+  eligible unit-period in it is a row.
+- **Target window (`w`):** the forward periods `(t+1 … t+w)` that a target looks at
+  (`time.target_window`, in periods). It excludes the current period.
+- **Backward window:** the periods a rolled-up feature looks back over, including the current
+  one. Upstream's business; the framework doesn't check it (D-129).
+- **Validation period (`v`):** the out-of-time (OOT) period the model is judged on
+  (`time.validation_period`). `v ≥ tk + w` by period index, so its target window never overlaps
+  a training target window. Set in the config; changing it after the config freezes is an
+  audit-log entry, refused when Feature Checks compared that period (D-088). "Validation month"
+  is the retired name.
+- **Inference period:** the period being scored; a run argument.
+- **Panel edge:** periods near either end of the data where a full window is missing. Targets
+  there are null.
+- **Gap periods:** the periods between the observation window and the validation period. Their
+  labels are never used; their features may be used for label-free checks (D-030).
 
 ## Data and splits
 
 - **Train / test / validation:** train and test share the observation window and are split by
   client; validation is out of time (OOT). Some texts swap "test" and "validation". Here
-  **validation always means OOT**. EDA and Feature Checks use every client in the window, labels
-  included; the client split happens after Feature Checks, and from Training on, fitting,
-  selection, calibration and every choice use train-split clients only (D-030).
-- **Eligibility:** the population a use case models and scores. It is defined by ordered config
-  steps and applied identically to train, test, validation and inference. A filter is applied
-  `before: eda` (its rows are dropped) or `before: model` (its rows stay for EDA, tagged by the
-  step's name as a 0/1 column, and are dropped before modelling; the tag is a stratum, e.g.
-  current holders vs non-holders). `eligible` marks the rows every pre-model filter passes
-  (D-129).
+  **validation always means OOT**. EDA uses every client of the window after the analysis
+  filters and Feature Checks every eligible client, labels included; the client split happens
+  after Feature Checks, and from Training on, fitting, selection, calibration and every choice
+  use train-split clients only (D-030).
+- **Eligibility:** the population a use case models and scores. It is defined by two ordered
+  lists of config steps, `analysis` and `modelling`, run as one order and applied identically
+  to train, test, validation and inference. An **analysis filter** drops its rows before EDA
+  (who the analysis sees); a **modelling filter** keeps its rows for EDA, tagged 0/1 by the
+  step's name (a **modelling tag**: a reference group and a stratum, e.g. current holders vs
+  non-holders), and drops them before Feature Checks (who the model sees). `eligible` marks the
+  rows every modelling filter passes (D-129; `dataset/eligibility.py`).
 - **Define / filter step:** the two kinds of eligibility entry, both Spark SQL (D-129). A
-  `define` names a boolean condition that later entries reuse by name and is dropped before the
-  candidates are resolved; a `filter` keeps the rows where its condition is true (a null counts
-  as false), with a required reason, and logs rows in → out.
+  `define` names a boolean condition that the entries after it, in either list, reuse by name
+  and is dropped before the candidates are resolved; a `filter` keeps the rows where its
+  condition is true (a null counts as false), with a required reason, and logs rows in → out.
 - **Frames:** what the dataset hands a stage: `Frames(window, train, test, validation, log,
-  meta)`. The window frame (every unit-month in the observation window after the pre-EDA
-  filters, the pre-model tags as columns, every client, labels included) serves EDA and Feature
-  Checks; train / test / validation serve Training on
+  meta)`. The window frame (every unit-period in the observation window after the analysis
+  filters, the modelling tags as columns, every client, labels included) serves EDA; its
+  eligible rows serve Feature Checks; train / test / validation serve Training on
   (D-030; `docs/components/dataset.md`).
-- **Model input:** one saved table per instance, named in the config (`data.model_input`) and
-  written by `save_model_input` from the Target Factory notebook: the governing spine's rows with
-  the candidate columns, `target` (known in the window and at the validation month only),
-  `split`, the pre-model tags and `eligible` (the pre-EDA
-  filters applied), with a `_model_input.json` holding
-  its hashes and logs. Every later stage reads it and fails loud when its data-definition hash
-  differs from the config's; saving it freezes the config; inference reads the sources instead
-  (D-131).
-- **Contract checks:** checks on the true population before any sampling: unique unit per month,
-  a non-degenerate target, a plausible rate band. Which apply comes from the per-task spec
-  (`docs/components/dataset.md`, `CLAUDE.md` §4.8).
-- **Label-free check:** a check or comparison that uses no labels (e.g. PSI). It may use months
-  after the observation window, but never the validation month (D-030).
+- **Model input:** one saved table per name (`data.model_input`), written by `save_model_input`
+  from the Target Factory notebook or `run a.yml b.yml --stages target_factory` for one or
+  several use cases that share the entity's feature sources, keys and period: the sources
+  joined plus one target column per use case, `target_<use_case>` (every period Target Factory
+  could build it; null at the panel edge, for leavers and across gaps), nothing else.
+  Eligibility, the candidates, the contract checks and the client split are derived on read
+  from the reader's config; the reader keeps its own target as `target` and drops the others,
+  which are never candidates. Its `_model_input.json` holds the shared sources, keys and
+  period, the periods covered, the join log and, per use case, the target-spec hash, lineage,
+  window and null share; a reader is refused on another version, other sources, keys or
+  period, a missing use case, another target spec or uncovered periods, never on a changed
+  eligibility, window, split or candidate list. Saving it freezes each config's data part;
+  inference reads the sources instead (D-131).
+- **Contract checks:** checks on the true population before any sampling, on every read of the
+  model input as in memory: unique unit per period, a non-degenerate target, a plausible rate
+  band, the null callout from the share Target Factory recorded. Which apply comes from the
+  per-task spec (`docs/components/dataset.md`, `CLAUDE.md` §4.8).
+- **Label-free check:** a check or comparison that uses no labels (e.g. PSI). It may use periods
+  after the observation window, but never the validation period (D-030).
 - **Positive rows vs positive events:** one conversion makes up to `w` consecutive rows positive.
   Reports show both counts. Wherever a count of positives decides something (minimum support,
-  a standard error, the AUC floor, a per-month statistic) it counts events, i.e. distinct
+  a standard error, the AUC floor, a per-period statistic) it counts events, i.e. distinct
   converting clients in that slice, and bootstraps and CV folds resample clients (D-082).
-- **Data definition / data-definition hash:** entity, sources, eligibility, target spec, observation
-  window and candidates (D-088). Its hash keys the EDA and Feature Checks artifacts that training
-  requires; the validation month sits outside it: EDA never reads it, and Feature Checks reads it only
-  to leave it out of its comparisons.
+- **Data definition / data-definition hash:** the task, entity, sources, eligibility, target
+  spec, the period, the observation window, the target window and candidates (D-088). Its hash keys the
+  EDA and Feature Checks artifacts that training requires; the validation period sits outside
+  it: EDA never reads it, and Feature Checks reads it only to leave it out of its comparisons.
+  The model input is keyed without it (D-131).
 - **Collect budget / collect printout:** `collect_budget_gb` in the environment file is the
   memory a collected frame may take in the Python process. Before any frame leaves Spark the
   dataset prints its rows, columns, the estimated size (rows × measured bytes per row × 2) and
@@ -110,8 +128,8 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Downsampling:** train-only sampling (of negative rows or of clients), only when the config
   declares it; the framework never samples on its own (D-117). It is always recorded, and the
   prior-shift offset undoes any change it makes to the class balance.
-- **Recency weighting:** sample weights that give the later months of the observation window more
-  weight; not in Phase 2 (D-117).
+- **Recency weighting:** sample weights that give the later periods of the observation window
+  more weight; not in Phase 2 (D-117).
 
 ## Features
 
@@ -150,8 +168,10 @@ Whether this glossary is also published to the wider unit is part of the open do
 ## Config and guidance
 
 - **Config / resolved config:** the config is the YAML file that holds a use case's intent (one
-  file unless it bloats, D-043); it is immutable once Target Factory has built the target, or at
-  the first EDA run for an upstream target. The **resolved config** is the config with the
+  file unless it bloats, D-043); its data part (sources, keys, period, target spec, target
+  window) is frozen once the model input is saved, or at the first EDA run when the frames are
+  built in memory, and the rest of the data definition changes only by a new config, which
+  reruns EDA onwards and keeps the saved table (D-125). The **resolved config** is the config with the
   audit-log entries replayed: saved with every artifact and report, it reproduces a run and is what
   `recipe_hash` covers (D-125). "Frozen config" is the retired name for the resolved config.
 - **Housekeeping block:** the part of the resolved config that records the framework and key-library
@@ -178,6 +198,11 @@ Whether this glossary is also published to the wider unit is part of the open do
   a person or a rule; the config itself never changes (D-125). Replaying the config plus entries
   1–n gives the **resolved config**, a run's one input; it can be saved as one file. The feature
   ledger is its per-feature part (`docs/components/config.md`).
+- **Revert:** the audit-log operation that goes back to the state after an earlier entry
+  (`to_seq`; 0 is the config as written): replay restarts from there and the later entries
+  continue; the undone entries stay in the log as the trail, and `upto` still reproduces every
+  earlier state. Written with `record_decision(…, revert_to=n)` or `decide --revert-to n`
+  (D-125).
 - **Decision point / pathway:** a decision point is a place in a run where something is chosen, by
   a rule or a person (the table in `docs/components/config.md`, D-132); a run's pathway is the
   chain of decision points it passed and what was chosen at each, read from the decision audit log.
@@ -216,16 +241,17 @@ Whether this glossary is also published to the wider unit is part of the open do
   (D-049).
 - **Refit:** one more fit of the same recipe, linked to its evaluated parent by `parent_run_id`
   (D-052). In Phase 2 it is the production retrain, on the same data definition, which keeps the
-  window and the clients and moves only the inference month; there is no refit command in the
-  sandpit. Refits on moved or extended data (later months, all clients, a longer window) come
+  window and the clients and moves only the inference period; there is no refit command in the
+  sandpit. Refits on moved or extended data (later periods, all clients, a longer window) come
   later (D-052).
 - **Per-task spec:** the plain dict, one entry per task, that holds every task-specific hook
   (target builder, ranking statistic, metrics, baselines, calibration, output columns…) (D-050).
 - **Window ablation:** the same config trained on windows of different lengths; the choice between
-  them weighs train and test metrics, and the validation month is reported, never chosen on (D-083).
+  them weighs train and test metrics, and the validation period is reported, never chosen on
+  (D-083).
 - **Experiment sweep / variant:** a sweep runs one config several times with a single field changed
   (e.g. the observation window); each run is a variant. A sweep that picks a variant picks on
-  train and test metrics, weighted; the validation month is reported, never chosen on (D-083).
+  train and test metrics, weighted; the validation period is reported, never chosen on (D-083).
 
 ## Lifecycle
 
@@ -245,9 +271,9 @@ Whether this glossary is also published to the wider unit is part of the open do
   deploying the fitted model without a retrain is also allowed (D-033, D-052). A data scientist's
   session never deploys.
 - **Production retrain check:** the check a production retrain passes against its evaluated parent
-  before it scores: label-free agreement on the inference month; its own test-split AUC and
-  calibration per window month; per-month rows and positive events against the parent's EDA
-  artifact; each within tolerances declared in the config, never on the validation month. Failing
+  before it scores: label-free agreement on the inference period; its own test-split AUC and
+  calibration per window period; per-period rows and positive events against the parent's EDA
+  artifact; each within tolerances declared in the config, never on the validation period. Failing
   keeps whatever production model is current and is recorded; at a first deploy the deploy fails
   loud (D-052).
 - **CR (change request):** the process for production changes: pre-agreed windows, platform and

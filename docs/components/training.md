@@ -103,12 +103,12 @@ model results report comes from [evaluation](evaluation.md) (D-036).
     retrains its recipe on the same data definition (neither more clients nor a longer window)
     before it scores, linked to its evaluated parent by `parent_run_id`; deploying the fitted model
     without a retrain is also allowed. A Phase 2 production retrain keeps the window and the
-    clients; only the inference month moves, since inference always runs on the latest month
+    clients; only the inference period moves, since inference always runs on the latest period
     (D-052, D-088). Its parameters differ only because production data differs from sandpit data.
     Before it scores, it passes a check against its evaluated parent: label-free agreement on the
-    inference month; its own test-split AUC and calibration (mean predicted against observed rate)
-    per window month; per-month rows and positive events against the parent's EDA artifact; each
-    within tolerances declared in the config before the run, never on the validation month.
+    inference period; its own test-split AUC and calibration (mean predicted against observed rate)
+    per window period; per-period rows and positive events against the parent's EDA artifact; each
+    within tolerances declared in the config before the run, never on the validation period.
     Failing keeps whatever production model is current and is recorded; at a first deploy the
     deploy fails loud (D-052). Whether production has the data and compute, determinism and what "deployed" records
     stay open (OD-27, M4).
@@ -127,7 +127,7 @@ interface:
 - bounded, regularisation-friendly search spaces per family; early stopping; pruning;
 - an optional two-objective search (in-time metric vs overfitting gap), shown as a **trade-off
   chart**. The user (or a level's rule) picks a point, and the pick is recorded. The chart weighs
-  train and test metrics; the validation month never chooses (D-083).
+  train and test metrics; the validation period never chooses (D-083).
 
 ## Lessons from the crunch
 T9, T14; downsampling, calibration and FLAML-search lessons in `docs/context/lessons.md`.
@@ -142,7 +142,7 @@ T9, T14; downsampling, calibration and FLAML-search lessons in `docs/context/les
 - Verify the Optuna 5.0 API (multi-objective, pruning) when first used.
 - The default pick rule on the trade-off chart at the `autonomous` level.
 - Calibration under uniform negative downsampling ([dataset](dataset.md)): one keep fraction for
-  the whole window, so one prior-shift offset from the sampled vs true rate holds for every month
+  the whole window, so one prior-shift offset from the sampled vs true rate holds for every period
   (D-117). Verify it against the synthetic oracle (reliability curves).
 - A lossless non-pickle format per model family on the pinned versions (D-051), all unverified
   until spike 2 and all three needed in M2 (D-037): XGBoost's JSON; LightGBM's text model (its

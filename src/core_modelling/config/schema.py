@@ -5,16 +5,18 @@ The config is the use case's intent, validated at load and frozen once the targe
 Fields the automation level fills (`levels.py`) have no default here: a dict that skipped
 `apply_level_defaults` fails loud instead of carrying None. Values that an audit-log replay writes
 (`features.excluded`, `features.kept_despite_flags`, `housekeeping`) are empty in a config file, so
-the resolved config validates with this same schema (D-125). A month is held as its last day, the
-framework's one convention; a config may write it as its first or its last day (D-129).
+the resolved config validates with this same schema (D-125). A period (the unit of analysis,
+`time.period`) is held as its last day, the framework's one convention; a config may write it as
+any day the period spec accepts (a month: its first or its last day, D-129).
 """
 
-import calendar
 import re
 from datetime import date
 from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from core_modelling.periods import PERIODS
 
 # FLAML's own metric names (T9): `ap`, not `average_precision`.
 FLAML_METRICS = {
@@ -31,17 +33,6 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-def _month_end(value: date) -> date:
-    """The month's last day, the framework's one month convention; a date that is neither the
-    first nor the last day of its month is refused as a likely typo."""
-    last = calendar.monthrange(value.year, value.month)[1]
-    if value.day not in (1, last):
-        raise ValueError(
-            f"{value} must be the first or the last day of a month, e.g. {value:%Y-%m}-{last}"
-        )
-    return value.replace(day=last)
-
-
 def _unique_names(steps: list) -> list:
     """Refuse duplicate `name` entries in an ordered step list."""
     names = [step.name for step in steps]
@@ -49,11 +40,6 @@ def _unique_names(steps: list) -> list:
     if repeated:
         raise ValueError(f"step names must be unique; repeated: {repeated}")
     return steps
-
-
-def _months_between(first: date, second: date) -> int:
-    """Whole months from `first`'s month to `second`'s; the days don't count."""
-    return (second.year - first.year) * 12 + (second.month - first.month)
 
 
 def _check_metric(value: str | None) -> str | None:
@@ -66,7 +52,6 @@ def _check_metric(value: str | None) -> str | None:
     return value
 
 
-Month = Annotated[date, AfterValidator(_month_end)]
 Metric = Annotated[str | None, AfterValidator(_check_metric)]
 
 
@@ -103,21 +88,19 @@ class Entity(StrictModel):
 
 
 class Keys(StrictModel):
-    """The sources' key column names, renamed to `unit_id` and `month` at load."""
+    """The sources' key column names, renamed to `unit_id` and `period` at load."""
 
     unit_id: str
-    month: str
+    period: str
 
 
 class EligibilityStep(StrictModel):
-    """One ordered eligibility entry: a named `define` condition, or a `filter` with a reason that
-    drops its rows `before` EDA or before modelling."""
+    """One ordered eligibility entry: a named `define` condition, or a `filter` with a reason."""
 
     name: str
     define: str | None = None
     filter: str | None = None
     reason: str | None = None
-    before: Literal["eda", "model"] | None = None
 
     @model_validator(mode="after")
     def _check_define_or_filter(self) -> "EligibilityStep":
@@ -128,17 +111,19 @@ class EligibilityStep(StrictModel):
             raise ValueError(f"eligibility filter {self.name!r} needs a reason")
         return self
 
+
+class Eligibility(StrictModel):
+    """The two ordered step lists (D-129): `analysis` filters drop their rows before EDA;
+    `modelling` filters keep them for EDA, tagged by the step's name, and drop them before
+    Feature Checks. A define in either list serves the steps after it."""
+
+    analysis: list[EligibilityStep] = []
+    modelling: list[EligibilityStep] = []
+
     @model_validator(mode="after")
-    def _check_before_goes_with_a_filter(self) -> "EligibilityStep":
-        """A `filter` says when it applies; a `define` drops nothing, so it takes no `before`."""
-        if self.filter is not None and self.before is None:
-            raise ValueError(
-                f"eligibility filter {self.name!r} needs `before` (eda: its rows are dropped "
-                "before EDA; model: its rows stay for EDA, tagged by the step's name, and are "
-                "dropped before modelling)"
-            )
-        if self.define is not None and self.before is not None:
-            raise ValueError(f"eligibility define {self.name!r} takes no `before`")
+    def _check_names_unique_across_both(self) -> "Eligibility":
+        """One name space: a tag column and a log entry are named after the step."""
+        _unique_names([*self.analysis, *self.modelling])
         return self
 
 
@@ -148,20 +133,7 @@ class Target(StrictModel):
 
     column: str
     rule: str | None = None
-    null_as: int | float | None = None
-    leavers: Literal["negative"] | None = None
     lineage: list[str] = []
-
-    @model_validator(mode="after")
-    def _check_built_only_fields_need_a_rule(self) -> "Target":
-        """Null and leaver handling are part of building the target; an upstream target brings its
-        own."""
-        for field in ("null_as", "leavers"):
-            if self.rule is None and getattr(self, field) is not None:
-                raise ValueError(
-                    f"`{field}` applies to a built target; an upstream target has `column` alone"
-                )
-        return self
 
 
 class Split(StrictModel):
@@ -181,44 +153,68 @@ class Data(StrictModel):
     """Keys, eligibility, target, split, rate band and the saved model input."""
 
     keys: Keys
-    eligibility: Annotated[list[EligibilityStep], AfterValidator(_unique_names)] = []
+    eligibility: Eligibility = Eligibility()
     target: Target
     split: Split = Split()
     rate_band: RateBand = RateBand()
     model_input: str | None = None
 
 
-class TrainMonths(StrictModel):
-    """The observation window t1 … tk."""
+class ObservationWindow(StrictModel):
+    """The observation window t1 … tk, each period as its last day."""
 
-    first: Month
-    last: Month
+    first: date
+    last: date
 
 
 class Time(StrictModel):
-    """The observation window, the target window `w` and the validation month."""
+    """The unit of analysis, the observation window, the target window `w` (periods t+1 … t+w)
+    and the validation period; the three dates are held as their period's last day."""
 
-    train_months: TrainMonths
-    target_window_months: int = Field(ge=1)
-    validation_month: Month
+    period: Literal["month", "week", "day"] = "month"
+    observation_window: ObservationWindow
+    target_window: int = Field(ge=1)
+    validation_period: date
+
+    @model_validator(mode="after")
+    def _move_to_period_end(self) -> "Time":
+        """The typo rule: a date the period may not be written as (a month: a day that is neither
+        its first nor its last) is refused; the accepted dates move to their period's end."""
+        spec = PERIODS[self.period]
+        window = self.observation_window
+        for path, value in (
+            ("observation_window.first", window.first),
+            ("observation_window.last", window.last),
+            ("validation_period", self.validation_period),
+        ):
+            if not spec.accept(value):
+                raise ValueError(
+                    f"time.{path} {value} must be the first or the last day of a {self.period}, "
+                    f"e.g. {spec.end(value)}"
+                )
+        window.first, window.last = spec.end(window.first), spec.end(window.last)
+        self.validation_period = spec.end(self.validation_period)
+        return self
 
     @model_validator(mode="after")
     def _check_window_order(self) -> "Time":
-        """The window's first month is not after its last."""
-        first, last = self.train_months.first, self.train_months.last
+        """The window's first period is not after its last."""
+        first, last = self.observation_window.first, self.observation_window.last
         if first > last:
-            raise ValueError(f"time.train_months.first {first} is after last {last}")
+            raise ValueError(f"time.observation_window.first {first} is after last {last}")
         return self
 
     @model_validator(mode="after")
     def _check_validation_after_window(self) -> "Time":
-        """No training target window overlaps the validation month's: v ≥ tk + w (§4.2)."""
-        gap = _months_between(self.train_months.last, self.validation_month)
-        if gap < self.target_window_months:
+        """No training target window overlaps the validation period's: v ≥ tk + w (§4.2), counted
+        in periods by the spec's index."""
+        spec = PERIODS[self.period]
+        gap = spec.index(self.validation_period) - spec.index(self.observation_window.last)
+        if gap < self.target_window:
             raise ValueError(
-                f"time.validation_month {self.validation_month} is {gap} months after the "
-                f"window's last month; it must be at least target_window_months "
-                f"({self.target_window_months}) after it"
+                f"time.validation_period {self.validation_period} is {gap} {self.period}s after "
+                f"the window's last period; it must be at least target_window "
+                f"({self.target_window}) after it"
             )
         return self
 

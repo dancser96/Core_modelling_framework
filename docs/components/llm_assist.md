@@ -25,7 +25,7 @@ on this branch for Phase 3.
    schema.
 5. Gate: the loop starts only when the pipeline is a clean config-in / artifacts-out job, with the
    invariants enforced and tests green. It picks variants the way every sweep does: on train and
-   test metrics, never on the validation month (D-083).
+   test metrics, never on the validation period (D-083).
 
 ## Design constraints
 - Nothing in the core package depends on an LLM.

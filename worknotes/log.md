@@ -2,6 +2,123 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-10-28 — The Stage 1 addendum: periods, one model input for several use cases, revert
+- The SDS's third round accepted everything (the hash answer; Q400 as reworked; Q405
+  `target_<use_case>`; Q406 one shape) and asked for the build with subagents and one continuous
+  review guide, noting that the Q401/Q403 proposals had been shortened out of the worknotes
+  (lesson recorded: a to-do keeps its full proposal). `addendum_spec.md` written as the one spec
+  (A periods, B the shared model input, C revert, the id cast); five builders on disjoint files
+  in two waves, then four reviewers on the merged state, then four fixers.
+- Code: `periods.py` (new: `Period`, `PERIODS` for month, week, day: index, inverse, start, end,
+  in Python and Spark, label, typo rule; `label_by_period`, `period_labels`); `sources.py`
+  (`unit_id`, `period` at the period's end, `unit_id` cast to string, `KEYS` and
+  `HELPER_COLUMNS` owned here, a reserved column name refused, the log's `periods`,
+  `period_tag`, `id_type`; `missing_periods`, `check_periods_covered`); `schema.py` (`Keys.period`,
+  `Time.period`, `observation_window`, `target_window`, `validation_period`; the typo rule and
+  the end move per period; `v ≥ tk + w` by index); `identities.py` (`task`, `period`,
+  `observation_window`, `target_window` in the hashes; digests re-pinned); `target_factory.py`
+  and `tasks.py` (the forward window over the period index; `null_in_window` null where the
+  window is incomplete; summaries per period); `dataset/panel.py` (`load_panel(cfgs)`: the
+  shared-definition check, the sources joined once, each target as `target_<use_case>`, one
+  rollup for the join log and the null shares, a feature source matching nothing refused;
+  `prepare_panel`: the own target kept, the other use cases' targets and upstream columns
+  dropped, eligibility, candidates, contract, split; `build_panel` = both; `JoinedSource`);
+  `dataset/eligibility.py` (new: the two lists, the SQL guard, the candidates);
+  `dataset/contract.py` (the null callout fed by the saved share, its population named);
+  `dataset/model_input.py` (schema 3; `save_model_input(cfgs | cfg)`; the refusal order: schema,
+  hash version, sources/keys/period, the use case, its target spec, the periods, the target
+  source's reach; `saved_candidates` without Spark); `dataset/frames.py`, `split.py` (period);
+  `run.py` and `__main__.py` (several config paths, one save; entity lists must agree;
+  `decide --revert-to`); `replay.py` and `audit_log.py` (`revert`: `to_seq`, the replay and the
+  origins restart from the slice, the header line, `record_decision(revert_to=)`; `include`
+  judged over the effective entries).
+- Tests: the week and day moves and index round trips, the id cast, the reserved column, the
+  old field names refused; the weekly and daily forward windows; two configs → two target
+  columns, the other target and upstream column never a candidate, the shared-field refusals,
+  the collision, a feature source matching nothing; read-side: a changed eligibility not
+  refused, a changed target spec, a missing use case, schema 2, uncovered periods and an
+  outrun target source refused; the weekly end-to-end frames; `run([a, b])`; the revert example
+  and its refusals; `task` moving both hashes. Full suite 252 passed, 9 deselected, 4 min 56 s; ruff clean; the notebook
+  on the dev data in 30 s (sidecar schema 3); the two-config CLI save and read-back checked.
+- Docs: D-088, D-125, D-129, D-131 extended; `config.md`, `dataset.md`, `target_factory.md`,
+  `architecture.md`, `glossary.md`, `lessons.md` (T19 reworded, T22), the template and the
+  example config, the notebook's text, CLAUDE.md §4 in periods; "period" through every
+  component doc; `UPDATES.md`; `roadmap.md`'s addendum item removed; `review_guide.md` rewritten
+  as one continuous guide; `review_answers.md` third round.
+
+### 2026-10-28 — The SDS's review of Stage 1's steps 2 and 3, applied
+- 2026-10-28, the SDS's remarks (`worknotes/m2_1_foundation/review_answers.md`, one row per
+  remark): Q395–Q398 at their defaults; Q399 refused ("the Target Factory must produce the labels
+  for the whole time window"; the framework doesn't police a DS); `null_as` and `leavers`
+  questioned; the two month-coverage functions questioned; `split.py` to be explained;
+  eligibility as two lists with the second before Feature Checks; the month anchoring to become
+  a parameter; the template's comments to follow one rule; a list of configs for Target Factory;
+  the univariate ranking's population; two audit-log usability questions.
+- Code: `schema.py` (`Eligibility` with `analysis` and `modelling` lists, names unique across
+  both; `EligibilityStep` without `before`; `Target` without `null_as` and `leavers`),
+  `panel.py` (`apply_eligibility(panel, eligibility)` runs the two lists as one order, the log
+  entry's `kind`; `modelling_tags`; `build_panel` keeps every label), `sources.py`
+  (`check_months_covered(log, first, last, role, until)`, the one check behind the spine's
+  `first … v` and the target source's `first … v + w`; `month_from_number`),
+  `target_factory.py` (no null or leaver handling; the coverage check shared),
+  `tasks.py` and `contract.py` (the column checks without `null_as`; the callout fires above 0
+  and points upstream), `split.py` (rewritten around `_hash_uniform(columns, salt, seed)`, one
+  draw in [0, 1) compared with the share; one `RESOLUTION` constant), `frames.py`
+  (`feature_checks` gets the window's eligible rows), the template (the comment rule in the
+  reading key: short inline, long above the key, level lines inline; the ordered-sources and
+  duplicate-key note; every line under 100 characters) and the example config.
+- Tests: the schema's eligibility tests (two lists, names unique across both, the defaults), the
+  Target Factory series without the `null_as` cases (six), `test_dataset.py` (the two lists, a
+  define in `analysis` serving a `modelling` filter), the contract's callout, `test_frames.py`
+  (the analysis step logged first; Feature Checks' frame is the eligible window; the model input
+  labelled in every month but the last w), the golden digests re-pinned (`HASH_VERSION` 1).
+- Docs: `config.md`, `dataset.md`, `target_factory.md`, `eda.md` (the ranking on the eligible
+  rows of the one frame), `feature_checks.md` (the eligible population; `eligibility_constant`
+  may fold into `quality`), `glossary.md`, D-029, D-030, D-129, D-131, `CLAUDE.md` §4.4, the
+  notebook's guide cell, `UPDATES.md`, the roadmap backlog (the Stage 1 addendum), the plan's
+  status; `review_guide.md` → Major steps 2 and 3 rewritten for the LDS (the reviewers' findings
+  condensed); `review_answers.md` holds this round only.
+- Open with the SDS (`review_answers.md`): Q400 one model input for several use cases (the list
+  form of the two public functions, one block of columns per use case), Q401 the unit of
+  analysis as a parameter (`time.period`, the key column `period`, the `time` fields renamed),
+  Q402 the list names, Q403 a `revert` operation in the audit log, Q404 the summary's display
+  rule. Q400 and Q401 are proposed as a Stage 1 addendum before M2.2.
+- Reviews (three in parallel on the diff, read-only, while a doc agent synced the owner docs):
+  code review 2 blocking (the docs, which the agent was syncing; one order test), 6
+  suggestions; ML audit safe, 2 should-fix, 2 hardening; compat review: every 0.x break named,
+  the sidecar's `schema_version` to 2. Taken on the main thread: `MODEL_INPUT_SCHEMA_VERSION`
+  2 with the refusal naming the framework version; `_modelling_rows` restricts its months
+  itself; a non-deterministic function refused in eligibility SQL (`UNSAFE_SQL`); the upstream
+  tail's `before_tail` by month number; the `KINDS` indirection dropped; the coverage message
+  with both dates; the Feature Checks collect entry named `eligible_window`, its own fixture and
+  test; the template's `gate_metric` comment restored; tests added: an analysis step cannot use
+  a modelling define, a define is never a tag, non-deterministic SQL, the modelling months
+  inside the window, a labelled gap-month row never counted by the contract, the pinned hash
+  draw with the boundary agreement over 200k ids, `month_from_number` round trips and a
+  year-end crossing. Deferred: `label_free_months` for Feature Checks (M2.2, F3);
+  `negative_downsampling`'s per-row check (a test idea, not a bug). Version kept at 0.2.0.
+- Verified: `ruff check .` clean, every file formatted; the full suite 202 passed, 9 slow
+  deselected, in 4 min 21 s before the reviews' fixes and 208 passed in 5 min 33 s after them
+  (one run in between failed on a stale test regex for the reworded refusal, fixed); the
+  notebook's code cells as a script on the `dev` dataset in 32 s, and again
+  in 27 s after the sidecar bump (the analysis filter drops 6% before EDA, 64% tagged
+  non-holders, the model input saved at `schema_version` 2, the window frame 116,998 rows ×
+  160 columns, ≈ 0.47 GB at the peak).
+
+- 2026-10-28, the SDS's second round (no code changed, as asked): Q401 approved as proposed,
+  Q402 and Q404 at their defaults, Q403's `revert` approved for M2.2; Q400 pushed back ("one
+  loop through the configs, add every target to the merged frame, filter nothing, save one
+  table every config refers to") and reworked to that shape: Target Factory builds the sources
+  joined plus one target column per use case; eligibility, candidates, contract and split move
+  to the read side (`build_frames`), the data-definition hash leaves the sidecar (schema 3
+  proposed), D-125's freeze point narrows to the data part; Q405 (the target column's name) and
+  Q406 (one shape for a single config too) open. The follow-up on the split's hash answered
+  with a scratchpad check on 100,000 structured ids (segment, age block, counter): the test
+  share per segment and per age block within binomial noise, lag-1 autocorrelation about 0,
+  chi-square over 100 bins 94 and 102 (expected 99 ± 14); found on the way: the id's type
+  changes the draw (string vs long), so `unit_id` is to be cast to string at load. Recorded in
+  `review_answers.md` (the hash check, Q400 reworked, the to-do list), `sync.md` and the
+  roadmap's addendum item.
 ### 2026-10-27 — Stage 1, major step 3 built: the dataset, `run`, the notebook (version 0.2.0)
 - 2026-10-27, the SDS: build step 3 now and review steps 2 and 3 together; the review guide
   combines both. Built on the main thread (the pieces depend on each other; one Spark job at a

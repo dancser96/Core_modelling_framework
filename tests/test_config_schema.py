@@ -32,14 +32,14 @@ PLACEHOLDERS = {
     "<feature_source>": "retail_mart",
     "<target_source>": "retail_holdings",
     "<unit_id_column>": "client_id",
-    "<month_column>": "snapshot_month",
+    "<period_column>": "snapshot_month",
     "<step_name>": "non_holders",
     "<spark_sql>": "cc_flag = 0",
     "<reason>": "scored for non-holders",
     "<target_column>": "cc_flag",
-    "<first_month>": "2025-03-01",
-    "<last_month>": "2025-08-01",
-    "<validation_month>": "2025-11-01",
+    "<first_period>": "2025-03-01",
+    "<last_period>": "2025-08-01",
+    "<validation_period>": "2025-11-01",
     "<strata_variable>": "segment",
 }
 REPLAY_ONLY = {"features.excluded", "features.kept_despite_flags", "housekeeping"}
@@ -192,44 +192,121 @@ def test_unknown_key_fails_naming_it(tmp_path: Path, raw: dict) -> None:
 
 
 def test_window_first_after_last_refused(tmp_path: Path, raw: dict) -> None:
-    """The observation window's first month must not be after its last."""
-    raw["time"]["train_months"]["first"] = date(2025, 9, 1)
+    """The observation window's first period must not be after its last."""
+    raw["time"]["observation_window"]["first"] = date(2025, 9, 1)
     assert "is after last" in _error(tmp_path, raw)
 
 
-def test_validation_month_inside_target_window_refused(tmp_path: Path, raw: dict) -> None:
+def test_period_defaults_to_month(tmp_path: Path, raw: dict) -> None:
+    """A config without `time.period` is monthly; the three fields read back by their new names."""
+    del raw["time"]["period"]
+    time = _load(tmp_path, raw).time
+    assert time.period == "month"
+    assert (time.observation_window.first, time.observation_window.last) == (
+        date(2025, 3, 31),
+        date(2025, 8, 31),
+    )
+    assert (time.target_window, time.validation_period) == (3, date(2025, 11, 30))
+
+
+def test_validation_period_inside_target_window_refused(tmp_path: Path, raw: dict) -> None:
     """v >= tk + w: 2025-10 is two months after 2025-08 with w = 3."""
-    raw["time"]["validation_month"] = date(2025, 10, 1)
-    assert "at least target_window_months" in _error(tmp_path, raw)
+    raw["time"]["validation_period"] = date(2025, 10, 1)
+    assert "at least target_window" in _error(tmp_path, raw)
 
 
-def test_validation_month_exactly_at_window_end_accepted(tmp_path: Path, raw: dict) -> None:
-    """v = tk + w is the earliest allowed validation month."""
-    raw["time"]["validation_month"] = date(2025, 11, 1)
-    raw["time"]["target_window_months"] = 3
-    assert _load(tmp_path, raw).time.validation_month == date(2025, 11, 30)
+def test_validation_period_exactly_at_window_end_accepted(tmp_path: Path, raw: dict) -> None:
+    """v = tk + w is the earliest allowed validation period."""
+    raw["time"]["validation_period"] = date(2025, 11, 1)
+    raw["time"]["target_window"] = 3
+    assert _load(tmp_path, raw).time.validation_period == date(2025, 11, 30)
+
+
+@pytest.mark.parametrize(
+    ("period", "last", "accepted", "refused"),
+    [
+        ("week", date(2025, 8, 31), date(2025, 9, 21), date(2025, 9, 14)),  # Sundays
+        ("day", date(2025, 8, 31), date(2025, 9, 3), date(2025, 9, 2)),
+    ],
+)
+def test_validation_period_gap_counts_in_periods(
+    tmp_path: Path, raw: dict, period: str, last: date, accepted: date, refused: date
+) -> None:
+    """With w = 3 the validation period is at least three weeks, or three days, after the
+    window's last period: one period less is refused."""
+    raw["time"]["period"] = period
+    raw["time"]["observation_window"]["last"] = last
+    raw["time"]["validation_period"] = accepted
+    assert _load(tmp_path, raw).time.validation_period == accepted
+    raw["time"]["validation_period"] = refused
+    assert "at least target_window (3)" in _error(tmp_path, raw)
 
 
 def test_mid_month_date_refused(tmp_path: Path, raw: dict) -> None:
     """A month is written as its first or its last day; any other day is a likely typo."""
-    raw["time"]["validation_month"] = date(2025, 11, 15)
-    assert "first or the last day of a month, e.g. 2025-11-30" in _error(tmp_path, raw)
+    raw["time"]["validation_period"] = date(2025, 11, 15)
+    message = _error(tmp_path, raw)
+    assert "time.validation_period 2025-11-15 must be the first or the last day" in message
+    assert "of a month, e.g. 2025-11-30" in message
+
+
+def test_week_is_written_as_any_day_and_held_as_its_sunday(tmp_path: Path, raw: dict) -> None:
+    """A weekly config may name any day of a week; the three dates move to their Sunday."""
+    raw["time"]["period"] = "week"
+    raw["time"]["observation_window"] = {"first": date(2025, 3, 5), "last": date(2025, 8, 13)}
+    raw["time"]["validation_period"] = date(2025, 9, 15)  # a Monday, three weeks after
+    time = _load(tmp_path, raw).time
+    assert time.observation_window.first == date(2025, 3, 9)
+    assert time.observation_window.last == date(2025, 8, 17)
+    assert time.validation_period == date(2025, 9, 21)
+
+
+def test_day_is_kept_as_itself(tmp_path: Path, raw: dict) -> None:
+    """A daily config's dates are their own period end."""
+    raw["time"]["period"] = "day"
+    raw["time"]["observation_window"] = {"first": date(2025, 3, 5), "last": date(2025, 8, 13)}
+    raw["time"]["validation_period"] = date(2025, 8, 16)
+    time = _load(tmp_path, raw).time
+    assert (time.observation_window.first, time.observation_window.last) == (
+        date(2025, 3, 5),
+        date(2025, 8, 13),
+    )
+    assert time.validation_period == date(2025, 8, 16)
+
+
+def test_unknown_period_refused(tmp_path: Path, raw: dict) -> None:
+    """Only the three units of analysis exist."""
+    raw["time"]["period"] = "quarter"
+    assert "time.period" in _error(tmp_path, raw)
 
 
 def test_first_or_last_day_name_the_same_month(tmp_path: Path, raw: dict) -> None:
     """Both spellings of a month load as its last day, the framework's one convention, so they
     give the same config and the same hashes."""
     first_days = _load(tmp_path, raw)
-    raw["time"]["train_months"] = {"first": date(2025, 3, 31), "last": date(2025, 8, 31)}
-    raw["time"]["validation_month"] = date(2025, 11, 30)
+    raw["time"]["observation_window"] = {"first": date(2025, 3, 31), "last": date(2025, 8, 31)}
+    raw["time"]["validation_period"] = date(2025, 11, 30)
     assert _load(tmp_path, raw) == first_days
-    assert first_days.time.train_months.first == date(2025, 3, 31)
+    assert first_days.time.observation_window.first == date(2025, 3, 31)
 
 
 def test_target_window_below_one_refused(tmp_path: Path, raw: dict) -> None:
-    """w >= 1: the target window never includes the observation month."""
-    raw["time"]["target_window_months"] = 0
-    assert "target_window_months" in _error(tmp_path, raw)
+    """w >= 1: the target window never includes the observation period."""
+    raw["time"]["target_window"] = 0
+    assert "target_window" in _error(tmp_path, raw)
+
+
+def test_old_field_names_refused_as_unknown_keys(tmp_path: Path, raw: dict) -> None:
+    """The pre-period names get no migration in 0.x (D-007 (c)): each fails naming the key by
+    its pydantic path."""
+    raw["time"]["train_months"] = raw["time"].pop("observation_window")
+    raw["time"]["target_window_months"] = raw["time"].pop("target_window")
+    raw["time"]["validation_month"] = raw["time"].pop("validation_period")
+    raw["data"]["keys"]["month"] = raw["data"]["keys"].pop("period")
+    message = _error(tmp_path, raw)
+    for path in ("time.train_months", "time.target_window_months", "time.validation_month",
+                 "data.keys.month"):  # fmt: skip
+        assert path in message
 
 
 @pytest.mark.parametrize(
@@ -267,48 +344,44 @@ def test_metric_must_be_a_flaml_name(tmp_path: Path, raw: dict) -> None:
 
 def test_eligibility_step_needs_exactly_one_of_define_and_filter(tmp_path: Path, raw: dict) -> None:
     """A step with both, or neither, is refused by name."""
-    raw["data"]["eligibility"][0] = {"name": "both", "define": "a", "filter": "b", "reason": "r"}
+    steps = raw["data"]["eligibility"]["analysis"]
+    steps[0] = {"name": "both", "define": "a", "filter": "b", "reason": "r"}
     assert "both" in _error(tmp_path, raw) and "exactly one" in _error(tmp_path, raw)
-    raw["data"]["eligibility"][0] = {"name": "neither"}
+    steps[0] = {"name": "neither"}
     assert "exactly one" in _error(tmp_path, raw)
 
 
 def test_eligibility_filter_needs_a_reason(tmp_path: Path, raw: dict) -> None:
     """A filter removes rows, so it says why."""
-    del raw["data"]["eligibility"][1]["reason"]
+    del raw["data"]["eligibility"]["modelling"][0]["reason"]
     assert "needs a reason" in _error(tmp_path, raw)
 
 
-def test_eligibility_filter_needs_before(tmp_path: Path, raw: dict) -> None:
-    """A filter says whether its rows go before EDA or before modelling; the message explains."""
-    del raw["data"]["eligibility"][1]["before"]
-    message = _error(tmp_path, raw)
-    assert "filter 'non_holders' needs `before`" in message
-    assert "tagged by the step's name" in message
+def test_eligibility_names_unique_across_both_lists(tmp_path: Path, raw: dict) -> None:
+    """Two steps with one name, in one list or across the two, would make the tag column and the
+    log ambiguous."""
+    eligibility = raw["data"]["eligibility"]
+    eligibility["analysis"].append(copy.deepcopy(eligibility["modelling"][0]))
+    assert "repeated: ['non_holders']" in _error(tmp_path, raw)
 
 
-def test_eligibility_define_takes_no_before(tmp_path: Path, raw: dict) -> None:
-    """A define names a condition and drops nothing."""
-    raw["data"]["eligibility"][0]["before"] = "eda"
-    assert "define 'has_income' takes no `before`" in _error(tmp_path, raw)
-
-
-def test_eligibility_names_unique(tmp_path: Path, raw: dict) -> None:
-    """Two steps with the same name would make the log ambiguous."""
-    raw["data"]["eligibility"].append(copy.deepcopy(raw["data"]["eligibility"][1]))
-    assert "non_holders" in _error(tmp_path, raw)
+def test_eligibility_lists_default_to_empty(tmp_path: Path, raw: dict) -> None:
+    """`eligibility`, or either of its lists, may be left out: every row is then eligible."""
+    del raw["data"]["eligibility"]
+    eligibility = _load(tmp_path, raw).data.eligibility
+    assert eligibility.analysis == [] and eligibility.modelling == []
+    raw["data"]["eligibility"] = {"modelling": [{"name": "x", "filter": "a = 1", "reason": "r"}]}
+    assert _load(tmp_path, raw).data.eligibility.analysis == []
 
 
 def test_upstream_target_is_column_without_rule(tmp_path: Path, raw: dict) -> None:
-    """An upstream target gives only the column, optionally with its lineage; leaver and null
-    handling belong to a built target."""
+    """An upstream target gives only the column, optionally with its lineage; a null in the
+    column is the source's business, so the target spec has no null setting."""
     raw["data"]["target"] = {"column": "cc_target", "lineage": ["cc_flag"]}
     target = _load(tmp_path, raw).data.target
     assert target.rule is None and target.lineage == ["cc_flag"]
-    raw["data"]["target"]["leavers"] = "negative"
-    assert "`leavers` applies to a built target" in _error(tmp_path, raw)
-    raw["data"]["target"] = {"column": "cc_target", "null_as": 0}
-    assert "`null_as` applies to a built target" in _error(tmp_path, raw)
+    raw["data"]["target"]["null_as"] = 0
+    assert "null_as" in _error(tmp_path, raw)
 
 
 def test_sampling_parameter_must_match_method(tmp_path: Path, raw: dict) -> None:

@@ -15,7 +15,7 @@ Three tiers in order, each with the step(s) that move a model on to the next:
 1. **LOCAL**: experiments; cheap, disposable.
    - `register`: one gate, the human feature sign-off (D-031). A registered model is any
      model a person has defended and wants to keep (D-033). It packs the run's slice of the
-     decision audit log (the entries up to its run marker, any later validation-month entry its
+     decision audit log (the entries up to its run marker, any later validation-period entry its
      Evaluation was scored with, plus the sign-off) into one file inside
      the registered bundle, since a folder of entries can't be registered or promoted as is
      (D-125; [config](config.md#decision-audit-log-d-125)). It always writes the lossless
@@ -32,11 +32,11 @@ Three tiers in order, each with the step(s) that move a model on to the next:
      records it. By default production then retrains the recipe on the same data definition
      (neither more clients nor a longer window) before it scores; deploying the fitted model
      without a retrain is also allowed (D-033, D-052). A Phase 2 production retrain keeps the
-     window and the clients; only the inference month moves, since inference always runs on the
-     latest month (D-052, D-088). Before it scores, it passes the **production retrain check**
-     against its evaluated parent: label-free agreement on the inference month; its own test-split
-     AUC and calibration per window month; per-month rows and positive events against the parent's
-     EDA artifact; each within tolerances declared in the config, never on the validation month.
+     window and the clients; only the inference period moves, since inference always runs on the
+     latest period (D-052, D-088). Before it scores, it passes the **production retrain check**
+     against its evaluated parent: label-free agreement on the inference period; its own test-split
+     AUC and calibration per window period; per-period rows and positive events against the parent's
+     EDA artifact; each within tolerances declared in the config, never on the validation period.
      Failing keeps whatever production model is current and is recorded; at a first deploy the
      deploy fails loud (D-052).
 3. **PRODUCTION**: one version per model key (D-111).
@@ -112,7 +112,7 @@ Promote-on-inference coupling; hash verification; manifest reproduction; T2–T4
   it scores (see `deploy` above); `model_hash` and `parent_run_id` identify what scored. In Phase 2 a production retrain
   on the same data definition (neither more clients nor a longer window) is the default deploy path: the
   parameters differ only because production data differs from sandpit data, and only the inference
-  month moves. There is no refit command in the sandpit. Still open with the platform
+  period moves. There is no refit command in the sandpit. Still open with the platform
   / MLOps team (M4): whether production has the data and compute to train, determinism, and what
   "deployed" then records.
 - Not to solve now: the code version of a run made from uncommitted code, and which repo's PR is

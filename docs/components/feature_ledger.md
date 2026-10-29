@@ -22,10 +22,10 @@ offer".
 | Group | Columns (illustrative) | Written by |
 |---|---|---|
 | Identity | feature, kind (numeric / categorical), source column, readable label (optional) | load |
-| EDA | missing %, distinct levels, univariate AUC and direction (every client in the window, D-030), rank, key feature (top-N or user-listed) | EDA |
+| EDA | missing %, distinct levels, univariate AUC and direction (the window's eligible rows, D-030), rank, key feature (top-N or user-listed) | EDA |
 | Checks | one flag + value per check step (lineage, leakage, eligibility-constant, stability, redundancy with partner and both AUCs, data quality); checks verdict (pass / flagged / auto-excluded) | Feature Checks |
 | Decision | human decision (keep / exclude), its group's reason, the entry numbers | the audit log entries the run replayed (D-125) |
-| Selection | automated selection result, the rule that made it and its statistic (e.g. the univariate AUC behind the floor), all on the train split, never EDA's all-client column (D-030) | Training |
+| Selection | automated selection result, the rule that made it and its statistic (e.g. the univariate AUC behind the floor), all on the train split, never EDA's pre-split column (D-030) | Training |
 | Use | in model (yes/no + why not), importance and rank, effect direction | Training, Evaluation |
 
 **Example rows:**

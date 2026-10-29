@@ -34,7 +34,7 @@ defaults, so a first run needs only the shared sections.
 | `decision` | Training, Evaluation, lifecycle | How the scores are used; the metric, gate metric and baselines derived from it or overridden, all declared before any result (`CLAUDE.md` §4.3) |
 | `entities` | every stage | Which entities the use case applies to; their logical sources |
 | `data` | every stage | Keys, eligibility, target, the client split, the contract band, the saved model input |
-| `time` | every stage | The observation window, `w`, the validation month |
+| `time` | every stage | The unit of analysis (`period`), the observation window, `w`, the validation period |
 | `features` | every stage | The candidates (patterns) |
 | `strata` | EDA, Evaluation, Monitoring | The stratification variables, level cap, minimum events (D-038) |
 | `eda` | EDA | Key features, chart sampling |
@@ -73,26 +73,28 @@ entities:                                # only the entities this use case appli
       targets: retail_holdings           # left-joins to the spine; omit when the target is a feature-source column
 
 data:
-  keys: {unit_id: client_id, month: snapshot_month}   # the sources' key names; renamed to unit_id, month at load
+  keys: {unit_id: client_id, period: snapshot_month}   # the sources' key names; renamed to unit_id, period at load; the id cast to string
   model_input: cc_acquisition_input      # optional: the saved model input's logical name (D-131); omit = build in memory
-  eligibility:                           # ordered; `define` names a condition, `filter` keeps rows; each logs rows in → out
-    - {name: has_income, define: "income IS NOT NULL"}
-    - {name: non_holders, filter: "cc_flag = 0", reason: "acquisition is scored for clients without a card",
-       before: model}                    # before: model: the rows stay for EDA, tagged `non_holders`; dropped before modelling
-    - {name: income_known_or_salaried, filter: "has_income OR salary_transfer_flag = 1",
-       reason: "card rules need a known income", before: eda}   # before: eda: the rows are dropped before EDA
-  target:                                # the target spec (target_factory.md)
-    rule: flag_goes_up                   # the Stage 1 rule (D-029 (c)); count and amount rules later (D-091); an upstream target gives only `column`
-    column: cc_flag                      # the column the rule reads; excluded from the candidates (lineage)
-    leavers: null                        # null (default) | negative: what a client leaving inside the window gets
-    null_as: null                        # built target only; the value a null in `column` stands for (e.g. 0); null: a null never counts
+                                         # one table may serve several use cases (run a.yml b.yml --stages target_factory)
+  eligibility:                           # two ordered Spark SQL lists; filters log rows in -> out
+    analysis:                            # rows dropped before EDA
+      - {name: has_income, define: "income IS NOT NULL"}
+      - {name: income_known_or_salaried, filter: "has_income OR salary_transfer_flag = 1",
+         reason: "card rules need a known income"}
+    modelling:                           # kept for EDA, tagged 0/1; dropped before Feature Checks
+      - {name: non_holders, filter: "cc_flag = 0",
+         reason: "acquisition is scored for clients without a card"}
+  target:
+    rule: flag_goes_up                   # the flag is 1 in some period of t+1 … t+w and 0 at t
+    column: cc_flag                      # excluded from the candidates (lineage)
   split: {test_share: 0.3, seed: 42}     # by client, seeded hash; applied from Training on (D-030)
   rate_band: {max: 0.5}                  # contract check on the true population; no floor
 
 time:
-  train_months: {first: 2025-03-01, last: 2025-08-01}   # the observation window t1 … tk
-  target_window_months: 3                               # w: targets look at months t+1 … t+w (D-129)
-  validation_month: 2025-11-01                          # v ≥ tk + w; v + w ≤ the sources' last month
+  period: month                          # the unit of analysis: month | week | day; one row per unit per period
+  observation_window: {first: 2025-03-01, last: 2025-08-01}   # t1 … tk; a period is held as its last day
+  target_window: 3                       # w: targets look at periods t+1 … t+w (D-129)
+  validation_period: 2025-11-01          # v ≥ tk + w, by period index; v + w ≤ the sources' last period
 
 features:
   candidates: {include: ["*"], exclude: []}             # glob patterns over the feature sources' columns
@@ -147,9 +149,13 @@ monitoring:
 ```
 
 **Model input.** `data.model_input` names, by logical name, the one saved table every stage after
-Target Factory works from; the environment file maps the name to a path or table. Without the
-field the same frames are built in memory. What it holds, its hash check and when it is written:
-[dataset](dataset.md#model-input-d-131) (D-131).
+Target Factory works from; the environment file maps the name to a path or table. One table may
+serve several use cases that share the entity's feature sources, `data.keys` and `time.period`
+(`run a.yml b.yml --stages target_factory`): it holds the sources joined plus one target column
+per use case, and eligibility, the candidates, the contract checks and the client split are
+derived on read from each reader's config. Without the field the same frames are built in memory.
+What it holds, what its reader refuses and when it is written: [dataset](dataset.md#model-input-d-131)
+(D-131).
 
 ## Phase 2 requirements
 1. Every config has `schema_version` and `task`. Unbuilt tasks are defined but fail with a clear "not
@@ -195,45 +201,55 @@ field the same frames are built in memory. What it holds, its hash check and whe
    `feature_store` source is refused until OD-26 is designed (D-021). Physical names never appear
    in the config: the environment file maps each logical name per entity (D-130).
 6. **Stepwise sections:** eligibility and feature-check steps are ordered and named, and each
-   produces a log entry (rows/cols in → out, reason). An eligibility entry is Spark SQL, either a
-   `define` (a named boolean condition that later entries reuse by name, dropped before the
-   candidates are resolved) or a `filter` with a required `reason`; a null condition counts as
-   false in a filter (D-129). A filter is one of two kinds: `before: eda` drops its rows before
-   EDA (clients the analysis shouldn't see at all, e.g. new clients); `before: model` keeps its
-   rows for EDA, tagged by the step's name as a 0/1 column, and drops them before modelling (e.g.
-   current holders of the product, whom the analysis compares with the non-holders). The tag is a
-   stratification column for EDA ([dataset](dataset.md), [eda](eda.md)).
+   produces a log entry (rows/cols in → out, reason). Eligibility is two ordered lists of Spark
+   SQL entries, `data.eligibility.analysis` and `data.eligibility.modelling`, run as one order,
+   analysis first, with step names unique across both (D-129). An entry is either a `define` (a
+   named boolean condition that the entries after it, in either list, reuse by name, dropped
+   before the candidates are resolved) or a `filter` with a required `reason`; a null condition
+   counts as false in a filter. An **analysis filter** drops its rows before EDA (who the
+   analysis sees: clients it shouldn't see at all, e.g. new clients); a **modelling filter**
+   keeps its rows for EDA, tagged 0/1 by the step's name (a reference group, e.g. current
+   holders of the product, whom the analysis compares with the non-holders), and drops them
+   before Feature Checks. The modelling tag is a stratification column for EDA
+   ([dataset](dataset.md), [eda](eda.md)).
 7. **Features:** candidates are explicit lists or patterns. Human decisions go both ways: `exclude`
    and `keep_despite_flag` (which also protects against automated pruning). They are entries in the
    decision audit log, one per group with one required reason, never edits to the config (D-043,
    D-125). Automated decisions are *not* written into the config as outcomes: the config holds the
    rules that make them (ordered, named steps, like eligibility), and their outcomes are rule
    entries in the log and columns in the feature ledger (D-043, D-125).
-8. **Time:** `time` holds the observation window (`train_months {first, last}`), the target
-   window `w` (`target_window_months`, one number read by the target builder and the time checks
-   alike) and the validation month; the inference month is a run argument (D-088, D-129). The validation month sits outside the
+8. **Time:** `time` holds the unit of analysis (`period`: `month`, `week` or `day`; one row per
+   unit per period, the key column `period`), the observation window (`observation_window
+   {first, last}`), the target window `w` (`target_window`, in periods, one number read by the
+   target builder and the time checks alike) and the validation period (`validation_period`);
+   the inference period is a run argument (D-088, D-129). The validation period sits outside the
    data-definition hash (EDA never reads it; Feature Checks reads it only to leave it out of its
-   comparisons), so moving it never changes the data-definition hash. After the config freezes, the validation month changes only through a
-   `set` entry in the audit log, refused when any Feature Checks run compared that month (Feature Checks
-   records the months it compared, [feature_checks](feature_checks.md); D-088). A Phase 2
-   production retrain moves only the inference month (D-052).
-   A month is held as its **last day**, the framework's one convention: a config may write it as
-   its first or its last day (any other day is refused as a likely typo), and the dataset moves
-   every source's month column to its month's last day on reading (D-129;
-   [dataset](dataset.md#sources-and-joins-d-129)).
+   comparisons), so moving it never changes the data-definition hash. After the config freezes,
+   the validation period changes only through a `set` entry in the audit log, refused when any
+   Feature Checks run compared that period (Feature Checks records the periods it compared,
+   [feature_checks](feature_checks.md); D-088). A Phase 2 production retrain moves only the
+   inference period (D-052).
+   A period is held as its **last day**, the framework's one convention. The typo rule at load
+   depends on `time.period`: a month is written as its first or its last day (any other day is
+   refused as a likely typo), a week as any of its days, a day as itself; the three dates move to
+   the period's end, and the dataset moves every source's period column to the period's end on
+   reading (D-129; [dataset](dataset.md#sources-and-joins-d-129)). Period arithmetic goes
+   through one dict of period specs (`periods.PERIODS`), never `add_months` or added days (T19).
    Checked at config load (D-129):
    - window order (`first ≤ last`) and `w ≥ 1`;
-   - `v ≥ tk + w` (no overlapping target windows).
+   - `v ≥ tk + w` by period index (no overlapping target windows).
 
    Checked when the frames are built, since only the data knows ([dataset](dataset.md)):
-   - the window and `v + w` lie inside the sources' months, so every validation label has
+   - the window and `v + w` lie inside the sources' periods, so every validation label has
      matured (otherwise partial maturity would null validation labels quietly). This replaces the
      backward-window check, which the framework can't make for upstream features.
-9. **Data-definition hash:** computed from entity, sources, eligibility, target spec, observation
-   window and candidates (D-088; the section below). It keys the EDA and Feature Checks artifacts
-   that training requires (D-031). It assumes a source month never changes after loading
-   (`CLAUDE.md` §4.10); training recomputes the per-month row and positive counts on every client
-   in the window, before the client split, and fails loud when they differ from the EDA artifact's.
+9. **Data-definition hash:** computed from `task`, entity, sources, eligibility, target spec, the
+   period, the observation window, the target window and candidates (D-088; the section
+   below). It keys
+   the EDA and Feature Checks artifacts that training requires (D-031). It assumes a source
+   period never changes after loading (`CLAUDE.md` §4.10); training recomputes the per-period
+   row and positive counts on every client of the window after the analysis filters, before the
+   client split, and fails loud when they differ from the EDA artifact's.
 10. **Model key** (entity, domain, use case, split) is derived from the config; split = `all` in
     Phase 2.
 11. **Downstream sections exist from v1** (lifecycle, inference, monitoring), even while those
@@ -244,9 +260,10 @@ field the same frames are built in memory. What it holds, its hash check and whe
 13. **Metric slices:** `top_pct` and `top_n` lists; either may be empty.
 14. **Templates guide:** the base template lists every option with a one-line when-to-use, and
     validation errors say how to fix the problem. Its header key says how to read a line
-    (`# required`; a plain value is the default; `null · level:` names both levels' values), and
-    a test checks every schema field against it, so an omitted value's default is always on
-    display.
+    (`# required`; a plain value is the default; `null · level:` names both levels' values) and
+    where a comment sits: a short comment on the line it explains, a longer one right above its
+    key, and a level line always names both levels' values inline. A test checks every schema
+    field against the template, so an omitted value's default is always on display.
 15. **Migrations:** small functions `migrate_vN_to_vN+1(dict) -> dict`, applied automatically with a
     deprecation warning.
 
@@ -254,13 +271,17 @@ field the same frames are built in memory. What it holds, its hash check and whe
 **Decided (settles the audit-log design; amends D-043 and D-088); built in Stage 1's major step 1.** The SDS
 and LDS build from this section.
 
-**The model.** The config is the intent, immutable once Target Factory has built the target, or
-at the first EDA run for an upstream target. Every
-later decision, by a person or a rule, is an append-only entry in the decision audit log. Replaying the config plus entries 1–n gives a run's one input, the **resolved config**,
-validated by the same Pydantic schema. The log never changes the data definition (entity, sources,
-eligibility, target spec, window, candidates): changing it means a new config, with fresh EDA and
-Feature Checks. Entries are never edited; a reversal is a new entry. The feature ledger is the same
-trail read per feature ([feature ledger](feature_ledger.md)).
+**The model.** The config is the intent. Its **data part** (sources, keys, period, target spec,
+target window) is frozen once the model input is saved, or at the first EDA run when the frames
+are built in memory; the rest of the data definition (eligibility, the observation window,
+candidates) changes only by a new config, which reruns EDA onwards but keeps the saved table
+(D-125, D-131). Every later decision, by a person or a rule, is an append-only entry in the
+decision audit log. Replaying the config plus entries 1–n gives a run's one input, the
+**resolved config**, validated by the same Pydantic schema. The log never changes the data
+definition (entity, sources, eligibility, target spec, period, window, candidates): changing it
+means a new config, with fresh EDA and Feature Checks. Entries are never edited; a reversal is a
+new entry, feature by feature (`include`) or back to an earlier state as a whole (`revert`). The
+feature ledger is the same trail read per feature ([feature ledger](feature_ledger.md)).
 
 **The cost.** The current state can't be read from the config file alone: a person reads it with
 `show_decisions` or `resolve_config` (below).
@@ -276,6 +297,7 @@ any extension-point entry.
 | person | `include`: reverse a person's `exclude` | changes the input |
 | person | `keep_despite_flag`: resolve a flag; also protects from automated pruning | changes the input |
 | person | `set`: change one listed setting (next section) | changes the input |
+| person | `revert`: go back to the state after an earlier entry (`to_seq`; 0 is the config as written) | changes the input: replay restarts from there |
 | person | `sign_off`: approve a run's final feature list (D-031) | trail |
 | person | `register`, `promote`: written by those commands | trail |
 | rule | `exclude`: lineage, quality filters | changes the input |
@@ -283,19 +305,36 @@ any extension-point entry.
 | rule | `dropped`: a run output, e.g. automated selection | trail |
 | stage | `run`: a marker with `run_id`, the entry it replayed up to and the input hash | trail |
 
-- Only `exclude`, `include`, `keep_despite_flag` and `set` change the resolved input; the rest are
-  the trail and are no-ops at replay. A flag stays open until a person's entry resolves it.
+- Only `exclude`, `include`, `keep_despite_flag`, `set` and `revert` change the resolved input;
+  the rest are the trail and are no-ops at replay. A flag stays open until a person's entry
+  resolves it.
+- A `revert` entry, `{op: revert, to_seq: 8, reason}`, goes back to an earlier state without
+  deleting anything: at replay the state restarts from the config with entries 1 … 8 applied,
+  and the entries after the revert continue from there. The undone entries stay in the log as
+  the trail, and `resolve_config(upto=n)` still reproduces every earlier state (`to_seq: 0` is
+  the config as written; a revert inside the reverted range is honoured in turn). It is written
+  with `record_decision(…, revert_to=8, reason=…)` or `decide --revert-to 8`, exactly one of
+  the five operations; it is refused unless `to_seq` is an earlier state than the current one
+  (0 … n−1), and it carries no features, path, `from` or `to` (no other operation takes
+  `to_seq`). Its default stage is the first undone entry's, overridable with `stage=`.
+  `show_decisions` shows `to #8` in `what`; the resolved file's header adds one line per
+  revert, `# entry 14 reverted to the state after #8`, and its per-value origins are those of
+  the entries still in force. `log_schema_version` stays 1: a new op, old entries read as
+  before.
 - Rejecting features at sign-off is an `exclude` entry with stage `sign_off`, and the model is
   retrained without them.
 - `include` reverses a person's `exclude` only, feature by feature: each named feature must be
   excluded now and last by a person's entry, so it may restore any subset of an earlier entry's
-  features. A rule's `exclude` is reversed by changing the rule (a listed threshold); a lineage
-  exclusion is never reversed (`CLAUDE.md` §4.6). A flagged feature was never dropped:
+  features. The check runs over the **effective** entries (every `revert` applied): `include`
+  is refused when any effective entry is a rule's `exclude` of the feature, so neither a revert
+  nor a person's no-op `exclude` on top of the rule's can launder it. A rule's `exclude` is
+  reversed by changing the rule (a listed threshold); a lineage exclusion is never reversed
+  (`CLAUDE.md` §4.6). A flagged feature was never dropped:
   `keep_despite_flag` settles the flag.
 - A write is refused at once when a feature isn't a candidate, the reason is missing, the change
   touches the data definition, the setting isn't listed, the value fails the schema, or it moves
-  the validation month to one Feature Checks compared (D-088).
-- An entry's evidence may cite train and test results only: the validation month never informs a
+  the validation period to one Feature Checks compared (D-088).
+- An entry's evidence may cite train and test results only: the validation period never informs a
   choice (`CLAUDE.md` §4.4).
 
 ### Which settings a `set` may touch, and maintaining the list
@@ -321,7 +360,7 @@ LOGGABLE_SETTINGS = {
     "training.categoricals.min_level_count": "training",
     "training.calibration.method": "training",
     "training.sampling": "training",
-    "time.validation_month": "evaluation",  # refused once a Feature Checks run compared it (D-088)
+    "time.validation_period": "evaluation",  # refused once a Feature Checks run compared it (D-088)
     "evaluation.slices.top_pct": "evaluation",
     "evaluation.slices.top_n": "evaluation",
     "evaluation.views": "evaluation",
@@ -341,10 +380,15 @@ from the new resolved input.
 - A field added to the schema isn't loggable until it is added to the list.
 - A test checks that every listed path exists in the schema and that none is a data-definition
   field, the decision, a metric or a baseline.
-- Entries carry `log_schema_version` and `hash_version`. A config migration that renames or
-  retypes a listed path must also bump `log_schema_version` and ship an entry migration, since
-  `set` entries store the dotted path and the values in the old schema's terms; the entry version
-  is checked before an entry is parsed, so a newer entry says "raise the pin" (`CLAUDE.md` §2).
+- Entries carry `log_schema_version` and `hash_version`. From release 1.0, a config migration
+  that renames or retypes a listed path must also bump `log_schema_version` and ship an entry
+  migration, since `set` entries store the dotted path and the values in the old schema's
+  terms; so must a new operation or a new entry field, since an older pinned reader refuses by
+  version only. The entry version is checked before an entry is parsed, so a newer entry says
+  "raise the pin" (`CLAUDE.md` §2). In 0.x neither bumps (D-007 (c)): the rename of
+  `time.validation_month` to `time.validation_period` (2026-10-28) left `log_schema_version`
+  at 1, since old entries sit unreachable under the old data-definition hash's folder, and a
+  `set` entry moved by hand fails naming its `seq`.
 - The list and the decision-point table (below) are kept in step: D-132 maps the automation
   levels on the same decision points.
 
@@ -372,8 +416,15 @@ for entry in entries[:upto]:
     cfg = APPLY_BY_OP[entry["op"]](cfg, entry)
 ```
 
+`revert` is not in `APPLY_BY_OP`: `replay` handles it itself, since it needs the config and the
+earlier entries, not only the current state. The replay restarts from the config with entries
+1 … `to_seq` (the slice, replayed the same way, so a revert inside it is honoured in turn) and
+continues with the entries after the revert; the origins of each value restart the same way, so
+the resolved file points at the entries still in force.
+
 - **Replaying to any point reproduces any run:** `upto` = a run marker's `replayed_to` gives that
-  run's input, so an old run can be rerun or compared without guessing what was decided then.
+  run's input, so an old run can be rerun or compared without guessing what was decided then; the
+  entries a `revert` undid are still there for `upto` below it.
 - **Stale entries fail loud:** an entry naming a feature that is no longer a candidate stops the
   replay, citing the entry number.
 - **Rule entries can be checked:** rerunning the rules on unchanged data reproduces their entries.
@@ -395,7 +446,8 @@ The replay code is expected to be a few dozen lines. That is a design target, no
 
 ### One entry
 Fields: `seq`, `time`, `by` (`kind`: person / rule / stage, plus `id`), `stage`, `op`, then
-`features` or `path` / `from` / `to` (`to` may be null, e.g. sampling off), plus `reason`,
+`features`, `path` / `from` / `to` (`to` may be null, e.g. sampling off) or `to_seq` (a
+`revert`), plus `reason`,
 `evidence`, `data_definition_hash`, `hash_version` (the recipe that computed it) and
 `log_schema_version`. Run markers add `run_id`, `replayed_to` and `resolved_input_hash`. An
 operand that doesn't belong to the operation is refused. Evidence
@@ -419,8 +471,9 @@ entry. Entry 6 of the worked example, as stored:
 
 ### The final config as one file
 `resolve_config(cfg, entity, env, upto=None, save_to=None)` returns the resolved config, or writes it
-as one YAML file with each value's entry number as a comment. It is a view, regenerated on demand
-and never edited back. Every run already saves its resolved config with its artifacts.
+as one YAML file with each value's entry number as a comment and, per revert replayed, one header
+line `# entry 14 reverted to the state after #8`. It is a view, regenerated on demand and never
+edited back. Every run already saves its resolved config with its artifacts.
 
 ### Storage
 - **Locally:** one small JSON file per entry, `decisions/<seq>.json`, per instance, under a folder
@@ -433,7 +486,7 @@ and never edited back. Every run already saves its resolved config with its arti
   an `hdfs://` data root is refused where the log is read or written. A missing log folder reads
   as an empty log with a warning; once the model input exists (major step 3), a missing folder
   for a frozen config is an error.
-- **Register:** the run's slice (the entries up to its run marker, any later validation-month entry
+- **Register:** the run's slice (the entries up to its run marker, any later validation-period entry
   its Evaluation was scored with, plus the sign-off that approved
   the run) is packed into one file inside the registered bundle, immutable; promote reads it
   there. A folder of entries can't be registered or promoted as is ([lifecycle](lifecycle.md)).
@@ -460,8 +513,13 @@ record_decision(
 )
 ```
 
-`show_decisions(cfg, entity, env)` prints the log as the table below. Each report's choices block
-shows the entries up to its run, and the model card the registered slice.
+Going back to an earlier state is the fifth operation, `record_decision(…, revert_to=8,
+reason=…)` or `decide --revert-to 8`; exactly one of the five (`exclude`, `include`,
+`keep_despite_flag`, `set`, `revert_to`) per call (the `revert` bullet above).
+
+`show_decisions(cfg, entity, env)` prints the log as the table below (a `revert` shows `to #8`
+in `what`). Each report's choices block shows the entries up to its run, and the model card the
+registered slice.
 
 ### Worked example
 Card acquisition within 3 months on the synthetic mart, entity A.
@@ -539,7 +597,7 @@ budgets) are reversible defaults, set as each stage is built.
 | Which version scores | production, or a pin in the config | same |
 
 Top-N is the N highest candidates in EDA's univariate ranking (binary: direction-agnostic AUC
-against the target, on every client in the window, D-030), plus the features the person lists:
+against the target, on the window's eligible rows, D-030), plus the features the person lists:
 EDA's key features, each with a deep dive ([eda](eda.md)). A move between levels is a config edit
 before the config freezes and a `set` on `automation_level` in the audit log after it, which
 reruns every stage from EDA (D-132); at replay the move re-fills exactly the fields the level
@@ -557,16 +615,24 @@ renamed or retyped, a default changed) changes the digests of every existing con
 a data change"). Until the December pre-release nothing is kept inside the bank, so a recipe
 change re-pins the digests and leaves `HASH_VERSION` at 1 (0.x promises nothing, `CLAUDE.md` §2);
 the bump applies from then. A golden-hash test pins the example's data-definition and target-spec
-digests, so the change can't happen unnoticed.
+digests, so the change can't happen unnoticed. Both hashes include `task` (re-pinned
+2026-10-28, `HASH_VERSION` still 1): an upstream target column read as binary and as
+regression no longer shares a digest.
 
 | Identity | Covers | Excludes | Changes when |
 |---|---|---|---|
 | config hash | the use-case definition: every section after level resolution | the housekeeping block; the environment file (tables, paths, Spark, theme; D-130); the audit log's entries | the config file changes, which after Target Factory means a new config; decisions in the log leave it unchanged |
-| data-definition hash | entity, sources, eligibility steps, target spec, observation window, candidates | the validation month (in the config; EDA never reads it, Feature Checks only to leave it out); the inference month (a run argument); the stage sections | the population, the target or the candidates change. It keys the EDA and Feature Checks artifacts training needs (D-031) |
-| resolved-input hash | the config plus entries 1–n, resolved (the run's one input) | the housekeeping block; the environment file; trail entries, which change nothing | every entry that changes the input: `exclude`, `include`, `keep_despite_flag`, `set` |
+| data-definition hash | `task`, entity, sources, eligibility steps, target spec, the `time` part `period`, `observation_window`, `target_window`, candidates | the validation period (in the config; EDA never reads it, Feature Checks only to leave it out); the inference period (a run argument); the stage sections | the population, the target, the unit of analysis, the window or the candidates change. It keys the EDA and Feature Checks artifacts training needs (D-031) |
+| target-spec hash | `task`, the target spec, the keys, the target window, the entity's target source: what one label column depends on | everything else | the label's meaning changes (the same upstream column read as binary and as regression is two labels); it keys each use case in the model input's sidecar (D-131) |
+| resolved-input hash | the config plus entries 1–n, resolved (the run's one input) | the housekeeping block; the environment file; trail entries, which change nothing | every entry that changes the input: `exclude`, `include`, `keep_despite_flag`, `set`, `revert` |
 | `run_id` | resolved-input hash + entity + timestamp | — | every training run of one instance |
 | `recipe_hash` | resolved config + final features + hyperparameters + encoder levels + calibration spec | the fitted numbers | the recipe changes; a retrain in production keeps it (D-052) |
 | `model_hash` | the bundle's per-part hashes | — | any part changes, a retrain included (D-094) |
+
+The saved model input is keyed by none of these as a whole: its sidecar holds the shared sources,
+keys and period plus each use case's target-spec hash, never the data-definition hash, so a
+changed eligibility, window or candidate list reruns EDA onwards and keeps the table (D-088,
+D-131; [dataset](dataset.md#model-input-d-131)).
 
 A worked example, one use case on two entities:
 1. The DS writes the config and runs EDA and Feature Checks on entity A. The artifacts are keyed by
@@ -578,8 +644,8 @@ A worked example, one use case on two entities:
    The config hash stays `c1` and the candidates are unchanged, so `d_A` stays and no EDA rerun is
    needed. The resolved-input hash becomes `i2`, and training reruns with a new
    `run_id = i2 + A + <timestamp>`.
-4. Next month the DS scores: the inference month is a run argument, so no hash changes and
-   nothing has to be rerun. Moving the validation month (a checked `set` entry, e.g. for a sweep
+4. Next period the DS scores: the inference period is a run argument, so no hash changes and
+   nothing has to be rerun. Moving the validation period (a checked `set` entry, e.g. for a sweep
    variant) changes the resolved-input hash but not the data-definition hash, so EDA and Feature
    Checks don't rerun.
 5. A framework upgrade migrates the config at load. Hashes are computed on the migrated canonical
@@ -609,28 +675,33 @@ functions)); the CLI command `decide` in `core_modelling/__main__.py`.
 - `load_config(path: str | Path) -> UseCaseConfig` (public): YAML → `migrate` →
   `apply_level_defaults` (fills nulls only) → `UseCaseConfig.model_validate`, with `extra="forbid"`
   on every model. One validator per rule: the name split (D-128), the time rules (req. 8),
-  `decision.type: top_n` needs `n`, an eligibility entry has exactly one of `define` / `filter`,
-  a `filter` has a `reason` and a `before` (`eda` / `model`) and a `define` has no `before`,
-  `target` has `rule` + `column` (with `null_as` and `leavers` only then) or `column` alone,
-  `sampling` with its parameters, `metric` in FLAML's names when set (T9), `test_share` in
-  (0, 1).
+  `decision.type: top_n` needs `n`, the period typo rule on the three `time` dates (a
+  `model_validator` on `Time`, since it needs `time.period`), an eligibility entry has exactly one
+  of `define` / `filter`,
+  a `filter` has a `reason`, step names are unique across the `analysis` and `modelling` lists,
+  `target` has `column` with an optional `rule` (its name is checked against the task's spec
+  when the target is built) and an optional `lineage`, `sampling` with its parameters, `metric`
+  in FLAML's names when set (T9), `test_share` in (0, 1).
 - `LEVEL_DEFAULTS: dict[str, dict[str, dict]]` (path → {autonomous, assisted}), `MIGRATIONS:
   dict[int, Callable[[dict], dict]]` (empty at `schema_version: 1`; a version above the current
   one fails loud).
 - The hashes (`identities.py`): `config_hash(cfg)`, `data_definition_hash(cfg, entity)`,
-  `target_spec_hash(cfg, entity)`, `resolved_input_hash(resolved)`; sha256 over canonical JSON
+  `target_spec_hash(cfg, entity)` (both with `task` among their parts), `resolved_input_hash(resolved)`; sha256 over canonical JSON
   of a dict that names its parts, with `HASH_VERSION = 1`, 12-character prefixes (`short`) in
   paths and `run_id`. The config hash excludes `housekeeping` and the two replay-written lists;
   the resolved-input hash excludes `housekeeping` only.
 - The audit log (public, D-024): `record_decision(config_path, entity, *, exclude=None,
-  include=None, keep_despite_flag=None, set=None, reason, evidence=(), stage=None,
-  env_path=None) -> Entry` (the writer is the current user id; rule and stage entries get their
-  own writers with their stages; a feature op checks its names against the saved model input's
-  candidate list when the config names one and it is saved, else against the candidate patterns,
-  saying so); `read_resolved_config(path) ->
+  include=None, keep_despite_flag=None, set=None, revert_to=None, reason, evidence=(),
+  stage=None, env_path=None) -> Entry` (exactly one of the five operations; the writer is the
+  current user id; rule and stage entries get their own writers with their stages; a feature op
+  checks its names against the saved model input's candidate list when the config names one and
+  it is saved, else against the candidate patterns, saying so; `revert_to` writes a `revert`
+  entry with `to_seq`, its stage the first undone entry's unless `stage` is given);
+  `read_resolved_config(path) ->
   UseCaseConfig` reads a saved resolved config back as is (no level defaults, its replayed lists
   and housekeeping kept), which `load_config` refuses, since a config file carries intent only; `resolve_config(cfg, entity, env, upto=None, save_to=None) ->
-  UseCaseConfig`; `show_decisions(cfg, entity, env) -> pd.DataFrame`; the CLI command `decide`.
+  UseCaseConfig`; `show_decisions(cfg, entity, env) -> pd.DataFrame`; the CLI command `decide`
+  (`--revert-to N` writes a revert).
   Entries live at `04_feature/<use_case>/<entity>/<data_definition_hash>/decisions/<seq>.json`
   ([environment](environment.md)), `seq` zero-padded to four digits, written create-if-absent with
   a retry on a clash; an entry under another data definition, a gap in the numbering, an unknown
@@ -638,7 +709,8 @@ functions)); the CLI command `decide` in `core_modelling/__main__.py`.
   off). `resolve_config` fills the housekeeping block (framework version, time, entity, the three
   hashes, `replayed_to`, `hash_version`, the environment values used, `level_filled`) and, with
   `save_to`, writes the YAML with a header naming
-  the entries replayed and the entry behind each changed value. The rule and stage entries
+  the entries replayed (one line per revert: `# entry 14 reverted to the state after #8`) and
+  the entry behind each changed value. The rule and stage entries
   (`flag`, `dropped`, `run`, `sign_off`, `register`, `promote`) get their writers with their
   stages; replay already accepts them.
 

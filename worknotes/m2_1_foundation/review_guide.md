@@ -1,320 +1,261 @@
 # Stage 1 (M2.1 Foundation): review guide
-_For the SDS (every major step) and the LDS (major steps 2 and 3 in full, D-072 (i)) · written as
-each major step ends (D-003 (b)) · the plan is `plan.md`, the design `questions.md` and D-129–D-133_
+_For the SDS and the LDS (the LDS reads the data code in full, D-072 (i)) · one continuous guide
+to Stage 1 as it stands after the 10-28 addendum · the plan is `plan.md`, the design
+`questions.md` and D-129–D-133, the addendum's spec `addendum_spec.md`, the SDS's review rounds
+and their outcomes `review_answers.md`_
 
-Each major step has one section: what to read in which order, what "right" looks like, and the
-reviewers' findings that were taken or justified. Read the docs first, then the tests (they say
-what the code promises), then the code. **Major steps 2 and 3 are reviewed together** (the SDS,
-10-27): their section below gives one reading order for both.
+**Status.** Built end to end and reviewed by the SDS three times (10-26 the config spine and
+the environment adapter; 10-27 Target Factory; 10-28 Target Factory and the dataset together,
+then the second round whose answers became the addendum, built the same day). Every remark is
+applied. What remains for Stage 1: the LDS's read of the data code and the deletion of this
+folder at sign-off. Version 0.2.0 is Stage 1's label until then.
 
-## Major step 1: config spine and environment adapter
-_Status: built, reviewed by the SDS (10-26); its remarks applied._
+**What Stage 1 is.** One config file per use case, validated at load with the automation
+level's defaults, hashed (D-088) and frozen in its data part once the model input is saved
+(D-125); the environment adapter (the Spark session, the sources, the paths); Target Factory,
+which labels every unit-period it can from the target source; the dataset, which joins the
+sources into one panel, saves it as the model input and, on read, applies a config's
+eligibility, candidates, contract checks and client split to give each stage its frames; the
+decision audit log, which records every later decision as an entry and replays them into the
+resolved config; `run` and the CLI; the Target Factory notebook.
 
-### Read in this order
-1. `docs/components/config.md`: the layout, the load, the identities, the audit log, the level
-   mapping. What "right" looks like: every field of `conf/base/cc_acquisition.yml` is explained
-   there; nothing in the doc describes code that doesn't exist without saying "planned".
-2. `docs/components/environment.md`: the environment file and the public session function.
-3. `conf/base/cc_acquisition.yml` and `conf/base/TEMPLATE.yml`: readable as a DS's first
-   contact with the framework; every option has a when-to-use.
-4. `tests/test_config_schema.py`: one test per rule; a failing config's message says how to fix
-   it.
-5. `src/core_modelling/config/schema.py`: flat models, one validator per rule, no cleverness.
-6. `src/core_modelling/config/identities.py` and `tests/test_identities.py`: what changes which
-   hash matches D-088 and D-129.
-7. `src/core_modelling/config/audit_log.py` and `tests/test_audit_log.py`: the worked example of
-   `config.md` is the test.
-8. `src/core_modelling/environment.py` and `tests/test_environment.py`.
-9. `src/core_modelling/__main__.py`: `decide` only parses arguments and calls `record_decision`.
-
-### What "right" looks like
-- `load_config` on the example gives the resolved level defaults; an unknown key fails naming it.
-- The validation month changes the config hash and not the data-definition hash.
-- Replaying the worked example's entries gives the states of its table.
-- A second `get_spark_session` with other settings fails loud naming the difference.
-- Nothing reads `conf/local` except `load_environment`; no physical name in `conf/base`.
-
-### Reviewers' findings
-Three reviewers ran on the merged state of 1.2–1.5 (code-reviewer, silent-failure-hunter,
-compat-guardian, all strong, high); the fix pass that followed is one agent's, verified on the
-main thread.
-
-**Taken (the fix pass):**
-- An `hdfs://` data root reached `pathlib` in the audit log and read back an empty log (all three
-  reviewers): the log refuses a URI root until the M2.4 transport.
-- A logged `set automation_level` relabelled the config without moving the level defaults (code
-  review, silent-failure audit): the loader records which paths the level filled, and the move
-  re-fills exactly those from the new level.
-- `SparkSession.getActiveSession()` is thread-local, so a call from another thread would have
-  reused and mutated the session quietly: the adapter now detects the process-wide session.
-- The write-clash retry re-numbered an entry whose checks were made against an older log: a clash
-  now fails, and the person re-runs the decision.
-- A config file carrying `features.excluded` or `housekeeping` loaded quietly, bypassing the
-  audit log: `load_config` refuses them; a saved resolved config is read through
-  `read_resolved_config`.
-- Operands that don't belong to an operation, a `set` that couldn't write `null`, a partial entry
-  file left by a failed dump, a naive local timestamp: all fixed.
-- Compatibility: `hash_version` on every entry, the entry version checked before validation, a
-  golden-hash test that makes a silent change of the hash recipe impossible, a dummy-migration
-  test, `schema_version` on the environment file with the migration loop shared, the environment
-  values in the resolved config's housekeeping.
-- Shapes: `selection.auc_floor` → `univariate_floor` (the statistic comes from the per-task
-  spec); typed lists replace three validators; the feature store and a wrong locator are refused
-  at load; `extra` can't override the framework's fixed Spark keys; a missing or unknown level
-  fails in one place; an empty log folder is logged as a warning.
-- Removed: `candidate_names`, which always returned `None` (the resolved candidate list arrives
-  with the model input in major step 3; until then `record_decision` says it checked the
-  patterns only).
-
-**Justified, not taken:**
-- `environment.py` keeps its own strict base instead of importing the config package's
-  `StrictModel`: the adapter must not depend on the config package.
-- `record_decision` takes paths while `resolve_config` and `show_decisions` take loaded models:
-  the first is the notebook and CLI call, as `config.md` designed it; the others serve code that
-  already holds the config.
-- `rate_band` stays a binary field: regression's contract check has no band; the per-task spec
-  decides which checks apply (D-050).
-- `target.rule` stays a plain string: the rule names live in the per-task spec, which validates
-  them when the target is built (major step 2), not at config load.
-- `schema.py` is 424 lines: one model per YAML block, one concept.
-
-**Deferred, with a row:** the audit log's folder is keyed by the short data-definition hash, so a
-change of the hash recipe would orphan a log silently; the golden-hash test prevents the silent
-part, and a `definition.json` beside the log for relocation is an open question in `config.md`.
-
-### The SDS's review (10-26)
-Six remarks, answered with Q388–Q390. Taken: the template shows every default under a header
-key, enforced by a test; `training.calibration` defaults. Found while answering and fixed: a
-level move overwrote a person's `set` on a level-filled setting.
-
-## Major steps 2 and 3: Target Factory, the dataset, `run`, the notebook
-_Status: both built and reviewed (step 2 reworked after the SDS's review of 10-27; step 3 built
-10-27); for the SDS's review in one go, then the LDS reads both in full (they build every
-model's label and frames)._
-
-### Read in this order (both steps)
-1. `review_answers.md`: what changed after your review of step 2, per remark, and the step 3
-   questions (Q395 on).
-2. `docs/components/target_factory.md` → Interface, then `docs/components/dataset.md` → Purpose,
-   Frames, Model input, requirements 1, 3, 6 and 9, Interface. What "right" looks like: every
-   refusal and every printout named there exists, and nothing describes code that doesn't.
-3. `conf/base/cc_acquisition.yml`: an eligibility step of each kind, `flag_goes_up`, `null_as`
-   unset, `model_input`; then `conf/base/TEMPLATE.yml` for the when-to-use of each.
-4. `src/core_modelling/tasks.py`: one dict by task (D-050): the two rules (read `_flag_goes_up`
-   against D-029 (c)), the two column checks, the summary, the contract checks.
-5. `src/core_modelling/target_factory.py`: `build_targets` (the forward window, the one place
-   §4.1 lives), then the checks `load_targets` runs before building, then `run_target_factory`.
-6. `src/core_modelling/sources.py`: one reader for every source (keys renamed, months at their
-   last day, the refusals); Target Factory and the dataset read through it.
-7. `src/core_modelling/dataset/panel.py`: `load_panel` (the joins, the month range, the join
-   log, the window months with no target), `apply_eligibility` (the two kinds; `_condition`
-   resolves a step's SQL against the sources' columns and earlier defines only), then
-   `resolve_candidates`.
-8. `src/core_modelling/dataset/split.py` (the salted hashes, T20), `contract.py` (the shared
-   checks and the null callout around the task's), `frames.py` (`build_frames` top down,
-   `_modelling_rows`, `collect_frame`), `model_input.py` (`save_model_input`,
-   `read_model_input_metadata`, `saved_candidates`); `panel.py::build_panel` ties them.
-9. `src/core_modelling/run.py` and `__main__.py` (parsing only), then the notebook
-   `notebooks/01_target_factory.ipynb`: thin, the guide cell written as instructions.
-10. The tests, in this order: `tests/test_target_factory.py` (the eight series side by side,
-    then the oracle), `test_sources.py`, `test_dataset.py` (the join, every eligibility rule),
+## Read in this order
+Docs first, then the configs, then the tests (they say what the code promises), then the code.
+1. `review_answers.md`: the SDS's 10-28 remarks and what changed for each, the explanations (the
+   split's hash, also on structured ids; the two populations; the audit log's branches), then
+   the second round's answers and the reworked model input design.
+2. `addendum_spec.md`: the one page every builder followed; its three sections are the three
+   changes of the addendum. Read it as the map of what the code below does.
+3. `docs/components/config.md`: the layout (`data.keys` with `period`, `time` with `period`,
+   `observation_window`, `target_window`, `validation_period`), the load, the identities, the
+   audit log with `revert`, the level mapping. What "right" looks like: every field of
+   `conf/base/cc_acquisition.yml` is explained there; nothing in the doc describes code that
+   doesn't exist without saying "planned".
+4. `docs/components/target_factory.md` → Interface, then `docs/components/dataset.md` → Purpose,
+   Time model, Frames, Sources and joins, Model input, requirements 1, 3, 6, 8 and 9, Interface.
+   What "right" looks like: every refusal and every printout named there exists.
+5. `docs/components/environment.md`: the environment file and the public session function.
+6. `conf/base/cc_acquisition.yml` (the two eligibility lists, `flag_goes_up`, `model_input`,
+   `period: month`), then `conf/base/TEMPLATE.yml` for the when-to-use of each option and the
+   reading key (how a comment is placed). Readable as a DS's first contact with the framework.
+7. `src/core_modelling/periods.py`: the one dict. Per period (month, week, day): the index
+   (consecutive periods are consecutive integers), its inverse, the start and the end, the same
+   in Spark, the label and the typo rule. Everything else that steps or compares periods goes
+   through it; nothing adds months or days.
+8. `src/core_modelling/config/schema.py`: flat models, one validator per rule; `Time` moves the
+   three dates to their period's end and checks `v ≥ tk + w` by index. Then
+   `config/identities.py` and `tests/test_identities.py`: what changes which hash (D-088).
+9. `src/core_modelling/sources.py`: one reader for every source (keys renamed to `unit_id` as a
+   string and `period` at the period's end, the refusals, the duplicate-key check after the
+   move) and the one coverage check the spine and the target source go through.
+10. `src/core_modelling/tasks.py` (one dict by task, D-050: the two rules, the two column checks,
+    the summary, the contract checks), then `src/core_modelling/target_factory.py`:
+    `build_targets` (the forward window over the period index, the one place §4.1 lives;
+    `null_in_window` null where the window is incomplete), the checks `load_targets` runs before
+    building, `run_target_factory`.
+11. `src/core_modelling/dataset/panel.py`, top down: `load_panel` for a list of configs (the
+    shared-definition check, the sources joined once, each config's target joined as
+    `target_<use_case>`, the one rollup behind the join log and the null shares), then
+    `prepare_panel` (the read side: the own target kept, the other use cases' targets and
+    upstream columns dropped, eligibility, candidates, contract, split) and `build_panel`
+    (the in-memory one-config path). Then `dataset/eligibility.py`: `apply_eligibility` (the
+    two lists as one order; `_condition` resolves a step's SQL against the sources' columns
+    and earlier defines only) and `resolve_candidates`.
+12. `src/core_modelling/dataset/split.py` (one hash draw in [0, 1), salted, T20), `contract.py`
+    (the shared checks and the null callout, fed by the saved share, around the task's),
+    `frames.py` (`build_frames` top down: the window for EDA, its eligible rows for Feature
+    Checks, the modelling frames; `collect_frame`), `model_input.py` (`save_model_input` for one
+    config or a list, the sidecar at schema 3, `read_model_input_metadata`'s refusal order,
+    `read_model_input` returning the prepared panel, `saved_candidates` without Spark).
+13. `src/core_modelling/config/replay.py` and `audit_log.py`: the entry model, `replay` with
+    `revert` restarting from the slice, `resolve_config(upto=…)`, `record_decision`,
+    `show_decisions`; the worked example in `tests/test_audit_log.py`.
+14. `src/core_modelling/run.py` and `__main__.py` (parsing only; `run` takes one or several
+    config paths), then `notebooks/01_target_factory.ipynb`: thin, the guide cell written as
+    instructions.
+15. The tests, in this order: `tests/test_config_schema.py` (one test per rule; a failing
+    config's message says how to fix it), `test_sources.py` (the id cast, the week and day
+    moves, the index round trips), `test_target_factory.py` (the six monthly series side by
+    side, the weekly and daily windows, then the oracle), `test_dataset.py` (the join for two
+    configs, every eligibility rule, the other use case's target never a candidate),
     `test_split.py` (T20 is `test_client_sample_keeps_whole_clients_whatever_the_split_seed`),
     `test_contract.py`, `test_frames.py` (end to end on the unit preset: the window, the
-    modelling frames, the model input round trip, the callout, regression), `test_run.py`.
-11. `synthetic/src/synthetic/output.py::_holdings_frame`: the holdings tag the last day, the mart
+    eligible window, the modelling frames, the model input round trip for two configs, what is
+    refused and what is not), `test_run.py`, `test_audit_log.py` (the revert example).
+16. `synthetic/src/synthetic/output.py::_holdings_frame`: the holdings tag the last day, the mart
     the first, so every run converts one of them (0.5.2).
 
-### What "right" looks like
-Target Factory (step 2):
-- The rule compares the observation month with the forward months, t+1 … t+w by calendar
-  month: 1 when some forward flag exceeds the flag at t, else 0. A holder at t gets 0; who is in
-  the population is eligibility's business (`before: model`), never the rule's.
-- A missing forward row (a leaver, a gap) gives a null target. A null value follows SQL: it never
-  counts as an event; the target is null only when nothing can be compared, and the summary's
-  `null_value_share` shows how often a window held one.
+## What "right" looks like
+The config and the identities:
+- Every field has one owner model and one validator per rule; an unknown or retired key
+  (`train_months`, `keys.month`) fails naming it; the level fills the `null` fields.
+- A month is written as its first or its last day, a week as any of its days, a day as itself;
+  all three dates are held as the period's end; the validation period is at least w periods
+  after the window's last, counted by the period index.
+- The data-definition hash covers what EDA depends on (entity, sources, keys, eligibility,
+  target, period, window, w, candidates); the target-spec hash what one label column depends on;
+  the golden digests pin both.
+
+Target Factory:
+- The rule compares the observation period with the forward periods t+1 … t+w by period index,
+  on month, week or day data alike: 1 when some forward flag exceeds the flag at t, else 0. A
+  holder at t gets 0; who is in the population is eligibility's business, never the rule's.
+- A missing forward row (a leaver, a gap) gives a null target; a null value follows SQL: never
+  an event; the target is null only when nothing can be compared. `null_in_window` is null
+  where the window is incomplete, so its average is the share among complete windows, shown in
+  the summary and stored per use case in the model input's sidecar for the contract's callout.
+- Every row of the source gets its label wherever the forward window is complete: the gap
+  periods and the periods after the validation period included. The summary shows label rates
+  for the observation window only.
 - The built targets equal the oracle's on every non-holder row of the `unit` preset, nulls
   included.
-- A source tagged on the first day and one tagged on the last key alike; a bad month, key, column
-  type or value, a short source and an upstream target with values in its last w months all fail
-  loud, naming the source.
-- The summary never shows a label rate outside the observation window.
+- A source tagged on the first day and one tagged on the last key alike; an integer id reads
+  back as a string; a bad period, key, column type or value, a column named like a key or a
+  helper column, a duplicate key, a short source and an upstream target with values in its
+  last w periods all fail loud, naming the source.
 
-The dataset (step 3):
-- The window frame holds every client of the window after the pre-EDA filter, the holders
-  present with `non_holders = 0` and `eligible = 0`; the lineage column `cc_flag` is gone, the
-  tag and the helper columns are not candidates.
-- The modelling frames hold eligible rows with a known target only; no client is in both train
-  and test; validation is the validation month; every frame has the same columns.
-- The log's order is the invariants' order: join, eligibility, contract (on the eligible window
-  before the split and any sampling), null-target, sampling (only when declared), collect.
-- The frames read from the saved model input equal the frames built in memory; a model input
-  built from another data definition, split, schema or hash version is refused naming
-  `save_model_input`.
+The dataset:
+- The saved model input is the sources joined plus one target column per use case, nothing
+  else; a single config is the one-element list. A reader keeps its own target as `target` and
+  drops the others; another use case's target is never a candidate, even with `include: ["*"]`.
+- Configs sharing a table declare the same feature sources, keys, model input and period, else
+  the two use cases and the field are named; a target column that collides with a source column
+  fails at save.
+- A reader is refused, naming `save_model_input`, on another schema or hash version, other
+  sources, keys or period, a use case the table lacks, another target spec, periods that
+  don't cover its window and validation period, or a validation period whose target window
+  outruns the saved target source. A changed eligibility, window, split or candidate list is
+  not refused: the new frames are derived on read. A joined feature source that matches no
+  spine row fails naming both id types.
+- Eligibility is two ordered lists run as one order, analysis first: an analysis filter drops
+  rows before EDA; a modelling filter keeps them, tagged 0/1 by its name, and `eligible` is the
+  AND of the tags. A define in either list serves the steps after it. A condition that names
+  the target, a key, the split, `eligible` or another filter's tag, or a non-deterministic
+  function, fails naming the step; a null condition counts as false.
+- The window frame (EDA) holds every client of the window after the analysis filters, the
+  holders present with `non_holders = 0` and `eligible = 0`; Feature Checks' frame is its
+  eligible rows; the lineage column `cc_flag` is gone; the tag and the helper columns are not
+  candidates.
+- The modelling frames hold eligible rows with a known target only, from the window and the
+  validation period; no client is in both train and test; every frame has the same columns.
+- The log's order is the invariants' order: join, eligibility (analysis then modelling),
+  contract (on the eligible window before the split and any sampling), null-target, sampling
+  (only when declared), collect.
+- The frames read from the saved model input equal the frames built in memory.
+- The split and the sample are two independent hash draws: a client is in test when its draw is
+  below `test_share`; a sample keeps the rows or clients whose draw is below the fraction asked,
+  whatever the split seed. The draw on structured ids is as uniform as a random number's
+  (`review_answers.md`).
 - The collect printout appears on every collect; above the budget it becomes the callout and the
   collect still proceeds.
-- An eligibility condition that names the target, a key, the split, `eligible` or another
-  filter's tag fails naming the step; a null condition counts as false.
-- `run` and the CLI only call the stage functions; the notebook imports the Public API only.
 
-### Reviewers' findings — step 2
-Four reviewers ran on the built step (code-reviewer, silent-failure-hunter, compat-guardian:
-strong, high; ml-correctness-auditor: strong, xhigh), then one fix agent (strong, high) and a
-focused re-audit of the fixes (ml-correctness-auditor, high).
+The audit log:
+- Entries are independent and append-only; a later entry supersedes only what it names;
+  `resolve_config(upto=n)` reproduces the state after entry n. A `revert` restarts the state
+  from the config with entries 1 … `to_seq` and continues after it; the undone entries stay as
+  the trail; a revert to the current state, or to a later entry, is refused.
+- A feature decision checks its names against the saved model input's candidates, resolved
+  from the sidecar without Spark.
 
-**Reverted by the SDS's review (10-27), see below:**
-- The ML audit's "null unless the flag at t is 0" precondition: a holder at t is an eligibility
-  matter, and the rule compares t with the forward months (a holder gets 0).
-- The ML audit's "any null value in the window gives a null target": too strict for a column
-  that isn't filled; nulls follow SQL semantics and their share is shown.
+`run`, the CLI and the notebook:
+- `run` and the CLI only call the stage functions; several config paths save one model input
+  with one target column per use case; the notebook imports the Public API only.
 
-**Taken (the fix pass):**
-- The summary showed label rates for months after the window, the validation month included:
-  label columns are now for the observation window only (ML audit; `CLAUDE.md` §4.4, D-030).
-- A string flag (`'Y'`/`'N'`) gave an all-zero target, a flag of 2 counted as 0, a string amount
-  summed partly: each task now checks its target column's type and values before building (code
-  review, silent-failure audit).
-- A TimestampType month written at midnight in another time zone shifted the whole source a
-  month: a timestamp month must be at 00:00 in the session time zone (silent-failure audit, ML
-  audit).
-- A source with a missing month, or ending before `v + w`, gave null targets without a word:
-  `load_targets` now checks the months it needs (silent-failure audit).
-- An upstream target had no §4.1 protection: one with values in the source's last w months is
-  refused, and the doc says §4.1 is owned for built targets (ML audit).
-- Replay applied a `set` on any path, so a hand-edited entry could change `decision` or the seed:
-  replay now refuses a path that isn't loggable (compat review).
-- Smaller: null unit ids are refused and named before duplicates; empty and null-month sources
-  get separate messages; `read_keyed_source` takes its arguments in the public order; a missing
-  target column names the source; test comparisons survive nulls.
+## What the reviews changed
+Every major step and the addendum were reviewed by fresh-context reviewers (code review,
+silent-failure audit, compatibility review, ML audit at the highest effort) before the SDS saw
+them; every finding was fixed on the main thread and re-tested. The full lists are in
+`worknotes/log.md` (10-26, 10-27, 10-28). What matters for a reader of the code:
+- **The addendum (10-28):** four reviews on the merged state (code review, silent-failure
+  audit, compatibility review, ML audit at the highest effort): no invariant violated, no
+  blocking code finding. Taken: `task` in both hashes (an upstream column read as binary
+  and as regression no longer shares a hash); a feature source that matches no spine row is
+  refused naming both raw id types (was printed; the string cast would turn a type mismatch
+  into an all-null feature block); a source column named like a key or a helper column
+  (`target`, `split`, `eligible`) is refused at read; a reader whose validation period plus
+  target window outruns the saved target source is refused (the sidecar records
+  `target_last`); another use case's upstream target column is dropped on read like its
+  `target_` column; the audit log's `include` is judged over the effective entries, so a
+  `revert` or a no-op person's exclude cannot launder a rule's exclude; `save_model_input([])`
+  and `run([])` refused, and `run` refuses configs whose entity lists differ; the null
+  callout names its population (target-source rows in the window with a complete target
+  window, before eligibility); eligibility moved to its own module and the join's 4-tuples
+  became a small frozen dataclass; one `label_by_period` helper behind every per-period
+  dict; weekly end-to-end frames and the second config's own window tested. Justified, not
+  taken: a monthly config over a source tagged on other days is logged, not refused (the
+  duplicate-key check after the move catches a finer source; the framework doesn't police);
+  the target source read twice by `run` (the summary before the save; one comment).
+- **The 10-28 remarks:** the model input's sidecar refuses an older schema by name, naming the
+  framework version when it differs; the modelling rows restrict themselves to the window and
+  the validation period, so the labels the panel carries elsewhere cannot reach a fit by
+  accident; a non-deterministic function is refused in eligibility SQL; the upstream tail check
+  finds the period before the tail by index; the pinned hash draw and the boundary agreement
+  test; a labelled gap-period row in the contract test.
+- **Step 3 (10-27):** the model input's folder is rewritten whole (a dynamic partition overwrite
+  left periods of an earlier definition on disk); a missing model-input mapping fails loud; a
+  step named `split` or `eligible` is refused; a star in a call, a subquery and a window function
+  are refused in eligibility SQL; a period without eligible rows is refused by the contract;
+  null conditions are counted per period; `period` is cast on read.
+- **Step 2 (10-26):** a string flag, a flag of 2 and a string amount are refused before
+  building; a timestamp period not at midnight in the session time zone is refused (it shifts a
+  period); a source with a missing period or ending before `v + w` is refused; an upstream
+  target with values in the source's last w periods, or none in the period before them, is
+  refused; replay refuses a `set` on a path that isn't loggable.
+- **Step 1 (10-26):** entries carry `hash_version`, a `set` may write null, a write clash fails
+  rather than retrying, a level move re-fills the level-filled fields, a config file carrying
+  replay-written fields is refused.
+- **Justified, not taken:** the notebook finds the repo's config from the editable install (a
+  use-case repo writes its own absolute path); `Frames` keeps positional fields; a per-row test
+  for `negative_downsampling` (a test idea, not a bug).
+- **Deferred, with a row:** a migration hook for the model input's sidecar (roadmap backlog);
+  the `definition.json` question for the audit log's folder (`config.md` → Open questions); a
+  `label_free_periods` helper for Feature Checks (`feature_checks.md` → Open questions, M2.2).
 
-**Justified, not taken:**
-- `_regression_summary` stays a named function rather than registering `_summarise` directly:
-  the dict reads the same for both tasks.
-- `forward_sum` keeps Spark's own sum type; the contract check sees the target.
+## The SDS's rounds, in short
+- **10-26 (step 1):** Q388–Q390 applied: the loggable settings widened, the pre-release
+  carve-out for recipe changes, the golden-hash test.
+- **10-27 (step 2):** the rule compares t with the forward periods (`flag_goes_up`; a holder at
+  t gets 0); nulls follow SQL semantics with `null_value_share` shown; eligibility in two kinds,
+  so EDA keeps the current holders as a reference group.
+- **10-28 (steps 2 and 3):** labels kept in every period Target Factory can build (Q399
+  reverted); `null_as` and `leavers` removed; the two coverage checks merged into one; the split
+  rewritten around one plain hash draw; eligibility as two lists (`analysis`, `modelling`), the
+  modelling filter applied before Feature Checks; the template's comment rule and the
+  ordered-sources note.
+- **10-28, second round (the addendum):** the hash draw trusted on structured ids after a check
+  with numbers; the model input reshaped to the SDS's picture (the sources joined plus one
+  target column per use case, everything else derived on read; `target_<use_case>`; one shape
+  for one or several configs); the unit of analysis as `time.period` with the renamed fields;
+  `revert` built now rather than in M2.2; the id cast found by the hash check.
 
-**Deferred, with a row:**
-- `training.calibration` defaults to Platt for regression too: decided with Training (M2.3),
-  `config.md` → Open questions.
-- A use case's laptop audit log is orphaned when the data-definition hash changes: the
-  `definition.json` question, before the December pre-release (roadmap backlog).
-- The oracle's loan-opening kind uses month-on-month steps; the count rule (M4) compares with
-  t, so the oracle is aligned when that rule is built (D-029 (c)).
-
-**Re-audit of the fixes** (ml-correctness-auditor, high): all five label findings fixed, each with
-a test that fails without its fix; two test gaps closed on the main thread (an upstream tail one
-month short, a time zone west of UTC) and the tail test checked by breaking the code.
-
-**The single failed run.** During the build, one combined test run failed two tests (one of them
-`test_forward_sum_matches_the_oracle`) while both step 2 agents ran Spark at once on the 8 GB
-machine; its error text was lost. Three sequential reruns then passed, and so did every run
-since. Load is the likely cause, unconfirmed.
-
-**The SDS's review (10-27).** Three conceptual points, all taken (`review_answers.md`): the rule
-compares the observation month with the forward months (`flag_goes_up`; a holder at t gets 0;
-the count and amount rules are separate rules for M4); nulls follow SQL semantics with
-`null_value_share` shown and an optional `data.target.null_as`; eligibility filters split into
-`before: eda` (dropped) and `before: model` (tagged, so EDA keeps the current holders as a
-reference group). D-029 (c), D-129 and D-131 extended; the dataset step amended.
-
-**Reviews of the rework (10-27).** Code review (strong, high): approved, nothing blocking; taken:
-the unused `w` dropped from the rule signature, `null_as` cast only for a boolean column so a
-fractional value on an integer amount widens instead of truncating (with a test), the window
-count named, the `null_as` template wording and the printed caption clarified. Left as is: the
-two column checks share three lines of a type error, not worth a helper. ML audit (strong,
-high): safe, nothing blocking; every invariant traced through the eight series and the oracle;
-taken: an upstream target built with a longer window than `w` slipped past the tail check (now
-refused: the month before the tail must hold a value), the `null_in_window` docstring; into step
-3: eligibility SQL may reference source columns and define names only, both kinds applied to the
-validation month, the tags and helper columns out of the candidates, join misses logged, and a
-contract callout when nulls hide negatives (`null_value_share` > 0 without `null_as`); for M2.2:
-the time-alignment screen on define and tag columns, and a label-free comparison for a tag that
-is the rule's own precondition.
-
-### Reviewers' findings — step 3
-Four reviewers ran in parallel on the built step (code-reviewer, silent-failure-hunter,
-compat-guardian: strong, high; ml-correctness-auditor: strong, xhigh); none found anything
-blocking; the fix pass is the main thread's, every item re-tested.
-
-**Taken:**
-- The model input's dynamic partition overwrite left months of an earlier definition on disk
-  (the window moved later, a column added), and Spark would then infer the schema from a stale
-  partition (code review, silent-failure audit): the folder is rewritten whole; a failed sidecar
-  write now leaves a table without one, refused on read.
-- `saved_candidates` fell back to the pattern check, saying "no model input is saved", when the
-  environment merely failed to map the name (both reviews): a missing mapping fails loud; the
-  fallback says which of the two remaining cases it is.
-- An eligibility step named `split` or `eligible` was accepted, and `assign_split` then
-  overwrote the tag (ML audit): the dataset's own column names are refused as step names.
-- A star in a call, a subquery and a window function in eligibility SQL could read beyond the
-  row's own source columns (ML audit, low): refused by a small pattern check before Spark sees
-  the text, three tests.
-- The model input and the panel carried labels for the gap months, the validation month's
-  successors and the latest month, which Feature Checks reads label-free by discipline only (ML
-  audit, hardening): `target` is nulled outside the window and the validation month, in the
-  frames and the saved table (D-131 and the glossary say so; **Q399**).
-- A window month, or the validation month, with no eligible row left the modelling frames
-  quietly (silent-failure audit): the contract's first check names such months.
-- The null count of a condition was invisible (`income > 1000` on a half-null column dropped
-  those rows as "not passing"): the eligibility log and printout count the null conditions per
-  month.
-- An eligibility step named like a log step (`collect`, `join`) would have landed in
-  `meta["collect"]` (compat review): the eligibility entries carry `step: eligibility` and the
-  step's `name`.
-- The model input's `data.split` comparison and `month` partition type hardened (compat
-  review): JSON-mode dumps on both sides; `month` cast to a date on read, so a session without
-  partition type inference gives the same frames.
-- The artifact inventory table D-007 (d) asked for at M2.1 (compat review): in
-  `architecture.md`, the model input its first built row.
-- Smaller: an empty train split after sampling fails loud instead of a bare format error; an
-  upstream boolean target reads as 0/1; the contract's `positives` renamed `positive_rows`
-  (D-082 visible); the null callout says a null inside the window may hide an event rather
-  than drop the row; the upstream case prints "unknown for an upstream target"; the model input
-  moved into `dataset/model_input.py` (frames.py held two concepts); `missing_months` shared by
-  the spine and the target source checks; `estimate_collect` names an empty frame; a constant
-  instead of a one-line function; loop and test trivia.
-
-**Justified, not taken:**
-- The notebook finds the repo's config from the editable install (`parents[2]`), which a zip
-  install inside the bank wouldn't; a use-case repo writes its own absolute path there and the
-  comment says so. The laptop demo must run as is.
-- The contract is not re-run when the model input is read, so a `data.rate_band` tightened
-  after saving waits for the next rebuild: an open question in `dataset.md`, not a check now.
-- `Frames` keeps its positional fields; a future frame goes last (noted in `dataset.md`).
-
-**Deferred, with a row:** a migration hook for the model input's sidecar (the rebuild is the
-migration until release 1.0; roadmap backlog); the sidecar's `schema_version` bump rule when
-`Split` or its keys change (`dataset.md`).
-
-### Deviations from the plan (step 3), for your judgement
-- **Built on the main thread, not by three parallel agents** (plan 3.1–3.3): the pieces depend
-  on each other (the frames need the panel, the split and the contract; `run` the frames) and
-  the 8 GB machine takes one Spark job at a time, so parallel builders would have run Spark at
-  once (the single failed run of step 2). The four reviews ran in parallel instead.
-- **Two traps found and ruled** (`docs/context/lessons.md`): T20, the sampling hash salted apart
-  from the split's (with equal seeds `client_sample` would have kept a fixed 29% slice of the
-  train clients instead of the share asked); T21, the metadata file is `_model_input.json`, not
-  `metadata.json`: Spark reads a `_metadata*` file as a parquet summary and any other `_` file
-  is skipped by its listing, so the name keeps it out of the table.
-- **The spine must cover `first … v`** without a gap (a check the plan didn't list; the target
-  source's `first … v + w` check is step 2's).
-- **The model input records `data.split`** and is refused when the config's differs: the split
-  isn't in the data-definition hash, so a reseeded config would otherwise read a stale split.
+## Deviations from the plan, for your judgement
+- **Built on the main thread, not by three parallel agents** (plan 3.1–3.3), since the pieces
+  depend on each other; the addendum, by contrast, was built by five agents on disjoint files
+  from one spec (`addendum_spec.md`), with the reviews in parallel after the merge.
+- **Two traps found and ruled** (`docs/context/lessons.md`): T20, the sampling draw salted apart
+  from the split's; T21, the metadata file is `_model_input.json`, since Spark reads a
+  `_metadata*` file as a parquet summary; T22, the hash draw depends on the id column's bytes,
+  hence the cast.
+- **The spine must cover `first … v`** without a gap, the target source `first … v + w`: one
+  check, two ranges; with several configs the spine covers the earliest first to the latest v.
 - **The model input's folder is rewritten whole** (the plan said dynamic partition overwrite):
-  a rerun must never leave months of an earlier definition behind; per-month incremental
+  a rerun must never leave periods of an earlier definition behind; per-period incremental
   builds are M4's requirement 7 and will revisit this.
-- **Labels only in the window and at the validation month** (the ML audit's hardening, Q399):
-  the gap months and the later ones carry a null target in the frames and the model input.
-- **The contract takes the whole panel** and first checks that every window month and the
-  validation month has eligible rows; its task checks run on the window's rows.
-- **`null_in_window` stays in the panel until the contract** (its callout needs it) and reaches
-  no frame and not the model input; the per-month label counts are Target Factory's summary and
-  are not repeated in `meta`.
-- **`negative_downsampling` is refused for regression at config load** (a schema validator;
-  compat-guardian reviewed).
+- **The split is not in the sidecar any more** (it was, to refuse a reseeded config): the split
+  is derived on read, so a reseeded config simply gets its own split.
+- **`null_in_window` reaches no frame and not the model input**: the contract's callout takes
+  the share from the sidecar (saved) or the fresh target log (in memory).
+- **The contract takes the whole panel** and first checks that every window period and the
+  validation period has eligible rows; its task checks run on the window's rows.
+- **`negative_downsampling` is refused for regression at config load** (a schema validator).
 - **`record_decision` checks feature names against the saved model input's candidates** (plan
-  3.4), falling back to the patterns, saying so, when the config names no model input, the
-  environment doesn't map it or none is saved yet; a stale model input fails loud.
+  3.4), falling back to the patterns, saying so, when the config names no model input or none
+  is saved yet; a stale model input fails loud.
 - **Signatures:** `estimate_collect(frame, name)` takes no `spark`; `collect_frame` returns the
-  frame with its log entry; `check_contract(panel, cfg)` runs the three shared checks around the
-  task's; the model input lives in `dataset/model_input.py` (plan: `frames.py`).
+  frame with its log entry; `check_contract(panel, cfg, null_in_window_share)`;
+  `apply_eligibility(panel, eligibility, spec)` takes the config's `Eligibility` and the period
+  spec; `load_panel(cfgs, …)` takes a list; `prepare_panel(panel, cfg, entity, targets)` is the
+  read side; the model input lives in `dataset/model_input.py` (plan: `frames.py`);
+  `run_target_factory` stays per config while `save_model_input` takes a list.
 - **Each step prints its own line** (join, eligibility, contract, null-target, sampling,
   collect) and the log entries are plain data, so a notebook and a `run` show the same lines.

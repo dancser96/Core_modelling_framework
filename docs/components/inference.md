@@ -5,7 +5,7 @@
 
 ## Purpose
 Pure scoring. Load production (or pinned registered) models, score the eligible population for a
-month (the inference month, a run argument, D-088) or another table with the same schema, and
+period (the inference period, a run argument, D-088) or another table with the same schema, and
 write one batch-scoped output with a manifest. No registering, promoting or deploying happens here.
 
 ## Phase 2 requirements
@@ -19,7 +19,7 @@ write one batch-scoped output with a manifest. No registering, promoting or depl
 4. **Output ends at the master layer** (D-016): the framework's own scores table, task-agnostic,
    long format and fully traceable: `unit_id, entity, use_case, model_hash, infer_date, score`,
    plus task-specific columns only when needed. It covers everything a consumer could need
-   (candidates: unit id, entity, domain, use case, product, activity, task, score, inference month,
+   (candidates: unit id, entity, domain, use case, product, activity, task, score, inference period,
    scoring batch id, run id, model hash, framework and schema version; the exact ones are designed
    when Inference is built). **Product and activity** are parsed from the use case's name,
    `<product>_<activity>` as in the crunch (e.g. `fx_activation`): the activity is the last token
@@ -49,14 +49,14 @@ write one batch-scoped output with a manifest. No registering, promoting or depl
    | Date_Refreshed | date | The date the score was refreshed |
 
    It carries none of the framework's traceability (entity, model hash, run, scoring batch,
-   inference month); the master layer keeps it. Because one table holds every product's scores,
+   inference period); the master layer keeps it. Because one table holds every product's scores,
    they are compared across products downstream. The retail examples therefore default to the
    `probability` decision through a comment in the example config, not a code default
    (calibration step on, prior shift applied), and correct calibration
    is a release requirement (D-049; calibration in [training](training.md)).
 5. **Batch-scoped and written once.** Collect, then write once, and assert that every "ok" model
    landed on disk (T6, T7). The path layout is under review (manifests vs score files, OD-18).
-6. **Reinference** from a manifest: rescore the same registered models on a new month or table,
+6. **Reinference** from a manifest: rescore the same registered models on a new period or table,
    without local runs.
 7. **Scale:** score in Spark (e.g. model broadcast / pandas UDF) or in pruned chunks; never collect the
    full population at once.
@@ -84,7 +84,7 @@ T2–T7; the per-use-case run-pin dict; reinference worked without local runs.
   the sandpit (local and registered tiers) may hold any format, and only what moves to production
   must avoid pickle (D-051).
 - By default deploy retrains the recipe in production before it scores (D-033, D-052), on the same
-  window and clients (only the inference month moves) and only after it passes the production
+  window and clients (only the inference period moves) and only after it passes the production
   retrain check against its parent ([lifecycle](lifecycle.md)); the manifest's `model_hash` then points at the model retrained in production, linked to its
   evaluated parent by `parent_run_id`, and the drift reference may need recomputing there.
   Whether production has the data and compute to train: OD-27.

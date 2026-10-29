@@ -1,15 +1,21 @@
 # Sync page
-_For the SDS and the LDS · last updated: 2026-10-27 (Stage 1 built end to end; steps 2 and 3 with the SDS for review) · last sync: 2026-10-26_
+_For the SDS and the LDS · last updated: 2026-10-28 (the Stage 1 addendum built and reviewed; one continuous review guide) · last sync: 2026-10-26_
 
-**In short (10-26 to 10-27):** Stage 1 is built end to end, two days ahead of its plan. The
-config spine was reviewed by the SDS and its remarks applied. Target Factory was reviewed too and
-reworked: the rule now catches any rise of the holding flag after the observation month, nulls in
-the data are handled leniently and shown, and whether a client already holds the product is an
-eligibility matter, split into filters applied before the analysis (rows dropped) and before
-modelling (rows kept and tagged, so holders and non-holders can be compared). The dataset is
-built on top: the sources joined, eligibility, the client split, the contract checks, a saved
-model input every later stage reads, and the first guided notebook. The SDS reviews Target
-Factory and the dataset together now; then they are yours to read in full.
+**In short (10-27 to 10-28):** Stage 1 is built end to end and the SDS has reviewed all of it;
+the remarks are applied, so Target Factory and the dataset are now yours to read in full. The
+review settled three things worth knowing: the framework keeps every label it can build and does
+not police a data scientist (leakage protection is the screens, not hidden data); data quality
+is fixed upstream, not by config knobs (two such knobs were removed); and eligibility is two
+lists, who the analysis sees and who the model sees, the second applied before Feature Checks.
+The SDS's second and third rounds then settled and approved the addendum, built the same day
+by five agents from one spec and reviewed by four more: the unit of analysis (month, week or
+day) is a parameter; the saved model input is the sources joined plus one target column per
+use case, so one table serves several use cases and everything from eligibility on is derived
+at read time from each use case's own config, which means a changed eligibility no longer
+forces a rebuild; and the audit log can revert to an earlier state. A follow-up on the client
+split was checked with numbers: hashing structured client ids gives a split as random as a
+random number would. The reviews found no invariant broken and tightened a handful of
+refusals. The review guide is now one continuous document for Stage 1 as it stands.
 
 Detail behind each item: `worknotes/log.md`. How this page is written: `worknotes/README.md`.
 
@@ -20,13 +26,12 @@ buy-in), then OD-06, OD-08, OD-11, OD-12, OD-18, OD-23. Everything below is for 
 - [ ] **Stage 1's design** — D-129–D-133 in `docs/decisions.md`, the full YAML in
       `docs/components/config.md` — feedback wanted: the config layout (D-129), the saved model
       input (D-131) and what the two automation levels change (D-132).
-- [ ] **Stage 1, major step 1 as built** — `conf/base/TEMPLATE.yml`, `conf/base/cc_acquisition.yml`,
-      then `worknotes/m2_1_foundation/review_guide.md` → Major step 1 (not ML-critical: sample it)
-      — feedback wanted: does the template read well as a DS's first contact with the framework?
-- [ ] **Stage 1, major steps 2 and 3 as built: Target Factory and the dataset** (after the SDS's
-      review) — `worknotes/m2_1_foundation/review_guide.md` → Major steps 2 and 3, read in full
-      (they build every model's label and frames) — feedback wanted: do the rule, the two kinds
-      of eligibility and the frames match how you'd define and model card acquisition?
+- [ ] **Stage 1 as built, after the addendum** — `worknotes/m2_1_foundation/review_guide.md`
+      (one continuous guide: read in order; the data code in full, it builds every model's
+      label and frames) — feedback wanted: do the rule, the two eligibility lists (analysis /
+      modelling, the second applied before Feature Checks), the frames and the one model input
+      for several use cases match how you'd define and model card acquisition; does
+      `conf/base/TEMPLATE.yml` read well as a DS's first contact with the framework?
 - [ ] **The decision audit log** — `docs/components/config.md` → Decision audit log — feedback
       wanted: do the closed list of operations, the settings a decision may change, the replay
       rules and the verbosity controls answer your concern about verbosity and the step from
@@ -53,32 +58,45 @@ buy-in), then OD-06, OD-08, OD-11, OD-12, OD-18, OD-23. Everything below is for 
 |---|---|---|---|
 | Is MLflow available inside the bank (OD-08)? | MLflow in Phase 2 is the goal; its shape is settled (D-111): M2.4's records map onto it, it goes in with the integrations in M4 | Ask at the platform learn session, by 11-06 | SDS + LDS, with the platform / MLOps team |
 
-## Last 2 working days (10-26 to 10-27)
-- **Stage 1 (M2.1 Foundation) built end to end, version 0.2.0 (10-26 → 10-27).** Three major
-  steps, each reviewed by four fresh-context reviewers before the SDS. **Step 1** (the config
-  schema and template, level defaults, the hashes, the decision audit log, the environment
-  adapter) was reviewed by the SDS on 10-26: the template now shows every default, more settings
-  may change through the log, and a month is held as its last day whichever day a source tags.
-  **Step 2** (Target Factory) was reviewed on 10-27 and reworked on three points: the rule
-  compares the observation month with any later month of the window (`flag_goes_up`); nulls
-  follow SQL semantics and their share is shown, with an optional value a null stands for; and
-  a client already holding the product is an eligibility matter, not the rule's, so eligibility
-  filters now come in two kinds: before EDA (rows dropped) and before modelling (rows kept,
-  tagged, usable as strata). **Step 3** (the dataset, 10-27): every source read the same way and
-  joined to the governing spine, eligibility of both kinds applied to every month alike, the
-  client split and the two declared sampling options, contract checks on the eligible window
-  before any sampling (with a callout when nulls may hide negatives), the frames collected with a
-  size printout against a budget, and the model input saved with its hashes and read back by
-  every later stage, refused when stale. Also `run` with its CLI and the first guided notebook.
-  Two traps found on the way and ruled: a sampling hash must not share the split's input, and a
-  sidecar file in a parquet folder must not be named `_metadata…`. The full suite passes (203
-  tests, 4 minutes). The SDS reviews steps 2 and 3 together next. — look at: D-129–D-133,
-  `worknotes/m2_1_foundation/review_guide.md` → Major steps 2 and 3; `docs/components/dataset.md`
+## Last 2 working days (10-27 to 10-28)
+- **The Stage 1 addendum, built and reviewed (10-28).** From the SDS's second and third
+  rounds: the unit of analysis is `time.period` (month, week or day; the key column `period`,
+  the `time` fields `observation_window`, `target_window`, `validation_period`; one dict of
+  period arithmetic in `periods.py`, never a bare `add_months`); the model input is the sources
+  joined plus one target column per use case (`target_<use_case>`), saved for one config or a
+  list, with eligibility, candidates, contract and split derived on read from the reader's
+  config (a changed eligibility no longer forces a rebuild; sidecar schema 3; the freeze point
+  narrows to the data part); `revert` in the audit log; the id cast to string at load so the
+  split's draw survives an upstream type change (T22). Built by five agents on disjoint files
+  from one spec; four reviews (code, silent failures, compatibility, ML audit) found no
+  invariant broken and tightened refusals: `task` in the hashes, a feature source matching
+  nothing, a reserved column name, a validation period outrunning the saved target source, a
+  `revert` laundering a rule's exclude. Full suite 252 passed, 9 deselected, 4 min 56 s; the notebook runs on the dev
+  data in 30 s; two configs save one table with two target columns. — look at:
+  `worknotes/m2_1_foundation/review_guide.md` (continuous), `addendum_spec.md`,
+  `review_answers.md`; D-088, D-125, D-129, D-131
+- **The SDS's review of steps 2 and 3, applied (10-28).** Labels kept in every period Target
+  Factory can build (an upstream target would look the same; the framework does not police a
+  DS); the two config knobs for source data quality went (`null_as`, `leavers`): a null never
+  counts as an event and the contract's callout points upstream; eligibility is two ordered
+  lists, `analysis` filters dropping rows before EDA and `modelling` filters tagging them until
+  Feature Checks, which runs on the eligible rows; the split and the sampling as one salted hash
+  draw in [0, 1); one coverage check for the spine and the target source; the template's comment
+  rule. — look at: `review_answers.md`; D-029, D-030, D-129, D-131
+- **Stage 1 (M2.1 Foundation) built end to end, version 0.2.0 (10-26 → 10-27).** The config
+  schema and template with the level defaults, the hashes, the decision audit log and the
+  environment adapter; Target Factory (`flag_goes_up`, nulls under SQL semantics with their
+  share shown); the dataset (every source read the same way and joined to the governing spine,
+  eligibility applied to every period alike, the client split and the two declared sampling
+  options, contract checks on the eligible window before any sampling, the frames collected with
+  a size printout against a budget, the model input saved with its hashes and refused when
+  stale); `run` with its CLI and the first guided notebook; two traps ruled (T20, T21). — look
+  at: D-129–D-133, `docs/components/dataset.md`
 
 ## Demo next
 - Stage 1 end to end on the synthetic dev data: `notebooks/01_target_factory.ipynb` (the target
-  summary, the join and eligibility lines, the model input saved, the window frame), or from the
-  command line `python -m core_modelling run conf/base/cc_acquisition.yml --env conf/local/environment.yml`.
+  summary, the join and the two eligibility lines, the model input saved, the window frame), or
+  from the command line `python -m core_modelling run conf/base/cc_acquisition.yml --env conf/local/environment.yml`.
 - The config spine: the template's reading key (`conf/base/TEMPLATE.yml:1`) and the audit log's
   worked example replayed, `pytest tests/test_audit_log.py -q`.
 - The Phase 2 plan (`worknotes/timeline_proposal.md`) if not shown yet.

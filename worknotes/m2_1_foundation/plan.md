@@ -335,10 +335,13 @@ Main thread: suite, reviewers, `doc-sync` (`target_factory.md` Interface, `test_
 
 Ends in the SDS's review and the LDS's review of the dataset code in full.
 
-_Status (10-27): 3.1–3.5 built, ahead of the timeline, on the main thread rather than by parallel
-agents (the pieces depend on each other and the machine takes one Spark job at a time); the
-deviations from the sub-steps below are listed in `review_guide.md` → Deviations. The SDS
-reviews steps 2 and 3 together; 3.6's LDS review and the folder's deletion remain._
+_Status (10-28): 3.1–3.5 built on the main thread rather than by parallel agents (the pieces
+depend on each other and the machine takes one Spark job at a time); the deviations from the
+sub-steps below are listed in `review_guide.md` → Deviations. The SDS reviewed steps 2 and 3
+together on 10-28 and the remarks are applied (`review_answers.md`); the second round's answers
+(Q400–Q406) became the Stage 1 addendum, built the same day from `addendum_spec.md`: the unit
+of analysis as a parameter, one model input for several use cases, `revert`. 3.6's LDS review
+and the folder's deletion remain._
 
 ### 3.1 The panel (after major step 2)
 Agent (strong, high; §4 code). Files: `dataset/__init__.py`, `dataset/panel.py`,
@@ -469,7 +472,8 @@ is long. Then this folder is deleted once the SDS and the LDS have reviewed.
 | 10-27 | 1.5; 1.6 (integration, reviews, review guide); the SDS reviews major step 1 |
 | 10-28 | 2.1 and 2.2 in parallel; 2.3; the SDS reviews major step 2 (done 10-26; reworked 10-27) |
 | 10-29 | 3.1, 3.2, 3.3 in parallel; 3.4 (done 10-27, on the main thread) |
-| 10-30 | 3.5; 3.6; the SDS reviews major step 3; the LDS's review guide out (3.5 done 10-27; the SDS reviews steps 2 and 3 together) |
+| 10-30 | 3.5; 3.6; the SDS reviews major step 3; the LDS's review guide out (3.5 done 10-27; the SDS reviewed steps 2 and 3 together on 10-28, remarks applied the same day) |
+| 10-28 | The Stage 1 addendum, built the same day from the second-round answers (`addendum_spec.md`) |
 | 11-02 | Buffer: the LDS's findings, fixes, `doc-sync`, the folder deleted |
 
 Risks: 1.5 is the most design-heavy step (the worked example is the test, so drift shows up at

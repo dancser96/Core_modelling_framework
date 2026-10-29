@@ -37,6 +37,7 @@ from core_modelling.config.replay import (
     By,
     Entry,
     check_candidates,
+    effective_entries,
     get_at,
     replay,
     set_at,
@@ -175,6 +176,7 @@ def _one_operation(
     include: list[str] | None,
     keep_despite_flag: list[str] | None,
     set: dict[str, object] | None,
+    revert_to: int | None,
 ) -> tuple[str, object]:
     """The one operation given as (op, operand); none or several fail."""
     operands = {
@@ -182,34 +184,37 @@ def _one_operation(
         "include": include,
         "keep_despite_flag": keep_despite_flag,
         "set": set,
+        "revert": revert_to,
     }
     given = {op: value for op, value in operands.items() if value is not None}
     if len(given) != 1:
         raise ValueError(
-            "a decision is exactly one of exclude / include / keep_despite_flag / set; "
-            f"got {sorted(given) or 'none'}"
+            "a decision is exactly one of exclude / include / keep_despite_flag / set / "
+            f"revert_to; got {sorted(given) or 'none'}"
         )
     return next(iter(given.items()))
 
 
 def _check_includable(entries: list[Entry], current: dict, features: list[str]) -> None:
-    """`include` reverses a person's `exclude` only: the feature is excluded now, and the entry
-    that last excluded it is a person's (a rule's exclude is reversed by changing the rule)."""
+    """`include` reverses a person's `exclude` only: the feature is excluded now, and no effective
+    entry (one no revert undid) is a rule's exclude of it, since a rule's exclude is reversed by
+    changing the rule. Any rule's exclude counts, not only the last: a person's later re-exclude
+    is a no-op that must not hide it."""
+    effective = effective_entries(entries)
     for feature in features:
         if feature not in current["features"]["excluded"]:
             raise ValueError(f"{feature!r} is not excluded, so there is nothing to include")
-        last = next(
-            (e for e in reversed(entries) if e.op == "exclude" and feature in e.features), None
-        )
-        if last is None:
+        excludes = [e for e in effective if e.op == "exclude" and feature in e.features]
+        if not excludes:
             raise ValueError(
                 f"{feature!r} is excluded by the config file itself, not by an entry; "
                 "edit the config"
             )
-        if last.by.kind == "rule":
+        by_rule = next((e for e in excludes if e.by.kind == "rule"), None)
+        if by_rule is not None:
             raise ValueError(
-                f"{feature!r} was excluded by rule {last.by.id!r} (entry {last.seq}); a rule's "
-                "exclude is reversed by changing the rule in the config, not by include"
+                f"{feature!r} was excluded by rule {by_rule.by.id!r} (entry {by_rule.seq}); a "
+                "rule's exclude is reversed by changing the rule in the config, not by include"
             )
 
 
@@ -266,6 +271,19 @@ def _set_fields(cfg: UseCaseConfig, current: dict, setting: object) -> dict:
     }
 
 
+def _revert_fields(entries: list[Entry], to_seq: object) -> dict:
+    """A revert's entry fields: an earlier state, 0 being the config as written; its default
+    stage is the first undone entry's, where the trail restarts. The current state
+    (`len(entries)`) is refused here as a no-op revert: the stored entry's own rule (`to_seq`
+    below `seq`) is wider, since the new entry's `seq` is `len(entries) + 1`."""
+    if not isinstance(to_seq, int) or not 0 <= to_seq < len(entries):
+        raise ValueError(
+            f"revert_to={to_seq!r} is not an earlier state: the log has {len(entries)} entries, so "
+            f"it can go back to 0 (the config as written) … {len(entries) - 1}"
+        )
+    return {"to_seq": to_seq, "stage": entries[to_seq].stage}
+
+
 def _write_entry(entry: Entry, log_dir: str) -> Entry:
     """Create `<seq>.json`, never overwriting: a number another writer took meanwhile fails, and
     the decision is re-run against the log as it is then."""
@@ -291,14 +309,16 @@ def record_decision(
     include: list[str] | None = None,
     keep_despite_flag: list[str] | None = None,
     set: dict[str, object] | None = None,
+    revert_to: int | None = None,
     reason: str,
     evidence: Sequence[str] = (),
     stage: str | None = None,
     env_path: str | None = None,
 ) -> Entry:
-    """Append one person decision, exactly one of the four operations with a reason, to the audit
-    log of `config_path` on `entity`; the writer is the current user id."""
-    op, operand = _one_operation(exclude, include, keep_despite_flag, set)
+    """Append one person decision, exactly one of the five operations with a reason, to the audit
+    log of `config_path` on `entity`; the writer is the current user id. `revert_to` goes back
+    to the state after entry n (0: the config as written); the undone entries stay as the trail."""
+    op, operand = _one_operation(exclude, include, keep_despite_flag, set, revert_to)
     if not reason or not reason.strip():
         raise ValueError("a decision needs a non-empty reason")
     cfg, env = load_config(config_path), load_environment(env_path)
@@ -306,6 +326,8 @@ def record_decision(
     current = replay(cfg, entries)
     if op == "set":
         fields = _set_fields(cfg, current, operand)
+    elif op == "revert":
+        fields = _revert_fields(entries, operand)
     else:
         fields = _feature_fields(cfg, entity, env, current, entries, op, operand)
     default_stage = fields.pop("stage")
@@ -326,7 +348,9 @@ def record_decision(
 
 
 def _what(entry: Entry) -> str:
-    """The features, `path: from → to`, or the run id."""
+    """The features, `path: from → to`, `to #n` for a revert, or the run id."""
+    if entry.op == "revert":
+        return f"to #{entry.to_seq}"
     if entry.features:
         return ", ".join(entry.features)
     if entry.path:

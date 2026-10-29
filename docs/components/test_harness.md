@@ -358,8 +358,8 @@ peaks in Priority. The emirate is drawn independently of residence status and na
 | mass | UM, MM, LM | 74 / 12 / 1.5 / 4 / 0.5 / 7 / 1 | 91 / 5 / 1.5 / 1 / 1.5 | 11% | 70% | 0% | 1.1% / 1.3% |
 
 **Entry and exit:** about 8% (Private) to 12% (Mass) of clients leave a year. Exits are random:
-they don't depend on behaviour (the SDS, 2026-10-19), so the choice between leavers as null and
-leavers as negatives looks harmless here and won't be on real data. Every profile grows ≈ 0.2% a
+they don't depend on behaviour (the SDS, 2026-10-19), so the null targets of leavers (D-029 (c))
+carry no signal here, as they will on real data. Every profile grows ≈ 0.2% a
 month, so the mix stays flat. New clients start at relationship day 0; leavers' rows stop.
 `n_clients` is the size 13 months before the panel starts (≈ 103k at month 1 for 100k). Dormant
 clients stay on the books with zero activity.
@@ -815,7 +815,7 @@ each within its check's tolerance (2026-10-25).
 | Credit card | As-of misalignment | yes | `cc_limit_trap_shifted` | Next month's `cc_limit`; null without a next month (the loan row below has the tells) | Beats the oracle for card acquisition at w = 1; ≈ 0.67 at w = 3 (one acquirer in three has next month's limit), below the oracle; the time-alignment check catches it |
 | Credit card | Process leak | yes | `application_cc_cnt_trap_process_leak` | A card taken at `t+1` is preceded by an application at `t` with chance 0.8; declined applications are 30% of all, among non-holders | Beats the oracle for card acquisition at w = 1, not at w = 3 |
 | Personal loan | Process leak | yes | `application_loan_personal_cnt_trap_process_leak` | An opening at `t+1` is preceded by an application at `t` with chance 0.8; declined applications (never opened) are 30% of all, drawn with chance ∝ the client's opening chance at `t+1` | Beats the oracle for openings in the next month (w = 1), not at w = 3 or 6; leakage screen plus human review |
-| Personal loan | As-of misalignment | yes | `loan_personal_bal_trap_shifted` | Holds next month's `loan_personal_bal` (an upstream join on the wrong month); null where the client has no next month: it leaves, or it is the panel's last month. The real column comes from the name, so the spec's parameters are just `{"months": 1}` | Beats the oracle for openings next month (w = 1), not at w = 3 or 6; a time-alignment check (the column against its real sibling one month on) catches it. Two realistic tells: its nulls reveal next-month exits, which would leak the negatives of a target that counts leavers as negatives (an option D-029 allows), and it is all-null in the latest month |
+| Personal loan | As-of misalignment | yes | `loan_personal_bal_trap_shifted` | Holds next month's `loan_personal_bal` (an upstream join on the wrong month); null where the client has no next month: it leaves, or it is the panel's last month. The real column comes from the name, so the spec's parameters are just `{"months": 1}` | Beats the oracle for openings next month (w = 1), not at w = 3 or 6; a time-alignment check (the column against its real sibling one month on) catches it. Two realistic tells: its nulls reveal next-month exits, which would leak which rows get a null target as leavers (D-029 (c)), and it is all-null in the latest month |
 | Personal loan | Rare high-rate level | no | `nationality` = Ghana (≈ 0.35% of clients) | +1.5 on the personal-loan log-odds | Stands out in event rate by level; unstable in CV |
 | Personal loan | Inverted U | no | `age` | Peak in the mid-30s | Spearman ≈ 0, mutual information high |
 | Personal loan | Hidden openings | no | `loan_personal_maturity_months` | A maturity in the same month hides an opening | Predictive under a "count at the end" rule only |

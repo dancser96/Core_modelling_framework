@@ -1,4 +1,4 @@
-"""The CLI (D-024): `python -m core_modelling run <config> [--stages …] [--entity …]` runs the
+"""The CLI (D-024): `python -m core_modelling run <config>… [--stages …] [--entity …]` runs the
 stages, and `decide <config> --entity E --reason R …` appends one decision to the audit log
 (D-125). Parsing only; the logic is `run` and `record_decision`.
 """
@@ -24,7 +24,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m core_modelling")
     commands = parser.add_subparsers(dest="command", required=True)
     runner = commands.add_parser("run", help="run the stages of a use case")
-    runner.add_argument("config", help="the use-case config file")
+    runner.add_argument("config", nargs="+", help="the use-case config file(s)")
     runner.add_argument("--stages", nargs="+", choices=list(STAGES), help="default: all built")
     runner.add_argument("--entity", help="default: every entity the config lists")
     runner.add_argument("--env", help="the environment file (else $CORE_MODELLING_ENVIRONMENT)")
@@ -36,6 +36,7 @@ def _build_parser() -> argparse.ArgumentParser:
     decide.add_argument("--include", nargs="+", metavar="FEATURE")
     decide.add_argument("--keep-despite-flag", nargs="+", metavar="FEATURE")
     decide.add_argument("--set", type=_parse_setting, metavar="PATH=VALUE")
+    decide.add_argument("--revert-to", type=int, metavar="SEQ", help="0: the config as written")
     decide.add_argument("--evidence", nargs="*", default=(), metavar="TEXT")
     decide.add_argument("--stage")
     decide.add_argument("--env", help="the environment file (else $CORE_MODELLING_ENVIRONMENT)")
@@ -57,6 +58,7 @@ def main(argv: list[str] | None = None) -> None:
         include=args.include,
         keep_despite_flag=args.keep_despite_flag,
         set=args.set,
+        revert_to=args.revert_to,
         reason=args.reason,
         evidence=args.evidence,
         stage=args.stage,

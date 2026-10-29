@@ -19,11 +19,12 @@ from core_modelling.config.replay import set_at
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "conf/base/cc_acquisition.yml"
 ENTITY = "entity_a"
-# The example's digests under HASH_VERSION 1 (re-pinned 2026-10-27 when eligibility steps gained
-# `before` and the target `null_as`); test_golden_hashes_of_the_example says what a change means.
+# The example's digests under HASH_VERSION 1 (re-pinned 2026-10-28 when the unit of analysis
+# became `time.period`, the `time` fields and `data.keys.period` were renamed and `task` joined
+# both hashes); test_golden_hashes_of_the_example says what a change means.
 GOLDEN = {
-    "data_definition": "00f1681b1c1b87c95e896dc7698f2e5ebd5f65fa9bb587db6e0dfeb4aa5e85cb",
-    "target_spec": "7f103317bde4946a3d7017c151a8803c1b6f2c8557583a37cbd1caaa4da0f3fe",
+    "data_definition": "87db23cd29669a7e625562449f7aab0121b2e9847943fff60249b89be0f1a6b5",
+    "target_spec": "ed51852ef4acb007730d569c91cbdc6780f65c21d47f8c098357275ee3594e68",
 }
 
 
@@ -72,10 +73,24 @@ def test_golden_hashes_of_the_example(cfg: UseCaseConfig) -> None:
     assert target_spec_hash(cfg, ENTITY) == GOLDEN["target_spec"]
 
 
-def test_validation_month_moves_only_the_config_and_resolved_input(cfg: UseCaseConfig) -> None:
-    """EDA and Feature Checks never depend on the validation month (D-088)."""
-    moved = _variant(cfg, "time.validation_month", date(2025, 12, 1))
+def test_validation_period_moves_only_the_config_and_resolved_input(cfg: UseCaseConfig) -> None:
+    """EDA and Feature Checks never depend on the validation period (D-088)."""
+    moved = _variant(cfg, "time.validation_period", date(2025, 12, 1))
     assert _changed(cfg, moved) == {"config", "resolved_input"}
+
+
+def test_period_moves_the_data_definition_not_the_target_spec(cfg: UseCaseConfig) -> None:
+    """Another unit of analysis is another data definition; the label column's identity stays
+    with the target spec, keys and `w`."""
+    weekly = _variant(cfg, "time", {**cfg.model_dump()["time"], "period": "week"})
+    assert _changed(cfg, weekly) == {"config", "data_definition", "resolved_input"}
+
+
+def test_task_moves_the_data_definition_and_the_target_spec(cfg: UseCaseConfig) -> None:
+    """The same upstream target column read as binary and as regression is another data
+    definition and another label column."""
+    regression = _variant(cfg, "task", "regression")
+    assert _changed(cfg, regression) >= {"data_definition", "target_spec"}
 
 
 def test_candidate_pattern_moves_the_data_definition_not_the_target_spec(

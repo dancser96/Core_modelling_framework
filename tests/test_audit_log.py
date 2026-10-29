@@ -1,5 +1,5 @@
-"""The decision audit log: the worked example of `docs/components/config.md` replayed, every
-refusal of `record_decision`, the storage rules and the `decide` command."""
+"""The decision audit log: the worked example of `docs/components/config.md` replayed, a revert,
+every refusal of `record_decision`, the storage rules and the `decide` command."""
 
 import json
 import logging
@@ -27,7 +27,13 @@ from core_modelling.config.audit_log import (
     show_decisions,
 )
 from core_modelling.config.identities import HASH_VERSION, data_definition_hash, resolved_input_hash
-from core_modelling.config.replay import APPLY_BY_OP, Op
+from core_modelling.config.replay import (
+    APPLY_BY_OP,
+    Op,
+    effective_entries,
+    replay,
+    validate_raw,
+)
 from core_modelling.environment import EnvironmentConfig, Roots
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,8 +50,8 @@ UNSTABLE = [
 ]
 NEVER_LOGGABLE = (
     "data.",
-    "time.train_months",
-    "time.target_window_months",
+    "time.observation_window",
+    "time.target_window",
     "entities",
     "features.candidates",
     "decision",
@@ -167,6 +173,17 @@ def worked_example(
                     reason="Not used for product targeting", **decide)  # fmt: skip
 
 
+@pytest.fixture
+def revert_example(config_path: Path, env_path: Path) -> None:
+    """Path A (entries 1–3), a revert to the state after entry 1 (entry 4), path B (entry 5)."""
+    decide = dict(env_path=str(env_path))
+    record_decision(config_path, ENTITY, exclude=LEAKS, reason="leak", **decide)
+    record_decision(config_path, ENTITY, keep_despite_flag=UNSTABLE, reason="trend", **decide)
+    record_decision(config_path, ENTITY, set={"training.max_iter": 300}, reason="A", **decide)
+    record_decision(config_path, ENTITY, revert_to=1, reason="path A overfits", **decide)
+    record_decision(config_path, ENTITY, set={"training.max_iter": 250}, reason="B", **decide)
+
+
 def test_replay_states_follow_the_worked_example(
     worked_example: None, cfg: UseCaseConfig, env: EnvironmentConfig
 ) -> None:
@@ -186,6 +203,86 @@ def test_replay_states_follow_the_worked_example(
     final = resolve_config(cfg, ENTITY, env)
     assert final.features.excluded[-1] == "nationality" and len(final.features.excluded) == 6
     assert final.housekeeping["replayed_to"] == 12
+
+
+def test_revert_restarts_the_replay_from_the_earlier_state(
+    revert_example: None, cfg: UseCaseConfig, env: EnvironmentConfig
+) -> None:
+    """The resolved config is the config plus entries 1 and 5; `upto=3` still reproduces path A, and
+    entry 5 was written against the reverted state (its `from` is the level default, not 300)."""
+    entries = read_entries(_log_dir(cfg, ENTITY, env))
+    final = resolve_config(cfg, ENTITY, env)
+    one_and_five = validate_raw(replay(cfg, [entries[0], entries[4]]), "entries 1 and 5")
+    assert resolved_input_hash(final) == resolved_input_hash(one_and_five)
+    assert final.features.kept_despite_flags == [] and final.training.max_iter == 250
+    assert final.housekeeping["replayed_to"] == 5
+    path_a = resolve_config(cfg, ENTITY, env, upto=3)
+    assert path_a.features.kept_despite_flags == UNSTABLE and path_a.training.max_iter == 300
+    assert (entries[3].op, entries[3].to_seq, entries[3].stage) == ("revert", 1, "feature_checks")
+    assert entries[4].from_value == 200
+
+
+def test_revert_to_zero_gives_the_config_as_written(
+    revert_example: None,
+    config_path: Path,
+    env_path: Path,
+    cfg: UseCaseConfig,
+    env: EnvironmentConfig,
+) -> None:
+    """Entry 6 reverts to 0: the resolved input is the config's own, the log keeps all six."""
+    record_decision(config_path, ENTITY, revert_to=0, reason="start over", env_path=str(env_path))
+    resolved = resolve_config(cfg, ENTITY, env)
+    assert resolved_input_hash(resolved) == resolved_input_hash(
+        resolve_config(cfg, ENTITY, env, upto=0)
+    )
+    assert resolved.housekeeping["replayed_to"] == 6
+    assert show_decisions(cfg, ENTITY, env)["what"].tolist()[3:] == [
+        "to #1",
+        "training.max_iter: 200 → 250",
+        "to #0",
+    ]
+
+
+def test_revert_shows_in_the_resolved_file_and_the_table(
+    revert_example: None, cfg: UseCaseConfig, env: EnvironmentConfig, tmp_path: Path
+) -> None:
+    """The YAML header names the revert; the origins are those of the surviving entries only; the
+    table row says where it went back to."""
+    saved = tmp_path / "resolved.yml"
+    resolve_config(cfg, ENTITY, env, save_to=saved)
+    lines = saved.read_text().splitlines()
+    assert lines[0].startswith("# resolved: cc_acquisition + entries 1–5")
+    assert lines[1] == "# entry 4 reverted to the state after #1"
+    assert "# training.max_iter: #5" in lines and not [line for line in lines if ": #2" in line]
+    table = show_decisions(cfg, ENTITY, env)
+    assert (table.loc[3, "op"], table.loc[3, "what"], table.loc[3, "reason"]) == (
+        "revert",
+        "to #1",
+        "path A overfits",
+    )
+
+
+def test_revert_refusals(
+    revert_example: None, config_path: Path, env_path: Path, cfg: UseCaseConfig
+) -> None:
+    """A revert goes to an earlier state only (never the current one or beyond), carries no other
+    operand, and a stored entry must point below its own `seq`."""
+    decide = dict(env_path=str(env_path))
+    for to_seq in (5, 7, -1):
+        with pytest.raises(
+            ValueError, match=f"revert_to={to_seq} is not an earlier state: the log has 5"
+        ):
+            record_decision(config_path, ENTITY, revert_to=to_seq, reason="r", **decide)
+    with pytest.raises(ValueError, match="exactly one of"):
+        record_decision(config_path, ENTITY, revert_to=0, exclude=["age"], reason="r", **decide)
+    with pytest.raises(ValidationError, match="entry 1: op 'revert' needs `to_seq` below 1"):
+        _entry(cfg, op="revert", to_seq=1)
+    with pytest.raises(ValidationError, match="op 'revert' needs `to_seq` below 1"):
+        _entry(cfg, op="revert")
+    with pytest.raises(ValidationError, match="op 'revert' takes no features / path / from / to"):
+        _entry(cfg, op="revert", to_seq=0, features=["age"])
+    with pytest.raises(ValidationError, match="op 'set' takes no `to_seq`"):
+        _entry(cfg, op="set", path="training.max_iter", to=300, to_seq=0)
 
 
 def test_resolved_input_hash_moves_only_with_input_entries(
@@ -365,6 +462,47 @@ def test_refusals_of_record_decision(
     assert len(read_entries(_log_dir(cfg, ENTITY, env))) == 1  # nothing was written
 
 
+def test_a_persons_no_op_exclude_never_hides_a_rules(
+    config_path: Path, env_path: Path, cfg: UseCaseConfig, env: EnvironmentConfig
+) -> None:
+    """Entry 1 is a rule's exclude, entry 2 a person's exclude of the same feature (a no-op):
+    `include` is refused naming the rule, both as the log stands and after a revert to 1."""
+    decide = dict(env_path=str(env_path))
+    _write_json(cfg, env, 1, by=_rule("target_lineage"), stage="target_factory", op="exclude",
+                features=["cc_flag"])  # fmt: skip
+    record_decision(config_path, ENTITY, exclude=["cc_flag"], reason="again", **decide)
+    refused = "'cc_flag' was excluded by rule 'target_lineage' \\(entry 1\\)"
+    with pytest.raises(ValueError, match=refused):
+        record_decision(config_path, ENTITY, include=["cc_flag"], reason="r", **decide)
+    record_decision(config_path, ENTITY, revert_to=1, reason="undo the no-op", **decide)
+    with pytest.raises(ValueError, match=refused):
+        record_decision(config_path, ENTITY, include=["cc_flag"], reason="r", **decide)
+    assert len(read_entries(_log_dir(cfg, ENTITY, env))) == 3
+
+
+def test_include_after_a_revert_undid_the_exclude_is_refused(
+    config_path: Path, env_path: Path, cfg: UseCaseConfig, env: EnvironmentConfig
+) -> None:
+    """Entry 1 is a person's exclude, entry 2 reverts to 0: the feature is not excluded any more,
+    so there is nothing to include."""
+    decide = dict(env_path=str(env_path))
+    record_decision(config_path, ENTITY, exclude=LEAKS, reason="leak", **decide)
+    record_decision(config_path, ENTITY, revert_to=0, reason="start over", **decide)
+    with pytest.raises(ValueError, match=f"{LEAKS[0]!r} is not excluded"):
+        record_decision(config_path, ENTITY, include=LEAKS[:1], reason="r", **decide)
+    assert len(read_entries(_log_dir(cfg, ENTITY, env))) == 2
+
+
+def test_effective_entries_drop_what_a_revert_undid(
+    revert_example: None, cfg: UseCaseConfig, env: EnvironmentConfig
+) -> None:
+    """Of entries 1–5, the revert (4) undoes 2 and 3 and is not itself effective: 1 and 5 remain;
+    before the revert, entries 1–3 all count."""
+    entries = read_entries(_log_dir(cfg, ENTITY, env))
+    assert [e.seq for e in effective_entries(entries)] == [1, 5]
+    assert [e.seq for e in effective_entries(entries[:3])] == [1, 2, 3]
+
+
 def test_feature_outside_the_candidate_patterns_is_refused(
     config_path: Path, env_path: Path
 ) -> None:
@@ -404,8 +542,9 @@ def test_entry_operands_belong_to_their_op(cfg: UseCaseConfig) -> None:
 
 
 def test_every_op_has_its_apply_function() -> None:
-    """`APPLY_BY_OP` is the closed list of operations, exactly the `Op` literal."""
-    assert set(APPLY_BY_OP) == set(get_args(Op))
+    """`APPLY_BY_OP` is the closed list of operations, exactly the `Op` literal less `revert`, which
+    restarts the replay instead of applying to one state."""
+    assert set(APPLY_BY_OP) == set(get_args(Op)) - {"revert"}
 
 
 def test_hdfs_log_root_is_refused_before_pathlib(cfg: UseCaseConfig) -> None:
@@ -479,3 +618,27 @@ def test_decide_command_writes_an_entry(
         == "entry 1: set by " + read_entries(_log_dir(cfg, ENTITY, env))[0].by.id
     )
     assert resolve_config(cfg, ENTITY, env).training.max_iter == 300
+
+
+def test_decide_command_reverts(
+    config_path: Path, env_path: Path, cfg: UseCaseConfig, env: EnvironmentConfig
+) -> None:
+    """`decide --revert-to 0` after a `set` records the revert; the config is as written again."""
+    record_decision(
+        config_path, ENTITY, set={"training.max_iter": 300}, reason="A", env_path=str(env_path)
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "core_modelling",
+        "decide",
+        str(config_path),
+        "--entity",
+        ENTITY,
+    ]
+    command += ["--reason", "start over", "--revert-to", "0", "--env", str(env_path)]
+    result = subprocess.run(command, capture_output=True, text=True, check=True)
+    entries = read_entries(_log_dir(cfg, ENTITY, env))
+    assert result.stdout.strip() == f"entry 2: revert by {entries[1].by.id}"
+    assert entries[1].to_seq == 0 and entries[1].stage == "training"
+    assert resolve_config(cfg, ENTITY, env).training.max_iter == 200

@@ -46,23 +46,29 @@ def config_hash(cfg: UseCaseConfig) -> str:
 
 
 def data_definition_hash(cfg: UseCaseConfig, entity: str) -> str:
-    """Entity, sources, keys, eligibility, target, observation window, `w` and candidates."""
+    """Entity, task, sources, keys, eligibility, target, period, observation window, `w` and
+    candidates."""
     parts = {
         "entity": entity,
+        "task": cfg.task,
         "sources": _sources(cfg, entity),
         "data": cfg.data.model_dump(mode="json", include={"keys", "eligibility", "target"}),
-        "time": cfg.time.model_dump(mode="json", include={"train_months", "target_window_months"}),
+        "time": cfg.time.model_dump(
+            mode="json", include={"period", "observation_window", "target_window"}
+        ),
         "features": cfg.features.model_dump(mode="json", include={"candidates"}),
     }
     return _sha256(canonical_json(parts))
 
 
 def target_spec_hash(cfg: UseCaseConfig, entity: str) -> str:
-    """Target spec, keys, `w` and the entity's target source: what one label column depends on."""
+    """Task, target spec, keys, `w` and the entity's target source: what one label column
+    depends on (the same upstream column read as binary and as regression is two labels)."""
     parts = {
+        "task": cfg.task,
         "target": cfg.data.target.model_dump(mode="json"),
         "keys": cfg.data.keys.model_dump(mode="json"),
-        "target_window_months": cfg.time.target_window_months,
+        "target_window": cfg.time.target_window,
         "target_source": _sources(cfg, entity)["targets"],
     }
     return _sha256(canonical_json(parts))

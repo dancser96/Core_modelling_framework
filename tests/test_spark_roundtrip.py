@@ -13,7 +13,7 @@ from pyspark.sql import SparkSession
 
 
 def test_month_partitioned_parquet_roundtrip(spark: SparkSession, tmp_path: Path) -> None:
-    """Types and nulls survive pandas → month-partitioned parquet → Spark → pandas."""
+    """Types and nulls survive pandas → parquet (partitioned by period) → Spark → pandas."""
     jan, feb = dt.date(2025, 1, 1), dt.date(2025, 2, 1)
     frame = pd.DataFrame(
         {

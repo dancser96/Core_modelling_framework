@@ -11,17 +11,17 @@ practical set of metrics and charts, produced reliably for every model family.
 ## Phase 2 requirements
 1. **Metrics from the per-task spec** (D-050). Binary: AUC, PR-AUC, base rate; precision / recall / lift at the
    `top_pct` and `top_n` slices. What gets emphasised follows the declared decision.
-2. **Test vs validation:** metrics on test (unseen clients, same months) and on validation (OOT).
+2. **Test vs validation:** metrics on test (unseen clients, same periods) and on validation (OOT).
    For a run nothing was picked on, the gap separates overfitting from decay over time, apart from
    the cost below; a sweep's winner states that its test-vs-validation gap mixes overfitting with
    selection (D-083). The model results report states the cost of EDA and Feature Checks using
    every client (D-030): people's feature decisions there have seen test clients' labels, so test
-   is not untouched by them; the validation month, whose labels EDA and Feature Checks never see,
+   is not untouched by them; the validation period, whose labels EDA and Feature Checks never see,
    stays the one honest number. Test
-   metrics are shown per observation month first and pooled second, so test compares with the
-   single validation month (D-098); a per-month statistic is shown only for months with at least
+   metrics are shown per observation period first and pooled second, so test compares with the
+   single validation period (D-098); a per-period statistic is shown only for periods with at least
    50 positive events (D-091). Optional:
-   validation on test clients only (unseen clients and an unseen month), the cleanest estimate.
+   validation on test clients only (unseen clients and an unseen period), the cleanest estimate.
 3. **Stratified metrics are mandatory** (D-038). Every metric is shown overall and per level of each
    configured variable. Levels are capped (top levels + "other"), and strata below the per-task
    minimum support (binary: positive events, D-082) are shown as insufficient.
@@ -41,7 +41,7 @@ practical set of metrics and charts, produced reliably for every model family.
 7. **Model comparison is first-class.** Several runs (challenger vs champion, window variants) are shown on the identical validation set, overlaid and side
    by side. Where the rows match, differences come from a **paired bootstrap** over validation
    clients, which gives much tighter intervals than comparing two separate ones. The window ablation's design is owned by
-   [dataset](dataset.md). A sweep picks on train and test metrics; the validation month is
+   [dataset](dataset.md). A sweep picks on train and test metrics; the validation period is
    reported for every variant and never chooses (D-083). Reports show validation
    everywhere, sweep tables included, and people are trusted not to choose on it (D-083).
 8. Results are structured data first; plots and reports are rendered from them. Evaluation writes

@@ -1,5 +1,6 @@
 """`run` and the CLI (D-024): the Target Factory stage through `python -m core_modelling run`,
-and the guided notebook calling only the Public API."""
+one model input saved for two configs at once, and the guided notebook calling only the Public
+API."""
 
 import json
 import re
@@ -27,7 +28,7 @@ PUBLIC_API = {
         "read_resolved_config",
     },  # fmt: skip
     "core_modelling.target_factory": {"run_target_factory"},
-    "core_modelling.dataset": {"build_frames", "save_model_input"},
+    "core_modelling.dataset": {"build_frames", "save_model_input", "Frames"},
     "core_modelling.run": {"run"},
 }
 
@@ -61,18 +62,56 @@ def test_run_through_the_cli_prints_the_summary_and_saves_the_model_input(
     assert "run target_factory for entity_a" in out and "positive_events" in out
     assert "model input saved:" in out and "entity_a: ran target_factory" in out
     metadata = json.loads((tmp_path / "data/05_model_input/cc" / METADATA_FILE).read_text())
-    assert metadata["use_case"] == "cc_acquisition" and metadata["entity"] == "entity_a"
+    assert metadata["use_cases"] == ["cc_acquisition"] and metadata["entity"] == "entity_a"
 
 
-def test_run_refuses_an_unknown_stage_or_entity(
+def test_run_two_configs_saves_one_table_with_two_target_columns(
+    spark: SparkSession, tmp_path: Path, unit_output: tuple[str, dict]
+) -> None:
+    """`run([a, b], stages=["target_factory"])` returns both summaries and saves one model
+    input whose sidecar lists both use cases and whose table carries both target columns."""
+    env_file = _environment_file(tmp_path, unit_output)
+    second = yaml.safe_load(CONFIG.read_text())
+    second["use_case"] = "td_acquisition"
+    second["data"]["target"]["column"] = "td_flag"
+    second["data"]["eligibility"]["modelling"] = [
+        {"name": "non_holders", "filter": "td_flag = 0", "reason": "scored without a deposit"}
+    ]
+    second_path = tmp_path / "td_acquisition.yml"
+    second_path.write_text(yaml.safe_dump(second))
+    out = run([CONFIG, second_path], env_path=str(env_file), stages=["target_factory"])
+    stage = out["entity_a"]["target_factory"]
+    assert sorted(stage["summary"]) == ["cc_acquisition", "td_acquisition"]
+    metadata = json.loads(Path(stage["model_input"], METADATA_FILE).read_text())
+    assert metadata["use_cases"] == ["cc_acquisition", "td_acquisition"]
+    columns = spark.read.parquet(stage["model_input"]).columns
+    assert {"target_cc_acquisition", "target_td_acquisition"} <= set(columns)
+    assert "target" not in columns and "eligible" not in columns
+
+
+def test_run_refuses_an_unknown_stage_or_entity_or_no_config(
     tmp_path: Path, unit_output: tuple[str, dict]
 ) -> None:
-    """A stage not built or an entity the config doesn't list fails before anything runs."""
+    """A stage not built, an entity the config doesn't list, an empty config list, or configs
+    listing different entities when no entity is given, each fail before anything runs."""
     env_file = _environment_file(tmp_path, unit_output)
     with pytest.raises(ValueError, match=r"unknown stages \['eda'\]; the built stages"):
         run(CONFIG, env_path=str(env_file), stages=["eda"])
-    with pytest.raises(ValueError, match="unknown entity 'entity_b'"):
+    with pytest.raises(ValueError, match="unknown entity 'entity_b': the config 'cc_acquisition'"):
         run(CONFIG, env_path=str(env_file), entity="entity_b")
+    with pytest.raises(ValueError, match="run needs at least one config"):
+        run([], env_path=str(env_file))
+    second = yaml.safe_load(CONFIG.read_text())
+    second["use_case"] = "td_acquisition"
+    second["entities"]["entity_b"] = second["entities"]["entity_a"]
+    second_path = tmp_path / "td_acquisition.yml"
+    second_path.write_text(yaml.safe_dump(second))
+    different = (
+        "'cc_acquisition' and 'td_acquisition' list different entities "
+        r"\(\['entity_a'\] vs \['entity_a', 'entity_b'\]\)"
+    )
+    with pytest.raises(ValueError, match=different):
+        run([CONFIG, second_path], env_path=str(env_file))
 
 
 def test_notebook_calls_only_the_public_api() -> None:

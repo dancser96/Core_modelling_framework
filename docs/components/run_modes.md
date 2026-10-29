@@ -9,7 +9,7 @@ API for automated and production runs. The framework is a versioned library, not
 so users can see and debug what happens under the hood.
 
 ## Phase 2 requirements
-1. **CLI:** `python -m core_modelling run <config> [--stages …] [--entity …]`, plus
+1. **CLI:** `python -m core_modelling run <config>… [--stages …] [--entity …]` (several configs save one model input; an empty list or configs listing different entities are refused), plus
    separate `register`, `promote` and `deploy` commands. They are gated steps run by different
    actors: the change-request process runs `deploy`. `decide` records a person's decision, the
    feature sign-off (D-031) included, as an entry in the decision audit log; it is the CLI form of
@@ -26,7 +26,7 @@ so users can see and debug what happens under the hood.
    window ablation, whose design that doc owns). Each variant changes only that field (same
    eligibility, candidates, budget, seeds, sampling rule). The comparison report comes from
    [evaluation](evaluation.md). A sweep that picks a variant picks on train and test metrics,
-   weighted; the validation month is reported, never chosen on (D-083). The reports,
+   weighted; the validation period is reported, never chosen on (D-083). The reports,
    sweep tables included, show the validation metric and people are trusted not to choose on it.
    The name is still to be decided.
 4. **Guided notebooks, one per stage.** Each opens with what the stage is for, what to look at, which
@@ -54,7 +54,7 @@ Built in Stage 1 (2026-10-27), in `core_modelling/run.py`, `core_modelling/__mai
   Stage 1 holds `target_factory`: `run_target_factory`, then `save_model_input` when the config
   names a model input (D-131). The later stages take the resolved config (D-125) and join as they
   are built.
-- CLI: `python -m core_modelling run <config> [--stages …] [--entity …] [--env …]` and `decide`
+- CLI: `python -m core_modelling run <config>… [--stages …] [--entity …] [--env …]` and `decide`
   ([config](config.md)); `__main__` parses and calls.
 - `notebooks/01_target_factory.ipynb`: the guide cell, the setup cell (`load_environment`,
   `get_spark_session`, `load_config`), `run_target_factory`, `save_model_input`,

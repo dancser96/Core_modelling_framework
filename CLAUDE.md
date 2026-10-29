@@ -173,7 +173,7 @@ The 0.x pre-release promises nothing; shared formats freeze from release 1.0's f
   Phase 2, D-020); series tasks come later. Every task-specific choice (target builder,
   EDA ranking, leakage screen, selection rule, contract checks, baselines, metrics, views,
   calibration, output columns…) dispatches on `task` through one per-task spec dict (D-050). Never
-  bake binary or single-month assumptions into
+  bake binary or single-period assumptions into
   data contracts, artifact schemas or output tables (an output column is `score`, not `propensity`).
 - **Domain- and entity-agnostic.** Domains (retail, SME, corporate) and entities (subsidiaries) are
   configuration, never names in code. Data is never merged across entities, and a use case lists the
@@ -196,20 +196,22 @@ The 0.x pre-release promises nothing; shared formats freeze from release 1.0's f
 
 ## 4. ML correctness invariants (non-negotiable)
 
-1. **Time separation.** Features are as-of the observation month; the target is strictly after it.
-   Forward windows exclude the current month; backward windows include it.
-2. **Out-of-time validation.** The validation (OOT) month comes after the observation window, and its
+1. **Time separation.** Features are as-of the observation period (the unit of analysis,
+   `time.period`: month, week or day); the target is strictly after it. Forward windows exclude
+   the current period; backward windows include it.
+2. **Out-of-time validation.** The validation (OOT) period comes after the observation window, and its
    target window does not overlap any training target window (`v ≥ tk + w`).
 3. **Baseline and metric (or the decision they derive from) are declared in config before any result
    is seen.**
 4. **Fit and select on the train split only.** No fitted transform or label-using automated selection ever sees
-   test or validation data, and the validation (OOT) month never informs any choice. A choice among
+   test or validation data, and the validation (OOT) period never informs any choice. A choice among
    variants or tuning trials (window, sweep, trade-off point) weighs train and test metrics only
-   (D-083). EDA and Feature Checks use every client in the observation window, labels included; the
-   train/test client split happens after Feature Checks, and from Training on everything fits and
-   selects on train-split clients only. People's feature decisions in EDA and Feature Checks have
-   therefore seen test labels, which the model results report states (D-030). Label-free
-   comparisons (e.g. PSI) may use later months, except the validation month (D-030).
+   (D-083). EDA uses every client in the observation window after the analysis filters, labels
+   included, and Feature Checks every eligible client; the train/test client split happens after
+   Feature Checks, and from Training on everything fits and selects on train-split clients only.
+   People's feature decisions in EDA and Feature Checks have therefore seen test labels, which the
+   model results report states (D-030). Label-free comparisons (e.g. PSI) may use later periods,
+   except the validation period (D-030).
 5. **Checks wrap the engine.** The modelling engine sees only the vetted feature set; validation runs
    outside the engine.
 6. **Leakage screens flag, never auto-drop.** Columns used to build the target are excluded
@@ -219,10 +221,10 @@ The 0.x pre-release promises nothing; shared formats freeze from release 1.0's f
    didn't change the class balance. A separate calibration step (e.g. Platt or isotonic) is fitted on
    out-of-fold predictions inside train, never on test or validation (D-049).
 8. **Contract checks run on the true population**, before any downsampling.
-9. **Eligibility is applied identically** to every month of train/test, validation and inference.
+9. **Eligibility is applied identically** to every period of train/test, validation and inference.
 10. **Everything is reproducible:** resolved config + config hash + data-definition hash + feature
     signature + model hash + code version. Every score can be traced to its model and config. This
-    assumes a source month never changes after it has been loaded.
+    assumes a source period never changes after it has been loaded.
 11. **Train and test are split by client.** They share the observation window, so no client appears in
     both, and any CV inside train is grouped by client too.
 12. **Sampling depends on outcomes only through the row's own label, with one keep fraction for the

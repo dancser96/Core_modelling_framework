@@ -1,85 +1,189 @@
-"""The panel: the spine, the other sources and the targets joined, eligibility applied, the
-candidates resolved (D-129, D-131).
+"""The panel: the sources joined with one target column per use case, and its preparation for
+one use case (D-129, D-131; the Stage 1 addendum, section B).
 
-`load_panel` reads every source of an entity through `read_keyed_source` (keys renamed, months
-at their last day), left-joins the other feature sources and the targets (`load_targets`, built
-over the whole target source, never a window of it) to the governing spine on the keys, and
-keeps the months from the observation window's first to the spine's last. `apply_eligibility`
-runs the ordered steps on every month alike (§4.9): a `define` adds a boolean column later steps
-reuse, a `before: eda` filter drops its rows, a `before: model` filter tags them (a 0/1 column
-named after the step) and `eligible` marks the rows every pre-model filter passes. A condition
-may reference the sources' columns and earlier define names only: the keys, the target, the
-split and another filter's tag never select the population, since eligibility SQL is a leakage
-surface outside the screens. `resolve_candidates` turns the config's patterns into the candidate
-list, minus the keys, the helper columns, the lineage and the step names
-(docs/components/dataset.md).
+`load_panel` takes a list of configs sharing one data definition (the same feature sources,
+keys, model input and period) and reads every source of an entity through `read_keyed_source`
+(keys renamed, periods at their last day), left-joins the other feature sources to the
+governing spine on the keys, then each config's targets (`load_targets`, built over the whole
+target source, never a window of it) as `target_<use_case>`, and keeps the periods from the
+earliest observation window's first to the spine's last. That panel, the sources plus the
+target columns and nothing else, is what the model input saves: one table serves several use
+cases, and a changed eligibility never forces a rebuild. `prepare_panel` is the read side, run
+from the reader's own config on the saved or the in-memory panel: the other use cases' target
+columns are dropped, with the source column an upstream target of theirs is read from (both
+are forward-looking), and the own one becomes `target`; then the eligibility steps and the
+candidates (`eligibility.py`), the contract check and the split. `build_panel` is both for one
+config, the in-memory path.
 """
 
-import re
-from fnmatch import fnmatchcase
-from functools import reduce
+from dataclasses import dataclass
 
-from pyspark.errors import AnalysisException
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql import functions as F
-from pyspark.sql.types import BooleanType
 
 from core_modelling.config import UseCaseConfig
 from core_modelling.config.identities import HASH_VERSION, data_definition_hash, target_spec_hash
-from core_modelling.config.schema import EligibilityStep
 from core_modelling.dataset.contract import check_contract
+from core_modelling.dataset.eligibility import apply_eligibility, modelling_tags, resolve_candidates
 from core_modelling.dataset.split import assign_split
 from core_modelling.environment import EnvironmentConfig
-from core_modelling.sources import missing_months, read_keyed_source
+from core_modelling.periods import Period, label_by_period, period_spec
+from core_modelling.sources import KEYS, check_periods_covered, read_keyed_source
 from core_modelling.target_factory import load_targets, target_lineage
 
-KEYS = ["unit_id", "month"]
-# Columns the dataset adds: never candidates, never referenced by an eligibility condition.
-HELPER_COLUMNS = ["target", "null_in_window", "split", "eligible"]
 PANEL_META_KEYS = ("data_definition_hash", "target_spec_hash", "hash_version", "lineage",
-                   "candidates", "tags")  # what `build_panel` puts in the meta  # fmt: skip
-# SQL a condition may not contain: a star in a call (expands over every column, the target
-# included), a subquery (reads the catalog, not the panel), a window function (looks across rows).
-UNSAFE_SQL = {r"[(,]\s*\*": "a star", r"\bselect\b": "a subquery", r"\bover\s*\(": "a window"}
+                   "candidates", "tags")  # what `prepare_panel` puts in the meta  # fmt: skip
+# The config fields every config of one model input must share (the panel is built from them).
+SHARED_FIELDS = {
+    "sources.features": lambda cfg, entity: cfg.entities[entity].sources.features,
+    "keys": lambda cfg, entity: cfg.data.keys.model_dump(),
+    "model_input": lambda cfg, entity: cfg.data.model_input,
+    "time.period": lambda cfg, entity: cfg.time.period,
+}
+
+
+@dataclass(frozen=True)
+class JoinedSource:
+    """One source in the join: its read log, the marker column its rows carry (None for the
+    spine), its role (`spine`, `joined`, `targets`) and, for a target, its use case."""
+
+    log: dict
+    marker: str | None
+    role: str
+    use_case: str | None = None
+
+
+def target_column(use_case: str) -> str:
+    """The panel's target column of a use case, `target_<use_case>` (Q405)."""
+    return f"target_{use_case}"
 
 
 def load_panel(
-    cfg: UseCaseConfig, entity: str, env: EnvironmentConfig, spark: SparkSession
-) -> tuple[DataFrame, list[dict]]:
-    """The governing spine with the other feature sources and the targets left-joined on the
-    keys, from the window's first month to the spine's last; the join log, one entry per source,
-    with the rows each matched per month."""
-    if entity not in cfg.entities:
-        raise ValueError(f"unknown entity {entity!r}: the config has {sorted(cfg.entities)}")
+    cfgs: list[UseCaseConfig], entity: str, env: EnvironmentConfig, spark: SparkSession
+) -> tuple[DataFrame, list[dict], dict]:
+    """The governing spine with the other feature sources and every config's targets
+    left-joined on the keys, from the earliest window's first period to the spine's last; the
+    join log, one entry per source; the meta: the definition the panel was built from and, per
+    use case, its target's column, spec hash, lineage, source, windows and null share."""
+    _check_shared_definition(cfgs, entity)
+    spec = period_spec(cfgs[0])
+    panel, joined = _join_sources(cfgs, entity, env, spark)
+    panel, joined, targets = _join_targets(panel, joined, cfgs, entity, env, spark)
+    first = min(cfg.time.observation_window.first for cfg in cfgs)
+    last = joined[0].log["periods"][-1]
+    panel = panel.where(F.col("period").between(first, last))
+    entries, null_shares = _join_log(panel, joined, cfgs, spec)
+    for use_case, share in null_shares.items():
+        targets[use_case]["null_in_window_share"] = share
+    cfg = cfgs[0]
+    meta = {
+        "hash_version": HASH_VERSION,
+        "sources": {"features": cfg.entities[entity].sources.features},
+        "keys": cfg.data.keys.model_dump(),
+        "period": cfg.time.period,
+        "periods": {"first": spec.label(first), "last": spec.label(last)},
+        "targets": targets,
+    }
+    transient = [source.marker for source in joined if source.marker]
+    transient += [f"_null_{t['column']}" for t in targets.values()]
+    return panel.drop(*transient), entries, meta
+
+
+def _check_shared_definition(cfgs: list[UseCaseConfig], entity: str) -> None:
+    """The use cases are distinct and every config lists `entity` and declares the same feature
+    sources, keys, model input and period, else the two use cases and the field are named."""
+    if not cfgs:
+        raise ValueError("load_panel needs at least one config")
+    names = [cfg.use_case for cfg in cfgs]
+    repeated = sorted({name for name in names if names.count(name) > 1})
+    if repeated:
+        raise ValueError(f"the use cases must be distinct; repeated: {repeated}")
+    for cfg in cfgs:
+        if entity not in cfg.entities:
+            raise ValueError(
+                f"unknown entity {entity!r}: the config {cfg.use_case!r} has {sorted(cfg.entities)}"
+            )
+    first = cfgs[0]
+    for cfg in cfgs[1:]:
+        for field, value in SHARED_FIELDS.items():
+            if value(cfg, entity) != value(first, entity):
+                raise ValueError(
+                    f"the configs {first.use_case!r} and {cfg.use_case!r} differ in {field} "
+                    f"({value(first, entity)} vs {value(cfg, entity)}); one model input needs "
+                    "one data definition"
+                )
+
+
+def _join_sources(
+    cfgs: list[UseCaseConfig], entity: str, env: EnvironmentConfig, spark: SparkSession
+) -> tuple[DataFrame, list[JoinedSource]]:
+    """The spine, checked to cover the earliest window's first period to the latest validation
+    period, with the other feature sources left-joined and marked; the joined sources, the
+    spine first."""
+    cfg = cfgs[0]
     names = cfg.entities[entity].sources.features
     panel, spine_log = read_keyed_source(cfg, entity, names[0], env, spark)
-    _check_spine_months(spine_log, cfg)
-    joined = [(spine_log, None, "spine")]  # (log, the column that shows a match, role)
+    # A gap would drop a period of rows quietly; a validation period must exist to be scored.
+    first = min(c.time.observation_window.first for c in cfgs)
+    last = max(c.time.validation_period for c in cfgs)
+    spec = period_spec(cfg)
+    check_periods_covered(spine_log, first, last, "spine", "time.validation_period", spec)
+    joined = [JoinedSource(spine_log, None, "spine")]
     for name in names[1:]:
         source, log = read_keyed_source(cfg, entity, name, env, spark)
         _check_no_shared_column(panel, source, name)
         marker = f"_from_{name}"
         panel = panel.join(source.withColumn(marker, F.lit(True)), KEYS, "left")
-        joined.append((log, marker, "joined"))
-    targets, log = load_targets(cfg, entity, env, spark)
-    panel = panel.join(targets.withColumn("_from_targets", F.lit(True)), KEYS, "left")
-    joined.append((log, "_from_targets", "targets"))
-    first, last = cfg.time.train_months.first, spine_log["months"][-1]
-    panel = panel.where(F.col("month").between(first, last))
-    _check_named_features(panel, cfg)
-    entries = _join_log(panel, joined, cfg)
-    return panel.drop(*[marker for _, marker, _ in joined if marker]), entries
+        joined.append(JoinedSource(log, marker, "joined"))
+    return panel, joined
 
 
-def _check_spine_months(log: dict, cfg: UseCaseConfig) -> None:
-    """The spine has every month from the window's first to the validation month: a gap would
-    drop a month of rows quietly, and the validation month must exist to be scored."""
-    missing = missing_months(log["months"], cfg.time.train_months.first, cfg.time.validation_month)
-    if missing:
-        raise ValueError(
-            f"spine {log['source']!r} lacks the months {missing}; it must have every month from "
-            "time.train_months.first to time.validation_month"
+def _join_targets(
+    panel: DataFrame,
+    joined: list[JoinedSource],
+    cfgs: list[UseCaseConfig],
+    entity: str,
+    env: EnvironmentConfig,
+    spark: SparkSession,
+) -> tuple[DataFrame, list[JoinedSource], dict]:
+    """Each config's targets left-joined as `target_<use_case>`, `null_in_window` as the
+    transient `_null_<column>`, marked; the joined list extended; per use case the target's
+    meta (`_target_meta`)."""
+    targets = {}
+    for cfg in cfgs:
+        column = target_column(cfg.use_case)
+        if column in panel.columns:
+            raise ValueError(
+                f"the target column {column!r} of use case {cfg.use_case!r} is a column of the "
+                "sources; rename it upstream"
+            )
+        built, log = load_targets(cfg, entity, env, spark)
+        marker = f"_from_{column}"
+        built = built.select(
+            *KEYS, F.col("target").alias(column), F.col("null_in_window").alias(f"_null_{column}")
         )
+        panel = panel.join(built.withColumn(marker, F.lit(True)), KEYS, "left")
+        joined.append(JoinedSource(log, marker, "targets", cfg.use_case))
+        targets[cfg.use_case] = _target_meta(cfg, entity, column, log)
+    return panel, joined, targets
+
+
+def _target_meta(cfg: UseCaseConfig, entity: str, column: str, target_log: dict) -> dict:
+    """One use case's target as the meta records it: what `prepare_panel` and the model input's
+    checks need; dates as the period's labels, but the target source's last period as an ISO
+    date, which a reader turns back into a date to check its own validation period against."""
+    spec, window = period_spec(cfg), cfg.time.observation_window
+    return {
+        "column": column,
+        "target_spec_hash": target_spec_hash(cfg, entity),
+        "lineage": target_lineage(cfg),
+        "source": target_log["source"],
+        "target_last": target_log["periods"][-1].isoformat(),
+        "upstream": cfg.data.target.rule is None,
+        "observation_window": {"first": spec.label(window.first), "last": spec.label(window.last)},
+        "target_window": cfg.time.target_window,
+        "validation_period": spec.label(cfg.time.validation_period),
+    }
 
 
 def _check_no_shared_column(panel: DataFrame, source: DataFrame, name: str) -> None:
@@ -101,179 +205,156 @@ def _check_named_features(panel: DataFrame, cfg: UseCaseConfig) -> None:
             raise ValueError(f"features.{field} names columns the sources don't have: {unknown}")
 
 
-def _join_log(panel: DataFrame, joined: list[tuple], cfg: UseCaseConfig) -> list[dict]:
-    """One entry per source from one rollup of the panel: the spine's rows per month, and per
-    joined source the rows it matched per month and their share; a window month with no known
-    target fails loud (the target source matched nothing there: keys or months disagree)."""
-    markers = [marker for _, marker, _ in joined if marker]
+def _join_log(
+    panel: DataFrame, joined: list[JoinedSource], cfgs: list[UseCaseConfig], spec: Period
+) -> tuple[list[dict], dict]:
+    """One entry per source from one rollup of the panel: the spine's rows per period, per
+    joined source the rows it matched per period and their share, per target also the share of
+    rows whose window held a null. A feature source matching no spine row, or a window period
+    with no known value in a config's target column, fails loud (keys or periods disagree). The
+    null share over each config's observation window comes back by use case, for the
+    contract's callout."""
+    by_period, all_rows = _rollup(panel, joined, cfgs)
+    _check_sources_matched(joined, all_rows)
+    for cfg in cfgs:
+        _check_window_labelled(by_period, cfg, spec)
+    entries = [_join_entry(source, by_period, all_rows, spec) for source in joined]
+    return entries, {cfg.use_case: all_rows[f"_share_{cfg.use_case}"] for cfg in cfgs}
+
+
+def _rollup(
+    panel: DataFrame, joined: list[JoinedSource], cfgs: list[UseCaseConfig]
+) -> tuple[dict, object]:
+    """The panel's rows, the rows each marker matched, per target the known values and the
+    null share, per period (the rows keyed by the period) and over every period (the last
+    row), from one rollup."""
+    markers = [source.marker for source in joined if source.marker]
+    use_cases = [cfg.use_case for cfg in cfgs]
     counts = [F.count(marker).alias(marker) for marker in markers]
-    rows = panel.groupBy("month").agg(
-        F.count(F.lit(1)).alias("rows"), F.count("target").alias("known"), *counts
-    )
-    by_month = {row.month: row for row in rows.orderBy("month").collect()}
-    spine_rows = sum(row.rows for row in by_month.values())
-    window = cfg.time.train_months
-    in_window = [m for m in by_month if window.first <= m <= window.last]
-    unlabelled = [f"{m:%Y-%m}" for m in in_window if not by_month[m].known]
+    known = [F.count(target_column(u)).alias(f"_known_{u}") for u in use_cases]
+    nulls = [F.avg(_null_flag(u)).alias(f"_nulls_{u}") for u in use_cases]
+    shares = [_window_null_share(cfg) for cfg in cfgs]
+    rows = panel.rollup("period").agg(
+        F.grouping("period").alias("_all"), F.count(F.lit(1)).alias("rows"),
+        *counts, *known, *nulls, *shares,
+    )  # fmt: skip
+    collected = rows.orderBy("_all", "period").collect()
+    return {row.period: row for row in collected if not row._all}, collected[-1]
+
+
+def _null_flag(use_case: str) -> Column:
+    """The use case's transient `null_in_window` as 0/1 (null where the window is incomplete or
+    the target is upstream), so its average is the share among complete windows."""
+    return F.col(f"_null_{target_column(use_case)}").cast("double")
+
+
+def _window_null_share(cfg: UseCaseConfig) -> Column:
+    """The share of the config's observation-window rows whose target window held a null, among
+    the rows with a complete window; null for an upstream target, which never fills it."""
+    window = cfg.time.observation_window
+    in_window = F.col("period").between(window.first, window.last)
+    return F.avg(F.when(in_window, _null_flag(cfg.use_case))).alias(f"_share_{cfg.use_case}")
+
+
+def _check_sources_matched(joined: list[JoinedSource], all_rows: object) -> None:
+    """Every joined feature source matched some spine row, else the keys disagree: named with
+    both id types (the targets have their own per-window check)."""
+    spine = joined[0].log
+    for source in joined:
+        if source.role == "joined" and all_rows[source.marker] == 0:
+            raise ValueError(
+                f"feature source {source.log['source']!r} matched no spine row: do the keys "
+                f"agree? its id is {source.log['id_type']}, the spine's {spine['id_type']} (both "
+                "cast to string at read)"
+            )
+
+
+def _check_window_labelled(by_period: dict, cfg: UseCaseConfig, spec: Period) -> None:
+    """Every period of the config's observation window has a known value in its target column
+    (the target source matched some spine row there)."""
+    window = cfg.time.observation_window
+    in_window = [p for p in by_period if window.first <= p <= window.last]
+    unlabelled = [spec.label(p) for p in in_window if not by_period[p][f"_known_{cfg.use_case}"]]
     if unlabelled:
         raise ValueError(
-            f"no known target in the window's months {unlabelled}: the target source matched no "
-            "spine row there (do the keys and the months agree?)"
+            f"no known target of use case {cfg.use_case!r} in the window's periods {unlabelled}: "
+            "the target source matched no spine row there (do the keys and the periods agree?)"
         )
-    entries = []
-    for log, marker, role in joined:
-        entry = {"step": "join", "source": log["source"], "role": role}
-        entry["month_tag"] = log["month_tag"]
-        if marker is None:
-            entry["rows"] = {f"{m:%Y-%m}": r.rows for m, r in by_month.items()}
-            print(f"spine {log['source']} ({log['month_tag']} months): {spine_rows:,} rows from "
-                  f"{min(by_month):%Y-%m} to {max(by_month):%Y-%m}")  # fmt: skip
-        else:
-            matched = {f"{m:%Y-%m}": r[marker] for m, r in by_month.items()}
-            entry.update(matched_share=sum(matched.values()) / spine_rows, matched=matched)
-            print(f"join {log['source']} ({role}, {log['month_tag']} months): "
-                  f"{entry['matched_share']:.1%} of the spine's rows matched")  # fmt: skip
-        entries.append(entry)
-    return entries
 
 
-def apply_eligibility(
-    panel: DataFrame, steps: list[EligibilityStep]
-) -> tuple[DataFrame, list[dict]]:
-    """The ordered steps applied to every month alike: a define adds its column for later steps
-    (dropped at the end), a `before: eda` filter drops its rows, a `before: model` filter tags
-    them 0/1 under its name; `eligible` is 1 where every tag is. The log has one entry per
-    filter (`step: eligibility`, the step's `name`) with its rows per month and the rows whose
-    condition was null (counted as not passing)."""
-    allowed = [c for c in panel.columns if c not in KEYS and c not in HELPER_COLUMNS]
-    defines, tags, log = [], [], []
-    for step in steps:
-        if step.name in panel.columns or step.name in (*KEYS, *HELPER_COLUMNS):
-            raise ValueError(
-                f"eligibility step {step.name!r} is named like a column of the panel or one the "
-                f"dataset adds ({', '.join(HELPER_COLUMNS)})"
-            )
-        condition = _condition(panel, step, allowed)
-        if step.define is not None:
-            panel = panel.withColumn(step.name, condition)
-            defines.append(step.name)
-            allowed.append(step.name)
-            continue
-        passes = F.coalesce(condition, F.lit(False))  # a null condition counts as false
-        rows, passing, nulls = _rows_per_month(panel, condition)
-        entry = {"step": "eligibility", "name": step.name, "before": step.before}
-        entry.update(reason=step.reason, rows=rows, null_condition=nulls)
-        total, kept, unknown = sum(rows.values()), sum(passing.values()), sum(nulls.values())
-        if step.before == "eda":
-            panel = panel.where(passes)
-            log.append({**entry, "rows_out": passing})
-            print(f"eligibility {step.name} (before eda): {total:,} → {kept:,} rows "
-                  f"({unknown:,} with a null condition, dropped); {step.reason}")  # fmt: skip
-        else:
-            panel = panel.withColumn(step.name, passes.cast("int"))
-            tags.append(step.name)
-            log.append({**entry, "tagged_1": passing})
-            print(f"eligibility {step.name} (before model): {kept:,} of {total:,} rows tagged 1 "
-                  f"({unknown:,} with a null condition, tagged 0), the rest stay for EDA; "
-                  f"{step.reason}")  # fmt: skip
-    eligible = reduce(lambda a, b: a & b, [F.col(tag) == 1 for tag in tags], F.lit(True))
-    return panel.withColumn("eligible", eligible.cast("int")).drop(*defines), log
+def _join_entry(source: JoinedSource, by_period: dict, all_rows: object, spec: Period) -> dict:
+    """One source's join entry, printed: the spine's rows per period; a joined source's matched
+    rows per period and share; a target's use case, column and null share per period too."""
+    log, marker, role, use_case = source.log, source.marker, source.role, source.use_case
+    entry = {"step": "join", "source": log["source"], "role": role, "period_tag": log["period_tag"]}
+    rows = by_period.values()
+    if marker is None:
+        entry["rows"] = label_by_period(rows, "rows", spec)
+        print(f"spine {log['source']} ({log['period_tag']} periods): {all_rows.rows:,} rows "
+              f"from {spec.label(min(by_period))} to {spec.label(max(by_period))}")  # fmt: skip
+        return entry
+    entry.update(matched_share=all_rows[marker] / all_rows.rows)
+    entry.update(matched=label_by_period(rows, marker, spec))
+    print(f"join {log['source']} ({role}, {log['period_tag']} periods): "
+          f"{entry['matched_share']:.1%} of the spine's rows matched")  # fmt: skip
+    if use_case is not None:
+        nulls = label_by_period(rows, f"_nulls_{use_case}", spec)
+        entry.update(use_case=use_case, column=target_column(use_case), null_in_window=nulls)
+    return entry
 
 
-def _condition(panel: DataFrame, step: EligibilityStep, allowed: list[str]) -> Column:
-    """The step's SQL as a boolean Column, resolved against the allowed columns only, so a
-    reference to the keys, the target, the split or another filter's tag fails naming the step."""
-    sql = step.define if step.define is not None else step.filter
-    for pattern, what in UNSAFE_SQL.items():
-        if re.search(pattern, sql, flags=re.IGNORECASE):
-            raise ValueError(
-                f"eligibility step {step.name!r}: {sql!r} holds {what}; a condition is a plain "
-                "expression over the row's own columns"
-            )
-    try:
-        probe = panel.select(*allowed).select(F.expr(sql).alias(step.name)).schema
-    except AnalysisException as exc:
-        raise ValueError(
-            f"eligibility step {step.name!r}: {sql!r} may reference the sources' columns and "
-            "earlier define names only, never the keys, the target, the split, `eligible` or "
-            f"another filter's tag; Spark says: {exc}"
-        ) from exc
-    column_type = probe[step.name].dataType
-    if not isinstance(column_type, BooleanType):
-        raise TypeError(
-            f"eligibility step {step.name!r}: {sql!r} is {column_type.simpleString()}, not a "
-            "boolean condition"
-        )
-    return F.expr(sql)
+def foreign_target_columns(targets: dict, use_case: str) -> list[str]:
+    """The other use cases' target columns and, for an upstream target of theirs, the source
+    column it was read from: both are forward-looking, so the reader never sees them as a
+    candidate. The own lineage is reserved by `resolve_candidates`."""
+    columns = []
+    for other, target in targets.items():
+        if other != use_case:
+            columns.append(target["column"])
+            if target["upstream"]:
+                columns.append(target["lineage"][0])
+    return columns
 
 
-def _rows_per_month(panel: DataFrame, condition: Column) -> tuple[dict, dict, dict]:
-    """The panel's rows per month, the rows passing the condition and the rows whose condition
-    is null, from one aggregate."""
-    counts = panel.groupBy("month").agg(
-        F.count(F.lit(1)).alias("rows"),
-        F.count(F.when(condition, True)).alias("passing"),
-        F.count(F.when(condition.isNull(), True)).alias("nulls"),
-    )
-    collected = counts.orderBy("month").collect()
-    per_month = lambda field: {f"{row.month:%Y-%m}": row[field] for row in collected}  # noqa: E731
-    return per_month("rows"), per_month("passing"), per_month("nulls")
-
-
-def pre_model_tags(cfg: UseCaseConfig) -> list[str]:
-    """The tag columns the panel carries: one per `before: model` filter, named after the step."""
-    return [step.name for step in cfg.data.eligibility if step.before == "model"]
-
-
-def resolve_candidates(columns: list[str], cfg: UseCaseConfig, lineage: list[str]) -> list[str]:
-    """The columns matching an include pattern and no exclude pattern, minus the keys, the
-    helper columns, the lineage (T12) and the eligibility steps' names (tags and defines)."""
-    patterns = cfg.features.candidates
-    reserved = {*KEYS, *HELPER_COLUMNS, *lineage, *(step.name for step in cfg.data.eligibility)}
-    candidates = [
-        column
-        for column in columns
-        if column not in reserved
-        and any(fnmatchcase(column, pattern) for pattern in patterns.include)
-        and not any(fnmatchcase(column, pattern) for pattern in patterns.exclude)
-    ]
-    if not candidates:
-        raise ValueError(
-            f"no candidate column: features.candidates {patterns.model_dump()} matches none of "
-            f"{sorted(set(columns) - reserved)}; never candidates: the keys, {HELPER_COLUMNS}, "
-            f"the lineage {lineage} and the eligibility steps' names"
-        )
-    return candidates
-
-
-def build_panel(
-    cfg: UseCaseConfig, entity: str, env: EnvironmentConfig, spark: SparkSession
+def prepare_panel(
+    panel: DataFrame, cfg: UseCaseConfig, entity: str, targets: dict
 ) -> tuple[DataFrame, list[dict], dict]:
-    """The panel built in memory: sources joined, eligibility applied, the contract checked
-    (`null_in_window` serves it and goes), the split assigned, the targets outside the window
-    and the validation month nulled; the keys, the candidates, the tags, `eligible`, `target`
-    and `split`, with the log and the meta (`PANEL_META_KEYS`)."""
-    panel, log = load_panel(cfg, entity, env, spark)
-    panel, eligibility_log = apply_eligibility(panel, cfg.data.eligibility)
-    lineage = target_lineage(cfg)
-    candidates = resolve_candidates(panel.columns, cfg, lineage)
-    tags = pre_model_tags(cfg)
-    contract_log = check_contract(panel, cfg)
+    """The panel of `load_panel` (or the saved model input) prepared for `cfg`: the other use
+    cases' target columns dropped and the own one as `target`, eligibility applied, the
+    candidates resolved, the contract checked, the split assigned; the keys, the candidates, the
+    tags, `eligible`, `target` and `split`, with the log and the meta (`PANEL_META_KEYS`)."""
+    if cfg.use_case not in targets:
+        raise ValueError(
+            f"the panel has no target for use case {cfg.use_case!r}; its use cases: "
+            f"{sorted(targets)}"
+        )
+    own = targets[cfg.use_case]
+    foreign = foreign_target_columns(targets, cfg.use_case)
+    panel = panel.drop(*foreign).withColumnRenamed(own["column"], "target")
+    _check_named_features(panel, cfg)
+    panel, eligibility_log = apply_eligibility(panel, cfg.data.eligibility, period_spec(cfg))
+    candidates = resolve_candidates(panel.columns, cfg, own["lineage"])
+    tags = modelling_tags(cfg)
+    contract_log = check_contract(panel, cfg, own["null_in_window_share"])
     panel = assign_split(panel, cfg)
-    # Labels stay in the window and at the validation month only: the later months, which
-    # Feature Checks reads label-free, carry none (§4.4), as Target Factory's summary shows none.
-    window = cfg.time.train_months
-    labelled = F.col("month").between(window.first, window.last) | (
-        F.col("month") == cfg.time.validation_month
-    )
-    panel = panel.withColumn("target", F.when(labelled, F.col("target")))
     columns = [*KEYS, *candidates, *tags, "eligible", "target", "split"]
     meta = {
         "data_definition_hash": data_definition_hash(cfg, entity),
         "target_spec_hash": target_spec_hash(cfg, entity),
         "hash_version": HASH_VERSION,
-        "lineage": lineage,
+        "lineage": own["lineage"],
         "candidates": candidates,
         "tags": tags,
     }
-    return panel.select(columns), [*log, *eligibility_log, *contract_log], meta
+    return panel.select(columns), [*eligibility_log, *contract_log], meta
+
+
+def build_panel(
+    cfg: UseCaseConfig, entity: str, env: EnvironmentConfig, spark: SparkSession
+) -> tuple[DataFrame, list[dict], dict]:
+    """The panel built in memory for one config: `load_panel` of the one config, then
+    `prepare_panel`; the prepared panel with the join log followed by the preparation's log,
+    and the preparation's meta."""
+    panel, log, meta = load_panel([cfg], entity, env, spark)
+    panel, prepared_log, prepared_meta = prepare_panel(panel, cfg, entity, meta["targets"])
+    return panel, [*log, *prepared_log], prepared_meta

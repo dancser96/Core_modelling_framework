@@ -9,7 +9,7 @@ so moving the code inside needs configuration, not code edits.
 | | Outside (development) | Inside the bank (target) |
 |---|---|---|
 | Machines | Windows 11 PC via WSL2 (Ubuntu); MacBook (native) | Internal devcontainer (JupyterLab / VS Code) |
-| Data | **Synthetic only** — generated panels that match the real schema | Real monthly panel on Hive/HDFS |
+| Data | **Synthetic only** — generated panels that match the real schema | Real panel on Hive/HDFS |
 | Spark | PySpark 3.4.3 in local mode, Java 11 | Cluster Spark (CDP-style), Hive tables, raw `hdfs://` paths |
 | Storage | Local filesystem | Local workspace, plus HDFS for registered models and scores |
 | LLM | Claude Code for development | Claude via API or Bedrock, limited tokens, not the newest models |
@@ -89,13 +89,13 @@ multi-objective studies and pruning against 5.0 before relying on them.
 - **Verified in FLAML 2.7.0:** for classification, passing `groups` turns the automatic split into
   a group split; regression also needs `split_type="group"`, or its automatic split stays by rows
   (`decide_split_type` in `flaml/automl/task/generic_task.py`). Train rows repeat clients across
-  months, so FLAML gets the client groups (D-106). **Unverified:** the group split on our data
+  periods, so FLAML gets the client groups (D-106). **Unverified:** the group split on our data
   (spike 1; Phase 2 has no sample weights, D-117; fallback in `docs/components/training.md`).
-- **Assumed:** a source month never changes after it has been loaded (no late-arriving rows or
+- **Assumed:** a source period never changes after it has been loaded (no late-arriving rows or
   restatements). Reproducibility from the resolved config + hashes depends on it (`CLAUDE.md`
   §4.10); the data-definition hash describes the data, it doesn't fingerprint it. Upstream data
   facts are the data owners' and the platform's responsibility, not the framework's (D-079): whether
-  source months are restated, when the monthly mart lands, and how storage permissions differ per
+  source periods are restated, when the monthly mart lands, and how storage permissions differ per
   entity. The framework states its assumption, reads tables and paths from `conf/local/`, and
   training's count check against the EDA artifact catches a restatement in between (D-088).
 - **Unverified until spike 2:** a lossless non-pickle format per model family on the pinned
@@ -135,9 +135,9 @@ decides.
 - Marts usually hold 24 months of history. A use case starts from 100–300 candidate features,
   often pre-filtered from thousands (especially with the feature store), so the framework's
   candidate lists and patterns are a second filter, not the first (the SDS, 2026-10-20).
-- Retail scale is ~2M rows per month × ~50 columns per model (ceiling ~5M × 400).
+- Retail scale is ~2M rows per period × ~50 columns per model (ceiling ~5M × 400).
   Single-node pandas and FLAML are fine **if** columns and rows are pruned in Spark first. With
-  multi-month observation windows this becomes e.g. ~24M unit-months for 12 months, beyond the row
+  multi-period observation windows this becomes e.g. ~24M unit-periods for 12 periods, beyond the row
   budget. Sampling happens only when the config declares it (D-117); when the rows exceed the
   budget with no sampling declared, the dataset step fails loud, naming the row count, the budget
   and the two sampling options (`docs/components/dataset.md`).

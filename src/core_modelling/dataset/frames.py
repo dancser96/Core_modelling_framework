@@ -1,13 +1,15 @@
 """Frames: what a stage works on, collected from Spark with the printout (D-030, D-133).
 
-`build_frames` takes the panel (`panel.build_panel`: sources joined, eligibility, the
-candidates, the contract checked, the split assigned; or the saved model input of
-`model_input.read_model_input` when the config names one) and collects what the stage asks for:
-the window frame (every row after the pre-EDA filters, the pre-model tags and `eligible` as
-columns, every client, labels included) for EDA and Feature Checks, or train, test and
-validation (the eligible rows with a known target, train sampled when declared) for Training and
-Evaluation. Before a frame leaves Spark, `collect_frame` prints its rows, columns, the estimated
-size and the collect budget, and the callout above the budget; it never stops.
+`build_frames` takes the prepared panel (`panel.build_panel` in memory, or the saved model
+input prepared for the config by `model_input.read_model_input` when the config names one:
+sources joined, the own target as `target`, eligibility, the candidates, the contract checked,
+the split assigned) and collects what the stage asks for:
+the window frame (every row after the analysis filters, the modelling tags and `eligible` as
+columns, every client, labels included) for EDA, the same frame's eligible rows for Feature
+Checks, or train, test and validation (the eligible rows with a known target, train sampled when
+declared) for Training and Evaluation. Before a frame leaves Spark, `collect_frame` prints its
+rows, columns, the estimated size and the collect budget, and the callout above the budget; it
+never stops.
 """
 
 from dataclasses import dataclass
@@ -21,12 +23,13 @@ from core_modelling.dataset.model_input import read_model_input
 from core_modelling.dataset.panel import build_panel
 from core_modelling.dataset.split import sample_train
 from core_modelling.environment import EnvironmentConfig
+from core_modelling.periods import label_by_period, period_spec
 
 SAMPLE_ROWS = 10_000  # measured for bytes per row before a collect
 GB = 1024**3
 STAGE_FRAMES = {
     "eda": "window",
-    "feature_checks": "window",
+    "feature_checks": "eligible_window",
     "training": "modelling",
     "evaluation": "modelling",
 }
@@ -49,9 +52,9 @@ class Frames:
 def build_frames(
     cfg: UseCaseConfig, entity: str, env: EnvironmentConfig, spark: SparkSession, stage: str
 ) -> Frames:
-    """The frames `stage` works on (`eda`, `feature_checks`: the window; `training`,
-    `evaluation`: train, test, validation), from the model input when the config names one,
-    else built in memory with the same logs."""
+    """The frames `stage` works on (`eda`: the window; `feature_checks`: its eligible rows;
+    `training`, `evaluation`: train, test, validation), from the model input when the config
+    names one, else built in memory with the same logs."""
     if stage not in STAGE_FRAMES:
         raise ValueError(f"unknown stage {stage!r}; the frames serve {sorted(STAGE_FRAMES)}")
     if cfg.data.model_input is None:
@@ -59,8 +62,12 @@ def build_frames(
     else:
         panel, log, meta = read_model_input(cfg, entity, env, spark)
     frames: dict[str, pd.DataFrame] = {}
-    if STAGE_FRAMES[stage] == "window":
-        frames["window"], entry = collect_frame(_window(panel, cfg), "window", env)
+    kind = STAGE_FRAMES[stage]
+    if kind in ("window", "eligible_window"):
+        rows = _window(panel, cfg)
+        if kind == "eligible_window":
+            rows = rows.where(F.col("eligible") == 1)
+        frames["window"], entry = collect_frame(rows, kind, env)  # the entry says which
         log.append(entry)
     else:
         modelling, null_log = _modelling_rows(panel, cfg)
@@ -71,7 +78,7 @@ def build_frames(
         parts = {
             "train": train,
             "test": _window(modelling, cfg).where("split = 'test'"),
-            "validation": modelling.where(F.col("month") == cfg.time.validation_month),
+            "validation": modelling.where(F.col("period") == cfg.time.validation_period),
         }
         for name, part in parts.items():
             frames[name], entry = collect_frame(part, name, env)
@@ -89,28 +96,29 @@ def build_frames(
 
 def _window(panel: DataFrame, cfg: UseCaseConfig) -> DataFrame:
     """The panel's rows in the observation window."""
-    window = cfg.time.train_months
-    return panel.where(F.col("month").between(window.first, window.last))
+    window = cfg.time.observation_window
+    return panel.where(F.col("period").between(window.first, window.last))
 
 
 def _modelling_rows(panel: DataFrame, cfg: UseCaseConfig) -> tuple[DataFrame, dict]:
-    """The eligible rows with a known target, in the window and at the validation month; the
-    share of eligible rows dropped for a null target, per month, logged and printed."""
+    """The eligible rows with a known target, in the window and at the validation period only
+    (the panel carries labels beyond them, which no fit may see, §4.4); the share of eligible
+    rows dropped for a null target, per period, logged and printed."""
     eligible = panel.where(F.col("eligible") == 1)
-    window = cfg.time.train_months
-    months = F.col("month").between(window.first, window.last) | (
-        F.col("month") == cfg.time.validation_month
+    window, spec = cfg.time.observation_window, period_spec(cfg)
+    periods = F.col("period").between(window.first, window.last) | (
+        F.col("period") == cfg.time.validation_period
     )
+    eligible = eligible.where(periods)
     counts = (
-        eligible.where(months)
-        .groupBy("month")
+        eligible.groupBy("period")
         .agg((1 - F.count("target") / F.count(F.lit(1))).alias("null_share"))
-        .orderBy("month")
+        .orderBy("period")
         .collect()
     )
-    shares = {f"{row.month:%Y-%m}": row.null_share for row in counts}
-    print("null targets dropped from the modelling frames, per month: "
-          + ", ".join(f"{m} {s:.1%}" for m, s in shares.items()))  # fmt: skip
+    shares = label_by_period(counts, "null_share", spec)
+    print("null targets dropped from the modelling frames, per period: "
+          + ", ".join(f"{p} {s:.1%}" for p, s in shares.items()))  # fmt: skip
     return eligible.where(F.col("target").isNotNull()), {"step": "null_target", "share": shares}
 
 

@@ -4,7 +4,8 @@ An `Entry` is one decision. `APPLY_BY_OP` maps every allowed operation to one sm
 the config's raw dict; `replay` runs entries 1–n through it, and the result validated by the
 config schema is the resolved config, a run's one input. Only `exclude`, `include`,
 `keep_despite_flag` and `set` change the input; `set` may touch the paths in `LOGGABLE_SETTINGS`
-only. The other operations are the trail. Storage, writing and the public functions live in
+only. A `revert` restarts the replay from an earlier state (the entries after it stay as the
+trail). The other operations are the trail. Storage, writing and the public functions live in
 `audit_log.py`.
 """
 
@@ -22,7 +23,7 @@ from core_modelling.config.schema import StrictModel, UseCaseConfig
 
 Op = Literal[
     "exclude", "include", "keep_despite_flag", "set",
-    "flag", "dropped", "sign_off", "register", "promote", "run",
+    "revert", "flag", "dropped", "sign_off", "register", "promote", "run",
 ]  # fmt: skip
 FEATURE_OPS = {"exclude", "include", "keep_despite_flag", "flag", "dropped"}
 INPUT_FEATURE_OPS = {"exclude", "include", "keep_despite_flag"}  # the ones replay checks
@@ -49,7 +50,7 @@ LOGGABLE_SETTINGS: dict[str, str] = {
     "training.categoricals.min_level_count": "training",
     "training.calibration.method": "training",
     "training.sampling": "training",
-    "time.validation_month": "evaluation",  # refused once Feature Checks compared it: M2.2 (D-088)
+    "time.validation_period": "evaluation",  # refused once Feature Checks compared it: M2.2 (D-088)
     "evaluation.slices.top_pct": "evaluation",
     "evaluation.slices.top_n": "evaluation",
     "evaluation.views": "evaluation",
@@ -82,6 +83,7 @@ class Entry(StrictModel):
     path: str | None = None
     from_value: object | None = Field(default=None, alias="from")
     to_value: object | None = Field(default=None, alias="to")
+    to_seq: int | None = Field(default=None, ge=0)  # revert: 0 is the config as written
     reason: str
     evidence: list[str] = []
     data_definition_hash: str
@@ -94,8 +96,21 @@ class Entry(StrictModel):
     @model_validator(mode="after")
     def _check_operands(self) -> "Entry":
         """A feature op names its features and nothing of a `set`; a `set` names its path and the
-        new value, which may be null (e.g. switching sampling off), and no features."""
+        new value, which may be null (e.g. switching sampling off), and no features; a `revert`
+        names an earlier state (`to_seq` below its own `seq`) and nothing else."""
         given = self.model_fields_set
+        if self.op == "revert":
+            if self.to_seq is None or self.to_seq >= self.seq:
+                raise ValueError(
+                    f"entry {self.seq}: op 'revert' needs `to_seq` below {self.seq} (an earlier "
+                    "entry, or 0 for the config as written)"
+                )
+            if self.features is not None or given & set(SET_ONLY_FIELDS):
+                raise ValueError(
+                    f"entry {self.seq}: op 'revert' takes no features / path / from / to"
+                )
+        elif self.to_seq is not None:
+            raise ValueError(f"entry {self.seq}: op {self.op!r} takes no `to_seq`")
         if self.op in FEATURE_OPS:
             if not self.features:
                 raise ValueError(f"entry {self.seq}: op {self.op!r} needs a non-empty `features`")
@@ -208,9 +223,14 @@ def validate_raw(raw: dict, context: str) -> UseCaseConfig:
 
 
 def replay(cfg: UseCaseConfig, entries: list[Entry]) -> dict:
-    """The entries applied in order to the config's raw dict; a stale one fails citing its `seq`."""
+    """The entries applied in order to the config's raw dict; a stale one fails citing its `seq`.
+    A `revert` restarts from the config with entries 1 … `to_seq` applied (the slice, since the
+    entries run 1..n) and the later entries continue from there."""
     raw = cfg.model_dump(mode="json")
     for entry in entries:
+        if entry.op == "revert":
+            raw = replay(cfg, entries[: entry.to_seq])
+            continue
         if entry.op in INPUT_FEATURE_OPS:
             check_candidates(cfg, entry.features, f"entry {entry.seq} is stale")
         # A hand-edited or old entry must not change the data definition, `decision` or the seed.
@@ -222,10 +242,24 @@ def replay(cfg: UseCaseConfig, entries: list[Entry]) -> dict:
     return raw
 
 
-def _origins(entries: list[Entry]) -> dict[str, int]:
-    """Each changed value's key → the entry that set it (the latest wins, an include removes)."""
-    origins: dict[str, int] = {}
+def effective_entries(entries: list[Entry]) -> list[Entry]:
+    """The entries that shape the current state once every revert is applied: a revert drops the
+    entries after its `to_seq` up to itself (restarting the way `replay` does), and reverts
+    themselves are never effective."""
+    effective: list[Entry] = []
     for entry in entries:
+        if entry.op == "revert":
+            effective = effective_entries(entries[: entry.to_seq])
+        else:
+            effective.append(entry)
+    return effective
+
+
+def _origins(entries: list[Entry]) -> dict[str, int]:
+    """Each changed value's key → the entry that set it (the latest wins, an include removes, a
+    revert restarts from the earlier state)."""
+    origins: dict[str, int] = {}
+    for entry in effective_entries(entries):
         if entry.op == "set":
             origins[entry.path] = entry.seq
         elif entry.op == "exclude":
@@ -241,12 +275,17 @@ def _origins(entries: list[Entry]) -> dict[str, int]:
 
 
 def write_resolved(resolved: UseCaseConfig, entries: list[Entry], save_to: str | Path) -> None:
-    """The resolved config as YAML under a comment header: the entries replayed and, per changed
-    value, the entry that set it. `resolved.housekeeping` is filled already."""
+    """The resolved config as YAML under a comment header: the entries replayed, each revert and,
+    per changed value, the entry that set it. `resolved.housekeeping` is filled already."""
     housekeeping = resolved.housekeeping
     header = [
         f"# resolved: {resolved.use_case} + entries 1–{housekeeping['replayed_to']} "
         f"(input hash {short(housekeeping['resolved_input_hash'])})"
+    ]
+    header += [
+        f"# entry {e.seq} reverted to the state after #{e.to_seq}"
+        for e in entries
+        if e.op == "revert"
     ]
     header += [f"# {key}: #{seq}" for key, seq in _origins(entries).items()]
     body = yaml.safe_dump(resolved.model_dump(mode="json"), sort_keys=False, allow_unicode=True)

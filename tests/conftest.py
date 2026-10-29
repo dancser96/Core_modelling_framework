@@ -104,7 +104,7 @@ def _merged(base: dict, change: dict) -> dict:
 
 @pytest.fixture
 def write_sources(spark: SparkSession, tmp_path: Path) -> Callable[..., EnvironmentConfig]:
-    """A function writing keyed panels (`unit_id`, `month`, …) to parquet under the config's key
+    """A function writing keyed panels (`unit_id`, `period`, …) to parquet under the config's key
     names (`client_id`, `snapshot_month`) as `entity_a`'s sources of a new environment on the
     test's folder; other keywords are environment settings (`collect_budget_gb=…`)."""
 
@@ -114,7 +114,7 @@ def write_sources(spark: SparkSession, tmp_path: Path) -> Callable[..., Environm
         for name, panel in panels.items():
             path = str(tmp_path / name)
             raw = panel.withColumnRenamed("unit_id", "client_id")
-            raw.withColumnRenamed("month", "snapshot_month").write.parquet(path)
+            raw.withColumnRenamed("period", "snapshot_month").write.parquet(path)
             sources[name] = Source(format="parquet", path=path)
         return EnvironmentConfig(
             schema_version=1,

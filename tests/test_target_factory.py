@@ -1,18 +1,19 @@
 """Target Factory: the forward window, the null rules, the source checks and the oracle (§4.1).
 
-Hand-made panels check each rule month by month: the window is t+1 … t+w (t never in it, T8),
-w comes from config (T13), the rule compares the value at t with the window's values, a null is
-ignored unless nothing can be compared (SQL semantics), `null_as` fills the nulls first, and the
-target is null where the unit lacks a month of the window (the panel edge, a leaver, a gap).
+Hand-made monthly panels check each rule period by period: the window is t+1 … t+w (t never in
+it, T8), w comes from config (T13), the rule compares the value at t with the window's values, a
+null is ignored unless nothing can be compared (SQL semantics), and the target is null where the
+unit lacks a period of the window (the panel edge, a leaver, a gap). A weekly and a daily panel
+with explicit dates check that the window counts the config's period, a missing one a gap.
 Hand-made sources written to parquet check what `load_targets` refuses: a target column of the
-wrong type or values, a `null_as` the task can't read, and months missing from the target source.
+wrong type or values, and periods missing from the target source.
 On the unit preset, the built flag targets equal the oracle's `realised_target` on the rows the
 oracle deems eligible, nulls included.
 """
 
 import calendar
+from collections.abc import Callable
 from datetime import date
-from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -20,7 +21,8 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from core_modelling.config import UseCaseConfig
-from core_modelling.environment import EnvironmentConfig, Roots, Source
+from core_modelling.environment import EnvironmentConfig
+from core_modelling.periods import period_spec
 from core_modelling.target_factory import (
     build_targets,
     load_targets,
@@ -30,15 +32,19 @@ from core_modelling.target_factory import (
 from core_modelling.tasks import TASK_SPECS
 from synthetic.truth.oracle import realised_target
 
-MISSING = "no row"  # the unit has no row that month
+MISSING = "no row"  # the unit has no row that period
 FIRST = (2024, 11)  # hand-made panels start here, so they cross a year end
 # With w = 3, the hand-made target source must have FIRST … 2025-06: eight months.
 SHORT_TIME = {
-    "train_months": {"first": date(2024, 11, 1), "last": date(2024, 12, 1)},
-    "validation_month": date(2025, 3, 1),
+    "observation_window": {"first": date(2024, 11, 1), "last": date(2024, 12, 1)},
+    "validation_period": date(2025, 3, 1),
 }
 UPSTREAM_TRAP = "cc_acquire_next_3_months_flag_trap_upstream_target"  # null in the last 3 months
-TARGET_COLUMNS = ["unit_id", "month", "target", "null_in_window"]
+TARGET_COLUMNS = ["unit_id", "period", "target", "null_in_window"]
+# Explicit dates for the weekly and the daily window, crossing a year end: the third period
+# (W02, 01-01) is the gap.
+WEEKS = [date(2024, 12, 29), date(2025, 1, 5), date(2025, 1, 12), date(2025, 1, 19)]  # Sundays
+DAYS = [date(2024, 12, 30), date(2024, 12, 31), date(2025, 1, 1), date(2025, 1, 2)]
 
 
 def _month(position: int) -> date:
@@ -60,16 +66,16 @@ def _panel(spark: SparkSession, values: dict[str, list], column_type: str = "int
         for position, value in enumerate(series)
         if value != MISSING
     ]
-    return spark.createDataFrame(rows, f"unit_id string, month date, value {column_type}")
+    return spark.createDataFrame(rows, f"unit_id string, period date, value {column_type}")
 
 
 def _targets(targets: DataFrame, column: str = "target") -> dict[str, list]:
     """The built `column` laid out like `_panel`'s input: per unit, month by month."""
     rows = targets.collect()
-    length = max(_position(row.month) for row in rows) + 1
+    length = max(_position(row.period) for row in rows) + 1
     out = {}
     for row in rows:
-        out.setdefault(row.unit_id, [MISSING] * length)[_position(row.month)] = row[column]
+        out.setdefault(row.unit_id, [MISSING] * length)[_position(row.period)] = row[column]
     return {unit: _trim(series) for unit, series in out.items()}
 
 
@@ -80,20 +86,6 @@ def _trim(series: list) -> list:
     return series
 
 
-def _env_of(spark: SparkSession, tmp_path: Path, panels: dict[str, DataFrame]) -> EnvironmentConfig:
-    """An environment whose `entity_a` sources are the keyed panels written to parquet under the
-    config's key names."""
-    sources = {}
-    for name, panel in panels.items():
-        path = str(tmp_path / name)
-        raw = panel.withColumnRenamed("unit_id", "client_id")
-        raw.withColumnRenamed("month", "snapshot_month").write.parquet(path)
-        sources[name] = Source(format="parquet", path=path)
-    return EnvironmentConfig(
-        schema_version=1, roots=Roots(data=str(tmp_path)), sources={"entity_a": sources}
-    )
-
-
 def _variant(
     cfg: UseCaseConfig,
     task: str = "binary",
@@ -102,10 +94,11 @@ def _variant(
     time: dict | None = None,
     **target: object,
 ) -> UseCaseConfig:
-    """`cfg` with another task, window, target source, months and target fields, re-validated."""
+    """`cfg` with another task, window, target source, time fields and target fields,
+    re-validated."""
     data = cfg.model_dump()
     data["task"] = task
-    data["time"] = {**data["time"], **(time or {}), "target_window_months": w}
+    data["time"] = {**data["time"], **(time or {}), "target_window": w}
     data["entities"]["entity_a"]["sources"]["targets"] = targets
     data["data"]["target"] = {**data["data"]["target"], **target}
     return UseCaseConfig.model_validate(data)
@@ -114,7 +107,7 @@ def _variant(
 def test_flag_window_runs_from_t_plus_1_to_t_plus_w(
     spark: SparkSession, cc_config: UseCaseConfig
 ) -> None:
-    """An event at t+1 and at t+w counts, at t+w+1 not; a holder at t gets 0; the last w months
+    """An event at t+1 and at t+w counts, at t+w+1 not; a holder at t gets 0; the last w periods
     are null."""
     cfg = _variant(cc_config, rule="flag_goes_up", column="value")
     targets = build_targets(_panel(spark, {"a": [0, 0, 0, 0, 1, 0, 0, 0]}), cfg)
@@ -126,14 +119,15 @@ def test_flag_window_runs_from_t_plus_1_to_t_plus_w(
 def test_flag_window_length_comes_from_config(
     spark: SparkSession, cc_config: UseCaseConfig
 ) -> None:
-    """With w = 2 the same unit's window is t+1 … t+2 and only the last two months are null."""
+    """With w = 2 the same unit's window is t+1 … t+2 and only the last two periods are null."""
     cfg = _variant(cc_config, w=2, rule="flag_goes_up", column="value")
     targets = build_targets(_panel(spark, {"a": [0, 0, 0, 0, 1, 0, 0, 0]}), cfg)
     assert _targets(targets) == {"a": [0, 0, 1, 1, 0, 0, None, None]}
 
 
 def test_leaver_and_gap_give_null(spark: SparkSession, cc_config: UseCaseConfig) -> None:
-    """A month missing from the window nulls the target, even with an event in the months seen."""
+    """A period missing from the window nulls the target, even with an event in the periods
+    seen."""
     cfg = _variant(cc_config, rule="flag_goes_up", column="value")
     panel = {
         "stays": [0, 0, 0, 0, 0, 0, 0, 0],
@@ -147,44 +141,49 @@ def test_leaver_and_gap_give_null(spark: SparkSession, cc_config: UseCaseConfig)
     }
 
 
+@pytest.mark.parametrize("period, dates", [("week", WEEKS), ("day", DAYS)], ids=["weekly", "daily"])
+def test_window_counts_the_config_period(
+    spark: SparkSession, cc_config: UseCaseConfig, period: str, dates: list[date]
+) -> None:
+    """On weekly or daily data with w = 2, the window is the next two periods of that length: a
+    unit with periods 1, 2, 4 has a gap at 3, so periods 1 and 2 get null; a unit with 1, 2, 3
+    labels period 1 from 2 and 3 (an event at 3, two periods ahead)."""
+    cfg = _variant(cc_config, w=2, time={"period": period}, rule="flag_goes_up", column="value")
+    rows = [("gap", dates[0], 0), ("gap", dates[1], 0), ("gap", dates[3], 1)]
+    rows += [("full", dates[0], 0), ("full", dates[1], 0), ("full", dates[2], 1)]
+    source = spark.createDataFrame(rows, "unit_id string, period date, value int")
+    built = {(r.unit_id, r.period): r.target for r in build_targets(source, cfg).collect()}
+    assert built == {
+        ("gap", dates[0]): None, ("gap", dates[1]): None, ("gap", dates[3]): None,
+        ("full", dates[0]): 1, ("full", dates[1]): None, ("full", dates[2]): None,
+    }  # fmt: skip
+
+
 @pytest.mark.parametrize(
-    "series, null_as, target, held_null",
+    "series, target, held_null",
     [
-        ([0, 0, 1, 1], None, 1, False),
-        ([1, 1, 1, 1], None, 0, False),
-        ([1, 0, 1, 1], None, 0, False),  # a rise compared with t, not month on month
-        ([0, None, 1, 1], None, 1, True),  # a null beside a 1 is ignored
-        ([0, None, None, None], None, None, True),  # nothing to compare with
-        ([None, 0, 1, 1], None, None, True),  # nothing at t to compare
-        ([None, 0, 1, 1], 0, 1, True),  # null_as fills t …
-        ([0, None, None, None], 0, 0, True),  # … and the window; the raw null is still noted
+        ([0, 0, 1, 1], 1, False),
+        ([1, 1, 1, 1], 0, False),
+        ([1, 0, 1, 1], 0, False),  # a rise compared with t, not period on period
+        ([0, None, 1, 1], 1, True),  # a null beside a 1 is ignored
+        ([0, None, None, None], None, True),  # nothing to compare with
+        ([None, 0, 1, 1], None, True),  # nothing at t to compare
     ],
-    ids=["rise", "holder", "drop then rise", "null beside 1", "all null", "null at t",
-         "null at t as 0", "all null as 0"],
+    ids=["rise", "holder", "drop then rise", "null beside 1", "all null", "null at t"],
 )  # fmt: skip
 def test_flag_goes_up_compares_t_with_the_window(
     spark: SparkSession,
     cc_config: UseCaseConfig,
     series: list,
-    null_as: int | None,
     target: int | None,
     held_null: bool,
 ) -> None:
     """The target at t from the values t … t+3 with w = 3: 1 when some window flag exceeds t's,
     0 otherwise, null only when nothing can be compared; `null_in_window` marks a raw null."""
-    cfg = _variant(cc_config, rule="flag_goes_up", column="value", null_as=null_as)
+    cfg = _variant(cc_config, rule="flag_goes_up", column="value")
     targets = build_targets(_panel(spark, {"a": series}), cfg)
     assert _targets(targets) == {"a": [target, None, None, None]}
-    assert _targets(targets, "null_in_window") == {"a": [held_null, False, False, False]}
-
-
-def test_fractional_null_as_widens_an_integer_amount(
-    spark: SparkSession, cc_config: UseCaseConfig
-) -> None:
-    """A fractional `null_as` on an integer column is kept in the sum, never truncated."""
-    cfg = _variant(cc_config, task="regression", rule="forward_sum", column="value", null_as=0.5)
-    targets = build_targets(_panel(spark, {"a": [0, 1, None, 2]}), cfg)
-    assert _targets(targets)["a"][0] == 3.5
+    assert _targets(targets, "null_in_window") == {"a": [held_null, None, None, None]}
 
 
 def test_forward_sum_skips_nulls(spark: SparkSession, cc_config: UseCaseConfig) -> None:
@@ -194,29 +193,38 @@ def test_forward_sum_skips_nulls(spark: SparkSession, cc_config: UseCaseConfig) 
     panel = {"a": [100.0, 1.0, None, 2.0], "b": [0.0, None, None, None]}
     targets = build_targets(_panel(spark, panel, "double"), cfg)
     assert _targets(targets) == {"a": [3.0, None, None, None], "b": [None, None, None, None]}
-    assert _targets(targets, "null_in_window") == {"a": [True, False, False, False],
-                                                   "b": [True, False, False, False]}  # fmt: skip
+    assert _targets(targets, "null_in_window") == {"a": [True, None, None, None],
+                                                   "b": [True, None, None, None]}  # fmt: skip
+
+
+def test_null_in_window_is_null_where_the_window_is_incomplete(
+    spark: SparkSession, cc_config: UseCaseConfig
+) -> None:
+    """A boolean for every complete window (true where the raw column had a null at t or in it:
+    a's null at month 1 is in t=0's window and at t=1's own t), null at the panel edge and
+    before a gap, whatever the raw values there."""
+    cfg = _variant(cc_config, rule="flag_goes_up", column="value")
+    panel = {"a": [0, None, 1, 1, 0], "b": [0, 0, 0, 0, 0], "gap": [0, MISSING, 0, 0, 0]}
+    assert _targets(build_targets(_panel(spark, panel), cfg), "null_in_window") == {
+        "a": [True, True, None, None, None],
+        "b": [False, False, None, None, None],
+        "gap": [None, MISSING, None, None, None],
+    }
 
 
 def test_null_value_share_counts_windows_with_a_raw_null(
     spark: SparkSession, cc_config: UseCaseConfig
 ) -> None:
-    """The summary's `null_value_share` is the share of rows whose raw window held a null, even
-    when `null_as` gave them a target; `null_share` stays the targets' own."""
-    cfg = _variant(cc_config, rule="flag_goes_up", column="value", null_as=0)
+    """The summary's `null_value_share` is the share of complete windows whose raw window held a
+    null, even where the target could still be built; `null_share` stays the targets' own."""
+    cfg = _variant(cc_config, time=SHORT_TIME, rule="flag_goes_up", column="value")
     targets = build_targets(_panel(spark, {"a": [0, None, 1, 1], "b": [0, 0, 1, 1]}), cfg)
-    summary = TASK_SPECS["binary"]["summarise_targets"](targets, _month(0), _month(3))
-    # a's window at t=0 held a null: 1 of 2 rows that month, 1 of 8 rows in all (the incomplete
-    # windows of months 1 … 3 count as false)
-    assert summary["null_value_share"].tolist() == [0.5, 0, 0, 0, 0.125]
+    summary = TASK_SPECS["binary"]["summarise_targets"](targets, cfg)
+    # a's window at t=0 held a null: 1 of the 2 complete windows, in month 0 and in all; the
+    # incomplete windows of months 1 … 3 are null, so their share is unknown
+    assert summary["period"].tolist() == ["2024-11", "2024-12", "2025-01", "2025-02", "all"]
+    assert summary["null_value_share"].fillna(-1).tolist() == [0.5, -1, -1, -1, 0.5]
     assert summary["null_share"].tolist() == [0, 1, 1, 1, 0.75]
-
-
-def test_leavers_negative_is_not_implemented(spark: SparkSession, cc_config: UseCaseConfig) -> None:
-    """`leavers: negative` is refused until M4 (D-091), never silently treated as null."""
-    cfg = _variant(cc_config, rule="flag_goes_up", column="value", leavers="negative")
-    with pytest.raises(NotImplementedError, match="M4.*D-091"):
-        build_targets(_panel(spark, {"a": [0, 0, 0, 0]}), cfg)
 
 
 @pytest.mark.parametrize(
@@ -239,25 +247,15 @@ def test_target_lineage_is_the_column_then_the_listed_ones(cc_config: UseCaseCon
 
 
 def test_boolean_flag_reads_as_0_1(
-    spark: SparkSession, tmp_path: Path, cc_config: UseCaseConfig
+    spark: SparkSession, write_sources: Callable[..., EnvironmentConfig], cc_config: UseCaseConfig
 ) -> None:
-    """A boolean flag passes the column check and builds the same targets as a 0/1 one; `null_as`
-    fills its nulls too."""
+    """A boolean flag passes the column check and builds the same targets as a 0/1 one, a null
+    at t giving a null target."""
     flags = [False, None, True, False, False, False, False, False]
-    env = _env_of(spark, tmp_path, {"retail_holdings": _panel(spark, {"a": flags}, "boolean")})
-    cfg = _variant(cc_config, time=SHORT_TIME, rule="flag_goes_up", column="value", null_as=0)
+    env = write_sources({"retail_holdings": _panel(spark, {"a": flags}, "boolean")})
+    cfg = _variant(cc_config, time=SHORT_TIME, rule="flag_goes_up", column="value")
     targets, _ = load_targets(cfg, "entity_a", env, spark)
-    assert _targets(targets) == {"a": [1, 1, 0, 0, 0, None, None, None]}
-
-
-def test_flag_null_as_must_be_a_flag_value(
-    spark: SparkSession, tmp_path: Path, cc_config: UseCaseConfig
-) -> None:
-    """A null in a flag reads as 0 or 1 at most; any other `null_as` is refused with the flag."""
-    env = _env_of(spark, tmp_path, {"retail_holdings": _panel(spark, {"a": [0, 0, 1, 1]})})
-    cfg = _variant(cc_config, time=SHORT_TIME, rule="flag_goes_up", column="value", null_as=2)
-    with pytest.raises(ValueError, match="null_as 2 is not a flag value"):
-        load_targets(cfg, "entity_a", env, spark)
+    assert _targets(targets) == {"a": [1, None, 0, 0, 0, None, None, None]}
 
 
 @pytest.mark.parametrize(
@@ -269,13 +267,13 @@ def test_flag_null_as_must_be_a_flag_value(
         ("regression", "value", ["1.5"], "string", TypeError, "'value' is string, not numeric"),
         ("regression", "value", [1.5, float("nan")], "double", ValueError, "'value' holds NaN"),
         ("binary", "other", [0, 1], "int", ValueError, r"no target column 'other'; its columns: "
-         r"\['unit_id', 'month', 'value'\]"),
+         r"\['unit_id', 'period', 'value'\]"),
     ],
     ids=["string flag", "flag 2", "NaN flag", "string amount", "NaN amount", "missing column"],
 )  # fmt: skip
 def test_target_column_the_task_cannot_read_is_refused(
     spark: SparkSession,
-    tmp_path: Path,
+    write_sources: Callable[..., EnvironmentConfig],
     cc_config: UseCaseConfig,
     task: str,
     column: str,
@@ -286,7 +284,7 @@ def test_target_column_the_task_cannot_read_is_refused(
 ) -> None:
     """A target column of the wrong type or values fails naming the source and the column, before
     any target is built."""
-    env = _env_of(spark, tmp_path, {"retail_holdings": _panel(spark, {"a": values}, column_type)})
+    env = write_sources({"retail_holdings": _panel(spark, {"a": values}, column_type)})
     rule = {"binary": "flag_goes_up", "regression": "forward_sum"}[task]
     cfg = _variant(cc_config, task=task, time=SHORT_TIME, rule=rule, column=column)
     with pytest.raises(error, match=f"'retail_holdings'.*{message}"):
@@ -298,14 +296,23 @@ def test_target_column_the_task_cannot_read_is_refused(
     [([0, 0, 0, MISSING, 0, 0, 0, 0], "2025-02"), ([0] * 7, "2025-06")],
     ids=["gap", "ends before v + w"],
 )
-def test_target_source_missing_a_month_is_refused(
-    spark: SparkSession, tmp_path: Path, cc_config: UseCaseConfig, series: list, missing: str
+def test_target_source_missing_a_period_is_refused(
+    spark: SparkSession,
+    write_sources: Callable[..., EnvironmentConfig],
+    cc_config: UseCaseConfig,
+    series: list,
+    missing: str,
 ) -> None:
-    """A month missing between the window's first and the validation month + w fails naming it."""
-    panel = _panel(spark, {"a": series, "b": series})
-    env = _env_of(spark, tmp_path, {"retail_holdings": panel})
+    """A period missing between the window's first and the validation period + w fails naming it
+    and the two config bounds."""
+    env = write_sources({"retail_holdings": _panel(spark, {"a": series, "b": series})})
     cfg = _variant(cc_config, time=SHORT_TIME, rule="flag_goes_up", column="value")
-    with pytest.raises(ValueError, match=f"'retail_holdings' lacks the months \\['{missing}'\\]"):
+    with pytest.raises(
+        ValueError,
+        match=rf"'retail_holdings' lacks the periods \['{missing}'\].*from 2024-11 "
+        r"\(time\.observation_window\.first\) to 2025-06 "
+        r"\(time\.validation_period \+ target_window\)",
+    ):
         load_targets(cfg, "entity_a", env, spark)
 
 
@@ -313,18 +320,19 @@ def _compare_with_oracle(
     targets: DataFrame, mart: pd.DataFrame, oracle_target: str, w: int, eligible: pd.Series
 ) -> None:
     """Assert the built targets equal the oracle's realised target on the `eligible` mart rows,
-    nulls included; the oracle's first-day months are moved to their last day to match."""
+    nulls included; the oracle's integer ids and first-day months are moved to the string ids
+    and last-day periods of the keyed source to match."""
     expected = pd.DataFrame(
         {
-            "unit_id": mart["client_id"],
-            "month": pd.to_datetime(mart["snapshot_month"]) + pd.offsets.MonthEnd(0),
+            "unit_id": mart["client_id"].astype(str),
+            "period": pd.to_datetime(mart["snapshot_month"]) + pd.offsets.MonthEnd(0),
             "expected": realised_target(mart, oracle_target, w),
         }
     )[eligible]
     built = targets.toPandas()
     assert len(built) == len(mart)
-    built["month"] = pd.to_datetime(built["month"])
-    both = expected.merge(built, on=["unit_id", "month"], validate="one_to_one")
+    built["period"] = pd.to_datetime(built["period"])
+    both = expected.merge(built, on=["unit_id", "period"], validate="one_to_one")
     assert len(both) == len(expected)
     assert both["expected"].notna().any() and both["expected"].isna().any()
     assert (both["target"] > 0).any()  # positives (a 1, a spend) among the compared rows
@@ -343,7 +351,7 @@ def test_flag_goes_up_matches_the_oracle(
     at t (the oracle nulls holders by its own eligibility; the rule gives them 0)."""
     mart = unit[0]
     targets, _ = load_targets(cc_config, "entity_a", unit_env, spark)
-    w = cc_config.time.target_window_months
+    w = cc_config.time.target_window
     _compare_with_oracle(targets, mart, "cc_acquire", w, mart["cc_flag"] == 0)
 
 
@@ -360,7 +368,7 @@ def test_forward_sum_matches_the_oracle(
     )
     targets, log = load_targets(cfg, "entity_a", unit_env, spark)
     assert log["source"] == "retail_mart"
-    w = cfg.time.target_window_months
+    w = cfg.time.target_window
     _compare_with_oracle(targets, mart, "spend_cc_next_3_months", w, mart["cc_flag"] == 1)
 
 
@@ -373,8 +381,8 @@ def test_upstream_column_is_the_target(
     targets, log = load_targets(cfg, "entity_a", unit_env, spark)
     raw = spark.read.parquet(unit_env.sources["entity_a"]["retail_mart"].path)
     expected = raw.select(
-        F.col("client_id").alias("unit_id"),
-        F.last_day("snapshot_month").alias("month"),
+        F.col("client_id").cast("string").alias("unit_id"),
+        F.last_day("snapshot_month").alias("period"),
         F.col(UPSTREAM_TRAP).alias("target"),
         F.lit(None).cast("boolean").alias("null_in_window"),
     )
@@ -384,41 +392,41 @@ def test_upstream_column_is_the_target(
     assert targets.exceptAll(expected).count() == expected.exceptAll(targets).count() == 0
 
 
-def test_upstream_target_known_in_the_last_w_months_is_refused(
+def test_upstream_target_known_in_the_last_w_periods_is_refused(
     spark: SparkSession, unit_env: EnvironmentConfig, cc_config: UseCaseConfig
 ) -> None:
-    """An upstream column with values in the source's last w months, where no target over
+    """An upstream column with values in the source's last w periods, where no target over
     t+1 … t+w can be known yet, is refused: here the holding flag itself."""
     cfg = _variant(cc_config, rule=None, column="cc_flag")
     with pytest.raises(
         ValueError,
-        match=r"'cc_flag' of 'retail_holdings' has values in the source's last 3 months "
-        r"\(2026-07-31 … 2026-09-30\).*fills immature labels or uses another window",
+        match=r"'cc_flag' of 'retail_holdings' has values in the source's last 3 periods "
+        r"\(2026-07 … 2026-09\).*fills immature labels or uses another window",
     ):
         load_targets(cfg, "entity_a", unit_env, spark)
 
 
 def test_upstream_target_with_a_longer_window_is_refused(
-    spark: SparkSession, tmp_path: Path, cc_config: UseCaseConfig
+    spark: SparkSession, write_sources: Callable[..., EnvironmentConfig], cc_config: UseCaseConfig
 ) -> None:
-    """An upstream column null in the last w + 1 months was built with a longer window than
-    `w`: its target windows would overlap the validation month's (§4.2)."""
+    """An upstream column null in the last w + 1 periods was built with a longer window than
+    `w`: its target windows would overlap the validation period's (§4.2)."""
     upstream = _panel(spark, {"a": [0, 0, 0, 0, None, None, None, None]})
-    env = _env_of(spark, tmp_path, {"retail_holdings": upstream})
+    env = write_sources({"retail_holdings": upstream})
     cfg = _variant(cc_config, time=SHORT_TIME, rule=None, column="value")
-    with pytest.raises(ValueError, match=r"no value in 2025-03-31.*seems longer than"):
+    with pytest.raises(ValueError, match=r"no value in 2025-03, the last period.*seems longer"):
         load_targets(cfg, "entity_a", env, spark)
 
 
-def test_upstream_value_in_the_first_of_the_last_w_months_is_refused(
-    spark: SparkSession, tmp_path: Path, cc_config: UseCaseConfig
+def test_upstream_value_in_the_first_of_the_last_w_periods_is_refused(
+    spark: SparkSession, write_sources: Callable[..., EnvironmentConfig], cc_config: UseCaseConfig
 ) -> None:
-    """The tail is all w last months: a value at month end - w + 1 is refused even when the last
-    w - 1 months are null (a tail one month short would let it through)."""
+    """The tail is all w last periods: a value at period end - w + 1 is refused even when the
+    last w - 1 periods are null (a tail one period short would let it through)."""
     upstream = _panel(spark, {"a": [0, 0, 0, 0, 0, 1, None, None]})
-    env = _env_of(spark, tmp_path, {"retail_holdings": upstream})
+    env = write_sources({"retail_holdings": upstream})
     cfg = _variant(cc_config, time=SHORT_TIME, rule=None, column="value")
-    with pytest.raises(ValueError, match=r"has values in the source's last 3 months"):
+    with pytest.raises(ValueError, match=r"has values in the source's last 3 periods"):
         load_targets(cfg, "entity_a", env, spark)
 
 
@@ -429,25 +437,27 @@ def test_run_target_factory_summary(
     cc_config: UseCaseConfig,
     capsys: pytest.CaptureFixture,
 ) -> None:
-    """One row per month plus `all`; rows add up; the last w months are null; no window held a
-    null (the synthetic flags have none); the label columns only for the observation window's
-    months, the `all` row's over them; events ≤ rows."""
-    mart, w = unit[0], cc_config.time.target_window_months
+    """One row per period plus `all`; rows add up; the last w periods are null, their null-value
+    share unknown; no complete window held a null (the synthetic flags have none); the label
+    columns only for the observation window's periods, the `all` row's over them; events ≤
+    rows."""
+    mart, w = unit[0], cc_config.time.target_window
     summary = run_target_factory(cc_config, "entity_a", unit_env, spark)
-    months, total = summary.iloc[:-1], summary.iloc[-1]
-    assert total["month"] == "all" and len(months) == mart["snapshot_month"].nunique()
-    assert months["rows"].sum() == total["rows"] == len(mart)
-    assert (months["null_share"].iloc[-w:] == 1).all()
-    assert (months["null_share"].iloc[:-w] < 1).all()
-    assert (summary["null_value_share"] == 0).all()
-    window = cc_config.time.train_months
-    shown = pd.to_datetime(months["month"]).dt.date.between(window.first, window.last)
+    periods, total = summary.iloc[:-1], summary.iloc[-1]
+    assert total["period"] == "all" and len(periods) == mart["snapshot_month"].nunique()
+    assert periods["rows"].sum() == total["rows"] == len(mart)
+    assert (periods["null_share"].iloc[-w:] == 1).all()
+    assert (periods["null_share"].iloc[:-w] < 1).all()
+    assert (periods["null_value_share"].iloc[:-w] == 0).all()
+    assert periods["null_value_share"].iloc[-w:].isna().all() and total["null_value_share"] == 0
+    window, label = cc_config.time.observation_window, period_spec(cc_config).label
+    shown = periods["period"].between(label(window.first), label(window.last))
     labels = ["mean_target", "positive_rows", "positive_events"]
     assert shown.sum() == 6
-    assert months.loc[shown, labels].notna().all().all()
-    assert months.loc[~shown, labels].isna().all().all()  # the validation month among them
-    assert total["positive_rows"] == months["positive_rows"].sum()
-    in_window = months[shown]
+    assert periods.loc[shown, labels].notna().all().all()
+    assert periods.loc[~shown, labels].isna().all().all()  # the validation period among them
+    assert total["positive_rows"] == periods["positive_rows"].sum()
+    in_window = periods[shown]
     assert (in_window["positive_events"] == in_window["positive_rows"]).all()
     assert 0 < total["positive_events"] < total["positive_rows"]
     out = capsys.readouterr().out

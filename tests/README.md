@@ -5,7 +5,7 @@
   - time separation; OOT target windows not overlapping training's;
   - client-grouped train/test split, made after Feature Checks; label-using views in EDA and
     Feature Checks never after the window, fitting and choices from Training on train-split
-    clients only, and label-free checks never on the validation month;
+    clients only, and label-free checks never on the validation period;
   - train-only sampling (after the split), only when the config declares it; the prior-shift
     offset uses the effective training rate (the sampled rate in Phase 2, which has no sample
     weights; zero when the class balance is unchanged); calibration fitted out-of-fold inside train;

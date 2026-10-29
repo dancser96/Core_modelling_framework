@@ -8,19 +8,20 @@
 #                       (D-132); for a key inside {…}, the comment names the key first
 #   any other null      off, or derived as the comment says
 #   # key: …            a commented-out alternative to the line above it
-# A comment line above a key explains its options. The resolved config records every value a run
-# used, defaults included.
-schema_version: 1                        # required · the schema this file follows; older files migrate
-task: binary                             # required · binary (a 0/1 outcome) | regression (an amount)
-use_case: <product>_<activity>           # required · lowercase snake_case; the last token is the activity
-domain: <domain>                         # required · retail | sme | corporate …: a label, never code
+# A short comment sits on the line it explains; a longer one sits right above its key; a
+# `null · level` line always names both values on its own line. The resolved config records
+# every value a run used, defaults included.
+schema_version: 1                        # required · the schema version; older files migrate
+task: binary                             # required · binary (0/1 outcome) | regression (amount)
+use_case: <product>_<activity>           # required · snake_case; the last token is the activity
+domain: <domain>                         # required · retail | sme | corporate; a label, not code
 # autonomous: rules decide, a first model fast | assisted: a person reviews each stage
 automation_level: assisted               # required
 
-decision:                                # required · set before any result, never changed later (§4.3)
-  # top_n: a fixed-size list | threshold: act above a cut | ranking: order only |
-  # probability: a calibrated score, comparable across products (D-049)
-  type: probability                      # required · how the scores are used
+decision:                                # required · set before any result, never changed (§4.3)
+  # how the scores are used: top_n: a fixed-size list | threshold: act above a cut | ranking:
+  # order only | probability: a calibrated score, comparable across products (D-049)
+  type: probability                      # required
   n: null                                # top_n only, and required there: the list size
   metric: null                           # null: derived from the type; else a FLAML name (T9)
   gate_metric: null                      # null: derived from the type; the promotion gate's metric
@@ -31,7 +32,8 @@ decision:                                # required · set before any result, ne
 entities:                                # required
   <entity>:
     sources:                             # required
-      # ordered logical names: the first is the spine, the rest left-join to it
+      # an ORDERED list of logical names: the first is the governing spine (its rows are the
+      # panel), the rest are left-joined to it on the keys; a duplicate key in any source fails
       features: [<feature_source>]       # required
       # features: [feature_store]        # the feature store alone (not implemented until OD-26)
       # features: [feature_store, <feature_source>]   # the feature store as the spine
@@ -39,41 +41,55 @@ entities:                                # required
       # targets: <target_source>         # a source left-joined to the spine for the target only
 
 data:                                    # required
-  keys: {unit_id: <unit_id_column>, month: <month_column>}   # required · the same in every source
+  # the sources' key columns, the same in every source; renamed to unit_id and period at load,
+  # the id cast to string (so the client split survives a change of the id's type)
+  keys: {unit_id: <unit_id_column>, period: <period_column>}   # required
   model_input: null                      # null: the frames are built in memory on every run
-  # saved once, every later stage reads it; saving freezes the config (D-131):
+  # saved once by Target Factory; every later stage reads it; saving freezes the config's data
+  # part (sources, keys, period, target). One table may serve several use cases that share the
+  # sources, keys and period: `run a.yml b.yml --stages target_factory`. Eligibility, the
+  # candidates, the contract checks and the split are derived on read, so they may change
+  # without a rebuild (D-131):
   # model_input: <product>_<activity>_input
-  eligibility: []                        # []: every row of the spine is eligible
-  # ordered Spark SQL; a define names a condition, a filter keeps rows and says why. A filter's
-  # before: eda drops its rows before EDA | model keeps them for EDA, tagged by the step's name,
-  # and drops them before modelling:
-  # eligibility:
-  #   - {name: has_income, define: "income IS NOT NULL"}
-  #   - {name: income_known, filter: "has_income OR salary_transfer_flag = 1",
-  #      reason: "card rules need a known income", before: eda}
-  #   - {name: <step_name>, filter: "<spark_sql>", reason: "<reason>", before: model}
+  # two ordered lists of Spark SQL steps; a define names a condition for the steps after it, a
+  # filter keeps rows and says why. Who the analysis sees: an `analysis` filter drops its rows
+  # before EDA. Who the model sees: a `modelling` filter keeps its rows for EDA, tagged 0/1 by
+  # the step's name (a reference group, e.g. current holders), and drops them before Feature
+  # Checks. A null condition counts as false.
+  eligibility:
+    analysis: []                         # []: every row of the spine reaches EDA
+    # analysis:
+    #   - {name: has_income, define: "income IS NOT NULL"}
+    #   - {name: income_known, filter: "has_income OR salary_transfer_flag = 1",
+    #      reason: "card rules need a known income"}
+    modelling: []                        # []: every row that reaches EDA is modelled
+    # modelling:
+    #   - {name: <step_name>, filter: "<spark_sql>", reason: "<reason>"}
   target:                                # required
     # the upstream target, or the column a rule reads; excluded from the candidates
     column: <target_column>              # required
-    rule: null                           # null: `column` is an upstream target, used as is
-    # built: the flag is 1 in some month of t+1 … t+w and 0 at t (acquisition, activation); the
-    # count and amount rules come later:
-    # rule: flag_goes_up
-    # built target only · null: a null is never an event, and the target is null when nothing can
-    # be compared · e.g. 0: a null in the column means 0
-    null_as: null
-    # built target only · null: a client leaving inside the window gets a null target |
-    # negative: counts as 0
-    leavers: null
+    # null: `column` is an upstream target, used as is. flag_goes_up: the flag is 1 in some
+    # period of t+1 … t+w and 0 at t (acquisition, activation); a null in the column is never an
+    # event and gives a null target when nothing can be compared, so fill nulls that mean a
+    # value upstream. The count and amount rules come later
+    rule: null
     lineage: []                          # upstream only: the columns it was built from, excluded
   split: {test_share: 0.3, seed: 42}     # the client split, a seeded hash; smaller for few clients
   rate_band: {max: 0.5}                  # the target rate's ceiling; above it the data is suspect
 
 time:                                    # required
-  # a month is written as its first or its last day and held as its last
-  train_months: {first: <first_month>, last: <last_month>}   # required
-  target_window_months: 3                # required · w: months t+1 … t+w; longer for slow outcomes
-  validation_month: <validation_month>   # required · the out-of-time month, ≥ w after the last
+  # the unit of analysis, one row per unit per period. month: the usual grain of a feature mart
+  # and of slow outcomes (acquisition, churn) | week: campaign or activity outcomes on weekly
+  # data | day: daily data and fast outcomes. The sources must carry one row per unit per period
+  period: month
+  # every date below is written as a day of its period (a month: its first or its last day, any
+  # other day is refused as a typo; a week: any of its days; a day: itself) and held as its last
+  # the observation window t1 … tk: the periods the model trains on; 6 periods is the usual start
+  observation_window: {first: <first_period>, last: <last_period>}   # required
+  target_window: 3                       # required · w: periods t+1 … t+w; more for slow outcomes
+  # the out-of-time period the model is judged on, at least w periods after the window's last so
+  # no target window overlaps; the sources must reach w periods beyond it (matured labels)
+  validation_period: <validation_period> # required
 
 features:
   # glob patterns over the feature sources' columns; exclude known non-features
@@ -95,7 +111,7 @@ feature_checks:
     - {name: leakage, params: {}}        # features that know the target
     - {name: time_alignment, params: {}} # features that move with the target window
     - {name: eligibility_constant, params: {}}   # constant on the eligible population
-    - {name: stability, params: {psi_max: 0.25}}   # drift across the window's months
+    - {name: stability, params: {psi_max: 0.25}}   # drift across the window's periods
     - {name: redundancy, params: {}}     # near-duplicates
 
 training:
@@ -106,7 +122,7 @@ training:
   # an optional wall-clock cap; with it a rerun reproduces the recipe, not the model
   time_budget_s: null                    # null: no cap
   seed: 42
-  search_space: {}                       # {}: FLAML's own ranges; the override format is set with Training
+  search_space: {}                       # {}: FLAML's own ranges; the override format: Training
   selection:                             # automated selection by rule, on the train split only
     univariate_floor: 0.515              # drop below this univariate statistic; binary: AUC
     importance_floor: null               # null: off · drop below this importance share
@@ -120,8 +136,10 @@ training:
   # sampling: {method: client_sample, share: 0.3, seed: 42}
 
 evaluation:
-  # metrics at the top of the ranking; top_n e.g. [10000]; either list may be empty
-  slices: {top_pct: null, top_n: []}     # top_pct null · level: autonomous [0.01, 0.1] · assisted [0.01, 0.05, 0.1]
+  # metrics at the top of the ranking; either list may be empty
+  slices:
+    top_pct: null  # null · level: autonomous [0.01, 0.1] · assisted [0.01, 0.05, 0.1]
+    top_n: []                            # e.g. [10000]
   views: []                              # extended views to add; the core views always render
 
 lifecycle:

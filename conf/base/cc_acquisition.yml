@@ -6,7 +6,7 @@ use_case: cc_acquisition                 # <product>_<activity> (D-128)
 domain: retail
 automation_level: assisted               # autonomous | assisted
 
-decision:                                # declared before any result; never changed through the audit log
+decision:                                # declared before any result; never changed later (§4.3)
   type: probability                      # scores compared across products (D-049)
   n: null
   metric: null                           # derived from the decision type
@@ -16,34 +16,40 @@ decision:                                # declared before any result; never cha
 entities:                                # only the entities this use case applies to (D-034)
   entity_a:
     sources:
-      features: [retail_mart]            # the first entry is the governing spine
+      features: [retail_mart]            # ordered: the first is the governing spine
       # features: [feature_store]        # the feature store, alone (not implemented until OD-26)
       # features: [feature_store, retail_mart]   # the feature store as the spine, the mart joined
       targets: retail_holdings           # left-joined to the spine; contributes only the target
 
 data:
-  keys: {unit_id: client_id, month: snapshot_month}   # renamed to unit_id, month at load
-  model_input: cc_acquisition_input      # the saved model input's logical name
-  eligibility:                           # ordered Spark SQL; each step logs rows in -> out
-    - {name: has_income, define: "income IS NOT NULL"}
-    - {name: non_holders, filter: "cc_flag = 0", reason: "acquisition is scored for clients without a card",
-       before: model}                    # rows stay for EDA, tagged non_holders; dropped before modelling
-    - {name: income_known_or_salaried, filter: "has_income OR salary_transfer_flag = 1",
-       reason: "card rules need a known income", before: eda}   # rows dropped before EDA
+  keys: {unit_id: client_id, period: snapshot_month}   # renamed to unit_id, period; id as string
+  # the saved model input's logical name; one table may serve several use cases that share the
+  # sources, keys and period (run a.yml b.yml --stages target_factory); eligibility, candidates,
+  # contract and split are derived on read, so they may change without a rebuild (D-131)
+  model_input: cc_acquisition_input
+  eligibility:                           # two ordered Spark SQL lists; filters log rows in -> out
+    analysis:                            # rows dropped before EDA
+      - {name: has_income, define: "income IS NOT NULL"}
+      - {name: income_known_or_salaried, filter: "has_income OR salary_transfer_flag = 1",
+         reason: "card rules need a known income"}
+    modelling:                           # kept for EDA, tagged 0/1; dropped before Feature Checks
+      - {name: non_holders, filter: "cc_flag = 0",
+         reason: "acquisition is scored for clients without a card"}
   target:
-    rule: flag_goes_up                   # the flag is 1 in some month of t+1 … t+w and 0 at t
+    rule: flag_goes_up                   # the flag is 1 in some period of t+1 … t+w and 0 at t
     column: cc_flag                      # excluded from the candidates (lineage)
-    leavers: null                        # null | negative
   split: {test_share: 0.3, seed: 42}     # by client, seeded hash; applied from Training on
   rate_band: {max: 0.5}                  # contract check on the true population
 
 time:
-  train_months: {first: 2025-03-01, last: 2025-08-01}   # the observation window t1 … tk
-  target_window_months: 3                               # w: months t+1 … t+w
-  validation_month: 2025-11-01                          # v >= tk + w
+  period: month                          # the unit of analysis: month | week | day; a monthly mart
+  # a month is written as its first or its last day and held as its last
+  observation_window: {first: 2025-03-01, last: 2025-08-01}   # t1 … tk: six months
+  target_window: 3                       # w: periods t+1 … t+w
+  validation_period: 2025-11-01          # v >= tk + w by period index; sources reach v + w
 
 features:
-  candidates: {include: ["*"], exclude: []}             # glob patterns over the feature sources' columns
+  candidates: {include: ["*"], exclude: []}   # glob patterns over the feature sources' columns
 
 strata:
   variables: [segment, onboarding_channel]

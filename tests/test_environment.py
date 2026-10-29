@@ -102,8 +102,8 @@ def test_spark_extra_refuses_named_and_fixed_keys() -> None:
 def test_read_source_reads_the_written_mart(
     spark: SparkSession, unit_env: EnvironmentConfig, unit_output: tuple[str, dict]
 ) -> None:
-    """The unit mart read through the environment: every month, every row, the snapshot's columns
-    (Spark puts the partition column last) and the written types."""
+    """The unit mart read through the environment: every month of the synthetic data, every
+    row, the snapshot's columns (Spark puts the partition column last) and the written types."""
     sdf = read_source(spark, unit_env, "entity_a", "retail_mart")
     assert sdf.select("snapshot_month").distinct().count() == 24
     assert sdf.count() == len(read_output(unit_output[0], "mart", ["client_id"]))
