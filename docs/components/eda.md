@@ -85,3 +85,7 @@ that showed nothing at low prevalence (T16); EDA run last because it gave no ins
   + core + extended, see [reporting](reporting.md); the core views per task: OD-12).
 - Which pivot dimensions to pre-compute in the report vs leave to the notebook functions.
 - Ranking statistic and base-rate views for the second task type (regression, D-050, D-020).
+- `strata.variables` naming a key or a column the dataset adds (`unit_id`, `period`, `target`,
+  `split`, `eligible`): a source column of that name is read as `source_<name>`, so such a
+  stratum would silently use the framework's column; refuse it with that hint when the stage
+  is built (found in the 10-29 silent-failure audit).

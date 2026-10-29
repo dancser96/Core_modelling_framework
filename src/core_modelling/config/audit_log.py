@@ -105,8 +105,11 @@ def read_entries(log_dir: str) -> list[Entry]:
 
 
 def _log_dir(cfg: UseCaseConfig, entity: str, env: EnvironmentConfig) -> str:
-    """The log folder of this config, entity and data definition."""
-    return audit_log_dir(env, cfg.use_case, entity, short(data_definition_hash(cfg, entity)))
+    """The log folder of this config, entity and data definition; the use case lower-cased, so
+    names differing only in case share one folder on every file system."""
+    return audit_log_dir(
+        env, cfg.use_case.lower(), entity, short(data_definition_hash(cfg, entity))
+    )
 
 
 def _load_entries(

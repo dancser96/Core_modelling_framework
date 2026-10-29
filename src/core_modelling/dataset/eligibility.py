@@ -102,7 +102,8 @@ def _condition(panel: DataFrame, step: EligibilityStep, allowed: list[str]) -> C
         raise ValueError(
             f"eligibility step {step.name!r}: {sql!r} may reference the sources' columns and "
             "earlier define names only, never the keys, the target, the split, `eligible` or "
-            f"another filter's tag; Spark says: {exc}"
+            "another filter's tag (a source column named like one of these is read as "
+            f"`source_<name>`); Spark says: {exc}"
         ) from exc
     column_type = probe[step.name].dataType
     if not isinstance(column_type, BooleanType):

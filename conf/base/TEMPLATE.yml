@@ -1,5 +1,5 @@
-# Use-case config template: copy to <product>_<activity>.yml and fill it in. Unknown keys fail at
-# load. Design and every field's description: docs/components/config.md.
+# Use-case config template: copy to <use_case>.yml and fill it in. Unknown keys fail at load.
+# Design and every field's description: docs/components/config.md.
 # How to read a line:
 #   `# required`        no default: the line must stay; fill the <angle brackets>, a plain value
 #                       is the common choice
@@ -13,7 +13,7 @@
 # every value a run used, defaults included.
 schema_version: 1                        # required · the schema version; older files migrate
 task: binary                             # required · binary (0/1 outcome) | regression (amount)
-use_case: <product>_<activity>           # required · snake_case; the last token is the activity
+use_case: <use_case>   # required · letters, digits, _ and -; names folders and target_<use_case>
 domain: <domain>                         # required · retail | sme | corporate; a label, not code
 # autonomous: rules decide, a first model fast | assisted: a person reviews each stage
 automation_level: assisted               # required
@@ -33,7 +33,10 @@ entities:                                # required
   <entity>:
     sources:                             # required
       # an ORDERED list of logical names: the first is the governing spine (its rows are the
-      # panel), the rest are left-joined to it on the keys; a duplicate key in any source fails
+      # panel), the rest are left-joined to it on the keys; a duplicate key in any source fails.
+      # A source column named unit_id, period, target, split or eligible is read as
+      # source_ + its name (source_target); name it so in the config (data.target.column names an
+      # upstream target as is)
       features: [<feature_source>]       # required
       # features: [feature_store]        # the feature store alone (not implemented until OD-26)
       # features: [feature_store, <feature_source>]   # the feature store as the spine
@@ -50,7 +53,7 @@ data:                                    # required
   # sources, keys and period: `run a.yml b.yml --stages target_factory`. Eligibility, the
   # candidates, the contract checks and the split are derived on read, so they may change
   # without a rebuild (D-131):
-  # model_input: <product>_<activity>_input
+  # model_input: <use_case>_input
   # two ordered lists of Spark SQL steps; a define names a condition for the steps after it, a
   # filter keeps rows and says why. Who the analysis sees: an `analysis` filter drops its rows
   # before EDA. Who the model sees: a `modelling` filter keeps its rows for EDA, tagged 0/1 by

@@ -246,6 +246,19 @@ def test_target_lineage_is_the_column_then_the_listed_ones(cc_config: UseCaseCon
     assert target_lineage(cfg) == ["cc_flag", "cc_status", "cc_limit"]
 
 
+@pytest.mark.parametrize(
+    "target, name", [({"column": "period"}, "period"), ({"lineage": ["unit_id"]}, "unit_id")]
+)
+def test_target_naming_a_key_is_refused(cc_config: UseCaseConfig, target: dict, name: str) -> None:
+    """A target column or lineage entry named like a key fails pointing at `source_<name>`: a
+    lineage `period` would reserve the key and leave `source_period` a candidate (§4.6)."""
+    cfg = _variant(cc_config, **target)
+    with pytest.raises(
+        ValueError, match=f"data.target names '{name}', a key; .* 'source_{name}': name it so"
+    ):
+        target_lineage(cfg)
+
+
 def test_boolean_flag_reads_as_0_1(
     spark: SparkSession, write_sources: Callable[..., EnvironmentConfig], cc_config: UseCaseConfig
 ) -> None:

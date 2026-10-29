@@ -27,7 +27,7 @@ from pyspark.sql.types import BooleanType
 from core_modelling.config import UseCaseConfig
 from core_modelling.environment import EnvironmentConfig
 from core_modelling.periods import period_spec
-from core_modelling.sources import check_periods_covered, read_keyed_source
+from core_modelling.sources import KEYS, check_periods_covered, read_keyed_source
 from core_modelling.tasks import TASK_SPECS
 
 
@@ -61,7 +61,8 @@ def _check_target_column(source: DataFrame, cfg: UseCaseConfig, name: str) -> No
     column = cfg.data.target.column
     if column not in source.columns:
         raise ValueError(
-            f"target source {name!r} has no target column {column!r}; its columns: {source.columns}"
+            f"target source {name!r} has no target column {column!r}; its columns: "
+            f"{source.columns} (a source column named like a key is read as `source_<name>`)"
         )
     TASK_SPECS[cfg.task]["check_target_column"](source, column, name)
 
@@ -99,6 +100,7 @@ def load_targets(
     rule or taken from the upstream column, with the source's log."""
     if entity not in cfg.entities:
         raise ValueError(f"unknown entity {entity!r}: the config has {sorted(cfg.entities)}")
+    _check_target_names(cfg)
     sources = cfg.entities[entity].sources
     name = sources.targets or sources.features[0]  # the first feature source is the spine (D-129)
     source, log = read_keyed_source(cfg, entity, name, env, spark)
@@ -123,7 +125,19 @@ def load_targets(
 def target_lineage(cfg: UseCaseConfig) -> list[str]:
     """The columns the target is built from, excluded from the candidates: `column`, then the
     config's `lineage`, without repeats."""
+    _check_target_names(cfg)
     return list(dict.fromkeys([cfg.data.target.column, *cfg.data.target.lineage]))
+
+
+def _check_target_names(cfg: UseCaseConfig) -> None:
+    """`data.target` names no key: a source column of that name is read as `source_<name>`, and
+    a lineage entry naming the key would leave that column a candidate (§4.6)."""
+    for name in (cfg.data.target.column, *cfg.data.target.lineage):
+        if name in KEYS:
+            raise ValueError(
+                f"data.target names {name!r}, a key; a source column named {name!r} is read as "
+                f"'source_{name}': name it so"
+            )
 
 
 def run_target_factory(

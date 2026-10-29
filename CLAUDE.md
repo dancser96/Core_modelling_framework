@@ -90,7 +90,8 @@ complete or "future-proof" code. When in doubt, write less.
 12. **No new dependency without asking.** It must also be installable inside the bank (see §5).
 13. **Small, reviewable steps.** One logical change per step, roughly ≤ 300–400 changed lines
     unless agreed. Stop, summarise, let the user review. A larger agreed build ships with a review
-    guide that says what to read, in which order, and what "right" looks like (D-003).
+    guide for the SDS that says what to read, in which order, and what "right" looks like (D-003);
+    an LDS review is written only when the SDS asks for one (D-072 (i)).
 
 **Workflow for any non-trivial task**
 
@@ -103,7 +104,11 @@ which model takes which piece, the brief template, integration); in short:
   with no context, and give parallel agents disjoint files;
 - integrate and verify every result yourself;
 - keep on the main thread only what needs the whole picture or must happen in order;
-- run at most one memory-heavy job at a time (the dev machine's memory is the limit).
+- run at most one memory-heavy job at a time (the dev machine's memory is the limit);
+- on a Fable session, start every major task with a routing plan shown with the plan: each piece
+  with its agent, model and effort. Fable keeps design, integration and the ML-correctness
+  audit; Opus, Sonnet and Haiku take the other subagent work, so the tokens don't all go to
+  Fable (D-072 (l)).
 
 0. **Major steps start wide.** A major step is a new component, config section, public function or
    dependency, or anything the user calls a significant redesign or extension. Before the plan:
@@ -119,12 +124,16 @@ which model takes which piece, the brief template, integration); in short:
 
    Per step: the files to touch, the function names and signatures, and what is deliberately left
    out. Wait for approval.
-2. Implement minor step by minor step. Run `pytest` and `ruff check .` after each, then step 3's
-   reviews. Stop for the SDS at the end of each major step.
+2. Implement minor step by minor step. After each, run the tests of the modules it touched and
+   `ruff check` on the touched files, then step 3's reviews. The full suite runs once, on the main
+   thread in the background, when a major step or a multi-module build is finished: never for
+   small, targeted fixes and never by subagents (D-072 (m)). Stop for the SDS at the end of each
+   major step.
 3. Run the **code-reviewer** subagent on each minor step's diff, plus the specialised subagents in
    §10 when their trigger applies (and `simplicity-review` on code). Fix or explicitly justify every
    finding.
-4. Update docs per §8, including `worknotes/sync.md` and `worknotes/log.md`. Report: what changed, why, what to review
+4. Update docs per §8, including `worknotes/log.md` (`sync.md` only via `/brief` or when the SDS
+   asks). Report: what changed, why, what to review
    first, open risks.
 
 ---
@@ -316,7 +325,8 @@ Each fact has **one owner doc**; every other doc links to it instead of repeatin
 
 | Trigger | Update |
 |---|---|
-| Any turn that changed files, settled something or produced a finding | Refresh `worknotes/sync.md` (rules: `worknotes/README.md` → "Writing `sync.md` for the LDS") and append to `worknotes/log.md`. Every time, not only for big changes. Both are read by the Lead DS: keep them clear and short |
+| Any turn that changed files, settled something or produced a finding | Append to `worknotes/log.md`, every time, not only for big changes. Keep it clear and short: the Lead DS reads it |
+| `/brief`, or the SDS asks | Refresh `worknotes/sync.md` (rules: `worknotes/README.md` → "Writing `sync.md` for the LDS"); never otherwise (D-072 (h)) |
 | A component's behaviour, interface or design changes | `docs/components/<component>.md` (Status, requirements, Interface, Open questions) |
 | A config field is added, changed or removed | `docs/components/config.md` + example in `conf/base/`; §2 procedure if breaking |
 | An artifact format changes (card, manifest, scores, ledger, registry, monitoring tables) | The owning component doc + the §2 procedure; run compat-guardian |
@@ -361,7 +371,9 @@ numbered list for a flow, nested bullets for a tree and a narrow table for a map
 ## 9. Working with the user
 
 - **Roles.** The user is the senior DS who builds the framework and owns every decision; all design
-  flows through them. The Lead DS reviews in a daily ~1h sync (prepare with `/brief`). The Chief DS
+  flows through them. The Lead DS reviews in a daily ~1h sync (prepare with `/brief`): they read
+  the design and the important parts of the code, not all of it, and try the functionality and
+  the notebooks (D-072 (i)). The Chief DS
   sets direction and leaves the design to the SDS and LDS; topics for the CDS go to
   `docs/roadmap.md` → Chief DS topics (D-073). Downstream operation questions go to the platform /
   MLOps team (D-079). Refer to people by role only.

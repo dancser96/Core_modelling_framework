@@ -2,7 +2,7 @@
 # Every option is explained in TEMPLATE.yml. `null` = the automation level's default (D-023).
 schema_version: 1
 task: binary
-use_case: cc_acquisition                 # <product>_<activity> (D-128)
+use_case: cc_acquisition  # letters, digits, _ and -; names the folders and target_cc_acquisition
 domain: retail
 automation_level: assisted               # autonomous | assisted
 
@@ -26,7 +26,7 @@ data:
   # the saved model input's logical name; one table may serve several use cases that share the
   # sources, keys and period (run a.yml b.yml --stages target_factory); eligibility, candidates,
   # contract and split are derived on read, so they may change without a rebuild (D-131)
-  model_input: cc_acquisition_input
+  model_input: retail_acquisition_input   # shared with td_acquisition
   eligibility:                           # two ordered Spark SQL lists; filters log rows in -> out
     analysis:                            # rows dropped before EDA
       - {name: has_income, define: "income IS NOT NULL"}

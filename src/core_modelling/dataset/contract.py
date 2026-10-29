@@ -63,7 +63,8 @@ def _check_eligible_periods(eligible: DataFrame, cfg: UseCaseConfig) -> dict:
             f"no eligible row in the periods {empty}: every period of the window and the "
             "validation period must have some"
         )
-    return {"check": "eligible_rows", "per_period": per_period}
+    min_rows = min(per_period.values())
+    return {"check": "eligible_rows", "min_rows": min_rows, "per_period": per_period}
 
 
 def _shown(entry: dict) -> str:

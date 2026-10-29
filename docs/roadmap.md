@@ -110,8 +110,8 @@ here once agreed (OD-01).
   we have seen it in use; MLflow shapes the registry build if it is integrated in Phase 2
 - Config spine: YAML, two automation levels, identities and the shared-table rule are settled
   (D-007, D-023, D-043, D-088), and so are the decision audit log (D-125), the level mapping (D-132), the
-  layout, the environment file and the model input (D-129–D-131); being built in M2.1 from
-  `worknotes/m2_1_foundation/plan.md` — `config.md`
+  layout, the environment file and the model input (D-129–D-131); built in M2.1, under the
+  LDS's review (`worknotes/m2_1_foundation/review_guide.md`) — `config.md`
 - Artifact inventory: one table in `architecture.md` (artifact, owner doc, version field, writer,
   readers, compatibility rule) at M2.1 (D-007)
 - A `dev` preset of 20k clients in `synthetic/` for daily work on the skeleton: built (M2.1,
@@ -138,6 +138,11 @@ Long-term targets, not planned into Phase 2 (D-072). Each item names where it ca
   (the SDS rates it highest; closest known method: local case-control sampling, Fithian and
   Hastie, 2014); smart downsampling as a framework asset, researched in a literature round; the
   comparison of every option against the synthetic oracle, with no sampling as the reference.
+- Sources with missing periods handled automatically. Phase 2 expects full coverage: the spine
+  must have every period from the window's first to the validation period and the target
+  source every period to the validation period + w, else the run is refused naming the
+  missing periods (`dataset.md` → Time model). How a gap is filled or carried is designed then
+  (SDS, 2026-10-29).
 - Recency weighting of older months, revisited if the window ablation shows that older months
   hurt (D-117).
 - Production retrains on moved or extended data: later months, all clients (train + test) or a

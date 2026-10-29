@@ -8,7 +8,8 @@ the modelling frames hold the eligible rows with a known target split by client,
 input gives the same frames back, a model input saved from two configs serves each, a changed
 eligibility, window, split or candidate list is prepared on read while a changed target spec, a
 validation period the saved target source can't label, a missing use case, an older sidecar or
-uncovered periods are refused, and the printout turns into the callout above a tiny budget.
+uncovered periods are refused, and the printout turns into the callout above a tiny budget;
+a saved spine's `eligible` column is a candidate as `source_eligible` in both lists.
 Regression runs through the same path with client sampling; a weekly panel runs through it
 with `YYYY-Www` labels.
 """
@@ -21,6 +22,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
 from pyspark.sql.types import DateType
 
 from core_modelling.config import UseCaseConfig
@@ -31,7 +33,7 @@ from core_modelling.environment import EnvironmentConfig, Source
 from core_modelling.periods import PERIODS
 
 ENTITY = "entity_a"
-INPUT = "cc_acquisition_input"
+INPUT = "retail_acquisition_input"
 WEEK = PERIODS["week"]
 SUNDAYS = [date(2025, 1, 5) + timedelta(days=7 * i) for i in range(10)]  # 2025-W01 … W10
 
@@ -39,7 +41,7 @@ SUNDAYS = [date(2025, 1, 5) + timedelta(days=7 * i) for i in range(10)]  # 2025-
 @pytest.fixture(scope="module")
 def env(unit_env: EnvironmentConfig, tmp_path_factory: pytest.TempPathFactory) -> EnvironmentConfig:
     """The unit environment with the model input mapped to a temporary folder."""
-    path = str(tmp_path_factory.mktemp("model_input") / "cc_acquisition" / ENTITY)
+    path = str(tmp_path_factory.mktemp("model_input") / "retail_acquisition" / ENTITY)
     sources = {**unit_env.sources[ENTITY], INPUT: Source(format="parquet", path=path)}
     return unit_env.model_copy(update={"sources": {ENTITY: sources}})
 
@@ -364,17 +366,11 @@ def _weekly_mart(spark: SparkSession) -> DataFrame:
     return spark.createDataFrame(rows, "unit_id string, period date, income double, cc_flag int")
 
 
-def test_weekly_panel_runs_end_to_end_with_week_labels(
-    spark: SparkSession,
-    write_sources: Callable[..., EnvironmentConfig],
-    variant: Callable[..., UseCaseConfig],
-) -> None:
-    """`time.period: week` on a hand-made weekly mart (the spine is the target source): the
-    window frame holds the four window weeks, the join log and the null-target entry are keyed
-    by `YYYY-Www`, the modelling frames split by client with the validation week W06 and the
-    card flag as the lineage, never a candidate."""
-    env = write_sources({"retail_mart": _weekly_mart(spark)})
-    cfg = variant(
+def _weekly_config(variant: Callable[..., UseCaseConfig], **data: object) -> UseCaseConfig:
+    """The skeleton's config on the weekly mart (the spine is the target source): window W01 …
+    W04, w = 2, validation week W06, the non-holders tagged; `data` merges into its data
+    section."""
+    return variant(
         time={
             "period": "week",
             "observation_window": {"first": SUNDAYS[0], "last": SUNDAYS[3]},
@@ -388,8 +384,22 @@ def test_weekly_panel_runs_end_to_end_with_week_labels(
                 "analysis": [],
                 "modelling": [{"name": "non_holders", "filter": "cc_flag = 0", "reason": "r"}],
             },
+            **data,
         },
     )
+
+
+def test_weekly_panel_runs_end_to_end_with_week_labels(
+    spark: SparkSession,
+    write_sources: Callable[..., EnvironmentConfig],
+    variant: Callable[..., UseCaseConfig],
+) -> None:
+    """`time.period: week` on a hand-made weekly mart (the spine is the target source): the
+    window frame holds the four window weeks, the join log and the null-target entry are keyed
+    by `YYYY-Www`, the modelling frames split by client with the validation week W06 and the
+    card flag as the lineage, never a candidate."""
+    env = write_sources({"retail_mart": _weekly_mart(spark)})
+    cfg = _weekly_config(variant)
     eda = build_frames(cfg, ENTITY, env, spark, "eda")
     join = [entry for entry in eda.log if entry["step"] == "join"]
     assert [entry["source"] for entry in join] == ["retail_mart", "retail_mart"]
@@ -407,6 +417,68 @@ def test_weekly_panel_runs_end_to_end_with_week_labels(
     assert set(training.train["period"]) | set(training.test["period"]) <= set(SUNDAYS[:4])
     null_target = next(entry for entry in training.log if entry["step"] == "null_target")
     assert set(null_target["share"]) == {f"2025-W{week:02d}" for week in (1, 2, 3, 4, 6)}
+
+
+def _with_input(env: EnvironmentConfig, tmp_path: Path) -> EnvironmentConfig:
+    """The environment with the model input mapped to the test's `input` folder."""
+    saved = Source(format="parquet", path=str(tmp_path / "input"))
+    return env.model_copy(update={"sources": {ENTITY: {**env.sources[ENTITY], INPUT: saved}}})
+
+
+def test_read_side_clash_is_refused_at_save(
+    spark: SparkSession,
+    write_sources: Callable[..., EnvironmentConfig],
+    variant: Callable[..., UseCaseConfig],
+    tmp_path: Path,
+) -> None:
+    """A spine `target` beside a `source_target` fails at save, naming both, before anything
+    is written, not at every later read."""
+    mart = _weekly_mart(spark).withColumn("target", F.lit(0)).withColumn("source_target", F.lit(1))
+    env = _with_input(write_sources({"retail_mart": mart}), tmp_path)
+    cfg = _weekly_config(variant, model_input=INPUT)
+    with pytest.raises(ValueError, match="the panel has both 'target' and 'source_target'"):
+        save_model_input(cfg, ENTITY, env, spark)
+    assert not Path(tmp_path, "input").exists()
+
+
+def test_saved_candidates_read_a_source_eligible_like_the_frames(
+    spark: SparkSession,
+    write_sources: Callable[..., EnvironmentConfig],
+    variant: Callable[..., UseCaseConfig],
+    tmp_path: Path,
+) -> None:
+    """A spine carrying `eligible`: the saved table's candidate list, resolved without Spark,
+    names it `source_eligible` as the frames read from the table do."""
+    env = write_sources({"retail_mart": _weekly_mart(spark).withColumn("eligible", F.lit(1))})
+    env = _with_input(env, tmp_path)
+    cfg = _weekly_config(variant, model_input=INPUT)
+    save_model_input(cfg, ENTITY, env, spark)
+    frames = build_frames(cfg, ENTITY, env, spark, "eda")
+    assert frames.meta["candidates"] == ["income", "source_eligible"]
+    assert saved_candidates(cfg, ENTITY, env) == frames.meta["candidates"]
+
+
+def test_saved_candidates_leave_out_a_built_target_column_named_target(
+    spark: SparkSession,
+    write_sources: Callable[..., EnvironmentConfig],
+    variant: Callable[..., UseCaseConfig],
+    tmp_path: Path,
+) -> None:
+    """A built target over the spine's `target` flag: the saved table's candidate list leaves
+    `source_target` out as the lineage, as the frames read from the table do (§4.6)."""
+    mart = _weekly_mart(spark).withColumnRenamed("cc_flag", "target")
+    env = write_sources({"retail_mart": mart})
+    env = _with_input(env, tmp_path)
+    holders = {"name": "non_holders", "filter": "source_target = 0", "reason": "r"}
+    cfg = _weekly_config(
+        variant,
+        model_input=INPUT,
+        target={"column": "target"},
+        eligibility={"analysis": [], "modelling": [holders]},
+    )
+    save_model_input(cfg, ENTITY, env, spark)
+    assert saved_candidates(cfg, ENTITY, env) == ["income"]
+    assert build_frames(cfg, ENTITY, env, spark, "eda").meta["candidates"] == ["income"]
 
 
 def test_unknown_stage_and_empty_frame_are_refused(

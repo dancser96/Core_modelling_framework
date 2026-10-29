@@ -107,6 +107,30 @@ Promote-on-inference coupling; hash verification; manifest reproduction; T2–T4
   integrations). The own records (append-only events, `production.json`, D-111) map one-to-one onto
   MLflow concepts, and `production.json` stays the pointer for the whole of major version 1.
 - OD-14: model inventory design.
+- **What a non-pickle promoted model costs** (D-051; scope: only what moves from the sandpit to
+  production; facts verified on the pinned versions unless marked):
+  1. The evaluated model isn't the promoted one unless Evaluation scores the non-pickle bundle
+     too; otherwise two scoring paths can drift apart.
+  2. Fewer families reach production: LightGBM (text) and XGBoost (JSON) round-trip
+     identically, CatBoost only as binary `.cbm` (its JSON drifts by up to 1e-15), and
+     scikit-learn's forests have no format; FLAML must not search a family that can't be
+     promoted (D-037).
+  3. More of our own code: encoding, calibration and the prior shift become our own parameters
+     and predict code, and inference redoes FLAML's in-memory preprocessing (D-094).
+  4. Library upgrades: XGBoost promises that older JSON models load; LightGBM and CatBoost don't,
+     so every pin bump needs a reload test against stored predictions (D-047).
+  5. MLflow, if its registry is the promotion path (unverified): its default flavors pickle, so
+     the bundle is registered as plain files and loaded with our own code, losing `pyfunc`
+     loading, `spark_udf` and serving.
+  6. Security still has to accept `.cbm` (binary) and LightGBM's text model.
+- **Q297** The promote gate: the non-pickle bundle is written at training and Evaluation scores
+  it (one scoring path); promote accepts only listed file types; pin bumps rerun stored bundles
+  against stored predictions. Default: yes to all three.
+- **Q298** Strict JSON, or any non-executable plain data, JSON preferred? This decides CatBoost.
+  Default: plain data, as D-051 reads now.
+- **Q299** Who confirms with security that `.cbm`, LightGBM's text model and, if ever used,
+  MLflow's models from code are acceptable? Default: the SDS raises it through the CDS before the
+  pre-release.
 - OD-27: retraining in production. The shape is settled (D-052): the bundle carries the recipe,
   and production retrains it and passes the production retrain check against the parent before
   it scores (see `deploy` above); `model_hash` and `parent_run_id` identify what scored. In Phase 2 a production retrain

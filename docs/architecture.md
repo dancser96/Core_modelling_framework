@@ -283,8 +283,9 @@ built.
     target summary and the contract checks in Stage 1)
   - `sources.py`: `KEYS` and `HELPER_COLUMNS` (`target`, `split`, `eligible`);
     `read_keyed_source`, a logical source with its keys renamed (`unit_id` as a string, a
-    column named like a key or a helper column refused) and its periods at their end; Target
-    Factory, the dataset and Inference all read through it (D-129)
+    non-key column named like a key read as `source_<name>`) and its periods at their end;
+    `rename_reserved`, the one naming rule for such clashes; Target Factory, the dataset and
+    Inference all read through it (D-129)
   - `target_factory.py`: `build_targets`, `load_targets`, `target_lineage`, `run_target_factory`
   - `dataset/`: `panel.py` (the build side: sources joined, one target column per use case; the
     read side, `prepare_panel`: eligibility, candidates, contract, split), `eligibility.py`

@@ -1,14 +1,16 @@
 # Stage 1 (M2.1 Foundation): review guide
-_For the SDS and the LDS (the LDS reads the data code in full, D-072 (i)) · one continuous guide
-to Stage 1 as it stands after the 10-28 addendum · the plan is `plan.md`, the design
-`questions.md` and D-129–D-133, the addendum's spec `addendum_spec.md`, the SDS's review rounds
-and their outcomes `review_answers.md`_
+_For the SDS (D-072 (i): the LDS reads the design and the functions the sync page names, and
+tries the notebook) · one continuous guide to Stage 1 as it stands · the design is D-129–D-133
+in `docs/decisions.md` and the owner docs named below; the build's trail is
+`worknotes/log.md` · this guide stands alone: the stage's questions, plan and specs were
+deleted on 10-29, their outcomes being in `docs/`_
 
 **Status.** Built end to end and reviewed by the SDS three times (10-26 the config spine and
 the environment adapter; 10-27 Target Factory; 10-28 Target Factory and the dataset together,
-then the second round whose answers became the addendum, built the same day). Every remark is
-applied. What remains for Stage 1: the LDS's read of the data code and the deletion of this
-folder at sign-off. Version 0.2.0 is Stage 1's label until then.
+then the second round whose answers became the addendum, built the same day; 10-29 questions
+answered, two changes made, the second example use case added). Every remark is applied.
+What remains for Stage 1: the LDS's read of the data code and the deletion of this folder at
+sign-off. Version 0.2.0 is Stage 1's label until then.
 
 **What Stage 1 is.** One config file per use case, validated at load with the automation
 level's defaults, hashed (D-088) and frozen in its data part once the model input is saved
@@ -21,11 +23,11 @@ resolved config; `run` and the CLI; the Target Factory notebook.
 
 ## Read in this order
 Docs first, then the configs, then the tests (they say what the code promises), then the code.
-1. `review_answers.md`: the SDS's 10-28 remarks and what changed for each, the explanations (the
-   split's hash, also on structured ids; the two populations; the audit log's branches), then
-   the second round's answers and the reworked model input design.
-2. `addendum_spec.md`: the one page every builder followed; its three sections are the three
-   changes of the addendum. Read it as the map of what the code below does.
+1. [Explanations](#explanations) at the end of this guide: why the split is a hash, and why
+   it can be trusted on structured client ids.
+2. `notebooks/01_target_factory.ipynb`, run on the dev data: two use cases, `cc_acquisition`
+   and `td_acquisition`, saved as one model input and read back each with its own config.
+   It is the shortest way to see what the code below does.
 3. `docs/components/config.md`: the layout (`data.keys` with `period`, `time` with `period`,
    `observation_window`, `target_window`, `validation_period`), the load, the identities, the
    audit log with `revert`, the level mapping. What "right" looks like: every field of
@@ -110,9 +112,14 @@ Target Factory:
 - The built targets equal the oracle's on every non-holder row of the `unit` preset, nulls
   included.
 - A source tagged on the first day and one tagged on the last key alike; an integer id reads
-  back as a string; a bad period, key, column type or value, a column named like a key or a
-  helper column, a duplicate key, a short source and an upstream target with values in its
-  last w periods all fail loud, naming the source.
+  back as a string; a bad period, key, column type or value, a duplicate key, a short source
+  and an upstream target with values in its last w periods all fail loud, naming the source.
+- A source column named like one the framework adds is never refused: a non-key `unit_id` or
+  `period` is read as `source_<name>` at the reader; on the read side the use case's own
+  upstream target column is dropped (its values are `target`'s, so `data.target.column:
+  target` works and no eligibility condition can name the label), and any other `target`,
+  `split` or `eligible` column is read as `source_<name>`, printed and logged; a built
+  target's own column stays excluded under its read name.
 
 The dataset:
 - The saved model input is the sources joined plus one target column per use case, nothing
@@ -145,7 +152,7 @@ The dataset:
 - The split and the sample are two independent hash draws: a client is in test when its draw is
   below `test_share`; a sample keeps the rows or clients whose draw is below the fraction asked,
   whatever the split seed. The draw on structured ids is as uniform as a random number's
-  (`review_answers.md`).
+  ([Explanations](#explanations)).
 - The collect printout appears on every collect; above the budget it becomes the callout and the
   collect still proceeds.
 
@@ -172,7 +179,8 @@ them; every finding was fixed on the main thread and re-tested. The full lists a
   and as regression no longer shares a hash); a feature source that matches no spine row is
   refused naming both raw id types (was printed; the string cast would turn a type mismatch
   into an all-null feature block); a source column named like a key or a helper column
-  (`target`, `split`, `eligible`) is refused at read; a reader whose validation period plus
+  (`target`, `split`, `eligible`) was refused at read, a rename since 10-29; a reader whose
+  validation period plus
   target window outruns the saved target source is refused (the sidecar records
   `target_last`); another use case's upstream target column is dropped on read like its
   `target_` column; the audit log's `include` is judged over the effective entries, so a
@@ -227,18 +235,26 @@ them; every finding was fixed on the main thread and re-tested. The full lists a
   target column per use case, everything else derived on read; `target_<use_case>`; one shape
   for one or several configs); the unit of analysis as `time.period` with the renamed fields;
   `revert` built now rather than in M2.2; the id cast found by the hash check.
+- **10-29:** seven questions answered in chat and in `worknotes/log.md`; a source column
+  named like the framework's own is renamed `source_<name>` instead of refused, and the own
+  upstream target column is dropped on the read side, which also closes an eligibility
+  condition naming the label; missing periods as a Phase 3 wish; the use case's name freed
+  to letters, digits, `_` and `-` in any case, compared ignoring case, its lower-case form
+  naming folders and columns (Q407, D-128 replaced); a second example use
+  case, `td_acquisition`, sharing `retail_acquisition_input` with `cc_acquisition`, shown in
+  the notebook.
 
-## Deviations from the plan, for your judgement
-- **Built on the main thread, not by three parallel agents** (plan 3.1–3.3), since the pieces
+## Deviations from the design, for your judgement
+- **Steps 2 and 3 were built on the main thread, not by parallel agents**, since the pieces
   depend on each other; the addendum, by contrast, was built by five agents on disjoint files
-  from one spec (`addendum_spec.md`), with the reviews in parallel after the merge.
+  from one written spec, with the reviews in parallel after the merge.
 - **Two traps found and ruled** (`docs/context/lessons.md`): T20, the sampling draw salted apart
   from the split's; T21, the metadata file is `_model_input.json`, since Spark reads a
   `_metadata*` file as a parquet summary; T22, the hash draw depends on the id column's bytes,
   hence the cast.
 - **The spine must cover `first … v`** without a gap, the target source `first … v + w`: one
   check, two ranges; with several configs the spine covers the earliest first to the latest v.
-- **The model input's folder is rewritten whole** (the plan said dynamic partition overwrite):
+- **The model input's folder is rewritten whole** (the design said dynamic partition overwrite):
   a rerun must never leave periods of an earlier definition behind; per-period incremental
   builds are M4's requirement 7 and will revisit this.
 - **The split is not in the sidecar any more** (it was, to refuse a reseeded config): the split
@@ -248,14 +264,64 @@ them; every finding was fixed on the main thread and re-tested. The full lists a
 - **The contract takes the whole panel** and first checks that every window period and the
   validation period has eligible rows; its task checks run on the window's rows.
 - **`negative_downsampling` is refused for regression at config load** (a schema validator).
-- **`record_decision` checks feature names against the saved model input's candidates** (plan
-  3.4), falling back to the patterns, saying so, when the config names no model input or none
+- **`record_decision` checks feature names against the saved model input's candidates**,
+  falling back to the patterns, saying so, when the config names no model input or none
   is saved yet; a stale model input fails loud.
 - **Signatures:** `estimate_collect(frame, name)` takes no `spark`; `collect_frame` returns the
   frame with its log entry; `check_contract(panel, cfg, null_in_window_share)`;
   `apply_eligibility(panel, eligibility, spec)` takes the config's `Eligibility` and the period
   spec; `load_panel(cfgs, …)` takes a list; `prepare_panel(panel, cfg, entity, targets)` is the
-  read side; the model input lives in `dataset/model_input.py` (plan: `frames.py`);
+  read side; the model input lives in `dataset/model_input.py` (the design said `frames.py`);
   `run_target_factory` stays per config while `save_model_input` takes a list.
 - **Each step prints its own line** (join, eligibility, contract, null-target, sampling,
   collect) and the log entries are plain data, so a notebook and a `run` show the same lines.
+
+## Explanations
+### `split.py`: why a hash, and what the buckets were
+- **Why a hash and not `rand()`.** The split must be the same on every machine, on every
+  rerun and in every Spark partition, and all of a client's months must land on the same side.
+  A random number gives none of that. A hash of the client id is a deterministic pseudo-random
+  number: the same client always gets the same one.
+- **How it is a number in [0, 1).** `xxhash64(salt, unit_id, seed)` is a 64-bit integer that
+  looks random. `pmod(…, 1_000_000)` folds it into one of a million equal buckets, 0 to
+  999,999, evenly spread; dividing by a million gives a number in [0, 1) that behaves like a
+  uniform draw. A client is in test when its number is below `test_share`. That is all the
+  "bucketing" was: the old code compared the bucket with `share × buckets`, the same test
+  written less readably, with two different bucket counts (1,000 for the split, 1,000,000 for
+  the sample). Now there is one function, `_hash_uniform(columns, salt, seed)`, and one
+  constant, `RESOLUTION`.
+- **Why the salt (T20).** The split and the sample would otherwise use the same draw of the
+  same key with the same default seed 42. Every train client then has a draw of 0.3 or more, so
+  "keep the clients with a draw below 0.5" keeps those in [0.3, 0.5): 29% of the train clients,
+  not the 50% asked, and always the same slice of the split. The salt (`'split'`, `'sample'`)
+  makes the two draws independent.
+- **Why the seed.** Another seed gives another split or sample; both are recorded.
+- **Per row or per client.** `negative_downsampling` draws on `(unit_id, period)`, since it keeps
+  rows; `client_sample` draws on `unit_id`, since it keeps whole clients.
+
+### The split's hash on structured ids
+Yes, it can be trusted. A hash is built for exactly this: `xxhash64` passes the SMHasher
+avalanche and keyset tests (sequential, sparse and common-prefix keys), which is what Spark
+relies on when it partitions a shuffle by key. Changing one digit of the id changes about half
+the bits of the hash, so segment digits, age digits and a counter give draws unrelated to each
+other and to their neighbours. Checked on 100,000 ids of the shape you describe (two segment
+digits, three for a relationship-age block, three for a counter within it, nothing random),
+with `_hash_uniform` as it stands in `split.py` and `test_share` 0.3:
+
+| What | string ids | long ids | a random draw would give |
+|---|---|---|---|
+| test share overall | 0.301 | 0.300 | 0.3 |
+| worst segment of 5, deviation in standard deviations | 1.6 | 0.7 | about 1.5 |
+| worst age block of 20, deviation in standard deviations | 2.2 | 1.8 | about 2 |
+| lag-1 autocorrelation along the counter | −0.001 | −0.000 | 0 ± 0.03 |
+| chi-square of the draw over 100 equal bins | 94 | 102 | 99 ± 14 |
+
+So every downstream assumption of a random client split holds: each segment's test share is the
+one asked up to binomial noise, and neighbouring ids are independent. Three things the hash
+does not do, and a random number would not do either: it does not stratify, so a small
+segment's share wobbles as any random split's would (500 clients: 30% ± 4 pp); it does not know
+about dependent clients (a household with two ids), which needs the household as `unit_id`; and
+its draw depends on the id's bytes, so the same digits stored as a string and as a long draw
+differently (hence the two columns above). The third was the one thing to fix: the reader
+now casts `unit_id` to string, so an upstream change of the id column's type (int to string)
+no longer moves every client's split (T22; a double or decimal id still would, `12345.0`).

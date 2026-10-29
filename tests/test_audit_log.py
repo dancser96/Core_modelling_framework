@@ -26,7 +26,12 @@ from core_modelling.config.audit_log import (
     resolve_config,
     show_decisions,
 )
-from core_modelling.config.identities import HASH_VERSION, data_definition_hash, resolved_input_hash
+from core_modelling.config.identities import (
+    HASH_VERSION,
+    data_definition_hash,
+    resolved_input_hash,
+    short,
+)
 from core_modelling.config.replay import (
     APPLY_BY_OP,
     Op,
@@ -34,7 +39,7 @@ from core_modelling.config.replay import (
     replay,
     validate_raw,
 )
-from core_modelling.environment import EnvironmentConfig, Roots
+from core_modelling.environment import EnvironmentConfig, Roots, audit_log_dir
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "conf/base/cc_acquisition.yml"
@@ -75,7 +80,7 @@ def env_path(tmp_path: Path) -> Path:
     # The example config names a model input; mapped but never saved here, so feature decisions
     # are checked against the candidate patterns.
     model_input = {"format": "parquet", "path": str(tmp_path / "model_input")}
-    sources = {"entity_a": {"cc_acquisition_input": model_input}}
+    sources = {"entity_a": {"retail_acquisition_input": model_input}}
     content = {"schema_version": 1, "roots": {"data": str(tmp_path)}, "sources": sources}
     path.write_text(yaml.safe_dump(content))
     return path
@@ -303,6 +308,22 @@ def test_set_entry_records_from_to_and_stage(
     assert entry.stage == "training" and entry.by.kind == "person" and entry.by.id
     assert entry.hash_version == HASH_VERSION and entry.time.endswith("+00:00")
     assert json.loads(Path(_log_dir(cfg, ENTITY, env), "0010.json").read_text())["to"] == 300
+
+
+def test_mixed_case_use_case_writes_under_its_lower_case_folder(
+    config_path: Path, env_path: Path, env: EnvironmentConfig
+) -> None:
+    """`CC_Acquisition` logs under `cc_acquisition`, so names differing only in case share one
+    folder on a case-sensitive file system as on a case-insensitive one."""
+    raw = yaml.safe_load(config_path.read_text())
+    raw["use_case"] = "CC_Acquisition"
+    config_path.write_text(yaml.safe_dump(raw))
+    record_decision(config_path, ENTITY, exclude=LEAKS, reason="leak", env_path=str(env_path))
+    definition = short(data_definition_hash(load_config(config_path), ENTITY))
+    folder = Path(audit_log_dir(env, "cc_acquisition", ENTITY, definition))
+    assert [path.name for path in folder.glob("*.json")] == ["0001.json"]
+    # The folder's own spelling, which a case-insensitive file system would not check above.
+    assert [path.name for path in folder.parents[3].iterdir()] == ["cc_acquisition"]
 
 
 def test_set_to_null_switches_a_setting_off(

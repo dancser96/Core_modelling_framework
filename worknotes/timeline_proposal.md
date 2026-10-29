@@ -122,10 +122,11 @@ they are the first cut. Stage 5 (integrations and release) runs in M4 and both r
 - One memory-heavy job at a time on the 8 GB Mac; the WSL2 PC takes round 2's heavy comparisons.
 
 ## How each block ends (D-072)
-- Each stage M2.1–M2.4 and round 1b ends in the SDS's review and the LDS's review with a review guide
-  (D-003). The decisions the LDS must take are the short-term open decisions in the roadmap.
-- The LDS reviews design docs and the ML-critical code in full (dataset, Target Factory, training,
-  calibration, evaluation) and samples the rest.
+- Each stage M2.1–M2.4 and round 1b ends in the SDS's review with a review guide (D-003) and the
+  LDS's review. The decisions the LDS must take are the short-term open decisions in the roadmap.
+- The LDS reads the design docs and the important parts of the ML-critical code (dataset, Target
+  Factory, training, calibration, evaluation), and tries the functionality and the notebooks
+  (D-072 (i)).
 - A fresh-context holistic review closes each round, before its run-through.
 - A run-through: the SDS takes one use case from config to scores through the guided notebooks
   and the CLI, on the canonical synthetic data, as a user would. The LDS reads the reports and the

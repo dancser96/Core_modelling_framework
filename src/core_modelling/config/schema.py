@@ -24,7 +24,7 @@ FLAML_METRICS = {
     "r2", "rmse", "mae", "mse", "mape",
 }  # fmt: skip
 Estimator = Literal["lgbm", "xgboost", "catboost"]  # the three families; the forests never (D-037)
-USE_CASE_PATTERN = r"^[a-z0-9]+(_[a-z0-9]+)+$"
+USE_CASE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]*$"
 
 
 class StrictModel(BaseModel):
@@ -422,20 +422,12 @@ class UseCaseConfig(StrictModel):
     @field_validator("use_case")
     @classmethod
     def _check_use_case_name(cls, value: str) -> str:
-        """The name splits into `<product>_<activity>` (D-128)."""
+        """Letters, digits, underscores and hyphens, a letter or digit first, in any case."""
         if not re.fullmatch(USE_CASE_PATTERN, value):
             raise ValueError(
-                f"use_case {value!r} must be '<product>_<activity>' in lowercase snake_case "
-                "with at least two tokens, e.g. 'cc_acquisition' or 'fx_card_activation' (D-128)"
+                f"use_case {value!r} may hold only letters, digits, underscores and hyphens, a "
+                "letter or digit first, since it names folders and the column "
+                "target_<use_case>, both compared ignoring case; e.g. 'cc_acquisition' or "
+                "'fx-activation'"
             )
         return value
-
-    @property
-    def product(self) -> str:
-        """Everything before the use case name's last token (D-128)."""
-        return self.use_case.rsplit("_", 1)[0]
-
-    @property
-    def activity(self) -> str:
-        """The use case name's last token (D-128)."""
-        return self.use_case.rsplit("_", 1)[1]

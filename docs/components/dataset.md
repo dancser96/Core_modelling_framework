@@ -101,9 +101,15 @@ because the labels are absent.
 - The keys are renamed to `unit_id` and `period` at load from `data.keys` (`sources.KEYS`), and
   `unit_id` is cast to string, so an upstream change of the id column's type cannot move every
   client's split (the hash draw is over the column's bytes, T22); the source's raw id type goes
-  into its log as `id_type`. A source column named like a key or like a column the dataset adds
-  (`sources.HELPER_COLUMNS`: `target`, `split`, `eligible`) is refused at read, naming the
-  column and the source. In Phase 2 one naming serves every source of a use case.
+  into its log as `id_type`. A non-key source column named `unit_id` or `period` would clash
+  with the renamed keys, so the reader reads it as `source_unit_id` / `source_period`, prints it
+  and records it in the source log's `renamed`. A source column named like one the dataset adds
+  (`sources.HELPER_COLUMNS`: `target`, `split`, `eligible`) keeps its name at the reader, so the
+  target spec names an upstream column as the data scientist knows it (`data.target.column:
+  target` works); the read side renames whatever of them remains ([model
+  input](#model-input-d-131)). One helper, `sources.rename_reserved`, makes the `source_<name>`
+  in both places, and a `source_<name>` that is already a column fails loud naming both. In
+  Phase 2 one naming serves every source of a use case.
 - On reading, each source's period column moves to the period's end for `time.period` (a month
   to its last day, a week to its Sunday, a day stays), the framework's one period convention, so
   a source tagged on the first day joins one tagged on the last. A period column that is not a
@@ -128,7 +134,11 @@ because the labels are absent.
 ## Model input (D-131)
 One saved table per name (`data.model_input`, a logical name the environment file maps to a path
 or table), for one or several use cases that share the entity's feature sources, `data.keys` and
-`time.period`. It holds the **sources joined plus one target column per use case, nothing
+`time.period`; their names must differ ignoring case (Spark compares column names that way), and
+a target column uses the name's lower-case form, `target_cc_acquisition`. A source column named
+like one the framework adds is matched ignoring case too (`Target` is read as `source_Target`).
+The examples: `cc_acquisition` and `td_acquisition` share `retail_acquisition_input`, and the
+Target Factory notebook saves both in one table. It holds the **sources joined plus one target column per use case, nothing
 else**: the governing spine's rows from the earliest observation window's first period to the
 spine's last, every column of every feature source, and `target_<use_case>` per use case (every
 period Target Factory could build it: wherever the forward window is complete, so the gap periods
@@ -152,11 +162,33 @@ Its path is local until the M2.4 transport.
 - `save_model_input(cfgs)` writes it, for one config or a list, from the Target Factory notebook
   or `run a.yml b.yml --stages target_factory`. Saving freezes each config's data part (sources,
   keys, period, target spec, target window; D-125).
-- A reader keeps its own target as `target` and drops the other use cases' target columns, which
-  are forward-looking and never candidates, by construction. Another use case's **upstream**
-  target column (a use case with `rule: null` whose column sits in the spine or a feature
-  source) is forward-looking too: the reader drops it with the `target_` columns, and
-  `saved_candidates` leaves it out. It is refused, naming `save_model_input`, on: no table or
+- The read side (`prepare_panel`, on the saved table and in memory alike), where the dataset adds
+  its own `target`, `split` and `eligible`, in order:
+  1. drops the other use cases' target columns and their **upstream** target columns (a use case
+     with `rule: null`), forward-looking, never candidates, by construction;
+  2. drops the use case's **own upstream target column** too: its values are exactly
+     `target`'s and it is the label, so it is never a candidate and no eligibility condition can
+     name it. An upstream label (own or another's) is dropped only when its target source is
+     one of the feature sources, so the label itself is in the panel; with a separate
+     `sources.targets`, a spine column of the same name is an ordinary column (still kept out
+     of the candidates by the lineage, by name). The drops are printed and logged as one
+     `drop` entry, each column with its reason;
+  3. reads any remaining source column named `target`, `split` or `eligible` as
+     `source_<name>`, printed and logged as one `rename` entry (for `target`, the printout adds
+     "if it is a label, list it in data.target.lineage"); the lineage follows the renames, so a
+     built target over a column named `target` keeps it excluded as `source_target`;
+  4. keeps its own `target_<use_case>` as `target`.
+
+  After the join a data scientist names a renamed column `source_<name>` everywhere: eligibility
+  SQL, candidate patterns, strata, decisions. The saved table itself is the sources joined: a
+  `target`, `split` or `eligible` column keeps its name there. One pure function,
+  `panel.read_side_columns`, owns this plan, for `prepare_panel`, `saved_candidates` and
+  `save_model_input` alike: the save runs it for every config before writing, so a clash (a
+  `target` beside a `source_target`) fails at save, not at every later read. A name the
+  framework uses is refused where a data scientist would mean the source's column: in
+  `data.target.column` or `lineage` a key name (`unit_id`, `period`), in `features.excluded` or
+  `kept_despite_flags` a key or helper name; each message names the `source_<name>` to write.
+- A reader is refused, naming `save_model_input`, on: no table or
   sidecar; another schema or hash version; other feature sources, keys or period; a use case the
   table lacks; another target-spec hash for its use case; periods that don't cover
   `observation_window.first … validation_period`; a `validation_period + target_window` that
@@ -185,11 +217,13 @@ Its path is local until the M2.4 transport.
    dropped before the candidates are resolved; a null condition counts as false. Step names are
    unique across both lists; a step named like a source column, or like one the dataset adds
    (`target`, `split`, `eligible`), fails loud. A condition may reference the sources' columns
-   and earlier define names only: the keys, `target`, `split`, `eligible` and another filter's
-   tag are refused, and so are a star in a call, a subquery, a window function and a
-   non-deterministic function (`rand`, `current_date`, …, which would change the population
-   between two reads of the model input), since eligibility SQL is a leakage surface outside
-   the screens. The log counts, per period, the rows whose condition was null.
+   (a renamed one as `source_<name>`) and earlier define names only: the keys, `target`,
+   `split`, `eligible` and another filter's tag are refused, and so are a star in a call, a
+   subquery, a window function and a non-deterministic function (`rand`, `current_date`, …,
+   which would change the population between two reads of the model input), since eligibility
+   SQL is a leakage surface outside the screens. The use case's own upstream target column is
+   gone by then: it is the label, dropped on the read side. The log counts, per period, the
+   rows whose condition was null.
 2. Keep every eligible unit-period row in the window. Report both **positive rows** and
    **positive events**, because one conversion is positive in up to `w` consecutive periods.
    Every rule that uses a count of positives as evidence (minimum support per stratum, standard
@@ -395,7 +429,8 @@ contract checks' task-specific functions sit in the per-task spec (`tasks.py`, D
   entries in order, each with a fixed `step`: `join` (one per source: the spine's rows per
   period, or the rows a source matched per period and the share; plus, per target column, the
   null share with its `population`: the target source's rows in the window with a complete
-  target window, before eligibility), `eligibility` (one per filter: its `name`,
+  target window, before eligibility), `rename` (one per source column read as `source_<name>`
+  on the read side), `eligibility` (one per filter: its `name`,
   `kind` (`analysis` / `modelling`), the reason, rows per period, the rows whose condition was
   null and the rows out or tagged 1), `contract` (one per check), then `null_target`,
   `sampling` and `collect` for the modelling frames (`frame`: `window` for EDA,
@@ -426,10 +461,19 @@ contract checks' task-specific functions sit in the per-task spec (`tasks.py`, D
   `record_decision` refuses feature decisions until it is rebuilt (the artifact inventory in
   [architecture](../architecture.md#artifact-inventory)).
 - `sources.py`: `KEYS = ["unit_id", "period"]` and `HELPER_COLUMNS = ["target", "split",
-  "eligible"]`; `read_keyed_source` names the keys and refuses a source column named like a
-  key or a helper column, naming the column and the source ([target
+  "eligible"]`; `rename_reserved(columns, reserved, where)` gives each of `columns` in
+  `reserved` the name `source_<name>`, failing loud naming both when `source_<name>` is already
+  among `columns` (`where` places the clash in the message); `read_keyed_source` names the keys
+  and reads a non-key column named `unit_id` or `period` through it, printed and in the log's
+  `renamed`, and leaves `target`, `split` and `eligible` as they are ([target
   factory](target_factory.md)).
 - `panel.py`: `target_column(use_case) -> str` (`target_<use_case>`).
+  `read_side_columns(columns, targets, use_case, features) -> tuple[dict[str, str],
+  dict[str, str]]`, pure, the read-side plan ([model input](#model-input-d-131)): the columns
+  dropped with their reason (`DROP_REASONS`: every use case's target column but the own one;
+  every upstream label, the own one included, when its target source is among `features`) and
+  the renames, in order (a remaining `target`, `split` or `eligible` → `source_<name>` through
+  `rename_reserved`; then `target_<use_case>` → `target`).
   `load_panel(cfgs: list[UseCaseConfig], entity, env, spark) -> tuple[DataFrame, list[dict],
   dict]`, the build side: the use cases must be distinct and every config declare the same
   `entities.<entity>.sources.features`, `data.keys`, `data.model_input` and `time.period`
@@ -449,15 +493,17 @@ contract checks' task-specific functions sit in the per-task spec (`tasks.py`, D
   lineage, source, `upstream`, observation window, target window, validation period,
   `target_last` and `null_in_window_share`.
   `prepare_panel(panel, cfg, entity, targets: dict) -> tuple[DataFrame, list[dict], dict]`,
-  the read side: drops the other use cases' target columns, their upstream target columns
-  among them, and renames the own one to `target` (a `cfg.use_case` missing from `targets`
-  fails naming the saved use cases), then `apply_eligibility`, `resolve_candidates` with the
-  lineage from `targets`, the named-feature check (a name in `features.excluded` /
-  `kept_despite_flags` that is not a column fails loud), `modelling_tags`, `check_contract`
+  the read side: applies `read_side_columns` (a `cfg.use_case` missing from `targets` fails
+  naming the saved use cases), the drops and the `source_<name>` renames printed and logged
+  as one `drop` and one `rename` entry (each only when non-empty),
+  then `apply_eligibility`, `resolve_candidates` with the
+  lineage from `targets` under its read names, the named-feature check (a name in
+  `features.excluded` / `kept_despite_flags` that is not a column, or is a key or helper name,
+  fails loud), `modelling_tags`, `check_contract`
   with the use case's null share, `assign_split`, and the select `[*KEYS, *candidates, *tags,
   "eligible", "target", "split"]`; the meta's keys are `PANEL_META_KEYS`
-  (`data_definition_hash`, `target_spec_hash`, `hash_version`, `lineage`, `candidates`,
-  `tags`). `build_panel(cfg, entity, env, spark) -> tuple[DataFrame, list[dict], dict]` =
+  (`data_definition_hash`, `target_spec_hash`, `hash_version`, `lineage` under the read
+  names, `candidates`, `tags`). `build_panel(cfg, entity, env, spark) -> tuple[DataFrame, list[dict], dict]` =
   `load_panel([cfg], …)` then `prepare_panel`: the in-memory one-config path, its return shape
   unchanged.
 - `eligibility.py`, who is in: `apply_eligibility(panel, eligibility: Eligibility) ->
@@ -507,8 +553,8 @@ contract checks' task-specific functions sit in the per-task spec (`tasks.py`, D
   `prepare_panel` with the sidecar's `targets`: returns the prepared panel, the join log plus
   the preparation's log, and the preparation's meta); `saved_candidates(cfg, entity, env) ->
   list[str] | None` for the audit log's feature decisions (`resolve_candidates` over the
-  sidecar's columns minus the target columns, the other use cases' upstream target columns
-  among them, with the sidecar's lineage, no Spark; `None` when
+  sidecar's columns after `read_side_columns`, so the names match the frames', with the
+  sidecar's lineage, no Spark; `None` when
   the config names no model input or none is saved yet; a mapping the environment lacks fails
   loud).
 - Tested on the unit preset end to end (the window frame with the holders tagged, the Feature
@@ -525,6 +571,12 @@ contract checks' task-specific functions sit in the per-task spec (`tasks.py`, D
   part (eligibility, contract, split) on every read. On the unit preset a stage's frames take
   about ten seconds; whether to persist the panel inside the bank is decided when a real source
   is read (M2.4).
+- Another use case's label is dropped on read only when that use case shares the model input;
+  built alone, the same column is an ordinary candidate, and its leak is left to Feature Checks'
+  leakage screen (§4.6: screens flag). So under one data-definition hash the candidate list can
+  depend on which use cases were saved together. Whether a use case should declare other
+  labels it knows about (e.g. a `data.exclude_labels` list) is decided with Feature Checks
+  (M2.2; found in the 10-29 ML audit).
 - `period` reaches pandas as `datetime.date` objects (Spark's `DateType` through Arrow); whether
   EDA wants `datetime64` is settled when EDA is built (M2.2).
 - The window ablation details (OD-17; a nice to have in M4). Sampling is settled for Phase 2

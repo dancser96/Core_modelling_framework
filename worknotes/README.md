@@ -6,12 +6,11 @@ are **never loaded at session start**; they are read only when asked (`CLAUDE.md
 
 | File | Purpose | Written | Read |
 |---|---|---|---|
-| `sync.md` | The sync page: what happened in short, what the LDS should review and decide, questions, what changed in the last 2 and 7 working days | Refreshed at the end of every turn that changed files, settled something or produced a finding | Before each sync; `/brief` |
-| `log.md` | The verbose trail, newest first: what changed, why, files, decisions | Appended at the same moments as `sync.md` | When the detail behind a sync item is needed |
+| `sync.md` | The sync page: what happened in short, what the LDS should review and decide, questions, what changed in the last 2 and 7 working days | Refreshed only by `/brief` or when the SDS asks (D-072 (h)) | Before each sync; `/brief` |
+| `log.md` | The verbose trail, newest first: what changed, why, files, decisions | Appended at the end of every turn that changed files, settled something or produced a finding | When the detail behind a sync item is needed |
 | `handovers/<topic>.md` | A chat handover, one file per topic, so several topics can run in parallel | `/handover <topic>` (overwrites that topic's file) | Only via `/resume <topic>` |
-| `decisions_LDS_review.md` | The twenty decisions the LDS should read first, in reading order, with why each matters and what feedback is wanted; rows leave once reviewed, new high-impact decisions join | By the SDS's request (2026-10-22); maintained by Claude as decisions land and reviews finish | The LDS, between syncs |
-| `<stage>/` (now `m2_1_foundation/`) | The folder of the stage being built: its design questions with defaults, the agreed build plan, the review guide. One folder at a time; deleted when the stage is done (the SDS, 2026-10-23) | At the start of each stage, updated through it | The SDS answers the questions and approves the plan; the LDS reads the review guide |
-| `holistic_review_questions.md`, `timeline_proposal.md` | What is left of the planning-session set of 2026-10-20: the closed questions file, and the Phase 2 plan, the working assumption under review (D-022, OD-01). The review itself was deleted on 2026-10-22, its outcomes being in `docs/` | Once, by request; deleted when the SDS says | When the plan is shared with the CDS |
+| `<stage>/` (now `m2_1_foundation/`) | The folder of the stage being built: its design questions with defaults, the agreed build plan, the review guide; files leave once settled, so a stage under review holds its review guide alone (2026-10-29). Written for the SDS, the active developer; an LDS review joins it only when the SDS asks for one (D-072 (i)). One folder at a time; deleted when the stage is done (the SDS, 2026-10-23) | At the start of each stage, updated through it | The SDS answers the questions, approves the plan and reviews with the guide |
+| `timeline_proposal.md` | What is left of the planning-session set of 2026-10-20: the Phase 2 plan, the working assumption under review (D-022, OD-01), until its dates and depth move to `docs/roadmap.md` | Once, by request; deleted when the SDS says | When the plan is shared with the CDS |
 
 **Rules**
 - These files are visible to the Lead DS. No bank data, no internal identifiers, no people's names
@@ -21,7 +20,8 @@ are **never loaded at session start**; they are read only when asked (`CLAUDE.md
 - Keep `sync.md` short enough to read in five minutes. Detail goes to `log.md`.
 
 **Writing `sync.md` for the LDS.** The SDS works on the framework about 6 hours a day; the LDS spends
-30–60 minutes, and only reads (code and markdown) and reviews, never writes or runs anything.
+30–60 minutes. The LDS reads the design and the important parts of the code, not all of it, tries
+the functionality and the notebooks, and reviews; they never write code (D-072 (i)).
 - **Windows count working days (Monday to Friday).** The 2-day window opens at the start of the
   second-to-last working day up to today and runs to now, so weekend work always falls inside it
   (on a Monday: Friday to Monday). The 7-day window opens at the seventh-to-last working day.
@@ -32,10 +32,11 @@ are **never loaded at session start**; they are read only when asked (`CLAUDE.md
 - **Review list: most important first, then newest, without tags.** One bold line above the list
   points to the decisions the LDS must take: the short-term open decisions in `docs/roadmap.md`,
   by OD-number. A decision never appears as a review item or a tag; the items are things to read,
-  each short (about three lines): what, where, the feedback wanted. The LDS reviews design docs and
-  the ML-critical code (dataset, Target Factory, training, calibration, evaluation) in full and
-  samples the rest. An item stays until the SDS says the LDS has finished it (that news usually
-  arrives a day later), or the SDS drains the list.
+  each short (about three lines): what, where, the feedback wanted. A code item names the few
+  functions that carry the ML logic (`path` → `function`), never a whole module or "the code in
+  full". An item stays until the SDS says the LDS has finished it (that news usually arrives a day
+  later), or the SDS drains the list.
+- **"To try": what the LDS can run themselves.** A notebook or a command, and what to look for.
 - **The two recent-changes sections focus on what matters.** Only important changes and updates
   that change the LDS's picture (design, scope, findings, something ready to review, a blocker),
   never an info dump: pick, don't list everything. No tooling, package versions, machine setup or
@@ -75,8 +76,8 @@ _For the SDS and the LDS · last updated: YYYY-MM-DD · last sync: YYYY-MM-DD_
 ## Last 2 working days (MM-DD to MM-DD)
 - **<topic> (MM-DD(→ MM-DD))**: <what changed and why it matters to the LDS> — look at: <path / D-nnn>
 
-## Demo next
-- <what to show> — `<command or notebook cell>` · `<path:line>`
+## To try
+- <what to try> — `<notebook or command>` · what to look for
 
 ## Last 7 working days (MM-DD to MM-DD)
 - MM-DD(–MM-DD) — **<topic>**: <one line> — <D-nnn / OD-nn / path>

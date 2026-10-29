@@ -34,9 +34,9 @@ roots:
   production: null
 sources:                                 # logical name → physical, per entity
   entity_a:
-    retail_mart:          {format: parquet, path: /ABSOLUTE/PATH/data/01_raw/synthetic_dev/mart}
-    retail_holdings:      {format: parquet, path: /ABSOLUTE/PATH/data/01_raw/synthetic_dev/holdings}
-    cc_acquisition_input: {format: parquet, path: /ABSOLUTE/PATH/data/05_model_input/cc_acquisition/entity_a}
+    retail_mart:              {format: parquet, path: /ABSOLUTE/PATH/data/01_raw/synthetic_dev/mart}
+    retail_holdings:          {format: parquet, path: /ABSOLUTE/PATH/data/01_raw/synthetic_dev/holdings}
+    retail_acquisition_input: {format: parquet, path: /ABSOLUTE/PATH/data/05_model_input/retail_acquisition/entity_a}
 collect_budget_gb: 1.5                   # the collect printout's budget (D-133)
 theme: null
 ```
@@ -72,8 +72,9 @@ is refused (T5). Credentials references, if any, also live here and never in the
 5. Source resolution per entity: `entities.<e>.sources` in the use-case config names logical
    sources, and `sources.<entity>.<name>` in the environment file maps each to a parquet path or a
    table. The example maps three for `entity_a`: `retail_mart` (the governing spine),
-   `retail_holdings` (the target source) and `cc_acquisition_input` (the model input, a parquet
-   source whose path stays local until the transport of M2.4, like the audit log's). On a
+   `retail_holdings` (the target source) and `retail_acquisition_input` (the model input shared
+   by `cc_acquisition` and `td_acquisition`, a parquet source whose path stays local until the
+   transport of M2.4, like the audit log's). On a
    laptop they point at the synthetic dataset in `data/01_raw/` and `data/05_model_input/`. In
    the first release a source can also be the feature store, alone or next to other sources
    (D-021); a `feature_store` format is refused at load until OD-26 is settled, since the

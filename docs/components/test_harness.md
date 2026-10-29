@@ -1076,7 +1076,9 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
 Framework tests assert against the ground truth, from M2.2:
 - screens flag every trap: the trap list in `truth.json` is the acceptance list, and a test in
   `tests/` maps each kind to the Feature Checks step that must flag it (the mapping lives there,
-  not in this package);
+  not in this package). The planned mapping: quality ← constant, near_constant, all_null,
+  low_fill, high_cardinality; leakage ← leak, missing_leak, process_leak, upstream_target; time
+  alignment ← shifted; redundancy ← redundant;
 - null controls carry no signal;
 - no model beats the oracle AUC.
 

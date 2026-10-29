@@ -52,6 +52,7 @@ def test_binary_window_passes_with_both_classes_under_the_band(
     checks = [entry["check"] for entry in log]
     assert checks == ["eligible_rows", "unique_keys", "positive_rate", "null_in_window"]
     assert log[0]["per_period"] == {"2025-03": 3, "2025-04": 2, "2025-07": 1}
+    assert log[0]["min_rows"] == 1  # the thinnest period, here the validation period
     rate = log[2]
     assert rate["positive_rows"] == 1 and rate["known"] == 4 and rate["rate"] == 0.25
     assert rate["per_period"] == {"2025-03": 0.5, "2025-04": 0.0} and rate["max"] == 0.5

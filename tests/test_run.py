@@ -1,6 +1,6 @@
 """`run` and the CLI (D-024): the Target Factory stage through `python -m core_modelling run`,
-one model input saved for two configs at once, and the guided notebook calling only the Public
-API."""
+one model input saved for the two example configs at once, and the guided notebook calling only
+the Public API."""
 
 import json
 import re
@@ -11,11 +11,14 @@ import yaml
 from pyspark.sql import SparkSession
 
 from core_modelling.__main__ import main
+from core_modelling.config import load_config
 from core_modelling.dataset.model_input import METADATA_FILE
 from core_modelling.run import run
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "conf/base/cc_acquisition.yml"
+SECOND_CONFIG = ROOT / "conf/base/td_acquisition.yml"
+MODEL_INPUT = "05_model_input/retail_acquisition"
 NOTEBOOK = ROOT / "notebooks/01_target_factory.ipynb"
 # The Public API table of docs/architecture.md: what the shipped notebooks may import.
 PUBLIC_API = {
@@ -40,7 +43,7 @@ def _environment_file(tmp_path: Path, unit_output: tuple[str, dict]) -> Path:
     sources = {
         "retail_mart": {"format": "parquet", "path": unit_output[0] + "/mart"},
         "retail_holdings": {"format": "parquet", "path": unit_output[0] + "/holdings"},
-        "cc_acquisition_input": {"format": "parquet", "path": data + "/05_model_input/cc"},
+        "retail_acquisition_input": {"format": "parquet", "path": f"{data}/{MODEL_INPUT}"},
     }
     path = tmp_path / "environment.yml"
     content = {"schema_version": 1, "roots": {"data": data}, "sources": {"entity_a": sources}}
@@ -61,7 +64,7 @@ def test_run_through_the_cli_prints_the_summary_and_saves_the_model_input(
     out = capsys.readouterr().out
     assert "run target_factory for entity_a" in out and "positive_events" in out
     assert "model input saved:" in out and "entity_a: ran target_factory" in out
-    metadata = json.loads((tmp_path / "data/05_model_input/cc" / METADATA_FILE).read_text())
+    metadata = json.loads((tmp_path / "data" / MODEL_INPUT / METADATA_FILE).read_text())
     assert metadata["use_cases"] == ["cc_acquisition"] and metadata["entity"] == "entity_a"
 
 
@@ -71,15 +74,7 @@ def test_run_two_configs_saves_one_table_with_two_target_columns(
     """`run([a, b], stages=["target_factory"])` returns both summaries and saves one model
     input whose sidecar lists both use cases and whose table carries both target columns."""
     env_file = _environment_file(tmp_path, unit_output)
-    second = yaml.safe_load(CONFIG.read_text())
-    second["use_case"] = "td_acquisition"
-    second["data"]["target"]["column"] = "td_flag"
-    second["data"]["eligibility"]["modelling"] = [
-        {"name": "non_holders", "filter": "td_flag = 0", "reason": "scored without a deposit"}
-    ]
-    second_path = tmp_path / "td_acquisition.yml"
-    second_path.write_text(yaml.safe_dump(second))
-    out = run([CONFIG, second_path], env_path=str(env_file), stages=["target_factory"])
+    out = run([CONFIG, SECOND_CONFIG], env_path=str(env_file), stages=["target_factory"])
     stage = out["entity_a"]["target_factory"]
     assert sorted(stage["summary"]) == ["cc_acquisition", "td_acquisition"]
     metadata = json.loads(Path(stage["model_input"], METADATA_FILE).read_text())
@@ -126,3 +121,18 @@ def test_notebook_calls_only_the_public_api() -> None:
         unknown = {name.strip() for name in names.split(",")} - PUBLIC_API[module]
         assert not unknown, f"{module}: {unknown} are not public"
     assert not re.search(r"^\s*(def|class) ", code, flags=re.MULTILINE)
+
+
+def test_example_configs_share_one_model_input() -> None:
+    """The two example configs load and share what one model input needs: the entity's feature
+    sources, the keys, the period and the model input's name; the notebook names both."""
+    first, second = load_config(CONFIG), load_config(SECOND_CONFIG)
+    assert (first.use_case, second.use_case) == ("cc_acquisition", "td_acquisition")
+    for cfg in (first, second):
+        assert cfg.data.model_input == "retail_acquisition_input"
+    features = [cfg.entities["entity_a"].sources.features for cfg in (first, second)]
+    assert features[0] == features[1]
+    assert first.data.keys == second.data.keys and first.time.period == second.time.period
+    notebook = NOTEBOOK.read_text()
+    assert "conf/base/cc_acquisition.yml" in notebook
+    assert "conf/base/td_acquisition.yml" in notebook

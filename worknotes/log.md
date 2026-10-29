@@ -2,6 +2,104 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-10-29 — New working rules: Fable routing, the LDS's reading, stage folders, targeted tests
+- The SDS set four generic rules: (1) on a Fable session, a major task starts with a routing plan
+  (each subagent piece's agent, model, effort and why) so the tokens don't all go to Fable; strong
+  subagent pieces now run on Opus, Fable keeps the main thread and the ML-correctness auditor
+  (the SDS, Q409); (2) the LDS reads the important
+  parts of the code, not all of it, and tries the functionality and the notebooks; (3) a stage's
+  worknotes folder is written for the SDS, an LDS review only on request; (4) small, targeted
+  fixes run the touched modules' tests only; the full suite runs once, on the main thread, when a
+  major step or a multi-module build is finished, and never per agent.
+- Why: Fable sessions spent nearly every token on Fable; the LDS's 30–60 minutes are better spent
+  on the logic that matters and on trying things; the full suite (about 5 minutes) on every small
+  fix cost more time than it caught.
+- Files: `CLAUDE.md` §1 (parallel bullets, rule 13, workflow step 2) and §9 (roles);
+  `.claude/skills/delegation/SKILL.md` (§3 strong = Opus, the routing plan; §4–§6 tests;
+  anti-patterns); `.claude/agents/code-reviewer.md` (own tests only);
+  `.claude/skills/verification-before-completion/SKILL.md`; `.claude/commands/brief.md` and the
+  sync template ("Demo next" becomes "To try"); `worknotes/README.md`;
+  `docs/guides/claude_code_workflow.md`; `worknotes/timeline_proposal.md`. The live sync page
+  was left as it was.
+- Then (Q410, the SDS): `sync.md` is refreshed only by `/brief` or on request; `log.md`
+  keeps the every-turn trigger (`CLAUDE.md` §1 step 4 and §8, `doc-sync`, `worknotes/README.md`).
+- Decisions / open decisions: D-072 (i) replaced, (l) and (m) added, (h) extended.
+
+### 2026-10-29 — Questions answered; source column names; the name rule; two example use cases
+- 2026-10-29, the SDS's second message: Q407 relax the name rule; the Target Factory notebook
+  must show several targets ("that was the main point"): a second config for another product;
+  then clean the worknotes folder of stale notes and drain the sync page's review list to the
+  one real to-do, starting the Stage 1 review.
+- Code: `config/schema.py` (`USE_CASE_PATTERN` letters, digits, `_`, `-`, any case; the
+  `product` / `activity` properties removed, D-128 replaced), `dataset/panel.py` (use cases
+  sharing a model input differ ignoring case; a target join line names its use case),
+  `dataset/contract.py` (the eligible-rows line prints its period count), `conf/base/
+  td_acquisition.yml` (new: term deposit, `analysis: []`, `non_holders` on `td_flag`), the
+  shared model input renamed `retail_acquisition_input` (both configs, the environment files,
+  the test fixtures), the notebook (two configs: summaries, one save, the target columns, a
+  per-use-case frame comparison). Notebook on the dev data: one table with
+  `target_cc_acquisition` and `target_td_acquisition`; `cc_acquisition` 116,998 window rows,
+  64% eligible, target mean 0.028; `td_acquisition` 124,484 rows, 94% eligible, 0.009.
+- Worknotes cleaned: deleted `decisions_LDS_review.md`, `pickle_summary.md` (its six costs and
+  the open Q297–Q299 moved to `lifecycle.md` → Open questions first), `handovers/
+  synthetic_build.md` (its trap-to-step mapping moved to `test_harness.md`), and the stage
+  folder's `questions.md`, `plan.md`, `addendum_spec.md`, `review_answers.md` (all answered
+  or built; the split explanations folded into `review_guide.md`, which now stands alone).
+  Kept `timeline_proposal.md`: the only home of the Phase 2 plan's detail (OD-01). References
+  fixed in `README.md`, `roadmap.md`, `UPDATES.md`, `decisions.md` (D-051), `sync.md`. The
+  sync page's review list drained to the Stage 1 item, which names the functions carrying the
+  ML logic (the peer session's new D-072 (i)).
+- Reviews of the afternoon's change: code review (approve; the notebook's income wording, a
+  memory note for several large use cases, a per-config `time` print, the contract line's
+  number, a hyphenated mixed-case name through Spark, the validator's docstring) and
+  compatibility review (no break, no version bump; but "any case" reached case-insensitive
+  places: the audit log folder on macOS and the target-column collision check). Fixed by
+  treating the name case-insensitively, as written in configs but lower-cased wherever it
+  becomes a folder or a column, starting with a letter or digit (D-128); reserved source
+  column names matched ignoring case (`Target` read as `source_Target`); the contract line's
+  `min_rows`. Full suite before the fix pass: 280 passed, 5 min 45 s; after it: 286 passed,
+  5 min 13 s; ruff clean. A hyphenated target column round-trips through partitioned parquet
+  (checked by hand). The notebook on the dev data: 34 s; one earlier run failed on the first
+  frame collect with a Spark execution error right after another local Spark session, and
+  passed alone; the cause is not pinned.
+- The SDS's seven points: the sidecar sentence (explained: the schema number stayed 3 after two
+  keys were added on 10-28, since no earlier schema-3 file survives), the window written
+  `2025-03-01 … 2025-08-31` (fine; checked by loading it), `task` in the hashes (binary or
+  regression, not the use case), `revert` 14 → 8 then 15, 16 (effective 1–8, 15, 16; checked in
+  code), source columns named `target`, `split`, `eligible` (the reader served every source, so
+  "the latter": handle it), missing periods (a Phase 3 wish), the use case's naming rule (no
+  programmatic reason today; Q407 opened, default relax). Recorded in `review_answers.md`, now
+  holding this round plus the earlier explanations the review guide points to.
+- Code (one builder, then three reviewers, then a fix pass by the same builder):
+  `sources.py` (`rename_reserved`; a non-key `unit_id`/`period` read as `source_<name>`, checked
+  against every column, keys included; no refusal for `target`, `split`, `eligible`; the source
+  log's `renamed`), `dataset/panel.py` (`read_side_columns(columns, targets, use_case,
+  features)`: an upstream label, own or another use case's, dropped only when its target source
+  is a feature source; a remaining `target`, `split`, `eligible` read as `source_<name>`; the
+  lineage under its read names; one `drop` and one `rename` log entry, printed; the join entry
+  carries `renamed`; decision names that are framework names refused), `model_input.py`
+  (`saved_candidates` and `save_model_input` run the same plan; a clash fails at save),
+  `target_factory.py` (a key name in `data.target.column` or `lineage` refused with the hint),
+  `eligibility.py` (the error names the `source_<name>` convention).
+- Reviews: code review (approve; the renames' two kinds separated in the log, the lineage's read
+  names in the meta, the save-side check, tests), silent-failure audit (a label dropped by name
+  when it came from a separate target source; key renames missing the lineage; decision names
+  that silently missed; a key collision; the join log), ML audit (one §4.6 gap: a lineage entry
+  `period` reserving the key while `source_period` stayed a candidate; the rest verified). All
+  fixed. Not taken: storing the read-side plan in the meta for inference (the bundle's feature
+  list suffices; inference is built in M2.4); the candidate list depending on which use cases
+  share a table (an open question in `dataset.md`, decided with Feature Checks); `strata`
+  naming a framework column (an open question in `eda.md`).
+- Tests: a pure parametrised `read_side_columns` test (ten cases), the printouts, the refusals,
+  the built target over `target`, the own upstream `target`, `saved_candidates` on both.
+  Full suite: 273 passed, 1 failed (the template test read `source_<name>` in a new comment as
+  an unfilled placeholder; the comment reworded, `test_config_schema.py` rerun: 38 passed);
+  ruff clean; the notebook on the dev data in 27 s.
+- Docs: D-129 extended; `dataset.md`, `target_factory.md`, `config.md`, `architecture.md`, the
+  template; `roadmap.md` Phase 3 wishlist (missing periods); `eda.md` and `dataset.md` open
+  questions; `UPDATES.md` dataset row; `review_guide.md` (status, reading order, what "right"
+  looks like, the 10-29 round).
+
 ### 2026-10-28 — The Stage 1 addendum: periods, one model input for several use cases, revert
 - The SDS's third round accepted everything (the hash answer; Q400 as reworked; Q405
   `target_<use_case>`; Q406 one shape) and asked for the build with subagents and one continuous

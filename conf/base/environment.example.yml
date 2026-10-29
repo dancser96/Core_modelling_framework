@@ -18,10 +18,10 @@ sources:                     # entity → logical name (as the use-case config s
   entity_a:
     # format: parquet → path: a folder of month-partitioned parquet, absolute or a URI (hdfs://…);
     # a relative path is refused. The synthetic dev dataset comes from `python -m synthetic --preset dev`.
-    retail_mart:          {format: parquet, path: /ABSOLUTE/PATH/data/01_raw/synthetic_dev/mart}
-    retail_holdings:      {format: parquet, path: /ABSOLUTE/PATH/data/01_raw/synthetic_dev/holdings}
-    # the saved model input of the cc_acquisition use case (save_model_input writes it here)
-    cc_acquisition_input: {format: parquet, path: /ABSOLUTE/PATH/data/05_model_input/cc_acquisition/entity_a}
+    retail_mart:              {format: parquet, path: /ABSOLUTE/PATH/data/01_raw/synthetic_dev/mart}
+    retail_holdings:          {format: parquet, path: /ABSOLUTE/PATH/data/01_raw/synthetic_dev/holdings}
+    # the saved model input shared by cc_acquisition and td_acquisition (save_model_input writes it)
+    retail_acquisition_input: {format: parquet, path: /ABSOLUTE/PATH/data/05_model_input/retail_acquisition/entity_a}
     # Inside the bank a source is usually a Hive table:
     # retail_mart:        {format: table, table: database.table}
     # A feature_store format arrives with OD-26; until then it is refused at load:

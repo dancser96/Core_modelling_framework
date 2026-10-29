@@ -21,12 +21,13 @@ behind the environment adapter; nothing is written back (D-021, OD-26).
 ## Phase 2 requirements
 1. **One declarative target spec** in config (D-129): `data.target` with `rule` (the builder in
    the per-task spec) and `column` (the column the rule reads, excluded from the candidates as
-   lineage); or, for a target built upstream, `column` alone with an optional
-   `lineage` list. The keys come from `data.keys`, the target source from
-   `entities.<e>.sources.targets` (the spine when omitted), and the forward window `w` from
-   `time.target_window`, in periods (`time.period`: month, week or day), one number shared with
-   the time checks, required for both variants since an upstream target also looks some periods
-   ahead. One function builds the targets lazily in Spark; saving is a separate call.
+   lineage); or, for a target built upstream, `column` alone (named as the source names it,
+   `target` included) with an optional `lineage` list. The keys come from `data.keys`, the
+   target source from `entities.<e>.sources.targets` (the spine when omitted), and the forward
+   window `w` from `time.target_window`, in periods (`time.period`: month, week or day), one
+   number shared with the time checks, required for both variants since an upstream target also
+   looks some periods ahead. One function builds the targets lazily in Spark; saving is a
+   separate call.
 2. **Two modes from the same spec** (D-029, D-131):
    - **Notebook mode:** build, inspect (the target rate per period, the lineage, the logs), then
      `save_model_input`, which writes the model input that later stages read, for one or
@@ -122,11 +123,18 @@ Built in Stage 1's major step 2 (2026-10-26; under the SDS's review), in
   "eligible"]`): the source with its keys as `unit_id` and `period`, `unit_id` cast to string
   (T22), the period moved to its end. Refused: a period column that is not a date or timestamp,
   a timestamp not at 00:00 in the session time zone (it may land in another period), an empty
-  source, a null period, a null unit id, a repeated key, and a source column named like a key
-  or a helper column (`target`, `split`, `eligible`), naming the column and the source. The
-  log names the source, its periods (as labels), the raw type of its id column (`id_type`, so
-  a join that matches nothing can name both sides' types) and how it tagged its periods:
-  `period start`, `period end` or `other days` (D-129).
+  source, a null period, a null unit id and a repeated key. A non-key column named `unit_id` or
+  `period` is read as `source_unit_id` / `source_period` (`rename_reserved`; a
+  `source_<name>` already in the source fails loud naming both), printed; one named `target`,
+  `split` or `eligible` keeps its name, so an upstream target column may be called `target`;
+  a key name (`unit_id`, `period`) in `data.target.column` or `lineage` is refused before the
+  read, naming the `source_<name>` to write instead
+  (the dataset's read side renames whatever of them remains,
+  [dataset](dataset.md#model-input-d-131)).
+  The log names the source, its periods (as labels), the raw type of its id column (`id_type`,
+  so a join that matches nothing can name both sides' types), the columns it renamed
+  (`renamed`) and how it tagged its periods: `period start`, `period end` or `other days`
+  (D-129).
 - `check_periods_covered(log, first, last, role, until, spec)` (`sources.py`): the one check
   that a read source has every period from `first` to `last`, failing with the source's `role`
   and the missing periods (`missing_periods(periods, first, last, spec) -> list[str]`, labels),

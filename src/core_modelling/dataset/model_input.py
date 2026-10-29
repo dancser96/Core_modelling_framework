@@ -31,7 +31,7 @@ from core_modelling import __version__
 from core_modelling.config import UseCaseConfig
 from core_modelling.config.identities import HASH_VERSION, target_spec_hash
 from core_modelling.dataset.eligibility import resolve_candidates
-from core_modelling.dataset.panel import foreign_target_columns, load_panel, prepare_panel
+from core_modelling.dataset.panel import load_panel, prepare_panel, read_side_columns
 from core_modelling.environment import EnvironmentConfig
 from core_modelling.periods import period_spec
 
@@ -86,6 +86,8 @@ def save_model_input(
         raise ValueError("save_model_input needs at least one config")
     path = _model_input_path(cfgs[0], entity, env)
     table, log, meta = load_panel(cfgs, entity, env, spark)
+    for cfg in cfgs:  # a column clash on the read side fails here, not at every later read
+        read_side_columns(table.columns, meta["targets"], cfg.use_case, meta["sources"]["features"])
     table.write.mode("overwrite").partitionBy("period").parquet(path)  # the folder, whole
     metadata = {
         "schema_version": MODEL_INPUT_SCHEMA_VERSION,
@@ -200,20 +202,21 @@ def _check_periods(metadata: dict, cfg: UseCaseConfig, path: str) -> None:
 
 def saved_candidates(cfg: UseCaseConfig, entity: str, env: EnvironmentConfig) -> list[str] | None:
     """The candidate list the saved model input gives the config, for the audit log's feature
-    decisions, resolved from the sidecar's columns minus the columns `prepare_panel` drops (the
-    target columns, the other use cases' upstream source columns; no Spark); None
-    when the config names no model input or none is saved yet; a model input the environment
-    doesn't map, or one the config can't read, fails loud."""
+    decisions, resolved from the sidecar's columns dropped and renamed as `prepare_panel` does
+    (`read_side_columns`; no Spark); None when the config names no model input or none is saved
+    yet; a model input the environment doesn't map, or one the config can't read, fails loud."""
     if cfg.data.model_input is None:
         return None
     if not Path(_model_input_path(cfg, entity, env), METADATA_FILE).is_file():
         return None
     metadata = read_model_input_metadata(cfg, entity, env)
-    targets = metadata["targets"]
-    own = targets[cfg.use_case]
-    dropped = {own["column"], *foreign_target_columns(targets, cfg.use_case)}
-    columns = [column for column in metadata["columns"] if column not in dropped]
-    return resolve_candidates(columns, cfg, own["lineage"])
+    features = metadata["sources"]["features"]
+    dropped, renames = read_side_columns(
+        metadata["columns"], metadata["targets"], cfg.use_case, features
+    )
+    columns = [renames.get(c, c) for c in metadata["columns"] if c not in dropped]
+    lineage = [renames.get(c, c) for c in metadata["targets"][cfg.use_case]["lineage"]]
+    return resolve_candidates(columns, cfg, lineage)
 
 
 def read_model_input(

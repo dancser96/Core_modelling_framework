@@ -21,11 +21,9 @@ write one batch-scoped output with a manifest. No registering, promoting or depl
    plus task-specific columns only when needed. It covers everything a consumer could need
    (candidates: unit id, entity, domain, use case, product, activity, task, score, inference period,
    scoring batch id, run id, model hash, framework and schema version; the exact ones are designed
-   when Inference is built). **Product and activity** are parsed from the use case's name,
-   `<product>_<activity>` as in the crunch (e.g. `fx_activation`): the activity is the last token
-   and the product everything before it; a name that doesn't split fails at load. The master layer
-   carries both as parsed; mapping them to a consumer's labels (e.g. Forex, Activation) is the
-   consumer's job (D-128, D-016). It reserves nullable `task` and `score_component` columns for later
+   when Inference is built). **Product and activity** come from explicit optional config fields,
+   added when the master layer first needs them, never parsed from the use case's name; mapping
+   them to a consumer's labels (e.g. Forex, Activation) is the consumer's job (D-128, D-016). It reserves nullable `task` and `score_component` columns for later
    tasks (D-016). It is a shared table under D-007, and each write replaces only its own slice,
    never another use case's rows (T6, T7). Consumable tables for consumer platforms are built
    outside the framework, by others.

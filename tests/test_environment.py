@@ -43,7 +43,7 @@ def test_example_file_loads_once_its_placeholders_are_filled(
     assert env.schema_version == 1 and env.spark == SparkSettings()
     assert env.roots == Roots(data=f"{tmp_path}/data")
     assert sorted(env.sources["entity_a"]) == [
-        "cc_acquisition_input",
+        "retail_acquisition_input",
         "retail_holdings",
         "retail_mart",
     ]

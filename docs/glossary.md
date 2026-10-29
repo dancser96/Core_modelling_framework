@@ -29,10 +29,12 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Unit:** what one row describes in one period (client, account, card, merchant…). Shapes say
   `unit_id`, held as a string whatever the source's type; the client is the usual unit.
 - **Use case:** one modelling problem (e.g. one product's acquisition propensity), defined by one
-  config and its decision audit log; a repo may hold several similar use cases (D-006).
-- **Product / activity:** the two parts of a use case's name, `<product>_<activity>` (e.g.
-  `fx_activation`): the activity is the last token, the product everything before it; the master
-  layer carries both (D-128).
+  config and its decision audit log; a repo may hold several similar use cases (D-006). Its name
+  (`use_case`) is letters, digits, underscores and hyphens, any case, compared ignoring case;
+  its lower-case form names folders and columns (D-128).
+- **Product / activity:** what a use case scores (e.g. Forex) and the behaviour it predicts (e.g.
+  activation), carried by the master layer; explicit optional config fields, added when the
+  master layer first needs them, never parsed from the use case's name (D-128).
 - **Instance:** a use case applied to one entity. A use case lists the entities it applies to (often
   just one), and each gets its own models.
 - **Model key:** `(entity, domain, use case, split)`, which identifies one line of model versions.

@@ -6,7 +6,10 @@ with a gap, a feature or a target source that matches nothing, a target column c
 source column), the join log and the meta; two configs on the same sources give two labelled
 target columns, each prepared panel keeps its own as `target` and never lists the other's target
 or upstream source column as a candidate, each window is checked for labels on its own, and
-configs differing in a shared field are refused naming the use cases and the field.
+configs differing in a shared field are refused naming the use cases and the field. Source
+columns named `target`, `split`, `eligible` are read as `source_<name>`; an upstream target
+column in the panel, even one named `target`, is the label and never a column of the prepared
+panel; `read_side_columns` plans the drops and renames without Spark.
 Eligibility runs on a hand-made keyed panel: a define reused by a filter and dropped, an
 analysis filter dropping rows, a modelling filter tagging them, a null condition counting as
 false, and the references a condition may not make (§4.9; the keys, the target, another
@@ -15,6 +18,7 @@ filter's tag).
 
 from collections.abc import Callable
 from datetime import date
+from pathlib import Path
 
 import pytest
 from pyspark.sql import DataFrame, SparkSession
@@ -24,13 +28,15 @@ from core_modelling.config import UseCaseConfig
 from core_modelling.config.schema import Eligibility
 from core_modelling.dataset.eligibility import apply_eligibility, modelling_tags, resolve_candidates
 from core_modelling.dataset.panel import (
+    DROP_REASONS,
     PANEL_META_KEYS,
     build_panel,
     load_panel,
     prepare_panel,
+    read_side_columns,
     target_column,
 )
-from core_modelling.environment import EnvironmentConfig
+from core_modelling.environment import EnvironmentConfig, Source
 from core_modelling.periods import PERIODS
 
 MONTH = PERIODS["month"]
@@ -143,16 +149,19 @@ def test_two_configs_give_two_target_columns_each_prepared_for_its_own(
 ) -> None:
     """Two use cases on the same sources: one column per target, both in the log and the meta;
     each prepared panel keeps its own target as `target`, drops the other and never lists it
-    as a candidate even with `include: ["*"]` (§4.6); an unsaved use case is refused."""
+    as a candidate even with `include: ["*"]` (§4.6); an unsaved use case is refused. The second
+    name has a hyphen and upper case: its column is lower-cased, its meta key kept as written."""
     env = write_sources(sources)
-    own, other = _config(variant), _other(variant)
+    mixed = "cc-Retention"
+    own = _config(variant)
+    other = UseCaseConfig.model_validate({**_other(variant).model_dump(), "use_case": mixed})
     panel, log, meta = load_panel([own, other], "entity_a", env, spark)
-    assert panel.columns[-2:] == [target_column(OWN), target_column(OTHER)]
+    assert panel.columns[-2:] == ["target_cc_acquisition", "target_cc-retention"]
     assert [entry["role"] for entry in log] == ["spine", "joined", "targets", "targets"]
-    assert sorted(meta["targets"]) == [OWN, OTHER]
+    assert set(meta["targets"]) == {OWN, mixed}
     rows = {r.unit_id: r for r in panel.where(F.col("period") == MONTHS[0]).collect()}
-    assert rows["a"].target_cc_acquisition == 1 and rows["a"].target_cc_retention == 1
-    for cfg, dropped in ((own, OTHER), (other, OWN)):
+    assert rows["a"]["target_cc_acquisition"] == 1 and rows["a"]["target_cc-retention"] == 1
+    for cfg, dropped in ((own, mixed), (other, OWN)):
         assert cfg.features.candidates.include == ["*"]
         prepared, prepared_log, prepared_meta = prepare_panel(
             panel, cfg, "entity_a", meta["targets"]
@@ -160,7 +169,8 @@ def test_two_configs_give_two_target_columns_each_prepared_for_its_own(
         assert target_column(dropped) not in prepared.columns
         assert prepared_meta["candidates"] == ["income", "cc_flag", "segment", "score"]
         assert prepared.columns == [*KEYS_AND_CANDIDATES, "eligible", "target", "split"]
-        assert [entry["step"] for entry in prepared_log][:1] == ["contract"]
+        assert [entry["step"] for entry in prepared_log][:2] == ["drop", "contract"]
+        assert prepared_log[0]["dropped"] == {target_column(dropped): "another use case's target"}
     unsaved = _other(variant)
     unsaved = unsaved.model_copy(update={"use_case": "fx_activation"})
     with pytest.raises(ValueError, match=r"no target for use case 'fx_activation'; its use cases"):
@@ -186,15 +196,20 @@ def test_configs_must_share_the_data_definition(
     field: str,
 ) -> None:
     """Configs differing in the feature sources, the keys, the model input or the period fail
-    naming the two use cases and the field, before any source is read; so do repeated use cases."""
+    naming the two use cases and the field, before any source is read; so do repeated use cases,
+    also when they differ only in case (Spark column names are case-insensitive)."""
     env = write_sources(sources)
     other = _other(variant, **change)
     with pytest.raises(ValueError, match=f"'cc_acquisition' and 'cc_retention' differ in {field}"):
         load_panel([_config(variant), other], "entity_a", env, spark)
-    with pytest.raises(
-        ValueError, match=r"use cases must be distinct; repeated: \['cc_acquisition'"
-    ):
+    with pytest.raises(ValueError, match=r"distinct ignoring case .*repeated: \['cc_acquisition'"):
         load_panel([_config(variant), _config(variant)], "entity_a", env, spark)
+    upper = _config(variant).model_copy(update={"use_case": "CC_Acquisition"})
+    with pytest.raises(
+        ValueError,
+        match=r"distinct ignoring case .*repeated: \['CC_Acquisition', 'cc_acquisition'\]",
+    ):
+        load_panel([_config(variant), upper], "entity_a", env, spark)
 
 
 def test_target_column_colliding_with_a_source_column_is_refused(
@@ -341,6 +356,225 @@ def test_other_use_case_upstream_source_column_is_dropped(
     assert prepared_meta["candidates"] == ["income", "segment", "score"]
 
 
+def test_source_columns_named_like_the_helper_columns_are_read_as_source_columns(
+    spark: SparkSession,
+    write_sources: Callable[..., EnvironmentConfig],
+    variant: Callable[..., UseCaseConfig],
+    sources: dict[str, DataFrame],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A spine carrying `target`, `split` and `eligible` builds: they come back as
+    `source_<name>` with the source's values beside the dataset's own, the first preparation
+    entry says so, printed, a filter may name `source_eligible`, and `source_split` is a
+    candidate."""
+    sources["retail_mart"] = (
+        sources["retail_mart"]
+        .withColumn("target", F.lit(7))
+        .withColumn("split", F.lit("upstream"))
+        .withColumn("eligible", F.when(F.col("unit_id") == "c", 0).otherwise(1))
+    )
+    env = write_sources(sources)
+    flagged = {"name": "flagged", "filter": "source_eligible = 1", "reason": "r"}
+    cfg = _config(variant, eligibility={"analysis": [flagged], "modelling": []})
+    panel, log, meta = build_panel(cfg, "entity_a", env, spark)
+    rows = {r.unit_id: r for r in panel.where(F.col("period") == MONTHS[0]).collect()}
+    assert sorted(rows) == ["a", "b"]  # c dropped by `source_eligible = 1`
+    assert rows["a"].source_target == 7 and rows["a"].target == 1 and rows["b"].target == 0
+    assert rows["a"].source_split == "upstream" and rows["a"].split in ("train", "test")
+    assert rows["a"].source_eligible == 1 and rows["a"].eligible == 1
+    prepared = [entry for entry in log if entry["step"] != "join"]
+    renamed = {name: f"source_{name}" for name in ("target", "split", "eligible")}
+    assert prepared[0] == {"step": "rename", "renamed": renamed}
+    assert "source_split" in meta["candidates"] and "split" not in meta["candidates"]
+    out = capsys.readouterr().out
+    assert (
+        "column 'target' of the sources read as 'source_target' (the dataset adds its own "
+        "'target'); if it is a label, list it in data.target.lineage" in out
+    )
+    assert "column 'split' of the sources read as 'source_split' (the dataset adds its own" in out
+
+
+def _labelled_spine(spine: DataFrame, column: str) -> DataFrame:
+    """The spine with an upstream 0/1 label `column`, unknown in the last w = 3 months, where
+    such a target can't be known yet."""
+    labels = {"a": [0, 1, 1, 0, 1], "b": [1] * 5, "c": [0] * 5}
+    rows = [
+        (unit, month, flag)
+        for unit, flags in labels.items()
+        for month, flag in zip(MONTHS, [*flags, None, None, None], strict=True)
+    ]
+    frame = spine.sparkSession.createDataFrame(rows, f"unit_id string, period date, {column} int")
+    return spine.join(frame, ["unit_id", "period"])
+
+
+def _upstream(variant: Callable[..., UseCaseConfig], column: str, **data: object) -> UseCaseConfig:
+    """The skeleton's config with the spine's `column` as an upstream target (no rule)."""
+    features = {"features": ["retail_mart", "extra"], "targets": None}
+    target = {"column": column, "rule": None}
+    return variant(
+        time=TIME,
+        entities={"entity_a": {"sources": features}},
+        data={"eligibility": EMPTY, "target": target, "model_input": None, **data},
+    )
+
+
+def test_upstream_target_column_named_target_is_the_label(
+    spark: SparkSession,
+    write_sources: Callable[..., EnvironmentConfig],
+    variant: Callable[..., UseCaseConfig],
+    sources: dict[str, DataFrame],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`data.target.column: target` names the upstream column as the source does: `target`
+    holds its values where labelled, and the raw column is dropped, printed and logged, never
+    `source_target`."""
+    raw = _labelled_spine(sources["retail_mart"], "target")
+    sources["retail_mart"] = raw
+    env = write_sources(sources)
+    panel, log, meta = build_panel(_upstream(variant, "target"), "entity_a", env, spark)
+    assert panel.columns == [*KEYS_AND_CANDIDATES, "eligible", "target", "split"]
+    assert meta["lineage"] == ["target"] and "rename" not in [entry["step"] for entry in log]
+    reason = "this use case's label: its values are `target`'s"
+    assert {"step": "drop", "dropped": {"target": reason}} in log
+    assert f"column 'target' dropped: {reason}" in capsys.readouterr().out
+    expected = {(r.unit_id, r.period): r.target for r in raw.collect()}
+    assert {(r.unit_id, r.period): r.target for r in panel.collect()} == expected
+
+
+def test_eligibility_never_names_the_own_upstream_target_column(
+    spark: SparkSession,
+    write_sources: Callable[..., EnvironmentConfig],
+    variant: Callable[..., UseCaseConfig],
+    sources: dict[str, DataFrame],
+) -> None:
+    """The own upstream target column is the label (forward-looking): a condition naming it
+    fails naming the step (§4.6)."""
+    sources["retail_mart"] = _labelled_spine(sources["retail_mart"], "label_fwd")
+    env = write_sources(sources)
+    peek = {"name": "peek", "filter": "label_fwd = 1", "reason": "r"}
+    cfg = _upstream(variant, "label_fwd", eligibility={"analysis": [], "modelling": [peek]})
+    with pytest.raises(ValueError, match="eligibility step 'peek'.*sources' columns"):
+        build_panel(cfg, "entity_a", env, spark)
+
+
+def test_built_target_over_a_spine_column_named_target_keeps_it_as_lineage(
+    spark: SparkSession,
+    write_sources: Callable[..., EnvironmentConfig],
+    variant: Callable[..., UseCaseConfig],
+    sources: dict[str, DataFrame],
+) -> None:
+    """A `flag_goes_up` target over the spine's `target` flag: the flag is read as
+    `source_target`, a filter may name it (the holder at t), it is the lineage (under its read
+    name) and never a
+    candidate even with `include: ["*"]` (§4.6), and the built labels equal those of the same
+    flag under another name."""
+    flags = sources["retail_holdings"].withColumnRenamed("value", "target")
+    sources["carded"] = sources["retail_mart"].join(flags, ["unit_id", "period"])
+    env = write_sources(sources)
+    holders = {"name": "non_holders", "filter": "source_target = 0", "reason": "r"}
+    features = {"features": ["carded", "extra"], "targets": None}
+    cfg = variant(
+        time=TIME,
+        entities={"entity_a": {"sources": features}},
+        data={
+            "eligibility": {"analysis": [], "modelling": [holders]},
+            "target": {"column": "target", "rule": "flag_goes_up"},
+            "model_input": None,
+        },
+    )
+    assert cfg.features.candidates.include == ["*"]
+    panel, _, meta = build_panel(cfg, "entity_a", env, spark)
+    assert meta["lineage"] == ["source_target"]  # the read name, as the frames carry it
+    assert meta["candidates"] == ["income", "cc_flag", "segment", "score"]
+    rows = {r.unit_id: r for r in panel.where(F.col("period") == MONTHS[0]).collect()}
+    assert {u: r.non_holders for u, r in rows.items()} == {"a": 1, "b": 0, "c": 1}
+    reference, _, _ = build_panel(_config(variant), "entity_a", env, spark)
+    labels = {(r.unit_id, r.period): r.target for r in reference.collect()}
+    assert {(r.unit_id, r.period): r.target for r in panel.collect()} == labels
+
+
+def _target_meta_of(column: str, upstream: bool, label: str, source: str) -> dict:
+    """A use case's target as the meta records it: the fields `read_side_columns` reads."""
+    return {"column": column, "upstream": upstream, "lineage": [label], "source": source}
+
+
+OWN_COLUMN, OTHER_COLUMN = target_column(OWN), target_column(OTHER)
+LABELS = ["target", "split", "eligible", "label_fwd"]
+READ_SIDE_CASES = [
+    *[
+        pytest.param([name], {OWN: _target_meta_of(OWN_COLUMN, True, name, "retail_mart")},
+                     {name: DROP_REASONS["own label"]}, {}, id=f"own label {name} in the spine")
+        for name in LABELS
+    ],
+    *[
+        pytest.param([name], {OWN: _target_meta_of(OWN_COLUMN, True, name, "retail_holdings")},
+                     {}, {name: f"source_{name}"} if name != "label_fwd" else {},
+                     id=f"own label {name} in a target source")
+        for name in LABELS
+    ],
+    pytest.param(
+        ["cc_flag", "target"],
+        {OWN: _target_meta_of(OWN_COLUMN, False, "cc_flag", "retail_holdings"),
+         OTHER: _target_meta_of(OTHER_COLUMN, True, "target", "retail_mart")},
+        {"target": DROP_REASONS["label"], OTHER_COLUMN: DROP_REASONS["target"]}, {},
+        id="other's label target in the spine",
+    ),
+    pytest.param(["target"], {OWN: _target_meta_of(OWN_COLUMN, False, "target", "retail_mart")},
+                 {}, {"target": "source_target"}, id="built over target"),
+    pytest.param(["Target"], {OWN: _target_meta_of(OWN_COLUMN, False, "Target", "retail_mart")},
+                 {}, {"Target": "source_Target"}, id="built over Target, any case"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("extra, targets, dropped, renamed", READ_SIDE_CASES)
+def test_read_side_columns_drop_labels_in_the_panel_and_rename_the_rest(
+    cc_config: UseCaseConfig, extra: list[str], targets: dict, dropped: dict, renamed: dict
+) -> None:
+    """An upstream label is dropped only when its target source is a feature source; another
+    use case's target and in-panel label are dropped; a remaining helper-named column is
+    renamed before the own target becomes `target`; with the lineage under its read name, only
+    `income` is a candidate (§4.6). Pure Python, no Spark."""
+    columns = ["unit_id", "period", "income", *extra, *[t["column"] for t in targets.values()]]
+    plan = read_side_columns(columns, targets, OWN, ["retail_mart", "extra"])
+    assert plan == (dropped, {**renamed, OWN_COLUMN: "target"})
+    assert list(plan[1])[-1] == OWN_COLUMN  # applied last
+    read = [plan[1].get(c, c) for c in columns if c not in plan[0]]
+    lineage = [plan[1].get(c, c) for c in targets[OWN]["lineage"]]
+    assert resolve_candidates(read, cc_config, lineage) == ["income"]
+
+
+@pytest.mark.parametrize("name", ["target", "Target"])
+def test_read_side_clash_is_refused(name: str) -> None:
+    """A source `target` beside a source `source_target`, either in any case, fails naming both
+    and the panel."""
+    columns = ["unit_id", "period", name, "source_target", OWN_COLUMN]
+    targets = {OWN: _target_meta_of(OWN_COLUMN, False, "cc_flag", "retail_holdings")}
+    with pytest.raises(ValueError, match=f"the panel has both '{name}' and 'source_{name}'"):
+        read_side_columns(columns, targets, OWN, ["retail_mart"])
+
+
+def test_join_entry_records_a_source_column_read_under_another_name(
+    spark: SparkSession,
+    write_sources: Callable[..., EnvironmentConfig],
+    variant: Callable[..., UseCaseConfig],
+    sources: dict[str, DataFrame],
+    tmp_path: Path,
+) -> None:
+    """A feature source's non-key `period` joins as `source_period`, named in its join entry;
+    the spine's entry, with nothing renamed, has no `renamed`."""
+    del sources["extra"]
+    env = write_sources(sources)
+    path = str(tmp_path / "extra")
+    rows = [(u, m, 0.5, 7) for u in ("a", "b") for m in MONTHS]
+    schema = "client_id string, snapshot_month date, score double, period int"
+    spark.createDataFrame(rows, schema).write.parquet(path)
+    extra = {**env.sources["entity_a"], "extra": Source(format="parquet", path=path)}
+    env = env.model_copy(update={"sources": {"entity_a": extra}})
+    panel, log, _ = load_panel([_config(variant)], "entity_a", env, spark)
+    assert "source_period" in panel.columns
+    assert log[1]["renamed"] == {"period": "source_period"} and "renamed" not in log[0]
+
+
 def test_build_panel_prepares_the_one_config(
     spark: SparkSession,
     write_sources: Callable[..., EnvironmentConfig],
@@ -349,7 +583,8 @@ def test_build_panel_prepares_the_one_config(
 ) -> None:
     """`build_panel` is `load_panel` of the one config then `prepare_panel`: the keys, the
     candidates, `eligible`, `target` and `split`, the join log then the preparation's, the
-    meta with `PANEL_META_KEYS`; a name in `features.excluded` that no source has fails loud."""
+    meta with `PANEL_META_KEYS`; a name in `features.excluded` that no source has, or that
+    is the framework's own column, fails loud."""
     env = write_sources(sources)
     panel, log, meta = build_panel(_config(variant), "entity_a", env, spark)
     assert panel.columns == [*KEYS_AND_CANDIDATES, "eligible", "target", "split"]
@@ -361,6 +596,9 @@ def test_build_panel_prepares_the_one_config(
     cfg = _config(variant).model_copy(deep=True)
     cfg.features.excluded = ["incom"]
     with pytest.raises(ValueError, match=r"features.excluded names columns .* \['incom'\]"):
+        build_panel(cfg, "entity_a", env, spark)
+    cfg.features.excluded = ["target"]
+    with pytest.raises(ValueError, match=r"excluded names \['target'\], the framework's own"):
         build_panel(cfg, "entity_a", env, spark)
 
 

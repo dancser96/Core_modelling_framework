@@ -46,14 +46,16 @@ defaults, so a first run needs only the shared sections.
 | `monitoring` | Monitoring | Drift thresholds, the outcome join, the retrain policy |
 
 **The layout**, with the walking skeleton's `cc_acquisition` values (`conf/base/cc_acquisition.yml`;
-the template with every option's when-to-use is `conf/base/TEMPLATE.yml`). A `null` on a level
+the template with every option's when-to-use is `conf/base/TEMPLATE.yml`). A second example,
+`conf/base/td_acquisition.yml` (term deposit), shares its model input: same sources, keys,
+period and `model_input`, its own target and eligibility. A `null` on a level
 path (`levels.py`) takes the level default; any other `null` is off or derived (the template's
 reading key).
 
 ```yaml
 schema_version: 1
 task: binary
-use_case: cc_acquisition                 # <product>_<activity>; must split at load (D-128)
+use_case: cc_acquisition                 # letters, digits, _ and -; compared ignoring case (D-128)
 domain: retail
 automation_level: assisted               # autonomous | assisted (D-023)
 
@@ -74,7 +76,7 @@ entities:                                # only the entities this use case appli
 
 data:
   keys: {unit_id: client_id, period: snapshot_month}   # the sources' key names; renamed to unit_id, period at load; the id cast to string
-  model_input: cc_acquisition_input      # optional: the saved model input's logical name (D-131); omit = build in memory
+  model_input: retail_acquisition_input  # optional: the saved model input's logical name, shared with td_acquisition (D-131); omit = build in memory
                                          # one table may serve several use cases (run a.yml b.yml --stages target_factory)
   eligibility:                           # two ordered Spark SQL lists; filters log rows in -> out
     analysis:                            # rows dropped before EDA
@@ -211,7 +213,12 @@ What it holds, what its reader refuses and when it is written: [dataset](dataset
    keeps its rows for EDA, tagged 0/1 by the step's name (a reference group, e.g. current
    holders of the product, whom the analysis compares with the non-holders), and drops them
    before Feature Checks. The modelling tag is a stratification column for EDA
-   ([dataset](dataset.md), [eda](eda.md)).
+   ([dataset](dataset.md), [eda](eda.md)). A source column named like one the framework adds
+   (`unit_id`, `period`, `target`, `split`, `eligible`) is referred to as `source_<name>` in
+   eligibility, the candidate patterns, strata and decisions (a decision naming the framework's
+   own column is refused with that hint); `data.target.column` alone names an upstream target
+   as the source does, `target` included, never a key name
+   ([dataset](dataset.md#sources-and-joins-d-129)).
 7. **Features:** candidates are explicit lists or patterns. Human decisions go both ways: `exclude`
    and `keep_despite_flag` (which also protects against automated pruning). They are entries in the
    decision audit log, one per group with one required reason, never edits to the config (D-043,
@@ -674,12 +681,13 @@ Built in Stage 1's major step 1 (2026-10-26; under the SDS's review). Package:
 functions)); the CLI command `decide` in `core_modelling/__main__.py`.
 - `load_config(path: str | Path) -> UseCaseConfig` (public): YAML → `migrate` →
   `apply_level_defaults` (fills nulls only) → `UseCaseConfig.model_validate`, with `extra="forbid"`
-  on every model. One validator per rule: the name split (D-128), the time rules (req. 8),
+  on every model. One validator per rule: the name's characters (D-128), the time rules (req. 8),
   `decision.type: top_n` needs `n`, the period typo rule on the three `time` dates (a
   `model_validator` on `Time`, since it needs `time.period`), an eligibility entry has exactly one
   of `define` / `filter`,
   a `filter` has a `reason`, step names are unique across the `analysis` and `modelling` lists,
-  `target` has `column` with an optional `rule` (its name is checked against the task's spec
+  `target` has `column` (any source column name, `target` included) with an optional `rule`
+  (its name is checked against the task's spec
   when the target is built) and an optional `lineage`, `sampling` with its parameters, `metric`
   in FLAML's names when set (T9), `test_share` in (0, 1).
 - `LEVEL_DEFAULTS: dict[str, dict[str, dict]]` (path → {autonomous, assisted}), `MIGRATIONS:

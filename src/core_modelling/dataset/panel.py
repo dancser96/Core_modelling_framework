@@ -9,11 +9,15 @@ target source, never a window of it) as `target_<use_case>`, and keeps the perio
 earliest observation window's first to the spine's last. That panel, the sources plus the
 target columns and nothing else, is what the model input saves: one table serves several use
 cases, and a changed eligibility never forces a rebuild. `prepare_panel` is the read side, run
-from the reader's own config on the saved or the in-memory panel: the other use cases' target
-columns are dropped, with the source column an upstream target of theirs is read from (both
-are forward-looking), and the own one becomes `target`; then the eligibility steps and the
-candidates (`eligibility.py`), the contract check and the split. `build_panel` is both for one
-config, the in-memory path.
+from the reader's own config on the saved or the in-memory panel, its columns planned by
+`read_side_columns` (the saved table's candidate list follows the same plan without Spark): the
+other use cases' target columns are dropped, and every upstream target's source column that is
+in the panel as a label (its target source is a feature source): another use case's, being
+forward-looking, the own one, its values being `target`'s; a source column named like one the
+dataset adds (`target`, `split`, `eligible`) is renamed `source_<name>`, and the own target
+column becomes `target`, each drop and rename printed and logged. Then the eligibility steps
+and the candidates (`eligibility.py`), the contract check and the split. `build_panel` is both
+for one config, the in-memory path.
 """
 
 from dataclasses import dataclass
@@ -28,7 +32,13 @@ from core_modelling.dataset.eligibility import apply_eligibility, modelling_tags
 from core_modelling.dataset.split import assign_split
 from core_modelling.environment import EnvironmentConfig
 from core_modelling.periods import Period, label_by_period, period_spec
-from core_modelling.sources import KEYS, check_periods_covered, read_keyed_source
+from core_modelling.sources import (
+    HELPER_COLUMNS,
+    KEYS,
+    check_periods_covered,
+    read_keyed_source,
+    rename_reserved,
+)
 from core_modelling.target_factory import load_targets, target_lineage
 
 PANEL_META_KEYS = ("data_definition_hash", "target_spec_hash", "hash_version", "lineage",
@@ -54,8 +64,9 @@ class JoinedSource:
 
 
 def target_column(use_case: str) -> str:
-    """The panel's target column of a use case, `target_<use_case>` (Q405)."""
-    return f"target_{use_case}"
+    """The panel's target column of a use case, `target_<use_case>` lower-cased (Q405): Spark
+    compares column names ignoring case."""
+    return f"target_{use_case.lower()}"
 
 
 def load_panel(
@@ -90,14 +101,19 @@ def load_panel(
 
 
 def _check_shared_definition(cfgs: list[UseCaseConfig], entity: str) -> None:
-    """The use cases are distinct and every config lists `entity` and declares the same feature
-    sources, keys, model input and period, else the two use cases and the field are named."""
+    """The use cases are distinct ignoring case and every config lists `entity` and declares the
+    same feature sources, keys, model input and period, else the two use cases and the field are
+    named."""
     if not cfgs:
         raise ValueError("load_panel needs at least one config")
-    names = [cfg.use_case for cfg in cfgs]
-    repeated = sorted({name for name in names if names.count(name) > 1})
+    lowered = [cfg.use_case.lower() for cfg in cfgs]
+    repeated = sorted({cfg.use_case for cfg in cfgs if lowered.count(cfg.use_case.lower()) > 1})
     if repeated:
-        raise ValueError(f"the use cases must be distinct; repeated: {repeated}")
+        raise ValueError(
+            "the use cases must be distinct ignoring case (Spark column names are "
+            "case-insensitive, so target_X and target_x would collide); repeated: "
+            f"{repeated}"
+        )
     for cfg in cfgs:
         if entity not in cfg.entities:
             raise ValueError(
@@ -152,7 +168,7 @@ def _join_targets(
     targets = {}
     for cfg in cfgs:
         column = target_column(cfg.use_case)
-        if column in panel.columns:
+        if column in (name.lower() for name in panel.columns):
             raise ValueError(
                 f"the target column {column!r} of use case {cfg.use_case!r} is a column of the "
                 "sources; rename it upstream"
@@ -190,16 +206,24 @@ def _check_no_shared_column(panel: DataFrame, source: DataFrame, name: str) -> N
     """A non-key column in two feature sources fails loud: the join would carry two of it."""
     shared = sorted(set(panel.columns) & set(source.columns) - set(KEYS))
     if shared:
+        renamed = any(column.startswith("source_") for column in shared)
+        note = " (a `source_<name>` column is a source's `<name>` read under another name)"
         raise ValueError(
-            f"feature source {name!r} shares the columns {shared} with an earlier source; rename "
-            "them upstream"
+            f"feature source {name!r} shares the columns {shared} with an earlier source"
+            f"{note if renamed else ''}; rename them upstream"
         )
 
 
 def _check_named_features(panel: DataFrame, cfg: UseCaseConfig) -> None:
-    """A name in the audit log's replayed lists that is not a column fails loud (a typo in an
-    entry would otherwise exclude nothing)."""
+    """A name in the audit log's replayed lists that is a key, a column the dataset adds or not
+    a column fails loud (it would otherwise exclude nothing)."""
     for field in ("excluded", "kept_despite_flags"):
+        framework = [n for n in getattr(cfg.features, field) if n in (*KEYS, *HELPER_COLUMNS)]
+        if framework:
+            raise ValueError(
+                f"features.{field} names {framework}, the framework's own columns; a source "
+                f"column of that name is read as `source_<name>`: name it so"
+            )
         unknown = [n for n in getattr(cfg.features, field) if n not in panel.columns]
         if unknown:
             raise ValueError(f"features.{field} names columns the sources don't have: {unknown}")
@@ -287,6 +311,8 @@ def _join_entry(source: JoinedSource, by_period: dict, all_rows: object, spec: P
     rows per period and share; a target's use case, column and null share per period too."""
     log, marker, role, use_case = source.log, source.marker, source.role, source.use_case
     entry = {"step": "join", "source": log["source"], "role": role, "period_tag": log["period_tag"]}
+    if log["renamed"]:
+        entry["renamed"] = log["renamed"]
     rows = by_period.values()
     if marker is None:
         entry["rows"] = label_by_period(rows, "rows", spec)
@@ -295,7 +321,8 @@ def _join_entry(source: JoinedSource, by_period: dict, all_rows: object, spec: P
         return entry
     entry.update(matched_share=all_rows[marker] / all_rows.rows)
     entry.update(matched=label_by_period(rows, marker, spec))
-    print(f"join {log['source']} ({role}, {log['period_tag']} periods): "
+    what = role if use_case is None else f"{role} of {use_case}"  # one line per use case's target
+    print(f"join {log['source']} ({what}, {log['period_tag']} periods): "
           f"{entry['matched_share']:.1%} of the spine's rows matched")  # fmt: skip
     if use_case is not None:
         nulls = label_by_period(rows, f"_nulls_{use_case}", spec)
@@ -303,37 +330,67 @@ def _join_entry(source: JoinedSource, by_period: dict, all_rows: object, spec: P
     return entry
 
 
-def foreign_target_columns(targets: dict, use_case: str) -> list[str]:
-    """The other use cases' target columns and, for an upstream target of theirs, the source
-    column it was read from: both are forward-looking, so the reader never sees them as a
-    candidate. The own lineage is reserved by `resolve_candidates`."""
-    columns = []
-    for other, target in targets.items():
-        if other != use_case:
-            columns.append(target["column"])
-            if target["upstream"]:
-                columns.append(target["lineage"][0])
-    return columns
+DROP_REASONS = {
+    "target": "another use case's target",
+    "label": "another use case's label (its upstream target column)",
+    "own label": "this use case's label: its values are `target`'s",
+}
+
+
+def _columns_to_drop(targets: dict, use_case: str, features: list[str]) -> dict[str, str]:
+    """The columns the use case's read drops, with why: the other use cases' target columns and
+    every upstream target's source column that is in the panel as a label (its target source
+    is one of the `features` sources); both are forward-looking, so never a candidate nor
+    nameable in eligibility."""
+    dropped = {}
+    for name, target in targets.items():
+        if name != use_case:
+            dropped[target["column"]] = DROP_REASONS["target"]
+        if target["upstream"] and target["source"] in features:
+            reason = DROP_REASONS["own label" if name == use_case else "label"]
+            dropped.setdefault(target["lineage"][0], reason)
+    return dropped
+
+
+def read_side_columns(
+    columns: list[str], targets: dict, use_case: str, features: list[str]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """The panel's columns the use case's read drops, with why (`_columns_to_drop`), and the
+    renames, in order: a remaining `target`, `split` or `eligible` as `source_<name>`, then the
+    own target column as `target`; `features` are the entity's feature sources."""
+    planned = _columns_to_drop(targets, use_case, features)
+    dropped = {column: reason for column, reason in planned.items() if column in columns}
+    remaining = [column for column in columns if column not in dropped]
+    renames = rename_reserved(remaining, HELPER_COLUMNS, "the panel")
+    renames[targets[use_case]["column"]] = "target"
+    return dropped, renames
 
 
 def prepare_panel(
     panel: DataFrame, cfg: UseCaseConfig, entity: str, targets: dict
 ) -> tuple[DataFrame, list[dict], dict]:
-    """The panel of `load_panel` (or the saved model input) prepared for `cfg`: the other use
-    cases' target columns dropped and the own one as `target`, eligibility applied, the
-    candidates resolved, the contract checked, the split assigned; the keys, the candidates, the
-    tags, `eligible`, `target` and `split`, with the log and the meta (`PANEL_META_KEYS`)."""
+    """The panel of `load_panel` (or the saved model input) prepared for `cfg`: its columns
+    dropped and renamed by `read_side_columns`, eligibility applied, the candidates resolved,
+    the contract checked, the split assigned; the keys, the candidates, the tags, `eligible`,
+    `target` and `split`, with the log and the meta (`PANEL_META_KEYS`; the lineage under its
+    read names)."""
     if cfg.use_case not in targets:
         raise ValueError(
             f"the panel has no target for use case {cfg.use_case!r}; its use cases: "
             f"{sorted(targets)}"
         )
     own = targets[cfg.use_case]
-    foreign = foreign_target_columns(targets, cfg.use_case)
-    panel = panel.drop(*foreign).withColumnRenamed(own["column"], "target")
+    features = cfg.entities[entity].sources.features
+    dropped, renames = read_side_columns(panel.columns, targets, cfg.use_case, features)
+    panel = panel.drop(*dropped)
+    for old, new in renames.items():  # in order: `source_target` before `target_<use_case>`
+        panel = panel.withColumnRenamed(old, new)
+    renamed = {old: new for old, new in renames.items() if old != own["column"]}
+    read_log = _read_side_log(dropped, renamed)
     _check_named_features(panel, cfg)
     panel, eligibility_log = apply_eligibility(panel, cfg.data.eligibility, period_spec(cfg))
-    candidates = resolve_candidates(panel.columns, cfg, own["lineage"])
+    lineage = [renames.get(column, column) for column in own["lineage"]]
+    candidates = resolve_candidates(panel.columns, cfg, lineage)
     tags = modelling_tags(cfg)
     contract_log = check_contract(panel, cfg, own["null_in_window_share"])
     panel = assign_split(panel, cfg)
@@ -342,11 +399,26 @@ def prepare_panel(
         "data_definition_hash": data_definition_hash(cfg, entity),
         "target_spec_hash": target_spec_hash(cfg, entity),
         "hash_version": HASH_VERSION,
-        "lineage": own["lineage"],
+        "lineage": lineage,
         "candidates": candidates,
         "tags": tags,
     }
-    return panel.select(columns), [*eligibility_log, *contract_log], meta
+    return panel.select(columns), [*read_log, *eligibility_log, *contract_log], meta
+
+
+def _read_side_log(dropped: dict[str, str], renamed: dict[str, str]) -> list[dict]:
+    """The columns dropped, with why, and the source columns read under another name, printed:
+    a `drop` then a `rename` entry, each only when there is one."""
+    for column, reason in dropped.items():
+        print(f"column {column!r} dropped: {reason}")
+    for old, new in renamed.items():
+        hint = (
+            "; if it is a label, list it in data.target.lineage" if old.lower() == "target" else ""
+        )
+        print(f"column {old!r} of the sources read as {new!r} (the dataset adds its own "
+              f"{old.lower()!r}){hint}")  # fmt: skip
+    log = [{"step": "drop", "dropped": dropped}] if dropped else []
+    return log + ([{"step": "rename", "renamed": renamed}] if renamed else [])
 
 
 def build_panel(

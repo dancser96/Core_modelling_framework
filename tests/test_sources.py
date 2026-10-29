@@ -1,5 +1,6 @@
 """The keyed source: keys renamed, the id cast to string, periods moved to their last day by the
-period spec, bad periods, keys and reserved columns refused; the period arithmetic round-trips in
+period spec, a non-key column named like a key read as `source_<name>`, bad periods and keys
+refused; the period arithmetic round-trips in
 Python and Spark.
 
 Hand-made sources are written to parquet with real local Spark; one test reads the unit preset's
@@ -90,6 +91,7 @@ def test_first_and_last_day_tags_read_alike_and_join(
         "periods": [date(2024, 2, 29), date(2024, 3, 31)],
         "period_tag": "period start",
         "id_type": "int",
+        "renamed": {},
     }
     assert last_log["period_tag"] == "period end"
 
@@ -145,6 +147,7 @@ def test_daily_source_keeps_its_days(
         "periods": [date(2024, 2, 7), date(2024, 2, 8)],
         "period_tag": "period end",
         "id_type": "int",
+        "renamed": {},
     }
 
 
@@ -263,23 +266,71 @@ def test_period_that_is_not_a_date_fails_naming_its_type(
         read_keyed_source(cc_config, "entity_a", "coded", env, spark)
 
 
-@pytest.mark.parametrize("reserved", ["target", "split", "eligible", "period"])
-def test_reserved_column_fails_naming_it(
-    spark: SparkSession, tmp_path: Path, cc_config: UseCaseConfig, reserved: str
-) -> None:
-    """A source carrying a column the dataset adds, or a key name beside its own keys, fails
-    naming the column, before the rename could make two of it."""
-    rows, schema = [(1, date(2024, 4, 1), 0)], f"client_id int, snapshot_month date, {reserved} int"
-    path = str(tmp_path / "clash")
-    spark.createDataFrame(rows, schema).write.parquet(path)
-    env = EnvironmentConfig(
+def _env_with_columns(
+    spark: SparkSession, tmp_path: Path, schema: str, row: tuple
+) -> EnvironmentConfig:
+    """An environment whose `entity_a` source `extra` is one row of the given schema."""
+    path = str(tmp_path / "extra")
+    spark.createDataFrame([row], schema).write.parquet(path)
+    return EnvironmentConfig(
         schema_version=1,
         roots=Roots(data=str(tmp_path)),
-        sources={"entity_a": {"clash": Source(format="parquet", path=path)}},
+        sources={"entity_a": {"extra": Source(format="parquet", path=path)}},
     )
-    message = rf"'clash' has a column \['{reserved}'\] that the framework reserves"
-    with pytest.raises(ValueError, match=message):
-        read_keyed_source(cc_config, "entity_a", "clash", env, spark)
+
+
+def test_columns_the_dataset_adds_keep_their_names_at_read(
+    spark: SparkSession, tmp_path: Path, cc_config: UseCaseConfig
+) -> None:
+    """A source's `target`, `split` and `eligible` read under their own names (the read side
+    renames them), so `data.target.column` can name an upstream `target`."""
+    schema = "client_id int, snapshot_month date, target int, split string, eligible int"
+    env = _env_with_columns(spark, tmp_path, schema, (1, date(2024, 4, 1), 1, "a", 0))
+    keyed, log = read_keyed_source(cc_config, "entity_a", "extra", env, spark)
+    assert keyed.columns == ["unit_id", "period", "target", "split", "eligible"]
+    assert log["renamed"] == {}
+
+
+@pytest.mark.parametrize("key", ["unit_id", "period", "Period"])
+def test_non_key_column_named_like_a_key_reads_as_source_column(
+    spark: SparkSession,
+    tmp_path: Path,
+    cc_config: UseCaseConfig,
+    capsys: pytest.CaptureFixture[str],
+    key: str,
+) -> None:
+    """A non-key `unit_id` or `period`, in any case, reads as `source_<name>` beside the keys,
+    printed and in the log's `renamed`."""
+    schema = f"client_id int, snapshot_month date, {key} int"
+    env = _env_with_columns(spark, tmp_path, schema, (1, date(2024, 4, 1), 7))
+    keyed, log = read_keyed_source(cc_config, "entity_a", "extra", env, spark)
+    assert keyed.columns == ["unit_id", "period", f"source_{key}"]
+    assert keyed.collect()[0][f"source_{key}"] == 7
+    assert log["renamed"] == {key: f"source_{key}"}
+    message = f"source 'extra': column '{key}' read as 'source_{key}' (the framework names its key"
+    assert message in capsys.readouterr().out
+
+
+def test_key_name_beside_its_source_name_is_refused(
+    spark: SparkSession, tmp_path: Path, cc_config: UseCaseConfig
+) -> None:
+    """A non-key `period` beside a `source_period` fails naming both: the rename would make two."""
+    schema = "client_id int, snapshot_month date, period int, source_period int"
+    env = _env_with_columns(spark, tmp_path, schema, (1, date(2024, 4, 1), 7, 8))
+    with pytest.raises(ValueError, match="source 'extra' has both 'period' and 'source_period'"):
+        read_keyed_source(cc_config, "entity_a", "extra", env, spark)
+
+
+def test_key_column_named_like_the_renamed_key_is_refused(
+    spark: SparkSession, tmp_path: Path, variant: Callable[..., UseCaseConfig]
+) -> None:
+    """A source keyed by `source_unit_id` that also carries a non-key `unit_id` fails naming
+    both: the rename would make two `source_unit_id` columns."""
+    cfg = variant(data={"keys": {"unit_id": "source_unit_id"}})
+    schema = "source_unit_id int, snapshot_month date, unit_id int"
+    env = _env_with_columns(spark, tmp_path, schema, (1, date(2024, 4, 1), 7))
+    with pytest.raises(ValueError, match="source 'extra' has both 'unit_id' and 'source_unit_id'"):
+        read_keyed_source(cfg, "entity_a", "extra", env, spark)
 
 
 def test_missing_key_column_fails_naming_the_columns(

@@ -7,10 +7,15 @@ tagged on a period's first day join one tagged on its last (D-129): the `data.ke
 and `period`, and `period` moves to its period's last day, the framework's one convention, through
 the period spec (`periods.py`). A source whose period is not a date or timestamp, whose timestamp
 periods are not at midnight in the session time zone (they may shift a period), or whose keys
-repeat after the move, fails loud here, before any target or join is built on it. The log says
-how the source tagged its periods, for the join log (docs/components/dataset.md, "Sources and
-joins"), and `check_periods_covered` is the one check that a source has every period a caller
-needs: the spine up to the validation period, the target source up to the validation period + w.
+repeat after the move, fails loud here, before any target or join is built on it. A non-key
+column named like a key (`unit_id`, `period`) is read as `source_<name>` (`rename_reserved`),
+refused when a column of that name exists already; a column named like one the dataset adds
+keeps its name here and is renamed or, as a label, dropped on the read side
+(`dataset/panel.py`), so `data.target.column` names an upstream column as the source does.
+The log says how the source tagged its periods and what was renamed, for the join log
+(docs/components/dataset.md, "Sources and joins"), and `check_periods_covered` is the one
+check that a source has every period a caller needs: the spine up to the validation period, the
+target source up to the validation period + w.
 """
 
 from datetime import date
@@ -23,8 +28,12 @@ from core_modelling.config import UseCaseConfig
 from core_modelling.environment import EnvironmentConfig, read_source
 from core_modelling.periods import Period, period_labels, period_spec
 
-KEYS = ["unit_id", "period"]  # the keys every keyed source and the dataset carry
-HELPER_COLUMNS = ["target", "split", "eligible"]  # the dataset adds them; no source carries them
+# The keys every keyed source and the dataset carry; a source's other column of that name is read
+# as `source_<name>`.
+KEYS = ["unit_id", "period"]
+# The columns the dataset adds; a source column of that name is renamed `source_<name>` on the
+# read side (`panel.read_side_columns`).
+HELPER_COLUMNS = ["target", "split", "eligible"]
 PERIOD_TYPES = (DateType, TimestampType, TimestampNTZType)
 SHOWN_KEYS = 5  # duplicate keys named in the error
 
@@ -33,8 +42,8 @@ def read_keyed_source(
     cfg: UseCaseConfig, entity: str, name: str, env: EnvironmentConfig, spark: SparkSession
 ) -> tuple[DataFrame, dict]:
     """The source `name` of `entity` with its keys as `unit_id` (a string) and `period` (the
-    period's last day), and its log: the source, its distinct periods, how it tagged them and
-    the raw id's type."""
+    period's last day), another column named like a key as `source_<name>`, and its log: the
+    source, its distinct periods, how it tagged them, the raw id's type and the renames."""
     raw = read_source(spark, env, entity, name)
     spec = period_spec(cfg)
     unit_column, period_column = cfg.data.keys.unit_id, cfg.data.keys.period
@@ -42,8 +51,15 @@ def read_keyed_source(
     _check_midnight(raw, name, period_column)
     log = _period_log(raw, name, period_column, spec)
     log["id_type"] = raw.schema[unit_column].dataType.simpleString()  # before the string cast
+    # Checked against every column, so a key column named `source_unit_id` is a clash too.
+    reserved = [key for key in KEYS if key not in (unit_column.lower(), period_column.lower())]
+    log["renamed"] = rename_reserved(raw.columns, reserved, f"source {name!r}")
+    for old, new in log["renamed"].items():
+        print(f"source {name!r}: column {old!r} read as {new!r} (the framework names its key "
+              f"{old.lower()!r})")  # fmt: skip
     keyed = (
-        raw.withColumnRenamed(unit_column, "unit_id")
+        raw.withColumnsRenamed(log["renamed"])
+        .withColumnRenamed(unit_column, "unit_id")
         .withColumnRenamed(period_column, "period")
         .withColumn("unit_id", F.col("unit_id").cast("string"))
         .withColumn("period", spec.spark_end(F.to_date("period")))
@@ -52,9 +68,26 @@ def read_keyed_source(
     return keyed, log
 
 
+def rename_reserved(columns: list[str], reserved: list[str], where: str) -> dict[str, str]:
+    """`{column: "source_" + column}` for each column named like a reserved name ignoring case
+    (Spark compares column names so), so the framework's own column of that name can sit beside
+    it; a `source_<column>` already among them, in any case, fails naming both and `where` (a
+    source, or the panel)."""
+    lowered = {name.lower() for name in reserved}
+    renamed = {column: f"source_{column}" for column in columns if column.lower() in lowered}
+    present = {column.lower() for column in columns}
+    taken = [(old, new) for old, new in renamed.items() if new.lower() in present]
+    if taken:
+        old, new = taken[0]
+        raise ValueError(
+            f"{where} has both {old!r} and {new!r}: the framework reads {old!r} as {new!r} "
+            f"beside its own {old!r}; rename one of them upstream"
+        )
+    return renamed
+
+
 def _check_key_columns(raw: DataFrame, name: str, unit_column: str, period_column: str) -> None:
-    """Both key columns present, the period a date or timestamp, and no other column named as
-    a key (the rename would make two) or as a column the dataset adds."""
+    """Both key columns present and the period a date or timestamp."""
     missing = [column for column in (unit_column, period_column) if column not in raw.columns]
     if missing:
         raise ValueError(f"source {name!r} has no key column {missing}; its columns: {raw.columns}")
@@ -65,13 +98,6 @@ def _check_key_columns(raw: DataFrame, name: str, unit_column: str, period_colum
         raise TypeError(
             f"source {name!r}: the period column {period_column!r} is "
             f"{period_type.simpleString()}, not a date or timestamp"
-        )
-    keys = (unit_column, period_column)
-    clashes = [c for c in (*KEYS, *HELPER_COLUMNS) if c in raw.columns and c not in keys]
-    if clashes:
-        raise ValueError(
-            f"source {name!r} has a column {clashes} that the framework reserves (the keys "
-            "unit_id, period and the dataset's target, split, eligible); rename it upstream"
         )
 
 

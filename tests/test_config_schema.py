@@ -25,8 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "conf/base/cc_acquisition.yml"
 TEMPLATE = ROOT / "conf/base/TEMPLATE.yml"
 PLACEHOLDERS = {
-    "<product>": "cc",
-    "<activity>": "acquisition",
+    "<use_case>": "cc_acquisition",
     "<domain>": "retail",
     "<entity>": "entity_a",
     "<feature_source>": "retail_mart",
@@ -309,23 +308,21 @@ def test_old_field_names_refused_as_unknown_keys(tmp_path: Path, raw: dict) -> N
         assert path in message
 
 
-@pytest.mark.parametrize(
-    ("name", "product", "activity"),
-    [("cc_acquisition", "cc", "acquisition"), ("fx_card_activation", "fx_card", "activation")],
-)
-def test_use_case_splits_into_product_and_activity(
-    tmp_path: Path, raw: dict, name: str, product: str, activity: str
+@pytest.mark.parametrize("name", ["cc_acquisition", "CC_Acquisition_v2", "fx-activation", "churn"])
+def test_use_case_name_accepts_letters_digits_underscores_hyphens(
+    tmp_path: Path, raw: dict, name: str
 ) -> None:
-    """The last token is the activity, everything before it the product (D-128)."""
+    """Any case, any number of tokens: the name only has to make a folder and a column name."""
     raw["use_case"] = name
-    cfg = _load(tmp_path, raw)
-    assert (cfg.product, cfg.activity) == (product, activity)
+    assert _load(tmp_path, raw).use_case == name
 
 
-def test_single_token_use_case_refused(tmp_path: Path, raw: dict) -> None:
-    """A name without an activity token fails at load."""
-    raw["use_case"] = "single"
-    assert "<product>_<activity>" in _error(tmp_path, raw)
+@pytest.mark.parametrize("name", ["cc acquisition", "cc.acq", "cc/acq", "", "-cc_acq", "_cc_acq"])
+def test_use_case_name_refuses_other_characters(tmp_path: Path, raw: dict, name: str) -> None:
+    """A space, a dot, a slash, an empty name or a hyphen or underscore first fails, naming the
+    allowed characters."""
+    raw["use_case"] = name
+    assert "only letters, digits, underscores and hyphens" in _error(tmp_path, raw)
 
 
 def test_top_n_decision_needs_n(tmp_path: Path, raw: dict) -> None:

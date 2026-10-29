@@ -28,7 +28,9 @@ committed `worknotes/` add a sync page for you and the Lead DS, a verbose log an
    out. In the CLI, `Shift+Tab` cycles into plan mode. Approve or trim it; cutting scope here is
    the cheapest anti-slop step.
 4. **Small steps.** One logical change per step. Review every diff line by line before accepting.
-5. **Checks.** `pytest`, `ruff check .`, then "run the code-reviewer subagent on this diff". Add
+5. **Checks.** The touched modules' tests and `ruff check` on the touched files (the full suite only
+   when a major step or a multi-module build is finished, D-072 (m)), then "run the code-reviewer
+   subagent on this diff". Add
    `silent-failure-hunter` / `ml-correctness-auditor` / `compat-guardian` when their triggers apply
    (`CLAUDE.md` §10). For bugs, "debug this systematically" runs `systematic-debugging`.
 6. **Docs.** "Run doc-sync": component doc, UPDATES, decisions, roadmap open decisions, glossary, and
@@ -41,7 +43,7 @@ committed `worknotes/` add a sync page for you and the Lead DS, a verbose log an
 
 | Need | Use |
 |---|---|
-| Daily Lead DS sync (~1h): what to review, open questions, what to demo | `/brief` (refreshes `worknotes/sync.md`; the Lead DS can read it directly) |
+| Daily Lead DS sync (~1h): what to review and try, open questions | `/brief` (refreshes `worknotes/sync.md`; the Lead DS can read it directly) |
 | A context that has grown too big; continue in a new chat | `/handover <topic>`, then `/resume <topic>` in the new chat (one file per topic, so parallel topics are fine) |
 | Where are we? | `docs/UPDATES.md` |
 | What's next, and what's still undecided? | `docs/roadmap.md` (milestones, backlog, OD-nn) |
@@ -72,7 +74,10 @@ resume on either machine.
   a lighter model only for mechanical sessions (renames, moving files), not ones that write the
   docs you read. `delegation` sends only mechanical, fully checked pieces to sonnet or haiku;
   research that feeds a design, ML-critical code and tests, the reviews and the docs you and the
-  Lead DS read run on a strong model, and design never leaves the main thread.
+  Lead DS read run on a strong model, and design never leaves the main thread. On a Fable
+  session, Claude shows a routing plan (each piece's agent, model and effort) before a major
+  task; Fable keeps the main thread and the ML-correctness audit, and Opus takes the other strong
+  subagent work (D-072 (l)).
 
 ## Hard rules
 
