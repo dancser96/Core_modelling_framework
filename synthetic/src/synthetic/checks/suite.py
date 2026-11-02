@@ -5,7 +5,8 @@ canonical-size dataset is checked from column subsets of the written parquet, ne
 `run_checks` runs families in this process (the tests on the small preset); `write_checks` runs
 each in its own process and saves its table (the CLI's `--checks`, the slow tests), which
 `read_checks` and the checking notebook read back. A family that reads every mart column
-(`MART_COLUMNS = None`, the mart family) runs at the canonical size on a client sample.
+(`MART_COLUMNS = None`, the mart family) runs at the canonical size on a client sample. The
+extract family also reads the feature-store extract, as its fourth argument.
 """
 
 import subprocess
@@ -18,6 +19,7 @@ import pandas as pd
 from synthetic.checks import (
     amount_levels,
     amount_rules,
+    extract,
     holdings,
     mart,
     oracle,
@@ -28,12 +30,14 @@ from synthetic.checks import (
 from synthetic.output import load_truth, read_output
 
 
-def _family(module: ModuleType, check: str) -> dict:
-    """A family's check function and the columns its module declares."""
+def _family(module: ModuleType, check: str, reads_extract: bool = False) -> dict:
+    """A family's check function, the columns its module declares and whether it also reads the
+    extract."""
     return dict(
         check=getattr(module, check),
         mart_columns=module.MART_COLUMNS,
         oracle_columns=module.ORACLE_COLUMNS,
+        reads_extract=reads_extract,
     )
 
 
@@ -46,6 +50,7 @@ CHECK_FAMILIES = {
     "mart": _family(mart, "check_mart"),
     "traps": _family(traps, "check_traps"),
     "oracle": _family(oracle, "check_oracle"),
+    "extract": _family(extract, "check_extract", reads_extract=True),
 }
 
 
@@ -62,7 +67,10 @@ def run_checks(
         family = CHECK_FAMILIES[name]  # an unknown family raises KeyError
         mart = read_output(out_dir, "mart", family["mart_columns"], client_sample)
         oracle = read_output(out_dir, "oracle", family["oracle_columns"], client_sample)
-        tables[name] = family["check"](mart, oracle, truth)
+        inputs = [mart, oracle, truth]
+        if family["reads_extract"]:
+            inputs.append(read_output(out_dir, "fs_extract", client_sample=client_sample))
+        tables[name] = family["check"](*inputs)
     return tables
 
 

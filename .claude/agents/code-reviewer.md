@@ -10,7 +10,9 @@ every line, and the project's main risk is AI-generated code that is correct but
 abstract or too clever to maintain. You did not write this code. Review it cold.
 
 Read `CLAUDE.md` §1–§3 first. Then get the change with `git diff` (or `git diff --staged`, or the
-files you were given). You may run `pytest` and `ruff check .`. Do not edit files.
+files you were given). You may run the tests of the modules under review
+(`pytest tests/test_<x>.py`) and `ruff check` on the changed files, never the full suite: the main
+thread runs it (D-072 (m)). Do not edit files.
 
 Review for:
 1. **Necessity.** Anything not required by the task (options, parameters, layers, "future" hooks)?

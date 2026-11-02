@@ -74,11 +74,65 @@ class Decision(StrictModel):
         return self
 
 
-class Sources(StrictModel):
-    """An entity's logical sources: the first feature source is the governing spine."""
+Name = Annotated[str, Field(pattern=r"^\s*\S")]  # a source or column name: not empty or blank
 
-    features: list[str] = Field(min_length=1)
-    targets: str | None = None
+
+class SourceKeys(StrictModel):
+    """A source's own key column names; a field left out is named as in `data.keys`."""
+
+    unit_id: Name | None = None
+    period: Name | None = None
+
+
+class SourceEntry(StrictModel):
+    """A logical source whose key columns are named other than `data.keys` (e.g. an extract)."""
+
+    source: Name
+    keys: SourceKeys
+
+    @model_validator(mode="after")
+    def _check_own_key(self) -> "SourceEntry":
+        """At least one own key name; keys restating `data.keys` are the writer's to avoid
+        (`dataset.md`, Key names)."""
+        if self.keys.unit_id is None and self.keys.period is None:
+            raise ValueError(
+                f"source {self.source!r}: keys names no column; name one, or list the source "
+                "by its plain name"
+            )
+        return self
+
+
+class Sources(StrictModel):
+    """An entity's logical sources, each a name or `{source, keys}`: the first feature source
+    is the governing spine, keyed by `data.keys`. A plain name stays a string in the dump, so
+    the hashes of a config without own keys are unchanged."""
+
+    features: list[Name | SourceEntry] = Field(min_length=1)
+    targets: Name | SourceEntry | None = None
+
+    @model_validator(mode="after")
+    def _check_features(self) -> "Sources":
+        """The spine is a plain name, no logical source is named twice, ignoring case (the
+        join's marker columns are Spark columns), and a target source that is also a feature
+        source is keyed as its feature entry."""
+        if isinstance(self.features[0], SourceEntry):
+            raise ValueError(
+                f"sources.features: the first feature source {self.features[0].source!r} is the "
+                "spine, keyed by data.keys; name it plainly and set data.keys to its key columns"
+            )
+        names = [(e if isinstance(e, str) else e.source).lower() for e in self.features]
+        repeated = sorted({name for name in names if names.count(name) > 1})
+        if repeated:
+            raise ValueError(f"sources.features names a source twice: {repeated}")
+        target = self.targets if isinstance(self.targets, str | None) else self.targets.source
+        twin = names.index(target.lower()) if target and target.lower() in names else None
+        if twin is not None and self.features[twin] != self.targets:
+            raise ValueError(
+                f"sources.targets {target!r} is also a feature source: key it exactly as in "
+                "sources.features, since the same rows under another period column would shift "
+                "the target against the features"
+            )
+        return self
 
 
 class Entity(StrictModel):

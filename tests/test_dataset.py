@@ -71,10 +71,13 @@ def _flags(spark: SparkSession, units: dict[str, list[int]]) -> DataFrame:
     return spark.createDataFrame(rows, "unit_id string, period date, value int")
 
 
-def _config(variant: Callable[..., UseCaseConfig], **data: object) -> UseCaseConfig:
-    """The skeleton's config on the hand-made sources: the mart and `extra` as features, the
-    flag source as targets, no eligibility unless given."""
-    sources = {"features": ["retail_mart", "extra"], "targets": "retail_holdings"}
+def _config(
+    variant: Callable[..., UseCaseConfig], features: list | None = None, **data: object
+) -> UseCaseConfig:
+    """The skeleton's config on the hand-made sources: the mart and `extra` as features unless
+    given, the flag source as targets, no eligibility unless given."""
+    features = features or ["retail_mart", "extra"]
+    sources = {"features": features, "targets": "retail_holdings"}
     return variant(
         time=TIME,
         entities={"entity_a": {"sources": sources}},
@@ -250,6 +253,42 @@ def test_shared_feature_column_is_refused(
     env = write_sources(sources)
     with pytest.raises(ValueError, match=r"'extra' shares the columns \['income'\]"):
         load_panel([_config(variant)], "entity_a", env, spark)
+
+
+def test_feature_column_differing_in_case_only_is_refused(
+    spark: SparkSession,
+    write_sources: Callable[..., EnvironmentConfig],
+    variant: Callable[..., UseCaseConfig],
+    sources: dict[str, DataFrame],
+) -> None:
+    """Spark compares column names ignoring case, so `Income` beside the spine's `income` fails
+    naming both spellings."""
+    sources["extra"] = sources["extra"].withColumn("Income", F.lit(1.0))
+    env = write_sources(sources)
+    with pytest.raises(ValueError, match=r"'extra' shares the columns \['Income \(as income\)'\]"):
+        load_panel([_config(variant)], "entity_a", env, spark)
+
+
+def test_feature_source_with_its_own_key_names_joins_alike(
+    spark: SparkSession,
+    write_sources: Callable[..., EnvironmentConfig],
+    variant: Callable[..., UseCaseConfig],
+    sources: dict[str, DataFrame],
+) -> None:
+    """A joined source given as `{source, keys}` with its own key columns gives the panel a
+    source keyed by `data.keys` gives; the meta records the entry."""
+    extract = sources["extra"].withColumnRenamed("unit_id", "customer_no")
+    extract = extract.withColumnRenamed("period", "as_of_date")
+    env = write_sources({**sources, "extract": extract})
+    entry = {"source": "extract", "keys": {"unit_id": "customer_no", "period": "as_of_date"}}
+    expected, _, _ = build_panel(_config(variant), "entity_a", env, spark)
+    keyed = _config(variant, features=["retail_mart", entry])
+    panel, log, _ = build_panel(keyed, "entity_a", env, spark)
+    _, _, meta = load_panel([keyed], "entity_a", env, spark)
+    assert panel.columns == expected.columns
+    assert panel.exceptAll(expected).count() == expected.exceptAll(panel).count() == 0
+    assert log[1]["source"] == "extract" and log[1]["matched_share"] == pytest.approx(2 / 3)
+    assert meta["sources"] == {"features": ["retail_mart", entry]}
 
 
 def test_spine_with_a_gap_before_the_validation_period_is_refused(

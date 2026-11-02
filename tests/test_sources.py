@@ -27,6 +27,7 @@ from pyspark.sql.types import (
 )
 
 from core_modelling.config import UseCaseConfig
+from core_modelling.config.schema import SourceEntry, SourceKeys
 from core_modelling.environment import EnvironmentConfig, Roots, Source
 from core_modelling.periods import PERIODS
 from core_modelling.sources import check_periods_covered, missing_periods, read_keyed_source
@@ -362,6 +363,33 @@ def test_duplicate_keys_fail_naming_the_source_and_key(
     env = _env_with(spark, tmp_path, {"doubled": (rows, DateType())})
     with pytest.raises(ValueError, match=r"'doubled' has duplicate .* \(1, 2024-03-31\)$"):
         read_keyed_source(cc_config, "entity_a", "doubled", env, spark)
+
+
+def test_finer_period_source_fails_with_an_aggregation_hint(
+    spark: SparkSession, tmp_path: Path, cc_config: UseCaseConfig
+) -> None:
+    """Weekly rows under a monthly config repeat a client-month; tagged on other days than the
+    month's first or last, the error says the source probably holds a finer period."""
+    weeks = [(1, date(2024, 3, day)) for day in (3, 10, 17, 24, 31)]
+    env = _env_with(spark, tmp_path, {"weekly": (weeks, DateType())})
+    with pytest.raises(
+        ValueError, match=r"'weekly' has duplicate .* finer period than time\.period .* upstream$"
+    ):
+        read_keyed_source(cc_config, "entity_a", "weekly", env, spark)
+
+
+def test_source_with_its_own_unit_id_column_reads_alike(
+    spark: SparkSession, tmp_path: Path, cc_config: UseCaseConfig
+) -> None:
+    """A `{source, keys}` entry reads its own unit id column; the period it leaves out is named
+    as in `data.keys`."""
+    schema = "customer_no int, snapshot_month date, income double"
+    env = _env_with_columns(spark, tmp_path, schema, (7, date(2024, 4, 1), 1.0))
+    entry = SourceEntry(source="extra", keys=SourceKeys(unit_id="customer_no"))
+    keyed, log = read_keyed_source(cc_config, "entity_a", entry, env, spark)
+    assert keyed.columns == ["unit_id", "period", "income"]
+    assert _keys(keyed) == [("7", date(2024, 4, 30))]
+    assert log["source"] == "extra" and log["id_type"] == "int"
 
 
 def test_null_unit_id_fails_naming_the_source(

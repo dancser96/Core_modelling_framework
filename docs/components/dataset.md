@@ -98,7 +98,21 @@ because the labels are absent.
 - `entities.<e>.sources.features` is an ordered list; the first source is the **governing spine**
   and the others are left-joined to it on the keys. `sources.targets` is one source, left-joined,
   contributing only the target; when it is omitted the target is a column of a feature source.
-- The keys are renamed to `unit_id` and `period` at load from `data.keys` (`sources.KEYS`), and
+  A source listed twice is refused.
+- **Key names.** The spine's key columns are named by `data.keys`. Another source (a joined
+  feature source or the target source) whose keys are named otherwise is listed as
+  `{source: <name>, keys: {unit_id: <column>, period: <column>}}`; a key left out falls back to
+  `data.keys`. The spine is always a plain name, since its names are `data.keys` (SDS, Q415).
+  A target source that is also a feature source is keyed exactly as its feature entry: the same
+  rows under another period column would shift the target against the features (§4.1). In a
+  source with its own key names, a column named like the spine's key columns (`client_id`,
+  `snapshot_month`) is read as `source_<name>` and printed: a second id or date. The join entry
+  of such a source records the key columns it was read with (`keys`). A plain name dumps as a plain string, so the hashes of a config without own key names didn't
+  move. An entry is hashed as written: `{unit_id: X}` and `{unit_id: X, period: <data.keys'
+  period>}` load the same source but are two data definitions, so write only the keys that
+  differ. A field added to a source entry later moves every entry config's hash, so it bumps
+  `HASH_VERSION` (D-088).
+- The keys are renamed to `unit_id` and `period` at load (`sources.KEYS`), and
   `unit_id` is cast to string, so an upstream change of the id column's type cannot move every
   client's split (the hash draw is over the column's bytes, T22); the source's raw id type goes
   into its log as `id_type`. A non-key source column named `unit_id` or `period` would clash
@@ -108,20 +122,26 @@ because the labels are absent.
   target spec names an upstream column as the data scientist knows it (`data.target.column:
   target` works); the read side renames whatever of them remains ([model
   input](#model-input-d-131)). One helper, `sources.rename_reserved`, makes the `source_<name>`
-  in both places, and a `source_<name>` that is already a column fails loud naming both. In
-  Phase 2 one naming serves every source of a use case.
+  in both places, and a `source_<name>` that is already a column fails loud naming both.
 - On reading, each source's period column moves to the period's end for `time.period` (a month
   to its last day, a week to its Sunday, a day stays), the framework's one period convention, so
   a source tagged on the first day joins one tagged on the last. A period column that is not a
   date or timestamp fails loud naming its type (a format setting waits for a real source that
   needs one). The join log says how each source tagged its periods (`period start`, `period
-  end` or `other days`; D-129). Every source is read this way through `read_keyed_source`
+  end`, `first and last days` or `other days`; D-129). Every source is read this way through `read_keyed_source`
   (`sources.py`, built with Target Factory), which also refuses a null unit id and a repeated key.
 - Duplicate keys in any source fail loud, naming the source and a few keys; the check runs after
-  the period move, so a source carrying both tags for one period fails it. A non-key column
-  present in two feature sources fails loud (renamed upstream, or by a per-source alias later).
-- The join log prints, per source, its distinct units per period and the share of spine rows it
-  matches. A feature source that matches no spine row at all is refused, naming the source and
+  the period move, so a source carrying both tags for one period fails it. When the source's
+  periods are tagged on other days, the message adds that it probably holds a finer period than
+  `time.period` (weekly rows on a monthly spine) to aggregate upstream. A non-key column present
+  in two feature sources fails loud, compared ignoring case as Spark does (`Income` and
+  `income` clash); it is renamed upstream.
+- A joined feature source needs no full coverage: clients or periods it lacks get nulls in its
+  columns from the left join (the SDS, 2026-10-30). The periods it lacks, from the window's
+  first to the latest validation period, are printed by name and kept in its join entry
+  (`missing_periods`), so a missing validation period never shifts validation silently against
+  test (ML audit, 2026-10-30). The join prints, per source, the share of spine rows it matches,
+  and the join log keeps its matched rows per period. A feature source that matches no spine row at all is refused, naming the source and
   both raw id types: the ids are compared as strings, so an empty match means two id systems,
   never a type mismatch.
 - Periods run from `observation_window.first` (the earliest, when several configs share a model

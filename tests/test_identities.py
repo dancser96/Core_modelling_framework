@@ -23,9 +23,12 @@ ENTITY = "entity_a"
 # became `time.period`, the `time` fields and `data.keys.period` were renamed and `task` joined
 # both hashes); test_golden_hashes_of_the_example says what a change means.
 GOLDEN = {
-    "data_definition": "87db23cd29669a7e625562449f7aab0121b2e9847943fff60249b89be0f1a6b5",
+    "data_definition": "28f8bc322919da27178463f8c51bb2b22015a01a71f288b98584f21114e25f96",
     "target_spec": "ed51852ef4acb007730d569c91cbdc6780f65c21d47f8c098357275ee3594e68",
 }
+# The example's data-definition digest before it joined the extract (`features: [retail_mart]`),
+# pinned since 10-26: per-source key names left plain-name configs' hashes where they were.
+PLAIN_DATA_DEFINITION = "87db23cd29669a7e625562449f7aab0121b2e9847943fff60249b89be0f1a6b5"
 
 
 @pytest.fixture
@@ -140,3 +143,18 @@ def test_short_gives_twelve_characters(cfg: UseCaseConfig) -> None:
     """The prefix used in paths and `run_id` is the digest's first 12 characters."""
     digest = config_hash(cfg)
     assert short(digest) == digest[:12] and len(short(digest)) == 12
+
+
+def test_plain_source_names_dump_as_before_and_own_keys_move_both_hashes(
+    cfg: UseCaseConfig,
+) -> None:
+    """Plain source names stay strings in the dump, so the example on its mart alone keeps the
+    digest pinned before per-source keys existed; a target source with its own key columns is
+    another data definition and another label."""
+    plain = _variant(cfg, f"entities.{ENTITY}.sources.features", ["retail_mart"])
+    sources = plain.entities[ENTITY].sources.model_dump(mode="json")
+    assert sources == {"features": ["retail_mart"], "targets": "retail_holdings"}
+    assert data_definition_hash(plain, ENTITY) == PLAIN_DATA_DEFINITION
+    own = {"source": "retail_holdings", "keys": {"unit_id": "customer_no"}}
+    keyed = _variant(plain, f"entities.{ENTITY}.sources.targets", own)
+    assert _changed(plain, keyed) == {"config", "data_definition", "target_spec", "resolved_input"}

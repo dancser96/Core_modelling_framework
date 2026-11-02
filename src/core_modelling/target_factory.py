@@ -27,7 +27,7 @@ from pyspark.sql.types import BooleanType
 from core_modelling.config import UseCaseConfig
 from core_modelling.environment import EnvironmentConfig
 from core_modelling.periods import period_spec
-from core_modelling.sources import KEYS, check_periods_covered, read_keyed_source
+from core_modelling.sources import KEYS, check_periods_covered, read_keyed_source, source_name
 from core_modelling.tasks import TASK_SPECS
 
 
@@ -102,8 +102,10 @@ def load_targets(
         raise ValueError(f"unknown entity {entity!r}: the config has {sorted(cfg.entities)}")
     _check_target_names(cfg)
     sources = cfg.entities[entity].sources
-    name = sources.targets or sources.features[0]  # the first feature source is the spine (D-129)
-    source, log = read_keyed_source(cfg, entity, name, env, spark)
+    # without a target source, the first feature source (the spine, D-129)
+    entry = sources.features[0] if sources.targets is None else sources.targets
+    name = source_name(entry)
+    source, log = read_keyed_source(cfg, entity, entry, env, spark)
     _check_target_column(source, cfg, name)
     # Every period up to v + w: a gap nulls the w targets before it, a source ending earlier
     # leaves the validation period's labels immature (one unbroken range; real panels have it).

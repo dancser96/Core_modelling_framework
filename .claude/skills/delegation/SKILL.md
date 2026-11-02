@@ -43,7 +43,10 @@ looks. A cheaper model takes only mechanical work that a test, a command or the 
 reading the whole diff checks in full. Anything that feeds a decision, anything the SDS or LDS
 reads as the record, and anything touching §4 runs on a strong model.
 
-- **Strong** means the session model when it is Opus or Fable; otherwise pass `model: opus`.
+- **Strong** means Opus: the session model when it is Opus, otherwise pass `model: opus`. On a
+  Fable session, Fable keeps the main thread and the `ml-correctness-auditor`; any other
+  subagent runs on Fable only when the routing plan says why (D-072 (l)). The review agents
+  inherit the session model, so pass `model: opus` to the others.
 - **Always pass `effort`** on the `Agent` call. What a subagent runs at without one isn't
   documented, and the default for Opus 5.5, Sonnet 5.5 and Haiku 5.5 is `medium`.
 - Never set `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` or `CLAUDE_CODE_EFFORT_LEVEL`: they override every
@@ -89,6 +92,11 @@ Escalate a piece to a strong model when it turns out to need judgement, or when 
 failed once. Never retry the same brief on the same model. A cheaper model's output isn't done
 until the main thread has read it in full and a strong reviewer has seen it (step 6).
 
+**Routing plan on a Fable session** (D-072 (l)). Before a major task, show the SDS, with the plan
+and before spawning, one table: piece, agent type, model and effort, why. Nearly all of the
+subagent work goes to Opus, Sonnet and Haiku per the tables above. The point is balance: without
+the plan, almost every token goes to Fable.
+
 ## 4. Brief
 
 Every brief has these parts, in this order. Short is fine; missing is not.
@@ -101,7 +109,8 @@ Every brief has these parts, in this order. Short is fine; missing is not.
    docstring on every function, names from `docs/glossary.md`, fail loud, no new dependency, no
    bank names, no cwd-relative paths), plus the function names and signatures from the plan.
 5. **Acceptance**: the commands to run and the expected result (`pytest tests/test_x.py`,
-   `ruff check <files>`). The agent runs them and reports the output, not a claim.
+   `ruff check <files>`): only the tests of the files the agent owns, never the full suite
+   (D-072 (m)). The agent runs them and reports the output, not a claim.
 6. **Report format**: at most ~15 lines: files and functions changed, the tail of the test and
    ruff output, open questions. No pasted files, no narrative.
 7. **Stop rule**: if a constraint can't be met or something unexpected appears, stop and report;
@@ -121,16 +130,17 @@ Two variants:
   poll; the result arrives as a notification.
 - Long shell jobs (data generation, slow tests) run in the background meanwhile.
 - One memory-heavy job at a time (local Spark, the full test suite): the 8 GB Mac is the limit.
-- The review subagents run together, in one message, once the merged state passes `pytest` and
-  `ruff`.
+- The review subagents run together, in one message, once the merged state passes its tests and
+  `ruff`. They run no tests themselves beyond those of the files under review.
 - A subagent can spawn its own subagents, three levels deep. Hand a whole minor step to one
   orchestrating subagent when the main thread would otherwise hold many small results.
 
 ## 6. Integrate and verify
 
 1. Read every result yourself. A report is a claim until the main thread has seen the diff.
-2. Run `pytest` and `ruff check .` on the merged state and read fresh output
-   (`verification-before-completion`).
+2. Run the tests of the touched modules and `ruff check` on the touched files, and read fresh
+   output (`verification-before-completion`). The full suite runs only when a major step or a
+   multi-module build is finished, on the main thread in the background (D-072 (m)).
 3. Run the reviewers in parallel: `code-reviewer` always, the §10 specialists whose trigger
    applies, and `simplicity-review` on code. Fix or explicitly justify every finding.
 4. Read every doc diff in full against §8 before the SDS sees it: verdict first, one owner per
@@ -151,7 +161,8 @@ main thread changed. Then what to review first and the open risks.
 - Omitting `effort`, so the agent runs at a level nobody chose.
 - Vague briefs ("improve the tests", "clean this up").
 - Two agents on one file.
-- Forcing every agent to one model.
+- Forcing every agent to one model, or letting every agent inherit Fable.
+- The full suite run by every agent, or for a small, targeted fix.
 - Resuming a failed worker with the same brief; fix the brief first.
 - Spawning for a single small edit; the overhead costs more than it saves.
 

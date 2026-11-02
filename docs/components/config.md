@@ -69,13 +69,15 @@ decision:                                # declared before any result; never cha
 entities:                                # only the entities this use case applies to; data never merged (D-034)
   entity_a:
     sources:
-      features: [retail_mart]            # ordered: the first is the governing spine, the rest left-join to it
+      features:                          # ordered: the first is the governing spine, the rest left-join to it
+        - retail_mart                    # a plain name: keys named as in data.keys
+        - {source: retail_fs_extract, keys: {unit_id: customer_no, period: as_of_date}}   # own key names
       # features: [feature_store]                   # the feature-store settings ship commented out (D-021)
       # features: [feature_store, retail_mart]
       targets: retail_holdings           # left-joins to the spine; omit when the target is a feature-source column
 
 data:
-  keys: {unit_id: client_id, period: snapshot_month}   # the sources' key names; renamed to unit_id, period at load; the id cast to string
+  keys: {unit_id: client_id, period: snapshot_month}   # the spine's key names (and any source's without its own); renamed to unit_id, period at load; the id cast to string
   model_input: retail_acquisition_input  # optional: the saved model input's logical name, shared with td_acquisition (D-131); omit = build in memory
                                          # one table may serve several use cases (run a.yml b.yml --stages target_factory)
   eligibility:                           # two ordered Spark SQL lists; filters log rows in -> out
@@ -161,7 +163,9 @@ What it holds, what its reader refuses and when it is written: [dataset](dataset
 
 ## Phase 2 requirements
 1. Every config has `schema_version` and `task`. Unbuilt tasks are defined but fail with a clear "not
-   implemented".
+   implemented". From release 1.0, a field that gains a new accepted form (as `sources.features`
+   gained `{source, keys}` in 0.x, 2026-10-30) also bumps `schema_version`, so an older framework
+   refuses the config by its version, not with a type error.
 2. Load = the config file, migrated, the level defaults applied, validated with Pydantic v2
    (unknown keys fail loud, so a leftover `profile:` can't fall back to a default level); the
    **environment file** loaded beside it, under its own schema and never merged into the config
@@ -198,7 +202,9 @@ What it holds, what its reader refuses and when it is written: [dataset](dataset
    first source is the **governing spine**, and the others are left-joined to it on the keys;
    `sources.targets` is one source, left-joined to the spine and contributing only the target,
    omitted when the target is a column of a feature source (D-129; the join rules:
-   [dataset](dataset.md#sources-and-joins-d-129)). The feature store is one more logical source, alone or
+   [dataset](dataset.md#sources-and-joins-d-129)). Each entry is a logical name, or
+   `{source, keys}` for a source whose key columns are named unlike the spine's `data.keys`; a key
+   left out falls back to `data.keys`, and the spine is always a plain name. The feature store is one more logical source, alone or
    next to a mart; the release example shows all three settings, two of them commented out, and a
    `feature_store` source is refused until OD-26 is designed (D-021). Physical names never appear
    in the config: the environment file maps each logical name per entity (D-130).

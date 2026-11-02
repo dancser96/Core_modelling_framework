@@ -107,9 +107,10 @@ def test_window_frame_keeps_every_client_after_the_analysis_filter_with_the_tags
     assert not (window["income"].isna() & (window["salary_transfer_flag"] == 0)).any()
     assert window["target"].isna().any()  # leavers inside the window keep their rows
     steps = [entry["step"] for entry in eda_frames.log]
-    assert steps == ["join", "join", "eligibility", "eligibility", "contract", "contract",
-                     "contract", "contract", "collect"]  # fmt: skip
-    assert [e["name"] for e in eda_frames.log[2:4]] == ["income_known_or_salaried", "non_holders"]
+    # the joins: the spine, the extract and the target source
+    assert steps == ["join", "join", "join", "eligibility", "eligibility", "contract",
+                     "contract", "contract", "contract", "collect"]  # fmt: skip
+    assert [e["name"] for e in eda_frames.log[3:5]] == ["income_known_or_salaried", "non_holders"]
     assert eda_frames.meta["tags"] == ["non_holders"] and eda_frames.meta["lineage"] == ["cc_flag"]
     assert eda_frames.meta["collect"][0]["rows"] == len(window)
 
@@ -189,7 +190,7 @@ def test_model_input_round_trip_gives_the_same_frames(
     target = metadata["targets"]["cc_acquisition"]
     assert target["target_spec_hash"] == training_frames.meta["target_spec_hash"]
     assert target["lineage"] == ["cc_flag"] and target["null_in_window_share"] == 0.0
-    assert [entry["step"] for entry in metadata["log"]] == ["join", "join"]
+    assert [entry["step"] for entry in metadata["log"]] == ["join", "join", "join"]
     assert set(metadata["columns"]) == set(saved.columns)  # Spark lists the partition last
     from_input = build_frames(cc_config, ENTITY, env, spark, "evaluation")
     for name in ("train", "test", "validation"):

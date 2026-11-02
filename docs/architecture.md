@@ -48,7 +48,7 @@ them in order (D-028).
 | **promote** | Registered version + approved PR | Promotion record + verified deployment bundle | [lifecycle](components/lifecycle.md) |
 | **deploy** | Promoted bundle, run by the change-request process | Production copy (by default retrained on the same data definition before it scores, D-052) + production record | [lifecycle](components/lifecycle.md) |
 | **inference** | Production (or pinned registered) model + a period | Batch-scoped scores + manifest | [inference](components/inference.md) |
-| **monitoring** | Scores, inputs, drift reference, matured labels, baselines | Monitoring tables + report, fed to the data observability framework (D-021) | [monitoring](components/monitoring.md) |
+| **monitoring** | Scores, inputs, drift reference, matured labels, baselines | Monitoring tables + report | [monitoring](components/monitoring.md) |
 
 **Cross-cutting pieces:**
 - [config](components/config.md)
@@ -66,8 +66,8 @@ automation level (D-031).
 
 **Integrations (first release, D-021):** the feature store upstream, limited in Phase 2 to Stage 1
 (M2.1 Foundation), where a use case's data comes in, so no later stage knows about it (alone or with other sources,
-OD-26), and the data observability framework downstream, whose needs shape the monitoring tables
-only once we have seen it in use (OD-13); both thin.
+OD-26), thin; and the data observability framework, to which every deploy points the model's
+source tables, with nothing built for it.
 
 ## 3. Config
 
@@ -202,8 +202,8 @@ change-request path and the open questions are owned by [lifecycle](components/l
   - realised performance against baselines: thin, built so it works as soon as outcomes exist;
   - business impact: a stub.
 
-  Monitoring outputs feed the data observability framework (D-021); tooling and dashboards are the
-  platform / MLOps team's (D-079). Details: [monitoring](components/monitoring.md).
+  Source-table quality is the data observability framework's (D-021); tooling and dashboards are
+  the platform / MLOps team's (D-079). Details: [monitoring](components/monitoring.md).
 
 ## 7. Run modes
 
@@ -282,7 +282,8 @@ built.
   - `tasks.py`: `TASK_SPECS`, the per-task spec (the target rules, the target-column check, the
     target summary and the contract checks in Stage 1)
   - `sources.py`: `KEYS` and `HELPER_COLUMNS` (`target`, `split`, `eligible`);
-    `read_keyed_source`, a logical source with its keys renamed (`unit_id` as a string, a
+    `source_name`, `source_keys` and `feature_source_names` for a source entry (a name or
+    `{source, keys}`); `read_keyed_source`, a source entry with its keys renamed (`unit_id` as a string, a
     non-key column named like a key read as `source_<name>`) and its periods at their end;
     `rename_reserved`, the one naming rule for such clashes; Target Factory, the dataset and
     Inference all read through it (D-129)

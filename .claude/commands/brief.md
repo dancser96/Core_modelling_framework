@@ -1,5 +1,5 @@
 ---
-description: Brief me for the daily Lead DS sync — what the Lead DS should review, open questions for both of us, recent developments, what to demo
+description: Brief me for the daily Lead DS sync — what the Lead DS should review and try, open questions for both of us, recent developments
 argument-hint: "[period, e.g. 'since Monday' — default: since the last briefing]"
 allowed-tools: Read, Write, Edit, Bash(git log:*), Bash(git status:*), Bash(git diff:*), Bash(git show:*)
 ---
@@ -14,8 +14,8 @@ memory, so it works in a fresh chat.
    entries for them from the commit messages and diffs. Mention uncommitted work (`git status`).
 3. Reply with, for the period "$ARGUMENTS" (default: since the last briefing):
    - **What happened:** 3–7 guiding bullets, newest first, each with why it matters.
-   - **Demo:** the concrete code, notebook or doc to show, with the command to run and `path:line`.
-     If nothing runnable exists yet, say which doc section to walk through.
+   - **To try:** the notebook or command the LDS can run themselves, and what to look for. If
+     nothing runnable exists yet, say which doc section to walk through.
    - **Discuss:** the open questions for this sync, most blocking first (OD-numbers, one line of
      context each, plus our current leaning).
    - **Risks / needs a decision:** anything blocked, unverified or drifting from the goals.
@@ -24,7 +24,7 @@ memory, so it works in a fresh chat.
    open decisions above an untagged review list by importance then recency (tick or remove only
    items the user says the LDS finished), "last 2 working days" (soft ceiling 40 lines, hard 50) and
    "last 7 working days" (at most one page) pruned to the important changes, the open-questions
-   table and "Demo next" updated, and `last sync` set. Don't commit anything; the user
+   table and "To try" updated, and `last sync` set. Don't commit anything; the user
    commits and pushes.
 
 Keep it skimmable: the user reads it right before a one-hour meeting. Roles only, no names; no bank

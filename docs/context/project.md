@@ -38,7 +38,7 @@ standard where it can.
 | **Explainability** | Explainers that error out and get switched off | Views chosen per model family from a compatibility table; anything that should work does work |
 | **Registry and deployment** | Models copied by hand and promoted as a side effect of scoring; unclear what is in production | register → promote → deploy, gated and signed off; tables showing every registered and production model |
 | **Scoring** | Outputs overwritten; scores not traceable to a model or config | Batch-scoped outputs with manifests; every score traces to its model, config and code version |
-| **Monitoring** | Rare and manual; performance seldom checked after go-live | Operational health and drift from day one, connected to the data observability framework; realised performance and impact as soon as outcomes exist |
+| **Monitoring** | Rare and manual; performance seldom checked after go-live | Operational health and drift from day one, the source tables watched by the data observability framework; realised performance and impact as soon as outcomes exist |
 | **Knowledge** | Inconsistent vocabulary; no overview of live models; little learning across the team | A shared glossary, a model inventory, and guided notebooks that show how things work under the hood |
 | **Environment** | Laptop code breaks inside the bank (paths, versions, HDFS) | An environment adapter and bank-parity pins: moving inside is configuration, not code |
 
@@ -89,14 +89,14 @@ standard where it can.
 | Automation | Two automation levels, `autonomous` and `assisted`, with the same checks at both (D-023; D-132) | `manual` |
 | Upstream | Feature store integration, limited to Stage 1 (M2.1 Foundation), where a use case's data comes in (no later stage knows about it): one use case config in three source settings (the feature store, other sources, both); outside the bank only the other-sources setting runs, on synthetic data, and the two feature-store settings ship commented out (D-021, OD-26) | Feedback mechanisms into the feature store (Phase 3 wishlist) |
 | Lifecycle | local → registered → production; register / promote / deploy; one production version per model key; own records (append-only registry events, `production.json`) that map one-to-one onto MLflow concepts, with MLflow added beside them in M4 once confirmed available (D-111, OD-08); retraining in production on the same data definition as the default deploy path (only the inference period moves; a check against the evaluated parent before it scores), deploying the fitted model also allowed (D-033, D-052; operations researched with the platform team in M4, OD-27); no log of who signs off or approves a model (approvals stay in the PR and the change request, D-033) | Which source of people logs to build in; shadow challengers; retraining on moved or extended data (later periods, all clients, a longer window) (Phase 3 wishlist in `docs/roadmap.md`) |
-| Monitoring | The frame built properly: all four layers present (health, drift, realised performance, impact), with versioned tables, flags and the seam to the data observability framework, whose needs shape the tables only once we have seen it in use (D-021, OD-13). The content light: a few health and drift measures, realised performance thin, impact a stub (D-040) | Richer content; alerting outputs (acting on them: the platform / MLOps team, D-079); retrain automation |
+| Monitoring | The frame built properly: all four layers present (health, drift, realised performance, impact), with versioned tables and flags; the data observability framework watches a production model's source tables, pointed to it at deploy, and shapes nothing (D-021). The content light: a few health and drift measures, realised performance thin, impact a stub (D-040) | Richer content; alerting outputs (acting on them: the platform / MLOps team, D-079); retrain automation |
 | Run modes | Library + CLI + Python API + guided notebooks | No service layer planned |
 | LLM-assisted modelling | Interface kept in mind only | Phase 3 (D-021) |
 
 **Phase 2 is done when** a DS can take a new use case, for whichever entities it applies to, from
 data to scores from a production model using only a config and the guided notebooks. Every component
-exists at least as a thin version (depth per component: OD-01), including the feature store and data
-observability integrations (thin); LLM-assisted modelling comes in Phase 3 (D-021).
+exists at least as a thin version (depth per component: OD-01), including the feature store integration (thin)
+and the data observability step at deploy; LLM-assisted modelling comes in Phase 3 (D-021).
 The production step is met outside the bank when `deploy` runs against a production-tier path on
 synthetic data (D-021). Inside the bank, a long change freeze around the year end makes the first
 change request release 1.0, which carries only the framework, no model; a model's first deploy is

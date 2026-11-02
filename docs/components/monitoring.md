@@ -13,9 +13,7 @@ model after its builder moves on, are for the platform / MLOps team to handle (D
 
 Phase 2 builds the frame properly and keeps the content light (D-040). The frame is
 all four layers present, their tables with `schema_version`, `framework_version` (D-007 (b)) and
-flags, where they are written, and the seam to the data observability framework, whose needs shape
-the tables only once we have seen it in use (D-021, OD-13). The content is a few health and drift
-measures with flags.
+flags, and where they are written. The content is a few health and drift measures with flags.
 
 | Layer | What | Phase 2 depth |
 |---|---|---|
@@ -33,17 +31,19 @@ measures with flags.
    maximum age, drift threshold) sets a "retrain recommended" flag.
 3. The outcome join is keyed by `scoring_batch_id` and model hash, and is built and tested on synthetic
    data, so it works the day labels exist.
-4. Monitoring outputs are integrated with the **data observability framework** (D-021). How is
-   designed after the work stream that learns it; its needs shape the monitoring tables only once
-   we have seen it in use (OD-13).
 
 ## Design constraints
+- Source-table quality (schema, freshness, nulls, ranges) is the **data observability
+  framework's**: a Great Expectations-style suite run on production tables, to which a production
+  model's source tables are pointed at deploy (D-021, [lifecycle](lifecycle.md)). Monitoring
+  doesn't repeat those checks and doesn't feed that framework; it watches what only the model
+  knows: the inputs as the model sees them against the drift reference, the scores, and
+  realised performance.
 - Performance monitoring is label-gated. Its absence before labels mature is correct, not a gap.
 - Simple, transparent maths: this serves the business and model maintenance, not research.
 
 ## Open questions
-- Tooling and dashboards: the platform / MLOps team's to handle (D-079). The data observability
-  integration is ours, designed after the work stream (D-021, OD-13). MLflow suits the registry and experiment tracking better than tracking
-  decay over time.
+- Tooling and dashboards: the platform / MLOps team's to handle (D-079, OD-13). MLflow suits the
+  registry and experiment tracking better than tracking decay over time.
 - How monitoring feeds the model inventory (OD-14).
 - Retraining automation and retirement policy (recorded as policy first, automation later).

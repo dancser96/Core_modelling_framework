@@ -24,8 +24,9 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Feature store:** a shared store of engineered features with its own framework and team. The
   first release reads from it in Stage 1 (M2.1 Foundation), where a use case's data comes in,
   alone or with other sources; no later stage knows about it (D-021).
-- **Data observability framework:** the existing framework for watching data, with its own team.
-  Monitoring integrates with it in the first release (D-021).
+- **Data observability framework:** the existing framework for watching data, with its own team:
+  a Great Expectations-style suite of data checks on production (maybe sandpit) tables. Every
+  deploy points the model's source tables at it; the framework does nothing else with it (D-021).
 - **Unit:** what one row describes in one period (client, account, card, merchant…). Shapes say
   `unit_id`, held as a string whatever the source's type; the client is the usual unit.
 - **Use case:** one modelling problem (e.g. one product's acquisition propensity), defined by one

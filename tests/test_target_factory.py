@@ -90,7 +90,7 @@ def _variant(
     cfg: UseCaseConfig,
     task: str = "binary",
     w: int = 3,
-    targets: str | None = "retail_holdings",
+    targets: str | dict | None = "retail_holdings",
     time: dict | None = None,
     **target: object,
 ) -> UseCaseConfig:
@@ -476,3 +476,22 @@ def test_run_target_factory_summary(
     out = capsys.readouterr().out
     assert "label columns for the observation window only" in out
     assert "null_value_share: rows whose window held a null" in out
+
+
+def test_target_source_with_its_own_key_names_builds_the_same_targets(
+    spark: SparkSession,
+    write_sources: Callable[..., EnvironmentConfig],
+    cc_config: UseCaseConfig,
+) -> None:
+    """A `{source, keys}` target source with its own key columns builds the targets a source
+    keyed by `data.keys` builds."""
+    panel = _panel(spark, {"a": [0, 0, 1, 1, 1, 1, 1, 1], "b": [1] * 8})
+    extract = panel.withColumnRenamed("unit_id", "customer_no")
+    extract = extract.withColumnRenamed("period", "as_of_date")
+    env = write_sources({"retail_holdings": panel, "extract": extract})
+    rule = {"time": SHORT_TIME, "rule": "flag_goes_up", "column": "value"}
+    entry = {"source": "extract", "keys": {"unit_id": "customer_no", "period": "as_of_date"}}
+    expected, _ = load_targets(_variant(cc_config, **rule), "entity_a", env, spark)
+    built, log = load_targets(_variant(cc_config, targets=entry, **rule), "entity_a", env, spark)
+    assert log["source"] == "extract"
+    assert built.exceptAll(expected).count() == expected.exceptAll(built).count() == 0

@@ -46,6 +46,11 @@ Three tiers in order, each with the step(s) that move a model on to the next:
   [environment](../context/environment.md) → Change requests). `deploy` is the framework command
   the CR process runs; it verifies checksums before copying. The first CR (release 1.0) carries
   only the framework; a model's first deploy inside the bank is a later, quicker CR (D-021).
+  Every deploy CR also points the model's source tables at the **data observability framework**,
+  which runs its data checks on production tables; that is the framework's whole contact with it
+  (D-021). `deploy` prints the physical source tables the model reads (from the environment file)
+  and records them in the production record, so the CR has the list; the framework's own scores
+  table stays out, since monitoring checks each batch (M2.4).
 - **Production paths are separate from the sandpit** (D-033, D-051). The sandpit is the local and
   registered (HDFS) tiers; anything saved there may be in any format, pickle included. What moves
   from the sandpit to production is never pickle. The folder layout per entity × domain is OD-06.

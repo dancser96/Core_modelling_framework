@@ -85,7 +85,7 @@ they are the first cut. Stage 5 (integrations and release) runs in M4 and both r
 | 4 | CLI and Python API | thin | deep | — |
 | 4 | Guided notebooks | thin | deep (guidance reviewed by the LDS) | — |
 | 5 | Feature store integration | — (learn session; design in the slowdown) | thin | — |
-| 5 | Data observability integration | — (learn session; design in the slowdown) | thin | — |
+| 5 | Data observability (a deploy step, nothing built; D-021) | — | the step in the deploy docs | — |
 | 5 | MLflow (registry, experiment tracking; if confirmed available, D-111) | — (M2.4's records map onto it) | thin | — |
 | 5 | Regression | shapes (per-task spec entries) | end to end | — |
 | 5 | Tests | invariants, migrations, bundle round trip, e2e on `unit` | every function; CI / Sonar | — |
@@ -99,10 +99,9 @@ they are the first cut. Stage 5 (integrations and release) runs in M4 and both r
   JupyterLab, opening time included (the SDS, inside, later). Spike 4 is dropped (D-036).
 - **Learn sessions, booked by the LDS, by 11-06:** platform / MLOps (change-request steps and the
   freeze, registry owner OD-23 (who builds the registry and deployment), Sonar quality gate,
-  scheduling); the feature store team (OD-26: how a use case reads from the feature store); the
-  data observability team (OD-13: how monitoring feeds that framework). The data observability
-  session matters before round 1b, since its needs shape the monitoring tables. Both integration
-  designs are written in the slowdown.
+  scheduling); the feature store team (OD-26: how a use case reads from the feature store). Its
+  design is written in the slowdown. The data observability team only needs to show how a
+  source table is pointed to their framework, before a model's first deploy (D-021).
 - **The first change request (D-021):** release 1.0, the framework only. If the bank allows it,
   start its first-time steps (security review of the saved formats, the deployment path) when the
   freeze lifts in January, using the pre-release as material, so only the final submission waits
@@ -117,8 +116,7 @@ they are the first cut. Stage 5 (integrations and release) runs in M4 and both r
 - The year-end change freeze is long; its dates are unknown. Nothing in the plan needs a change
   request before release 1.0.
 - External teams are unavailable until a session is booked. Nothing on the critical path depends
-  on them before round 2, except that the data observability session should shape the monitoring
-  tables.
+  on them before round 2.
 - One memory-heavy job at a time on the 8 GB Mac; the WSL2 PC takes round 2's heavy comparisons.
 
 ## How each block ends (D-072)
@@ -139,7 +137,7 @@ they are the first cut. Stage 5 (integrations and release) runs in M4 and both r
 | Review backlog grows | More than five items on the sync page's review list for a week | The LDS reviews designs and ML-critical code only; the SDS reviews with review guides |
 | Round 1a slips | M2.4 not done by 11-20 | Round 1b keeps the exit points; calibration depth and the presentable report move to round 2 |
 | Round 1b is short | The lost week of 11-30 | The exit points come first; the presentable report is the first item to move to round 2 |
-| An exit point's shape changes after the pre-release | A downstream team or the data observability session needs a different shape | Cheap until release 1.0's first shared row (D-007); collect the changes in run-through 1 |
+| An exit point's shape changes after the pre-release | A downstream team needs a different shape | Cheap until release 1.0's first shared row (D-007); collect the changes in run-through 1 |
 | Round 2 is too full | Behind plan in its third week | Cut the nice to haves, then depth in EDA and Evaluation. The integrations, regression and tests stay (D-021, D-022) unless the CDS agrees otherwise |
 | A spike fails | Any spike result before 11-09 | A family whose round trip fails is fixed in M2.3 rather than dropped (D-037); a failed group split falls back to a client-grouped holdout (D-106) |
 | External teams not available | No session booked by 11-06 | The feature-store settings of the release example stay commented out (D-021); a flat monitoring export stands in; the integrations stay in round 2 |

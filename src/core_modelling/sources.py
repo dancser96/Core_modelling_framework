@@ -5,7 +5,9 @@ the dataset's join and, later, Inference. Reading every source the same way is w
 tagged on a period's first day join one tagged on its last (D-129): the `data.keys` columns become
 `unit_id` (cast to string, so a draw on it survives an upstream change of the id column's type)
 and `period`, and `period` moves to its period's last day, the framework's one convention, through
-the period spec (`periods.py`). A source whose period is not a date or timestamp, whose timestamp
+the period spec (`periods.py`). A source names its key columns as in `data.keys`, or, written
+as `{source, keys}` in `entities.<e>.sources`, its own (`source_keys`); the spine always uses
+`data.keys`. A source whose period is not a date or timestamp, whose timestamp
 periods are not at midnight in the session time zone (they may shift a period), or whose keys
 repeat after the move, fails loud here, before any target or join is built on it. A non-key
 column named like a key (`unit_id`, `period`) is read as `source_<name>` (`rename_reserved`),
@@ -25,6 +27,7 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import DateType, TimestampNTZType, TimestampType
 
 from core_modelling.config import UseCaseConfig
+from core_modelling.config.schema import Keys, SourceEntry
 from core_modelling.environment import EnvironmentConfig, read_source
 from core_modelling.periods import Period, period_labels, period_spec
 
@@ -38,25 +41,65 @@ PERIOD_TYPES = (DateType, TimestampType, TimestampNTZType)
 SHOWN_KEYS = 5  # duplicate keys named in the error
 
 
+def source_name(entry: str | SourceEntry) -> str:
+    """The logical name of a source entry (a plain name, or `{source, keys}`)."""
+    return entry if isinstance(entry, str) else entry.source
+
+
+def source_keys(entry: str | SourceEntry, keys: Keys) -> Keys:
+    """The entry's key columns: its own `keys`, each one left out named as in `keys`."""
+    if isinstance(entry, str):
+        return keys
+    own = entry.keys
+    return Keys(
+        unit_id=keys.unit_id if own.unit_id is None else own.unit_id,
+        period=keys.period if own.period is None else own.period,
+    )
+
+
+def feature_source_names(cfg: UseCaseConfig, entity: str) -> list[str]:
+    """The logical names of `entity`'s feature sources, the spine first."""
+    return [source_name(entry) for entry in cfg.entities[entity].sources.features]
+
+
+def feature_sources_dump(cfg: UseCaseConfig, entity: str) -> list:
+    """`entity`'s feature sources as plain data, a name or `{source, keys}`: what the panel's
+    meta and the model input's sidecar record and compare."""
+    return cfg.entities[entity].sources.model_dump(mode="json")["features"]
+
+
 def read_keyed_source(
-    cfg: UseCaseConfig, entity: str, name: str, env: EnvironmentConfig, spark: SparkSession
+    cfg: UseCaseConfig,
+    entity: str,
+    entry: str | SourceEntry,
+    env: EnvironmentConfig,
+    spark: SparkSession,
 ) -> tuple[DataFrame, dict]:
-    """The source `name` of `entity` with its keys as `unit_id` (a string) and `period` (the
-    period's last day), another column named like a key as `source_<name>`, and its log: the
-    source, its distinct periods, how it tagged them, the raw id's type and the renames."""
+    """The source `entry` (a name, or `{source, keys}`) of `entity` with its keys as `unit_id`
+    (a string) and `period` (the period's last day), another column named like a key as
+    `source_<name>`, and its log: the source, its distinct periods, how it tagged them, the raw
+    id's type and the renames."""
+    name = source_name(entry)
     raw = read_source(spark, env, entity, name)
     spec = period_spec(cfg)
-    unit_column, period_column = cfg.data.keys.unit_id, cfg.data.keys.period
+    keys = source_keys(entry, cfg.data.keys)
+    unit_column, period_column = keys.unit_id, keys.period
     _check_key_columns(raw, name, unit_column, period_column)
     _check_midnight(raw, name, period_column)
     log = _period_log(raw, name, period_column, spec)
     log["id_type"] = raw.schema[unit_column].dataType.simpleString()  # before the string cast
+    if not isinstance(entry, str):  # which columns became the keys, a fallback included
+        log["keys"] = keys.model_dump()
     # Checked against every column, so a key column named `source_unit_id` is a clash too.
-    reserved = [key for key in KEYS if key not in (unit_column.lower(), period_column.lower())]
+    own = (unit_column.lower(), period_column.lower())
+    reserved = [key for key in KEYS if key not in own]
+    if not isinstance(entry, str):  # the spine's key names here would be a second id or period
+        spine = (cfg.data.keys.unit_id, cfg.data.keys.period)
+        reserved += [key for key in spine if key.lower() not in own]
     log["renamed"] = rename_reserved(raw.columns, reserved, f"source {name!r}")
     for old, new in log["renamed"].items():
         print(f"source {name!r}: column {old!r} read as {new!r} (the framework names its key "
-              f"{old.lower()!r})")  # fmt: skip
+              f"{old.lower()!r}, or the spine's key column is so named)")  # fmt: skip
     keyed = (
         raw.withColumnsRenamed(log["renamed"])
         .withColumnRenamed(unit_column, "unit_id")
@@ -64,7 +107,7 @@ def read_keyed_source(
         .withColumn("unit_id", F.col("unit_id").cast("string"))
         .withColumn("period", spec.spark_end(F.to_date("period")))
     )
-    _check_unique_keys(keyed, name)
+    _check_unique_keys(keyed, name, log["period_tag"])
     return keyed, log
 
 
@@ -133,6 +176,8 @@ def _period_log(raw: DataFrame, name: str, period_column: str, spec: Period) -> 
         tag = "period end"
     elif all(day == spec.start(day) for day in days):
         tag = "period start"
+    elif all(day in (spec.start(day), spec.end(day)) for day in days):
+        tag = "first and last days"
     else:
         tag = "other days"
     return {"source": name, "periods": sorted({spec.end(day) for day in days}), "period_tag": tag}
@@ -159,10 +204,11 @@ def check_periods_covered(
         )
 
 
-def _check_unique_keys(keyed: DataFrame, name: str) -> None:
+def _check_unique_keys(keyed: DataFrame, name: str, period_tag: str) -> None:
     """No null `unit_id` (the forward window would take every such row for one unit) and no
     `(unit_id, period)` twice after the period move, so a source carrying both a first-day and a
-    last-day row for one client-period fails too."""
+    last-day row for one client-period fails too; a source tagged on other days than the
+    period's first or last probably holds a finer period, which the error says."""
     repeated = (
         keyed.groupBy("unit_id", "period")
         .count()
@@ -175,7 +221,12 @@ def _check_unique_keys(keyed: DataFrame, name: str) -> None:
         raise ValueError(f"source {name!r} has rows with a null unit id; every row needs one")
     if repeated:
         shown = ", ".join(f"({row.unit_id}, {row.period})" for row in repeated)
+        hint = (
+            "; its periods fall on other days than the period's first or last, so it probably "
+            "holds a finer period than time.period (e.g. weekly rows on a monthly spine): "
+            "aggregate it to time.period upstream"
+        )
         raise ValueError(
             f"source {name!r} has duplicate (unit_id, period) keys after moving periods to their "
-            f"last day, e.g. {shown}"
+            f"last day, e.g. {shown}{hint if period_tag == 'other days' else ''}"
         )

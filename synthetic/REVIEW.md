@@ -1,9 +1,9 @@
 # Synthetic data — review guide
 
-The review guide for the synthetic data generator (M1, D-003), version 0.5.2. Approved by the SDS
+The review guide for the synthetic data generator (M1, D-003), version 0.5.3. Approved by the SDS
 on 2026-10-19 and accepted by the LDS on 2026-10-21 (summary on `worknotes/sync.md`); 0.5.0 adds
 the ten trap columns from the LDS's to-dos (2026-10-25); 0.5.1 also writes a slim `holdings` table
-(the client key and the six holding flags, copied from the mart) beside the mart (2026-10-26); 0.5.2 tags the holdings' months with their last day, the mart's with their first (D-129). The spec and code map are
+(the client key and the six holding flags, copied from the mart) beside the mart (2026-10-26); 0.5.2 tags the holdings' months with their last day, the mart's with their first (D-129); 0.5.3 adds the feature-store extract `fs_extract` (a second feature source with its own keys, six trait proxies and a look-ahead trap column; 2026-10-30). The spec and code map are
 in `docs/components/test_harness.md`; history is in `docs/UPDATES.md` and D-003, D-011, D-029, D-033, D-041, D-043, D-050, D-064, D-072, D-083.
 
 ## 1. What it is
@@ -13,7 +13,7 @@ in `docs/components/test_harness.md`; history is in `docs/UPDATES.md` and D-003,
   - `spec/`: the rules, as plain data;
   - `mechanisms/`: the functions that simulate;
   - `truth/`: the oracle, the regression oracle and `truth.json`;
-  - `checks/`: 8 check families, written from the spec and never from the generator's code.
+  - `checks/`: 9 check families, written from the spec and never from the generator's code.
 - `truth.json` (55 KB) keeps only what can't be recomputed: the spec, calibration, column kinds,
   per-target oracle metrics and the dirty-data record.
 - Traps of two kinds:
@@ -46,7 +46,9 @@ pytest -m slow         # canonical size, each check family in its own process, �
 ### 3.1 The notebook (`notebooks/00_synthetic_data.ipynb`, committed with outputs)
 A visual tour first (sections 1–8, following Level 2 of the spec), then an appendix with the check
 tables and the tables behind each chart. Its first cell prints the check status: 1,309 of 1,309
-rows pass in 8 families.
+rows pass in 8 families (its committed outputs are from 0.5.2; at 0.5.3 the canonical dataset
+passes 1,336 of 1,336 rows in 9 families, the extract's included, and the notebook shows the
+extract once it is re-run).
 
 | Section | What right looks like |
 |---|---|

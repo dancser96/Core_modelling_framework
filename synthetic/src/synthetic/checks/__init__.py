@@ -1,6 +1,7 @@
 """Checks of a generated dataset, written from the spec, never from the generator's code.
 
-Each family is one module with a `check_<family>(mart, oracle, truth)` returning a table (check,
+Each family is one module with a `check_<family>(mart, oracle, truth)` (the extract family also
+takes the feature-store extract) returning a table (check,
 stratum, n, expected, realised, tolerance, passed, rule); `suite` lists the families and runs them
 on a written dataset, each in its own process. `table` holds the row helpers and estimators;
 `events` reads the data the checks' own way (month-on-month events, forward-window targets, spec

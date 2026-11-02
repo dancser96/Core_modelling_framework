@@ -4,7 +4,8 @@ The month loop is three functions every driver shares: `start_simulation` draws 
 (holdings drawn from each client's history) and calibrates the products on it;
 `advance_simulation` runs one month and returns the panel months that are final;
 `finish_simulation` returns what is still buffered at the end. `generate_mart` collects the months
-in memory; `output.write_mart` writes each to disk as it comes.
+in memory; `output.write_mart` writes each to disk as it comes. `generate_extract` builds the
+feature-store extract from the finished clean panel.
 
 Each month: clients leave and new clients join (rates per profile), the hidden traits take one
 AR(1) step, holdings and usage states move with each client's chances, the amounts follow from
@@ -35,6 +36,7 @@ from synthetic.mechanisms.clients import (
     step_latents,
     subsegment_medians,
 )
+from synthetic.mechanisms.extract import extract_frame
 from synthetic.mechanisms.holdings import calibrate, holding_columns, start_holdings, step_holdings
 from synthetic.mechanisms.mart import advance_history, history_columns, start_history
 from synthetic.mechanisms.traps import (
@@ -66,6 +68,7 @@ STREAMS = (
     "attributes",  # hidden client attributes, so amounts' draws never move holdings
     "noise",  # the noise, high-cardinality and low-fill trap columns (0.5.0)
     "card_leaks",  # the card twins' and the offer code's look-ahead draws (0.5.0)
+    "extract",  # the feature-store extract, drawn after the panel (`generate_extract`, 0.5.3)
 )
 WEALTH = LATENTS.index("wealth")
 DESCRIPTION_COLUMNS = [
@@ -115,6 +118,16 @@ def generate_mart(
     sim, planted = dirty_panel(sim, frames)
     truth = complete_truth(sim, mart, oracle)
     return pd.concat([m for m, _ in planted], ignore_index=True), oracle, truth
+
+
+def generate_extract(mart: pd.DataFrame, oracle: pd.DataFrame, truth: dict) -> pd.DataFrame:
+    """The feature-store extract (`fs_extract`) of a clean panel and its truth, in memory.
+
+    Its draws come from the `extract` stream of the truth's seed (the stream `start_simulation`
+    spawns but never draws from), so it moves no other table.
+    """
+    streams = np.random.default_rng(truth["seed"]).spawn(len(STREAMS))
+    return extract_frame(truth["spec"], mart, oracle, streams[STREAMS.index("extract")])
 
 
 def start_simulation(

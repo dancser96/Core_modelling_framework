@@ -4,6 +4,6 @@
 `holdings` gives every client's monthly chances and moves what they hold; `seasons` holds the
 calendar effects; `variation`, `accounts`, `cards` and `logins` make the amounts, which `amounts`
 runs in order each month; `mart` names the columns and derives rollups, recency and ratios;
-`traps` adds the trap columns and the dirty-data defects. `synthetic.generate` runs them month by
-month.
+`traps` adds the trap columns and the dirty-data defects; `extract` builds the feature-store
+extract from the finished panel. `synthetic.generate` runs them month by month.
 """

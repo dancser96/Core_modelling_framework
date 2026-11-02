@@ -19,8 +19,10 @@ NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE
 
 If you haven't run the verification command in this message, you cannot claim it passes.
 
-**In this repo** the minimum evidence for a code change is a fresh `pytest` and `ruff check .`, plus
-the review steps in `CLAUDE.md` §1 (subagents per §10) when the change is non-trivial.
+**In this repo** the minimum evidence for a code change is a fresh run of the tests covering it
+and `ruff check` on the touched files, plus the review steps in `CLAUDE.md` §1 (subagents per §10)
+when the change is non-trivial. The full suite is the evidence only when a major step or a
+multi-module build is finished (D-072 (m)).
 
 ## The Gate Function
 

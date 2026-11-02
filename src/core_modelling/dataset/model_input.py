@@ -34,6 +34,7 @@ from core_modelling.dataset.eligibility import resolve_candidates
 from core_modelling.dataset.panel import load_panel, prepare_panel, read_side_columns
 from core_modelling.environment import EnvironmentConfig
 from core_modelling.periods import period_spec
+from core_modelling.sources import feature_source_names, feature_sources_dump
 
 # Bumped when the sidecar's keys, the log entries' keys or a column's meaning change: an older
 # table is refused by name, not by chance. 3: the table is the sources joined plus one
@@ -86,8 +87,9 @@ def save_model_input(
         raise ValueError("save_model_input needs at least one config")
     path = _model_input_path(cfgs[0], entity, env)
     table, log, meta = load_panel(cfgs, entity, env, spark)
+    feature_names = feature_source_names(cfgs[0], entity)  # every config shares them
     for cfg in cfgs:  # a column clash on the read side fails here, not at every later read
-        read_side_columns(table.columns, meta["targets"], cfg.use_case, meta["sources"]["features"])
+        read_side_columns(table.columns, meta["targets"], cfg.use_case, feature_names)
     table.write.mode("overwrite").partitionBy("period").parquet(path)  # the folder, whole
     metadata = {
         "schema_version": MODEL_INPUT_SCHEMA_VERSION,
@@ -138,7 +140,7 @@ def read_model_input_metadata(cfg: UseCaseConfig, entity: str, env: EnvironmentC
 def _check_join_definition(metadata: dict, cfg: UseCaseConfig, entity: str, path: str) -> None:
     """The table was joined from the config's feature sources, keys and period."""
     mine = {
-        "sources": {"features": cfg.entities[entity].sources.features},
+        "sources": {"features": feature_sources_dump(cfg, entity)},
         "keys": cfg.data.keys.model_dump(),
         "period": cfg.time.period,
     }
@@ -210,9 +212,8 @@ def saved_candidates(cfg: UseCaseConfig, entity: str, env: EnvironmentConfig) ->
     if not Path(_model_input_path(cfg, entity, env), METADATA_FILE).is_file():
         return None
     metadata = read_model_input_metadata(cfg, entity, env)
-    features = metadata["sources"]["features"]
     dropped, renames = read_side_columns(
-        metadata["columns"], metadata["targets"], cfg.use_case, features
+        metadata["columns"], metadata["targets"], cfg.use_case, feature_source_names(cfg, entity)
     )
     columns = [renames.get(c, c) for c in metadata["columns"] if c not in dropped]
     lineage = [renames.get(c, c) for c in metadata["targets"][cfg.use_case]["lineage"]]

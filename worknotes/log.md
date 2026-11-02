@@ -2,6 +2,172 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-10-30 — Stage 2 (M2.2 Understanding) design opened: four surveys and Q418–Q462
+- The SDS asked to start Stage 2 (EDA, Feature Checks, the feature ledger, Reporting) between
+  thin and deep with every key component in, and to name every check and view explicitly. The
+  brainstorming path is architectural (four new components); step 0 (research, critique) ran
+  before the questions; the holistic review runs with the plan once the questions are answered.
+- Delegated (D-072 (l)): the crunch's EDA / checks / charts catalogue (Opus, high); best practice
+  with web sources (Opus, xhigh); the synthetic traps measured on the dev data and the oracle's
+  shape (Sonnet, high); the package's interface sheet after Stage 1 (Sonnet, high). The main
+  thread read every report in full; the design and the questions stayed on it.
+- **Legacy survey** (`legacy/propensity_crunch/`): VIF, MI, univariate AUC, PSI and the
+  summary all skipped categoricals (T10); every statistic ran after median imputation; the AUC
+  existed twice (`feature_stats.py:65`, `leakage.py:21`); no cardinality statistic; lineage was
+  a hand-typed list (T12); VIF silently dropped zero-variance columns, hiding T11; signal
+  persistence used the OOT month's labels; every threshold a literal (0.95 leak, 0.03 AUC drop,
+  0.25 PSI, 0.98 dominance, 0.5 missing, 0.9 correlation); charts with fixed 0–1 ranges and
+  raw-count overlays (T16); bare `except` fallbacks in three chart functions; the card held a
+  feature count only.
+- **Trap survey** (measured on `data/01_raw/synthetic_dev`, 20k clients, cc-eligible rows):
+  `leak` AUC 0.968 and 0.872 (oracle ceiling 0.844); `missing_leak` fill indicator 0.894;
+  `shifted` 1.00 at `w = 1` but **0.70 at `w = 3`**; `process_leak` 0.90 at `w = 1`, **0.67 at
+  `w = 3`** (98.7% zeros); `upstream_target` equals the target; `redundant` Spearman 0.99997
+  with `relationship_days`; `high_cardinality` 300 levels; null controls 0.495–0.502;
+  `near_constant` 99.9% zeros; `low_fill` 1.05% and 0.3%. Under `cc_flag = 0` eleven card
+  columns are exactly constant and `cc_utilisation_ratio` all null (T11); `repayment_cc_vol`
+  99.4% zero. The login drift starts 2026-01 (the latest synthetic period is 2026-09). The
+  `unit` preset: 5k × 24 months, 125,709 rows, 16.8 s to generate. `truth.json` has no
+  relevance ranking: the trap list (`spec.traps`, 33 entries; 20 trap columns) and the oracle's
+  AUC per target and window are the acceptance material. An observation: `cc_acquisition`'s
+  second analysis filter is a no-op after the first (`income IS NOT NULL` drops the exempt
+  null-income clients), to look at with the config.
+- **Interface survey**: nothing tells numeric from categorical; `run` passes raw configs, writes
+  no resolved config and no stage artifacts; `period` reaches pandas as `datetime.date`; no
+  gap / latest-period helper; `features.excluded` validated, not applied (by design: EDA and
+  Feature Checks see the candidates); `flag`, `dropped`, `run`, `sign_off` exist in `Op` with
+  no writer; the audit log and the model input are local only (`://` refused).
+- **Best-practice survey** (web, verified where stated). Ranking: AUC's null SE is
+  √((n₊+n₋+1)/(12 n₊ n₋)) ≈ 1/√(12·n₊) (Hanley–McNeil 1982; simulation at 800 events: 0.0105 vs
+  the lesson's 0.0177), **so `lessons.md`'s 0.5/√events is 1.7× too conservative**; IV bands
+  (Siddiqi) depend on the binning; MI's failure in the crunch was probably the kNN estimator.
+  Regression: Kendall τ-b / Harrell's C generalise AUC; scipy's τ is O(n log n). Leakage: no
+  numeric thresholds in the primary sources (Kaufman et al. 2012; Kapoor & Narayanan 2023);
+  DataRobot flags at 0.85 and removes at 0.975; no published backward check (the nearest
+  analogue: negative-control outcomes, Lipsitch 2010). Drift: the PSI bands are Lewis's 1994
+  constants, blind to n and bins (n·PSI ~ χ²; Yurdakul 2018, du Pisanie 2023); JS distance is
+  the bounded alternative; at 50 events a per-period AUC range of ≈ 0.10 arises from noise
+  alone. Redundancy: |ρ| ≥ 0.9 (ydata, caret); VIF 5/10 don't justify dropping (O'Brien 2007).
+  Quality: drop above 95% missing (scorecardpy); near-constant rules are scale-free (caret
+  95/5); ydata warns above 50 levels. Low prevalence: Wilson via `binomtest(...).proportion_ci`
+  (verified, scipy 1.16.2); no standard minimum per bin (half-width ≈ 1.96/√k); SMD 0.1 / 0.25
+  (Austin 2009). Report: plotly.js 3.1.1 is 4.83 MB; fragments 7.6 KB (20 bars) to 1.37 MB
+  (100k raw points), so charts are pre-aggregated; 8–16 WebGL contexts per page; Styler needs
+  jinja2, **absent from the local venv** (to pin, D-012); kaleido needs a browser. Ledger: no
+  per-feature audit schema exists; SR 11-7 asks for evidence and traceability.
+- **The questions**, `worknotes/m2_2_understanding/questions.md` (959 lines): section 0 is the
+  explicit catalogue (what Stage 2 builds per component, what waits, what is deliberately not
+  built); A scope and time (7–8 days instead of 4; regression real on a variant config); B the
+  shape (`statistics.py`, `eda/`, `feature_checks/`, `ledger.py`, `reporting/`,
+  `artifacts.py`; stage functions resolve the config themselves; one `StageResult`; artifacts
+  under `04_feature/<uc>/<entity>/<ddh>/{eda,feature_checks}/` with the ledger at the hash
+  level; column kinds from the Spark schema); C the statistics (one **concordance** scale for
+  both tasks: AUC / Kendall; shrunk level encoding for categoricals; missingness never imputed;
+  Wilson intervals; `strata.min_events` for strata and periods, 20 events for bins; PSI with a
+  null bin); D EDA's views one by one (choices block and warnings, headline, funnel, target per
+  period / stratum, label-free reference groups with SMDs, the ranking table, deep dives, strata
+  pivots, chart sampling, `pivot_target`); E Feature Checks' steps and findings one by one with
+  low defaults (`quality`: all_null, constant, near_constant 0.99, high_missing 0.95,
+  high_cardinality 50, unsupported_type; `leakage`: too_strong 0.80, missingness_leak 0.60,
+  rare_value_leak lift 5; `time_alignment`: a **lag check** instead of D-029 (d)'s backward
+  label, which is degenerate under a precondition eligibility; `stability`: Cochran's Q on the
+  per-period concordances, PSI 0.10 within the window, against the gap periods and the latest
+  period, new levels; `redundancy`: Spearman 0.90, Cramér's V 0.90; `eligibility_constant`
+  folds into quality); every finding a flag, only lineage a rule exclude, idempotent rule
+  entries, `open_flags`, proposed decisions, Feature Checks requiring EDA's artifact; F the
+  ledger (wide, per data definition, `ledger_schema_version` 1, decisions joined at render); G
+  reporting (the writer, chart primitives, no cap with pre-aggregated figures, neutral theme,
+  two reports); H notebooks, the trap acceptance mapping, period labels, strata validation, no
+  `exclude_labels` field. Twelve assumptions and the facts still to check close it.
+- Files: `worknotes/m2_2_understanding/questions.md` (new), `worknotes/README.md` (two stage
+  folders for now), `docs/UPDATES.md` (status rows, a log line).
+- Decisions / open decisions: none settled; D-134 onward once answered. Touches OD-11, OD-12.
+- Still open: every question; the plan follows the answers, with the routing plan and the
+  holistic review. Sequencing: the other chat scheduled the synthetic to-do (extra feature
+  tables, mistake tests) and per-source key names before EDA's build; both are dataset and
+  synthetic files, disjoint from Stage 2's, so they can run beside it (Q419).
+
+### 2026-10-30 — Integration news: data observability narrowed, feature store leaning, synthetic to-do
+- The SDS's news, routed by firmness:
+  - **Data observability (firm, "pretty much sure"):** it is a Great Expectations-style suite of
+    data checks on production (maybe sandpit) tables. The framework's only contact: every deploy
+    points the model's source tables at it. Recorded: D-021 (b) replaced in place; D-040 and
+    D-079 lose the monitoring feed; OD-13 narrowed to tooling; the Chief DS topic became an
+    information item; the learn session is no longer needed before M3.
+  - **Feature store (a leaning, an update may follow):** little build outside the bank; the SDS
+    adds an example notebook inside the bank that loads features, applies the format fixes and
+    saves a dataset that Target Factory joins like any other source. Recorded in OD-26; D-021 (a)
+    marked under review. The config comments and the refused `feature_store` format stay until
+    the update.
+  - **Synthetic to-do:** small feature tables so the primary example merges two feature sources,
+    and mistake tests for the guardrails (`test_harness.md` → To-do).
+- Critique (also in the reply):
+  - Data observability: a real saving (no work stream, no monitoring-table dependency before
+    M3). It doesn't replace monitoring's drift layer: its checks see source tables, not the
+    model's inputs against the training reference.
+  - Feature store notebook: three risks. (i) Point in time: it must write one row per unit per
+    period holding the values as of that period; today's values stamped on history are
+    look-ahead that no Stage 1 check can see (§4.1). (ii) Production: inference reads the
+    sources each scored period, so the extract needs a refresh job with the same fixes; a
+    notebook can't be in the production path (§3, §4.9). (iii) Reproducibility: the hashes see
+    logical names, not contents, so an extract overwritten under the same name changes a model
+    silently (§4.10).
+- Guardrail inventory for the to-do (a subagent read the code, the main thread checked the key
+  lines). A joined feature source gets no period-coverage check: only the spine
+  (`dataset/panel.py:146`) and the target source (`target_factory.py:112`) do, so a source that
+  ends before the validation period leaves its features null there without a message. The
+  column-clash check (`panel.py:205`) is case-sensitive, while Spark isn't. Padded ids only lower
+  the matched share. A weekly table on a monthly spine fails as "duplicate keys" without naming
+  the period. `dataset.md` claimed that the join log prints distinct units per period; it prints
+  the matched share and logs matched rows per period (fixed).
+- Files: `docs/decisions.md` (D-021, D-040, D-079), `docs/roadmap.md` (verdict, backlog, OD-13,
+  OD-26, CDS topics), `docs/components/monitoring.md`, `lifecycle.md`, `test_harness.md` (To-do),
+  `dataset.md` (join print), `docs/architecture.md`, `docs/context/project.md`,
+  `docs/glossary.md`, `docs/UPDATES.md`, `CLAUDE.md` (integrations line),
+  `worknotes/timeline_proposal.md`.
+- Then (the SDS's answers, 2026-10-30): Q411, Q413 kept; Q412 `deploy` prints and records the
+  physical source tables (D-021 (b), `lifecycle.md`); Q414 the extract written by an upstream
+  job, else a framework function (OD-26 (ii)); Q417 the to-do's table and timing (after Stage
+  1's sign-off, before EDA). Q416: close the gaps after Q415, but no coverage check on joined
+  sources: missing clients or periods are fine, the left join leaves nulls (`dataset.md`); left
+  to fix: the case-insensitive clash check, the weekly-on-monthly hint. Q415 became a question
+  back: what per-source key names cost (the spine keeps `data.keys`, another source may name
+  its own, the list taking `{source, keys}`); estimated in the chat (`dataset.md` → Open
+  questions).
+- Then built (the SDS accepted Q415: "build all above as needed"), in parallel:
+  - per-source key names (`SourceKeys`, `SourceEntry`; `sources.source_name`, `source_keys`,
+    `feature_source_names`, `feature_sources_dump`; `read_keyed_source` takes the entry); a
+    plain-name config's hashes and sidecar unchanged (the old example digest is reproduced by
+    its plain-name variant, pinned in `test_identities.py`); the column-clash check ignoring
+    case; the finer-period hint, with a new tag `first and last days` so `other days` means a
+    day that is neither (code review);
+  - synthetic 0.5.3: `fs_extract` (keys `customer_no` as a string, `as_of_date`; 85% of the
+    clients; six trait proxies; `holding_cnt_trap_lookahead`, kind `lookahead`) with its own
+    check family (all rows pass at 5k and 20k); the mart, oracle and holdings byte-identical to
+    0.5.2 at seed 0 (hashed before and after);
+  - `tests/test_source_mistakes.py`: 12 tests, one per planted mistake; every guardrail behaved
+    as documented;
+  - wiring: both example configs join the extract; the environment example, `conf/local` and
+    the test fixtures map it; the dev dataset regenerated at 0.5.3 (72 s, 1.2 GB peak); notebook
+    01's cells run on it (41 s; `cc_acquisition` 116,998 window rows, 64% eligible, 161
+    candidates, the extract's columns among them).
+- Reviews: code (two blockers fixed: the mixed-tag hint, a long line; simplifications taken),
+  compatibility (safe; two stale signature lines and three doc notes fixed), silent failures
+  (empty names refused at load, the keys read logged and printed, `targets: ""` no longer falls
+  back to the spine, a level-values rule row, case-insensitive duplicate sources), ML audit
+  (safe; taken: a joined source's missing periods printed by name, a target source keyed as its
+  feature entry, the spine's key names read as `source_<name>` in an own-keyed source; parked:
+  inference on a lagging extract → `inference.md`, a target lag check → `target_factory.md`;
+  for M2.2: the look-ahead trap needs a tell in Feature Checks; a survival-coded coverage trap
+  deferred).
+- Then (the SDS, 2026-11-02): Q463 notebook 00 is not re-run (the EDA notebook replaces it in
+  M2.2); Q464 the version goes to 0.3.0 at Stage 1's sign-off; Q465 (a): the SDS carries the
+  look-ahead finding to the Stage 2 chat.
+- A slip of mine: the mistake-test brief's wait loop (`pgrep -f pytest`) matched its own shell,
+  so the agent waited about an hour; stopped and re-briefed.
+- Decisions / open decisions: D-021 (b) replaced and extended, (a) under review; D-040, D-079
+  extended; D-129 extended (per-source keys); OD-13 narrowed; OD-26 leaning.
+
 ### 2026-10-29 — New working rules: Fable routing, the LDS's reading, stage folders, targeted tests
 - The SDS set four generic rules: (1) on a Fable session, a major task starts with a routing plan
   (each subagent piece's agent, model, effort and why) so the tokens don't all go to Fable; strong

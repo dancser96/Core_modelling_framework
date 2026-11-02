@@ -21,6 +21,7 @@ for one config, the in-memory path.
 """
 
 from dataclasses import dataclass
+from datetime import date
 
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -36,8 +37,12 @@ from core_modelling.sources import (
     HELPER_COLUMNS,
     KEYS,
     check_periods_covered,
+    feature_source_names,
+    feature_sources_dump,
+    missing_periods,
     read_keyed_source,
     rename_reserved,
+    source_name,
 )
 from core_modelling.target_factory import load_targets, target_lineage
 
@@ -45,7 +50,7 @@ PANEL_META_KEYS = ("data_definition_hash", "target_spec_hash", "hash_version", "
                    "candidates", "tags")  # what `prepare_panel` puts in the meta  # fmt: skip
 # The config fields every config of one model input must share (the panel is built from them).
 SHARED_FIELDS = {
-    "sources.features": lambda cfg, entity: cfg.entities[entity].sources.features,
+    "sources.features": feature_sources_dump,
     "keys": lambda cfg, entity: cfg.data.keys.model_dump(),
     "model_input": lambda cfg, entity: cfg.data.model_input,
     "time.period": lambda cfg, entity: cfg.time.period,
@@ -89,7 +94,7 @@ def load_panel(
     cfg = cfgs[0]
     meta = {
         "hash_version": HASH_VERSION,
-        "sources": {"features": cfg.entities[entity].sources.features},
+        "sources": {"features": feature_sources_dump(cfg, entity)},
         "keys": cfg.data.keys.model_dump(),
         "period": cfg.time.period,
         "periods": {"first": spec.label(first), "last": spec.label(last)},
@@ -137,21 +142,34 @@ def _join_sources(
     period, with the other feature sources left-joined and marked; the joined sources, the
     spine first."""
     cfg = cfgs[0]
-    names = cfg.entities[entity].sources.features
-    panel, spine_log = read_keyed_source(cfg, entity, names[0], env, spark)
+    entries = cfg.entities[entity].sources.features
+    panel, spine_log = read_keyed_source(cfg, entity, entries[0], env, spark)
     # A gap would drop a period of rows quietly; a validation period must exist to be scored.
     first = min(c.time.observation_window.first for c in cfgs)
     last = max(c.time.validation_period for c in cfgs)
     spec = period_spec(cfg)
     check_periods_covered(spine_log, first, last, "spine", "time.validation_period", spec)
     joined = [JoinedSource(spine_log, None, "spine")]
-    for name in names[1:]:
-        source, log = read_keyed_source(cfg, entity, name, env, spark)
+    for entry in entries[1:]:
+        name = source_name(entry)
+        source, log = read_keyed_source(cfg, entity, entry, env, spark)
         _check_no_shared_column(panel, source, name)
+        _note_missing_periods(log, first, last, spec)
         marker = f"_from_{name}"
         panel = panel.join(source.withColumn(marker, F.lit(True)), KEYS, "left")
         joined.append(JoinedSource(log, marker, "joined"))
     return panel, joined
+
+
+def _note_missing_periods(log: dict, first: date, last: date, spec: Period) -> None:
+    """A joined feature source may lack periods (the left join leaves its columns null there,
+    by design); which ones, up to the latest validation period, go into its log and are printed,
+    so a missing validation period is never a silent shift between test and validation."""
+    missing = missing_periods(log["periods"], first, last, spec)
+    if missing:
+        log["missing_periods"] = missing
+        print(f"source {log['source']!r} has no rows in {missing} (the latest validation period "
+              f"is {spec.label(last)}): its columns are null there")  # fmt: skip
 
 
 def _join_targets(
@@ -203,14 +221,22 @@ def _target_meta(cfg: UseCaseConfig, entity: str, column: str, target_log: dict)
 
 
 def _check_no_shared_column(panel: DataFrame, source: DataFrame, name: str) -> None:
-    """A non-key column in two feature sources fails loud: the join would carry two of it."""
-    shared = sorted(set(panel.columns) & set(source.columns) - set(KEYS))
+    """A non-key column in two feature sources, ignoring case as Spark does, fails loud: the
+    join would carry two of it; a clash in case only names both spellings."""
+    earlier = {column.lower(): column for column in panel.columns if column not in KEYS}
+    shared = []
+    for column in source.columns:
+        other = earlier.get(column.lower())
+        if column in KEYS or other is None:
+            continue
+        shared.append(column if other == column else f"{column} (as {other})")
+    shared.sort()
     if shared:
         renamed = any(column.startswith("source_") for column in shared)
         note = " (a `source_<name>` column is a source's `<name>` read under another name)"
         raise ValueError(
-            f"feature source {name!r} shares the columns {shared} with an earlier source"
-            f"{note if renamed else ''}; rename them upstream"
+            f"feature source {name!r} shares the columns {shared} with an earlier source "
+            f"(Spark compares names ignoring case){note if renamed else ''}; rename them upstream"
         )
 
 
@@ -311,8 +337,9 @@ def _join_entry(source: JoinedSource, by_period: dict, all_rows: object, spec: P
     rows per period and share; a target's use case, column and null share per period too."""
     log, marker, role, use_case = source.log, source.marker, source.role, source.use_case
     entry = {"step": "join", "source": log["source"], "role": role, "period_tag": log["period_tag"]}
-    if log["renamed"]:
-        entry["renamed"] = log["renamed"]
+    for key in ("renamed", "keys", "missing_periods"):  # only when present
+        if log.get(key):
+            entry[key] = log[key]
     rows = by_period.values()
     if marker is None:
         entry["rows"] = label_by_period(rows, "rows", spec)
@@ -322,7 +349,8 @@ def _join_entry(source: JoinedSource, by_period: dict, all_rows: object, spec: P
     entry.update(matched_share=all_rows[marker] / all_rows.rows)
     entry.update(matched=label_by_period(rows, marker, spec))
     what = role if use_case is None else f"{role} of {use_case}"  # one line per use case's target
-    print(f"join {log['source']} ({what}, {log['period_tag']} periods): "
+    keyed = f", keyed on {log['keys']['unit_id']}, {log['keys']['period']}" if "keys" in log else ""
+    print(f"join {log['source']} ({what}, {log['period_tag']} periods{keyed}): "
           f"{entry['matched_share']:.1%} of the spine's rows matched")  # fmt: skip
     if use_case is not None:
         nulls = label_by_period(rows, f"_nulls_{use_case}", spec)
@@ -380,7 +408,7 @@ def prepare_panel(
             f"{sorted(targets)}"
         )
     own = targets[cfg.use_case]
-    features = cfg.entities[entity].sources.features
+    features = feature_source_names(cfg, entity)
     dropped, renames = read_side_columns(panel.columns, targets, cfg.use_case, features)
     panel = panel.drop(*dropped)
     for old, new in renames.items():  # in order: `source_target` before `target_<use_case>`

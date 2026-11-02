@@ -43,6 +43,7 @@ def _environment_file(tmp_path: Path, unit_output: tuple[str, dict]) -> Path:
     sources = {
         "retail_mart": {"format": "parquet", "path": unit_output[0] + "/mart"},
         "retail_holdings": {"format": "parquet", "path": unit_output[0] + "/holdings"},
+        "retail_fs_extract": {"format": "parquet", "path": unit_output[0] + "/fs_extract"},
         "retail_acquisition_input": {"format": "parquet", "path": f"{data}/{MODEL_INPUT}"},
     }
     path = tmp_path / "environment.yml"

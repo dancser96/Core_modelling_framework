@@ -20,6 +20,7 @@ sources:                     # entity → logical name (as the use-case config s
     # a relative path is refused. The synthetic dev dataset comes from `python -m synthetic --preset dev`.
     retail_mart:              {format: parquet, path: /ABSOLUTE/PATH/data/01_raw/synthetic_dev/mart}
     retail_holdings:          {format: parquet, path: /ABSOLUTE/PATH/data/01_raw/synthetic_dev/holdings}
+    retail_fs_extract:        {format: parquet, path: /ABSOLUTE/PATH/data/01_raw/synthetic_dev/fs_extract}
     # the saved model input shared by cc_acquisition and td_acquisition (save_model_input writes it)
     retail_acquisition_input: {format: parquet, path: /ABSOLUTE/PATH/data/05_model_input/retail_acquisition/entity_a}
     # Inside the bank a source is usually a Hive table:

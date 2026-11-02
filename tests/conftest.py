@@ -59,14 +59,21 @@ def unit_output(tmp_path_factory: pytest.TempPathFactory) -> tuple[str, dict]:
 def unit_env(
     unit_output: tuple[str, dict], tmp_path_factory: pytest.TempPathFactory
 ) -> EnvironmentConfig:
-    """An environment whose `entity_a` sources are the written unit mart and holdings, with the
-    local Spark defaults and a temporary data root."""
-    mart = Source(format="parquet", path=unit_output[0] + "/mart")
-    holdings = Source(format="parquet", path=unit_output[0] + "/holdings")
+    """An environment whose `entity_a` sources are the written unit mart, holdings and
+    feature-store extract, with the local Spark defaults and a temporary data root."""
+    tables = {
+        "retail_mart": "mart",
+        "retail_holdings": "holdings",
+        "retail_fs_extract": "fs_extract",
+    }
+    sources = {
+        name: Source(format="parquet", path=f"{unit_output[0]}/{table}")
+        for name, table in tables.items()
+    }
     return EnvironmentConfig(
         schema_version=1,
         roots=Roots(data=str(tmp_path_factory.mktemp("data"))),
-        sources={"entity_a": {"retail_mart": mart, "retail_holdings": holdings}},
+        sources={"entity_a": sources},
     )
 
 

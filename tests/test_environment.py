@@ -44,6 +44,7 @@ def test_example_file_loads_once_its_placeholders_are_filled(
     assert env.roots == Roots(data=f"{tmp_path}/data")
     assert sorted(env.sources["entity_a"]) == [
         "retail_acquisition_input",
+        "retail_fs_extract",
         "retail_holdings",
         "retail_mart",
     ]

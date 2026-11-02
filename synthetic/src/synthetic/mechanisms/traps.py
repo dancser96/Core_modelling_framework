@@ -34,7 +34,7 @@ from synthetic.spec.presets import LATENTS
 
 TRAP_KINDS = ("leak", "upstream_target", "process_leak", "shifted", "null_control",
               "near_constant", "all_null", "weak", "noise", "high_cardinality", "constant",
-              "redundant", "low_fill", "missing_leak")  # fmt: skip
+              "redundant", "low_fill", "missing_leak", "lookahead")  # fmt: skip
 
 
 def trap_name(name: str, kind: str) -> str:

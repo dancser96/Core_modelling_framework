@@ -1,10 +1,13 @@
 """Writing a synthetic dataset to disk and reading it back.
 
 `write_mart` drives the month loop (`generate`) and writes each month as it comes, so memory holds
-about one month: `<out>/mart/snapshot_month=YYYY-MM-01/part-0.parquet`, the oracle likewise under
+about one month, except for the extract, built at the end from the whole panel's keys, holding
+flags and traits read back (about 2.4M rows at the canonical size):
+`<out>/mart/snapshot_month=YYYY-MM-01/part-0.parquet`, the oracle likewise under
 `<out>/oracle/`, the slim `holdings` table (the client key and the six holding flags, copied from
-the final mart frame) under `<out>/holdings/`, and `<out>/truth.json` last, so a folder without a
-truth file is an incomplete dataset. The holdings tag each month with its last day
+the final mart frame) under `<out>/holdings/`, the feature-store extract (`generate_extract`, from
+the finished clean panel) in one file under `<out>/fs_extract/`, and `<out>/truth.json` last, so a
+folder without a truth file is an incomplete dataset. The holdings tag each month with its last day
 (`snapshot_month=YYYY-MM-28/29/30/31`), the mart and oracle with its first: bank sources tag either
 day, so the two sources exercise the framework's month conversion on reading (D-129). The
 truth's oracle part (the oracle's metrics) is computed once every month is on disk and the
@@ -16,9 +19,10 @@ folder name (T18). The mart is written with the explicit types of `mart.arrow_sc
 counts int64 with nulls where nullable, `cc_limit` decimal(18, 2)), so every month has the same
 schema whatever its values; the oracle keeps the types pandas gives it. `read_output` reads a table
 back in month order with `snapshot_month` as `datetime.date` values and decimals as floats, so it
-returns the mart as it was in memory (Spark sees the decimal). `load_truth` refuses a dataset
-written by another generator version or another numpy or scipy minor version (the seed-to-data
-mapping depends on them), so stale data fails loud.
+returns the mart as it was in memory (Spark sees the decimal); the extract is not partitioned (its
+month, `as_of_date`, is a date column in the file) and reads back as `generate_extract` made it.
+`load_truth` refuses a dataset written by another generator version or another numpy or scipy
+minor version (the seed-to-data mapping depends on them), so stale data fails loud.
 """
 
 import calendar
@@ -33,15 +37,25 @@ import pyarrow.parquet as pq
 import scipy
 
 from synthetic import __version__
-from synthetic.generate import advance_simulation, finish_simulation, start_simulation
+from synthetic.generate import (
+    advance_simulation,
+    finish_simulation,
+    generate_extract,
+    start_simulation,
+)
+from synthetic.mechanisms.extract import extract_schema
 from synthetic.mechanisms.mart import arrow_schema
-from synthetic.mechanisms.traps import dirty_panel
-from synthetic.spec.presets import PRESETS
+from synthetic.mechanisms.traps import dirty_panel, trap_record
+from synthetic.spec.extract import EXTRACT as EXTRACT_SPEC
+from synthetic.spec.presets import LATENTS, PRESETS
 from synthetic.truth.oracle import BINARY_TARGETS, target_columns, target_metrics
 from synthetic.truth.truth_file import build_truth, complete_truth, with_oracle
 
-TABLES = ("mart", "oracle", "holdings")
+MONTHLY_TABLES = ("mart", "oracle", "holdings")  # partitioned by month, written in the loop
+EXTRACT = EXTRACT_SPEC["table"]
+TABLES = (*MONTHLY_TABLES, EXTRACT)
 PARTITION = "snapshot_month"
+LATENT_COLUMNS = [f"z_{trait}" for trait in LATENTS]  # the oracle's hidden traits
 HOLDINGS_COLUMNS = [
     "client_id",
     "casa_flag",
@@ -62,7 +76,8 @@ def write_mart(
     dirty: bool = False,
     n_extra_columns: int = 0,
 ) -> dict:
-    """Generate month by month, write the partitioned mart, oracle and truth.json; return truth.
+    """Generate month by month, write the partitioned mart, oracle and holdings, then the extract
+    and truth.json; return truth.
 
     `out_dir` must not hold a dataset already: months left over from another run would mix in.
     With `dirty` on, the defects are planted in the whole panel (`traps.dirty_panel`), so every
@@ -82,6 +97,10 @@ def write_mart(
         truth = _write_clean(out, sim)
         del sim  # the starting book's state; the oracle part reads the written months instead
         truth = _with_written_oracle(out_dir, truth)
+        flags = trap_record(truth["spec"], "lookahead")["parameters"]["flags"]
+        mart = read_output(out_dir, "mart", ["client_id", PARTITION, *flags])
+        oracle = read_output(out_dir, "oracle", ["client_id", PARTITION, *LATENT_COLUMNS])
+        _write_extract(out, mart, oracle, truth)
     (out / "truth.json").write_text(json.dumps(truth, indent=1))
     return truth
 
@@ -129,7 +148,20 @@ def _write_dirty(out: Path, sim: dict) -> dict:
     sim, planted = dirty_panel(sim, frames)
     _write_months(out, planted, list(sim["spec"]["products"]))
     clean = [pd.concat([pair[i] for pair in frames], ignore_index=True) for i in (0, 1)]
-    return complete_truth(sim, *clean)
+    truth = complete_truth(sim, *clean)
+    _write_extract(out, *clean, truth)
+    return truth
+
+
+def _write_extract(out: Path, mart: pd.DataFrame, oracle: pd.DataFrame, truth: dict) -> None:
+    """Write the extract of the clean panel (`generate_extract`) with its explicit types."""
+    folder = out / EXTRACT
+    folder.mkdir()
+    frame = generate_extract(mart, oracle, truth)
+    schema = extract_schema(truth["spec"])
+    pq.write_table(
+        pa.Table.from_pandas(frame, schema, preserve_index=False), folder / "part-0.parquet"
+    )
 
 
 def _with_written_oracle(out_dir: str, truth: dict) -> dict:
@@ -147,7 +179,8 @@ def _with_written_oracle(out_dir: str, truth: dict) -> dict:
 def read_output(
     out_dir: str, table: str, columns: list[str] | None = None, client_sample: int | None = None
 ) -> pd.DataFrame:
-    """One table ("mart", "oracle" or "holdings") in month order, with `snapshot_month` as dates.
+    """One table ("mart", "oracle" or "holdings") in month order, with `snapshot_month` as dates;
+    or the extract ("fs_extract") as written, with `as_of_date` as dates.
 
     `columns` reads only those (in that order); None reads every column, keys first.
     `client_sample` n keeps only the clients whose id is a multiple of n, in every month: a fixed
@@ -155,6 +188,8 @@ def read_output(
     """
     if table not in TABLES:
         raise ValueError(f"table must be one of {TABLES}, not {table!r}")
+    if table == EXTRACT:
+        return _read_extract(Path(out_dir, table, "part-0.parquet"), columns, client_sample)
     folders = sorted(Path(out_dir, table).glob(f"{PARTITION}=*"))
     if not folders:
         raise FileNotFoundError(f"no months in {Path(out_dir, table)}")
@@ -187,6 +222,16 @@ def load_truth(out_dir: str) -> dict:
     return truth
 
 
+def _read_extract(path: Path, columns: list[str] | None, client_sample: int | None) -> pd.DataFrame:
+    """The extract's file, optionally only the clients whose id is a multiple of `client_sample`."""
+    if client_sample is None:
+        return pq.read_table(path, columns=columns).to_pandas()
+    read = None if columns is None else list(dict.fromkeys([*columns, "customer_no"]))
+    frame = pq.read_table(path, columns=read).to_pandas()
+    kept = frame[frame["customer_no"].astype(np.int64) % client_sample == 0]
+    return kept[columns or frame.columns].reset_index(drop=True)
+
+
 def _major_minor(version: str) -> str:
     """A version's major.minor part (`2.3.5` → `2.3`)."""
     return ".".join(version.split(".")[:2])
@@ -213,7 +258,8 @@ def _write_months(
     folder of each table; the mart and holdings with the mart's explicit schema (`products`: the
     spec's product keys, to parse the column names)."""
     for mart, oracle in frames:
-        for table, frame in zip(TABLES, (mart, oracle, _holdings_frame(mart)), strict=True):
+        frames = (mart, oracle, _holdings_frame(mart))
+        for table, frame in zip(MONTHLY_TABLES, frames, strict=True):
             months = frame[PARTITION].unique()
             if len(months) != 1:
                 raise ValueError(f"a {table} frame must hold one month, not {len(months)}")

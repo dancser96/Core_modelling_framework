@@ -86,10 +86,11 @@ def test_extra_columns_are_weak_or_noise(unit: tuple[pd.DataFrame, pd.DataFrame,
 
 def test_truth_lists_every_trap(unit: tuple[pd.DataFrame, pd.DataFrame, dict]) -> None:
     """Truth's spec holds the trap list; the summary table has one row per trap, and the trap
-    columns are exactly the mart's columns with a `_trap_` suffix."""
+    columns are the mart's columns with a `_trap_` suffix plus the extract's look-ahead."""
     traps = unit[2]["spec"]["traps"]
     assert [t["kind"] for t in traps] == [t["kind"] for t in TRAPS]
     summary = trap_summary(unit[2]["spec"])
     assert len(summary) == len(TRAPS) and summary["column"].tolist() == [t["column"] for t in TRAPS]
     listed = {t["column"] for t in TRAPS if t["trap_column"] and t["column"]}
-    assert listed == {c for c in unit[0].columns if "_trap_" in c}
+    in_extract = {"holding_cnt_trap_lookahead"}  # the feature-store extract's look-ahead column
+    assert listed == {c for c in unit[0].columns if "_trap_" in c} | in_extract

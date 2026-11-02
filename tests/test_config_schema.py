@@ -472,3 +472,64 @@ def test_negative_downsampling_needs_a_binary_target(tmp_path: Path, raw: dict) 
     assert "needs a binary target" in _error(tmp_path, raw)
     raw["training"]["sampling"] = {"method": "client_sample", "share": 0.5}
     assert _load(tmp_path, raw).training.sampling.share == 0.5
+
+
+def test_source_entry_with_own_keys_loads_and_a_plain_name_stays_a_string(
+    tmp_path: Path, raw: dict
+) -> None:
+    """A joined or target source may name its own key columns; a plain name dumps as itself, so
+    the hashes and the sidecar of a config without own keys are unchanged."""
+    own = {"source": "extract", "keys": {"unit_id": "customer_no"}}
+    raw["entities"]["entity_a"]["sources"] = {"features": ["retail_mart", own], "targets": own}
+    dumped = {**own, "keys": {"unit_id": "customer_no", "period": None}}
+    sources = _load(tmp_path, raw).entities["entity_a"].sources
+    assert sources.model_dump(mode="json") == {
+        "features": ["retail_mart", dumped],
+        "targets": dumped,
+    }
+
+
+@pytest.mark.parametrize(
+    "features, message",
+    [
+        (
+            [{"source": "retail_mart", "keys": {"unit_id": "id"}}],
+            "'retail_mart' is the spine, keyed",
+        ),
+        (
+            ["retail_mart", "extra", {"source": "extra", "keys": {"unit_id": "id"}}],
+            r"twice: \['extra'\]",
+        ),
+        (["retail_mart", {"source": "extra", "keys": {}}], "'extra': keys names no column"),
+    ],
+    ids=["spine with own keys", "named twice", "no own key"],
+)
+def test_spine_with_own_keys_or_a_source_named_twice_refused(
+    tmp_path: Path, raw: dict, features: list, message: str
+) -> None:
+    """The spine is keyed by `data.keys`, a logical source joins once, and an entry names at
+    least one own key."""
+    raw["entities"]["entity_a"]["sources"]["features"] = features
+    assert re.search(message, _error(tmp_path, raw))
+
+
+@pytest.mark.parametrize(
+    "features, targets, refused",
+    [
+        (["retail_mart"], {"source": "retail_mart", "keys": {"period": "load_date"}}, True),
+        (["retail_mart", "FS"], None, False),
+        (["retail_mart", "fs"], "retail_holdings", False),
+        (["retail_mart", {"source": "fs", "keys": {"unit_id": "id"}}], "fs", True),
+    ],
+    ids=["spine re-keyed", "no target source", "another source", "feature twin re-keyed"],
+)
+def test_target_source_keyed_unlike_its_feature_entry_refused(
+    tmp_path: Path, raw: dict, features: list, targets: object, refused: bool
+) -> None:
+    """A target source that is also a feature source reads the same rows: under another period
+    column it would shift the target against the features (§4.1)."""
+    raw["entities"]["entity_a"]["sources"] = {"features": features, "targets": targets}
+    if refused:
+        assert "is also a feature source: key it exactly as" in _error(tmp_path, raw)
+    else:
+        _load(tmp_path, raw)

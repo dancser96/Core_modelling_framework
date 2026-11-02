@@ -6,8 +6,8 @@ walking skeleton, then two deepening rounds, each followed by a run-through; a p
 the bank's internal repo by 2026-12-18, and release 1.0 (the definition of done) by 2027-02-19,
 submitted as the first change request (D-021). It is
 milestones with dates per stage, not a task board (D-022). Release 1.0 also integrates, thinly,
-with the feature store and the data observability framework; LLM-assisted modelling comes in
-Phase 3 (D-021). This file holds the plan and the **open decisions**. Current status lives in `docs/UPDATES.md`; settled decisions in `docs/decisions.md`.
+with the feature store, and a production model's source tables are pointed to the data
+observability framework at deploy; LLM-assisted modelling comes in Phase 3 (D-021). This file holds the plan and the **open decisions**. Current status lives in `docs/UPDATES.md`; settled decisions in `docs/decisions.md`.
 
 Roles and the daily Lead DS sync: `docs/context/project.md` → People and rhythm. Sync preparation:
 `/brief`.
@@ -60,7 +60,9 @@ here once agreed (OD-01).
 - Synthetic data: sticky holdings and usage, 24 months, traps, oracle (M1) — `test_harness.md`.
   The LDS's to-dos (2026-10-21: noise columns of several kinds, very-low-fill columns, each named
   like the traps) are built in M2.1 (2026-10-25, version 0.5.0), except the `unstable` kind, which
-  waits for M4 with Feature Checks' stability
+  waits for M4 with Feature Checks' stability. Built 2026-10-30 (0.5.3): a feature-store extract
+  stand-in that the primary example joins, and mistake tests for every source guardrail —
+  [merges and mistake tests](components/test_harness.md#merges-and-mistake-tests)
 - Dataset: observation window, client-grouped split, OOT validation, Spark-side sampling, row
   budget (M2 thin, M4 deep) — `dataset.md`
 - A migration hook for the model input's sidecar (`_model_input.json`), like the config's
@@ -103,11 +105,12 @@ here once agreed (OD-01).
   integrate it (M4): limited to Stage 1 (M2.1 Foundation), where a use case's data comes in,
   shown by one use case config in three source settings (the feature store, other sources, both), two of them commented out until inside
   the bank (D-021) — OD-26, `environment.md`
-- Data observability work stream: learn the framework (alongside M2–M3), then integrate
-  monitoring with it (M4) (D-021) — OD-13, `monitoring.md`
+- Data observability (D-021): nothing to build; the deploy change request points a production
+  model's source tables at that framework (written into the deploy docs with M2.4; done inside
+  the bank at a model's first deploy) — `lifecycle.md`
 - What shapes the build (D-021): the feature store doesn't (it is limited to Stage 1, M2.1
-  Foundation; feedback mechanisms are Phase 3); the data observability framework shapes the monitoring tables only once
-  we have seen it in use; MLflow shapes the registry build if it is integrated in Phase 2
+  Foundation; feedback mechanisms are Phase 3); nor does the data observability framework, which
+  watches source tables; MLflow shapes the registry build if it is integrated in Phase 2
 - Config spine: YAML, two automation levels, identities and the shared-table rule are settled
   (D-007, D-023, D-043, D-088), and so are the decision audit log (D-125), the level mapping (D-132), the
   layout, the environment file and the model input (D-129–D-131); built in M2.1, under the
@@ -120,10 +123,10 @@ here once agreed (OD-01).
   offered (D-051): `lgbm`, `xgboost` and `catboost` all verified in M2 (D-037; spike 2, due
   11-09) — `training.md`
 - Retraining in production: research (M4) — OD-27, `lifecycle.md`
-- Learn sessions with the platform / MLOps team, the feature store team and the data observability
-  team, booked by the LDS by 11-06; the data observability one before M3, so that its needs can
-  shape the monitoring tables; the platform one also covers MLflow's availability — OD-08, OD-13,
-  OD-23, OD-26
+- Learn sessions with the platform / MLOps team and the feature store team, booked by the LDS by
+  11-06; the platform one also covers MLflow's availability. The data observability team only
+  needs to show how a source table is pointed to their framework, before a model's first deploy
+  — OD-08, OD-13, OD-23, OD-26
 - The first change request (release 1.0, D-021): start its first-time steps (security review of
   the saved formats, the deployment path) when the freeze lifts, if the bank allows; unverified
 
@@ -208,12 +211,12 @@ direction or needs people outside the team.
 |---|---|---|---|---|
 | OD-02 | **Distribution:** where a use case lives (repo per use case / per domain / other) and how users get the guided notebooks | CDS hint: one repo per entity × domain would be good but may be idealistic; as the framework, or a use case in it, expands it may branch off, so likely something between that and today's repo per use case. Leaning: one repo per entity × domain by default, and a use case branches into its own repo when it grows. Either way a repo may hold several similar use cases, each a config and its audit log (D-006). That needs standardised upstream data per entity and domain, which the feature store may provide (OD-26). Not one shared repo with code folders; the notebooks would come with the package in the base image (leaning, unverified) and users copy them. Doesn't block M2: the walking skeleton's use cases live in this repo's `conf/base/` | SDS + LDS | `components/run_modes.md` |
 | OD-04 | **Distribution:** release mechanics: zip → internal repo → internal CI → Nexus → base image. Who publishes; what must pass first (CI/Sonar); how often images are cut | Channel settled: the base image through Nexus (D-024). A use case can probably take a newer framework version within its image's year (D-047, soft); compatibility is about outputs (D-007). The first change request is release 1.0, the framework only (D-021) | SDS, with the platform / MLOps team (M5) | `components/run_modes.md` |
-| OD-13 | **Monitoring:** tooling and the data observability integration: what monitoring uses, what is shown and where dashboards live; how monitoring outputs feed the data observability framework (D-021) | Tooling and dashboards are the platform / MLOps team's (D-079); the integration is ours (D-021). A work stream to learn the data observability framework comes first. MLflow suits the registry and experiment tracking (OD-08), not tracking decay over time. The framework's needs shape the monitoring tables only once we have seen it in use (D-040) | SDS after the work stream, with the data observability team; tooling: the platform / MLOps team | `components/monitoring.md` |
+| OD-13 | **Monitoring:** tooling: what monitoring uses, what is shown and where dashboards live | Tooling and dashboards are the platform / MLOps team's (D-079). MLflow suits the registry and experiment tracking (OD-08), not tracking decay over time. The data observability part is settled: that framework watches a production model's source tables, pointed to it at deploy, and doesn't shape the monitoring tables (D-021, D-040; the SDS, 2026-10-30) | SDS, with the platform / MLOps team | `components/monitoring.md` |
 | OD-14 | **Lifecycle:** model inventory design | In scope, possibly richer than registry tables | SDS + LDS | `components/lifecycle.md` |
 | OD-17 | **Dataset:** the window ablation design | Sampling is settled for Phase 2 (D-117: only when the config declares it, for a rare target or the row budget; uniform negative downsampling or a random sample of clients; no sample weights); advanced sampling is on the Phase 3 wishlist. Ablation, now a nice to have at release 1.0: paired bootstrap on one validation month, plus a row-count-matched control and per-month models; the choice weighs train and test (D-083) | SDS | `components/dataset.md` |
 | OD-19 | **Features:** whether the Phase 3 LLM loop needs a feature-aggregation spec | Phase 2: features come from upstream, including the feature store (OD-26); only the spec's shape is kept in mind. If the feature store holds feature definitions, the loop may write those instead of a framework spec. The aggregation list agreed as a starting point for such a spec: sum / mean / max / min / std over windows, count of non-zero months, months since last non-zero, ratios between windows, and trend | SDS | Phase 3; no owner doc until then |
 | OD-20 | **Docs:** documentation approach for users (generated docs, pages, wiki…), and the glossary's reach | Parked: too early. The framework's own docs are written with Claude in our current documentation structure (D-021) | SDS + LDS | — |
-| OD-26 | **Upstream:** feature store integration (D-021): how a use case reads from the feature store, alone or with other sources (point-in-time reads; how its entities and features map onto the data definition and its hash); how the work splits with the feature store team | In Phase 2 the integration is limited to Stage 1 (M2.1 Foundation), where a use case's data comes in, and doesn't shape the build; feedback mechanisms, such as enrolling Target Factory's targets, are on the Phase 3 wishlist (D-021). A work stream to learn how the feature store works comes first, in the near future. The environment adapter's source resolution is the seam (a logical source → a table or the feature store). Short-term slice: the config spine allows several sources per entity from v1, joined on unit and month (`config.md`). The worked example is one use case config in three source settings; outside the bank only the other-sources setting runs, on synthetic data, and the two feature-store settings ship commented out | SDS after the work stream, with the feature store team | `components/environment.md` |
+| OD-26 | **Upstream:** feature store integration (D-021): how a use case reads from the feature store, alone or with other sources (point-in-time reads; how its entities and features map onto the data definition and its hash); how the work splits with the feature store team | Leaning (the SDS, 2026-10-30; an update may follow): little build outside the bank. Inside the bank the SDS adds an example notebook that loads features from the feature store, applies the format fixes and saves them as a dataset, which the environment file maps like any other source (a path or a table) and Target Factory joins to the others; the adapter then needs no `feature_store` format (refused at load today), and the outside-bank example's merge runs on a synthetic stand-in ([merges and mistake tests](components/test_harness.md#merges-and-mistake-tests)). Still to settle: (i) point in time: one row per unit per period holding the values as of that period, never today's values stamped on history (`CLAUDE.md` §4.1); (ii) production: inference reads the sources for every scored period, so the extract is refreshed by a job, not a notebook (`CLAUDE.md` §3), with the same fixes as for training (§4.9); leaning: the feature store team or an upstream job writes it as a table, read like any other, else a small framework function does the read and the fixes for both the notebook and inference; the notebook's instructions require one row per unit per period, as of that period; (iii) a saved period never changes afterwards, since the hashes see logical names, not contents (§4.10, D-079); (iv) which fixes the framework makes: the id cast, period tags and per-source key names (D-129, 2026-10-30); clashing columns are renamed in the extract. Limited to Stage 1 in Phase 2; feedback into the feature store stays on the Phase 3 wishlist (D-021) | SDS after the work stream, with the feature store team | `components/environment.md` |
 | OD-27 | **Lifecycle:** retraining in production. The CDS prefers models retrained in production rather than moved there | Shape settled (D-052): the bundle carries the recipe (`recipe_hash`); production refits it on the same window and clients, only the inference month moving, and passes a check against its evaluated parent (label-free agreement on the inference month, its own test-split AUC and calibration per window month, rows and positive events per month against the parent's EDA artifact, tolerances declared beforehand, never the validation month) before it scores. Retraining is the Phase 2 default, and deploying the fitted model without a retrain is also allowed (D-033). Still open, with the platform / MLOps team in M4: whether production has the data and compute to train; determinism; what "deployed" then records | SDS + LDS, with the platform / MLOps team (M4) | `components/lifecycle.md` |
 | OD-28 | **Inference:** a rank score beside the calibrated probability? Scores are compared across products downstream (D-049); in the long run a rank or normalised score may serve that comparison better than probabilities alone | Not before release 1.0; probabilities with correct calibration until then | SDS + LDS | `components/inference.md` |
 
@@ -226,7 +229,7 @@ the team, or he asked to see it. Results are shown at check-ins.
 | Topic | Raise when | Related |
 |---|---|---|
 | Feature store integration: a use case on the feature store, on other sources, and on both | The work stream has a design | D-021, OD-26 |
-| Data observability integration | The work stream has a design | D-021, OD-13 |
+| Data observability: reduced to pointing a production model's source tables at it at deploy, since it checks tables and consumes no model outputs (information item) | Next check-in | D-021 |
 | Retraining in production; models without pickle | Research results per model family | OD-27, D-051 |
 | The Phase 2 plan: the December pre-release, release 1.0 and the dates | After the LDS's review and the stakeholder buy-in in the week of 10-26 | D-022, `worknotes/timeline_proposal.md` |
 | Automation levels (two in Phase 2), and how a use case moves between them | The config spine is built (M2.1); the mapping is D-132 | D-023, D-132 |

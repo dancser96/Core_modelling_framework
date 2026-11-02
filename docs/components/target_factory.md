@@ -118,7 +118,8 @@ Built in Stage 1's major step 2 (2026-10-26; under the SDS's review), in
   through the index, never `add_months` or added days (T19). `label_by_period(rows, field,
   spec)` and `period_labels(first, last, spec)` build the per-period dicts, keyed by label,
   that every log entry uses.
-- `read_keyed_source(cfg, entity, name, env, spark) -> tuple[DataFrame, dict]` (`sources.py`,
+- `read_keyed_source(cfg, entity, entry: str | SourceEntry, env, spark) -> tuple[DataFrame,
+  dict]` (the entry a logical name or `{source, keys}`, D-129; `sources.py`,
   which owns `KEYS = ["unit_id", "period"]` and `HELPER_COLUMNS = ["target", "split",
   "eligible"]`): the source with its keys as `unit_id` and `period`, `unit_id` cast to string
   (T22), the period moved to its end. Refused: a period column that is not a date or timestamp,
@@ -133,8 +134,8 @@ Built in Stage 1's major step 2 (2026-10-26; under the SDS's review), in
   [dataset](dataset.md#model-input-d-131)).
   The log names the source, its periods (as labels), the raw type of its id column (`id_type`,
   so a join that matches nothing can name both sides' types), the columns it renamed
-  (`renamed`) and how it tagged its periods: `period start`, `period end` or `other days`
-  (D-129).
+  (`renamed`) and how it tagged its periods: `period start`, `period end`, `first and last
+  days` (both, which only a repeated key can mean) or `other days` (D-129).
 - `check_periods_covered(log, first, last, role, until, spec)` (`sources.py`): the one check
   that a read source has every period from `first` to `last`, failing with the source's `role`
   and the missing periods (`missing_periods(periods, first, last, spec) -> list[str]`, labels),
@@ -185,3 +186,9 @@ Built in Stage 1's major step 2 (2026-10-26; under the SDS's review), in
 ## Open questions
 - How a use case reads from the feature store, and how that work splits with the feature store
   team (OD-26).
+- A target source from another system may tag its periods differently (a first day meaning the
+  previous period's end, a load date), which places the target a period late, overlapping what
+  the features see (§4.1). When the lineage column also exists in the spine, should Target
+  Factory compare the two at lag 0 and ±1 and fail if a shifted lag agrees better? (ML audit,
+  2026-10-30; a target source that is also a feature source must already be keyed as its
+  feature entry, D-129.)

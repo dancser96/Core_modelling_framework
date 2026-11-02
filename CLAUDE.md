@@ -18,8 +18,9 @@ of every live model. Where we start from and where we want to reach: `docs/conte
   entity (subsidiary) is handled through configuration.
 - **Model types:** AutoML (FLAML) in Phase 2; predefined model families tuned with Optuna in
   Phase 3 (D-020); both behind one model interface.
-- **Integrations (first release):** the feature store upstream and the data observability
-  framework downstream. LLM-assisted modelling comes in Phase 3 (D-021).
+- **Integrations (first release):** the feature store upstream; the data observability framework
+  only gets a production model's source tables pointed to it at deploy. LLM-assisted modelling
+  comes in Phase 3 (D-021).
 - **Current state:** Phase 2, design baseline done; the package is still a skeleton. The crunch
   implementation in `legacy/propensity_crunch/` is reference only. Status: `docs/UPDATES.md`. Plan
   and open decisions: `docs/roadmap.md`. Vocabulary: `docs/glossary.md`. Reading order and the

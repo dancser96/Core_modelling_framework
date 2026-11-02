@@ -10,6 +10,7 @@ docs/components/test_harness.md explain them.
 """
 
 from synthetic.spec.amounts import LEVELS, SEASONS
+from synthetic.spec.extract import EXTRACT
 from synthetic.spec.products import HOLDING_RULES, PRODUCTS
 from synthetic.spec.traps import TRAPS
 
@@ -245,6 +246,7 @@ RETAIL = {
     "levels": LEVELS,
     "seasons": SEASONS,
     "traps": TRAPS,
+    "extract": EXTRACT,
 }
 
 # unit: the tests; dev: daily work on the skeleton (D-091); canonical: demos and the slow tests.

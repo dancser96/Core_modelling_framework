@@ -2,12 +2,12 @@
 **Status:** tested (built 2026-10-17; the SDS's review applied and approved, 2026-10-19);
 reviewed and accepted by the LDS, 2026-10-21, guided by `synthetic/REVIEW.md` (D-003); version
 0.5.0 adds ten trap columns from the LDS's to-dos and a 20k `dev` preset (2026-10-25, M2.1); 0.5.1
-adds the slim `holdings` table (2026-10-26, D-129); 0.5.2 tags the holdings' months with their last day; the canonical and `dev` datasets in `data/01_raw/` are written by it ·
+adds the slim `holdings` table (2026-10-26, D-129); 0.5.2 tags the holdings' months with their last day; 0.5.3 adds the feature-store extract `fs_extract` (2026-10-30); the canonical and `dev` datasets in `data/01_raw/` are written by it ·
 **Legacy:** `tests/smoke_test.py` (stub-based — do not copy its stubs)
 **Related:** [dataset](dataset.md) (time model) · [target factory](target_factory.md) ·
 [EDA](eda.md) · [feature checks](feature_checks.md) · [environment](environment.md) ·
 [config](config.md) · `tests/README.md` · `synthetic/REVIEW.md` (review guide) · D-003, D-011, D-014, D-020, D-029,
-D-041, D-064, D-083 · OD-17
+D-041, D-064, D-083 · OD-17, OD-26
 
 Read it in three levels:
 - **Level 1** (a two-minute read) gives the essentials.
@@ -37,6 +37,10 @@ will read real data. Stubs hid every environment bug in the crunch (T15).
   (`2025-03-01`), so the two sources exercise the framework's month conversion on reading (D-129).
   The framework's Stage 1 reads it as the target source (targets from `holdings`,
   features from `mart`, joined on client and month).
+- **The feature-store extract (`fs_extract`):** a second feature source standing in for a saved
+  feature-store dataset: about 85% of the clients, its own key names (`customer_no` a string id,
+  `as_of_date` the month's last day), six features that proxy the hidden traits, and one
+  look-ahead trap column ([feature-store extract](#feature-store-extract)).
 - **The oracle:** the hidden truth beside the mart. It holds each client's hidden traits and the
   true chance behind every event.
 - **`truth.json`:** the seed, the spec, the calibration and, per standard target, the oracle's AUC.
@@ -62,8 +66,9 @@ will read real data. Stubs hid every environment bug in the crunch (T15).
   perfect model would reach. A model that beats it by more than about two standard errors on
   positive events is leaking (D-100 (e)).
 
-**How it is trusted.** 8 check families compare 1,309 statistics with this spec, and all pass at
-100k. The checks are written from the spec and never call the code that makes the data. The notebook
+**How it is trusted.** 9 check families compare 1,336 statistics with this spec, and all pass at
+100k (0.5.3, 2026-10-30). The checks are written from the spec and never call the code that
+makes the data. The notebook
 `notebooks/00_synthetic_data.ipynb` gives a visual tour of the data, with the checks in an
 appendix.
 
@@ -263,10 +268,11 @@ The code lives under `synthetic/src/synthetic/`, in four folders by role:
   - `holdings.step_holdings` moves every product;
   - `amounts.step_amounts` sets every amount;
   - `mart` builds names and rollups;
-  - `traps` builds the trap columns.
+  - `traps` builds the trap columns;
+  - `extract` builds the feature-store extract.
 - **`truth/`** holds the oracle (`window_probability`, the standard targets), the regression oracle
   and `truth.json`.
-- **`checks/`** holds the 8 check families.
+- **`checks/`** holds the 9 check families.
 
 At the top level:
 - `generate.py` runs the month loop;
@@ -274,8 +280,8 @@ At the top level:
 - `__main__.py` is the command line.
 
 ### How it is checked
-- **Eight families**, one table each: population, holdings, amount rules, amount levels, seasons,
-  mart, traps and oracle. Each row compares a statistic with what this spec says.
+- **Nine families**, one table each: population, holdings, amount rules, amount levels, seasons,
+  mart, traps, oracle and the feature-store extract. Each row compares a statistic with what this spec says.
 - **Tolerance:** 4.5 standard errors, so a correct generator fails a family about once in a
   thousand runs. A rule that must always hold has tolerance 0.
 - **Independent of the generator.** The checks never call the code that makes the data, so a
@@ -726,7 +732,8 @@ All names are lowercase and come from one grammar (`mechanisms/mart.py`):
 - **Ratio:** `{base}_0_2_vs_3_5_months_ratio` (average of months 0–2 over months 3–5).
 - **Trap columns** end in `_trap_{kind}` (D-064), kind ∈ `leak`, `upstream_target`,
   `process_leak`, `shifted`, `missing_leak`, `null_control`, `near_constant`, `all_null`,
-  `constant`, `redundant`, `low_fill`, `high_cardinality`; extra columns are
+  `constant`, `redundant`, `low_fill`, `high_cardinality` (and `lookahead`, in the
+  [extract](#feature-store-extract)); extra columns are
   `extra_{nnnn}_trap_weak` / `extra_{nnnn}_trap_noise`.
 
 #### Columns
@@ -784,6 +791,52 @@ The environment file `conf/local/environment.yml` maps the logical sources to `<
 `truth.json` and the oracle are never mapped. The canonical dataset lives in
 `data/01_raw/synthetic_canonical/`.
 
+### Feature-store extract
+**A second feature source, joined like any other source (0.5.3; OD-26's leaning).**
+`<out>/fs_extract/part-0.parquet` is one file, not partitioned: the month is a date column inside
+it. It is built from the finished clean panel (also under `--dirty`) and draws from the `extract`
+stream appended last, so the mart, oracle and holdings are byte-identical to 0.5.2's at the same
+seed (unit preset, seed 0, checked 2026-10-30). The spec is `spec/extract.py` (`spec.extract` in
+`truth.json`).
+- **Keys named unlike the mart's:** `customer_no` is the mart's `client_id` as an unpadded digit
+  string (`"123"`, so the framework's id cast is exercised); `as_of_date` is the month's last day.
+- **Coverage:** 85% of the clients, drawn once per client. A covered client has a row in every one
+  of its mart months, an uncovered one none.
+- **Six features**, each a moderate proxy of one hidden trait: the trait's normal score within the
+  month mixed with noise at the spec's rank correlation, then a monotone form. No nulls.
+
+  | Column | Type | Trait | Rank corr. | Form |
+  |---|---|---|---|---|
+  | `app_sessions_30d` | int64 | digital | 0.55 | round(12 · e^(0.8 s)) |
+  | `bureau_score` | int64 | credit | 0.50 | round(650 + 80 s), clipped to 300–900 |
+  | `external_assets_band` | string | wealth | 0.50 | E/D/C/B/A at 30/30/20/12/8%, E lowest |
+  | `travel_spend_share` | double | crossborder | 0.50 | logistic(−1.5 + s), 3 decimals |
+  | `preferred_channel` | string | digital | 0.55 | branch/web/mobile at 25/30/45% |
+  | `salary_regularity_score` | double | activity | 0.45 | logistic(s), 3 decimals |
+
+  Ties cost the two categoricals a little (≈ 0.47–0.48 at 5k), so the check takes the spec's
+  range 0.4–0.6.
+- **The look-ahead trap:** `holding_cnt_trap_lookahead` (int64) is the number of the six holding
+  flags the client holds in its last panel month, stamped on every month: a feature store's
+  "current" value pulled today and written over history (kind `lookahead`).
+
+### Merges and mistake tests
+**The primary example is a merge, and every source guardrail has a test (the SDS, 2026-10-30).**
+`cc_acquisition` and `td_acquisition` join the extract after the mart as
+`{source: retail_fs_extract, keys: {unit_id: customer_no, period: as_of_date}}`, so every stage
+runs on a merged model input. `tests/test_source_mistakes.py` plants one mistake per variant of
+the clean extract (the mistake lives in the test, not the generator, D-041) and checks what the
+framework does ([dataset](dataset.md#sources-and-joins-d-129)):
+- **refused, naming the source:** its key names undeclared; repeated rows; weekly rows on the
+  monthly spine (with the finer-period hint); a null id; a `YYYY-MM` string period; a column
+  shared with the mart, in the same case or another (`income`, `Income`); another id system;
+- **printed only:** the clean extract's matched share (about 85%) with the string id joined to
+  the int one; periods tagged on the 15th (`other days`);
+- **accepted by design:** the validation period missing from the extract leaves its columns
+  null there only (the left join; the SDS, 2026-10-30);
+- **not caught, documented:** half the ids zero-padded only lower the matched share. The
+  look-ahead column passes Stage 1 by design and is Feature Checks' to flag (M2.2).
+
 ### Trap summary
 Traps sit on **two products** (D-064): credit card acquisition (`cc_flag` 0 → 1) and personal-loan
 opening (`loan_personal_cnt` rises). The card meets every trap-column kind, since the first
@@ -831,6 +884,7 @@ each within its check's tolerance (2026-10-25).
 | Any | Drift (monitoring) | no | login columns | [Time effects](#time-effects) | PSI > 0.25 after panel month 16, ≈ 0 before |
 | Any | Collinearity | no | rollups and identities | Rollups of one measure over `0_2` and `0_5`; `<product>_status == "active"` ⇔ `<product>_flag`; `product_cnt` = product flags + loan counts > 0; inflow − outflow = change in `casa_bal`; subcategories sum to their total | Correlation views and VIF flag the clusters (infinite for the identities) |
 | Any | Dirty switches, off by default | no | — | Duplicate client-months; a month with the login columns null (an outage); income × 12 from one month on (a unit change); a few `casa_bal` typos × 1,000 | Contract checks fail loud; operational monitoring flags them (tests on the `unit` preset only). Known limit: the rollups stay clean, while a real upstream mart would roll up its own bad values (stated, not built) |
+| Any | Look-ahead (in the extract) | yes | `holding_cnt_trap_lookahead` in `fs_extract` | The six holding flags held in the client's last panel month, stamped on every month | Strongly predictive of acquisitions (card AUC ≈ 0.81 at w = 3, below the oracle's 0.86; above the oracle for the term deposit; 5k clients, 2026-10-30); constant per client while the flags move; Feature Checks' leakage and time-alignment screens must flag it |
 | Any | Extra columns, off by default | yes | `extra_{nnnn}_trap_weak` / `_trap_noise` | 10% weak (a trait plus noise, rank correlation 0.1–0.3), the rest pure noise | Scale tests; weak ones rank above noise |
 
 Later (not in M1): an interaction-only feature.
@@ -936,8 +990,10 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
     `finish_simulation`.
   - `month_rows` builds the mart and oracle rows.
   - `buffer_month` holds a month until its look-ahead columns exist.
+- `generate.py` also holds `generate_extract`, the feature-store extract of a clean panel (in memory;
+  its own `extract` stream).
 - `output.py`: `write_mart` drives the loop, writes month by month (mart, oracle and the holdings
-  derived from the mart), then writes the truth.
+  derived from the mart), then the extract (`generate_extract`), then the truth.
   `read_output` reads columns or a client sample; `load_truth` is the stale-data guard.
 
 **`spec/`: rules and numbers, no logic**
@@ -945,7 +1001,9 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
   Its only functions are two small dict builders (`_sub`, `_profile`).
 - `products.py`: `PRODUCTS` (shares, volumes, drivers) and `HOLDING_RULES`.
 - `amounts.py`: `LEVELS` (multiples, variation, card, loans, logins) and `SEASONS` (time effects).
-- `traps.py`: `TRAPS`, the trap summary (20 trap-column rows and the traps in real columns).
+- `traps.py`: `TRAPS`, the trap summary (21 trap-column rows, the extract's look-ahead included,
+  and the traps in real columns).
+- `extract.py`: `EXTRACT`, the feature-store extract (coverage, the six features).
 
 **`mechanisms/`: the functions that simulate**
 - `clients.py`: `draw_clients`, `draw_income`, `draw_hidden_attributes`, `relationship_days`; the
@@ -981,6 +1039,8 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
     `_offer_codes`, and `finalize_lookahead`;
   - the extra columns;
   - `apply_dirty` and `dirty_panel` (dirty data).
+- `extract.py`: `extract_frame` (the extract of a clean panel: coverage, the six features, the
+  look-ahead count) and `extract_schema` (its written types).
 
 **`truth/`: the hidden truth**
 - `oracle.py`: `STANDARD_TARGETS`, `realised_target`, `window_probability`, `oracle_metrics`.
@@ -1000,6 +1060,8 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
   - spec values restated.
 - `switches.py`: `check_dirty` and `check_extra_columns`, for the off-by-default switches (not a
   family).
+- `extract.py`: `check_extract(mart, oracle, truth, extract)`, the family that also reads the
+  extract.
 - One module per family, each with `check_<family>(mart, oracle, truth)`: `population.py`,
   `holdings.py`, `amount_rules.py`, `amount_levels.py`, `seasons.py`, `mart.py`, `traps.py`,
   `oracle.py`.
@@ -1034,6 +1096,8 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
 - `oracle/…`: the same keys and partitions, hidden columns only. It is never mapped as a source.
 - `holdings/snapshot_month=YYYY-MM-<last day>/…`: the same months tagged with their last day; `client_id` and the six holding flags (`HOLDINGS_COLUMNS`),
   copied from the final mart frame with the mart's types (also under `--dirty`).
+- `fs_extract/part-0.parquet`: the feature-store extract, one unpartitioned file
+  ([feature-store extract](#feature-store-extract)); `read_output(out, "fs_extract")` reads it.
 - `truth.json`: what can't be recomputed from the two tables ([ground truth](#ground-truth-and-oracle)).
 - `checks/<family>.parquet`: the saved check tables (with `--checks`).
 
@@ -1051,7 +1115,8 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
 - **The traps family has rows for every trap column.** For the 0.5.0 columns: the constants equal
   their value; the redundant column's formula, rank correlation and AUC against its source; the
   low-fill shares and persistence; the missingness-pattern leak's fill shares, holder nulls and
-  AUC above the oracle; the card shifted and process-leak columns mirror the loan rows. The mart
+  AUC above the oracle; the card shifted and process-leak columns mirror the loan rows. The
+  extract's look-ahead column has its row in the extract family. The mart
   family's null rule leaves the three random-fill columns to the traps family.
 - **Tolerances:** 4.5 standard errors, a family-wise false-failure rate of about 0.1%.
   - Standard errors are analytical where the statistic has one, on one row per client. Examples:
@@ -1077,8 +1142,12 @@ Framework tests assert against the ground truth, from M2.2:
 - screens flag every trap: the trap list in `truth.json` is the acceptance list, and a test in
   `tests/` maps each kind to the Feature Checks step that must flag it (the mapping lives there,
   not in this package). The planned mapping: quality ← constant, near_constant, all_null,
-  low_fill, high_cardinality; leakage ← leak, missing_leak, process_leak, upstream_target; time
-  alignment ← shifted; redundancy ← redundant;
+  low_fill, high_cardinality; leakage ← leak, missing_leak, process_leak, upstream_target,
+  lookahead; time alignment ← shifted; redundancy ← redundant. The look-ahead column's card AUC
+  (≈ 0.81) is below the oracle's and it is constant per client, so neither a near-perfect
+  separator test nor a forward-vs-backward check sees it: Feature Checks needs a look-ahead tell
+  (e.g. a column constant within a client while the holdings move), or the kind is remapped (ML
+  audit, 2026-10-30; an input to the M2.2 design);
 - null controls carry no signal;
 - no model beats the oracle AUC.
 
@@ -1092,7 +1161,7 @@ real data has no such names.
 
 ### Interface
 ```python
-from synthetic.generate import generate_mart
+from synthetic.generate import generate_mart, generate_extract
 from synthetic.output import write_mart, read_output, load_truth
 from synthetic.truth.oracle import STANDARD_TARGETS, realised_target, window_probability
 from synthetic.checks.suite import run_checks, write_checks, read_checks
@@ -1101,6 +1170,7 @@ from synthetic.mechanisms.traps import trap_summary
 generate_mart(preset="unit", n_clients=None, seed=0, n_months=None, dirty=False,
               n_extra_columns=0) -> (mart, oracle, truth)     # in memory, small presets
 write_mart(out_dir, preset="canonical", ...) -> truth           # month by month to disk
+generate_extract(mart, oracle, truth) -> pd.DataFrame        # fs_extract of a clean panel
 read_output(out_dir, table, columns=None, client_sample=None) -> pd.DataFrame
 load_truth(out_dir) -> dict          # fails loud if another generator, numpy or scipy version wrote it
 window_probability(mart, oracle, truth, target, w) -> pd.Series   # the true chance, keyed to t
@@ -1125,7 +1195,9 @@ through the environment adapter, copy `conf/base/environment.example.yml` to
 **Budgets:** `canonical` ≤ 10 min and ≤ 3 GB peak; `unit` ≤ 20 s. Measured on the 8 GB Mac
 (2026-10-19): `canonical` 337–355 s, within the 3 GB budget (the slow budget test passed); `unit`
 ≈ 19 s. At 0.5.0 (2026-10-25): `canonical` 328 s, `dev` 68 s, `unit` ≈ 16 s; peak memory not
-remeasured. More than half the time goes to the regression oracle's simulated paths.
+remeasured. At 0.5.3 (2026-10-30), with the extract built from the whole panel at the end:
+`canonical` 398 s and 2.53 GB peak, `dev` 72 s and 1.18 GB. More than half the time goes to the
+regression oracle's simulated paths.
 `synthetic.__version__` goes up whenever the output changes, so a stale `data/01_raw/` fails loud.
 
 ### The maths
@@ -1254,3 +1326,6 @@ None. Answered in the SDS's review (2026-10-19):
   window month only) waits for M4, with Feature Checks' stability.
 - A noisy copy of a real column was considered and dropped: the redundant column covers
   redundancy.
+- A survival-coded coverage trap: an extract that covers only the clients alive at extract
+  time, so its nulls encode future exits, the commonest real feature-store look-ahead. The
+  extract's coverage is drawn independently today (ML audit, 2026-10-30).

@@ -16,7 +16,10 @@ decision:                                # declared before any result; never cha
 entities:                                # only the entities this use case applies to (D-034)
   entity_a:
     sources:
-      features: [retail_mart]            # ordered: the first is the governing spine
+      features:                          # ordered: the first is the governing spine
+        - retail_mart                    # keyed as in data.keys
+        # a feature-store extract stand-in with its own key names, left-joined (OD-26)
+        - {source: retail_fs_extract, keys: {unit_id: customer_no, period: as_of_date}}
       # features: [feature_store]        # the feature store, alone (not implemented until OD-26)
       # features: [feature_store, retail_mart]   # the feature store as the spine, the mart joined
       targets: retail_holdings           # left-joined to the spine; contributes only the target

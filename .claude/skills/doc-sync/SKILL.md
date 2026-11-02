@@ -31,14 +31,10 @@ a doc); this skill applies them.
    over `*.md` and fix every hit. Relative links must resolve.
 5. **Style.** Edit text in place (integrate; don't append "update" sections). Verdict first,
    concise. Mark unverified claims as unverified. Roles, not names; no bank identifiers.
-6. **Worknotes (shared with the Lead DS).** Refresh `worknotes/sync.md` following the rules in
-   `worknotes/README.md` → "Writing `sync.md` for the LDS": "In short" at the top in plain words
-   without references, one line pointing to the short-term open decisions above an untagged review
-   list (most important first, then newest), "last 2 working days" (soft ceiling 40 lines, hard 50)
-   and a terse "last 7 working days" recap (at most one page), only the important changes (one
-   bullet per topic, no info dump, no tooling or setup noise).
-   Add to `worknotes/log.md`, merging into the existing entry when the same topic was updated the
-   same or a neighbouring day (each update keeps its date). This happens every time, not only for big changes.
+6. **Worknotes (shared with the Lead DS).** Add to `worknotes/log.md`, merging into the existing
+   entry when the same topic was updated the same or a neighbouring day (each update keeps its
+   date). This happens every time, not only for big changes. Don't touch `worknotes/sync.md`:
+   only `/brief` or the SDS's request refreshes it (D-072 (h)).
 7. **Docs guide.** If a doc was added, renamed or deleted, update `docs/README.md` (reading order,
    stage → component map).
 8. **Report** the doc files touched, one line each on what changed.
