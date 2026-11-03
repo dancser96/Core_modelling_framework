@@ -2,6 +2,59 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-11-03 — Briefing for the LDS sync
+- `/brief`: `sync.md` refreshed (windows 11-02 to 11-03 and 10-26 to 10-30; last sync 11-03).
+  Every commit since the last briefing is covered by this log; uncommitted: the plan and record
+  revisions after R1–R9 and the doc edits staged with them.
+- Review list: a new first item, the Stage 2 design's summary levels (input before the build is
+  cheapest); Stage 1 kept (not reported finished). A new open question: whether OD-01's
+  stakeholder buy-in, planned for the week of 10-26, happened (nothing records it).
+- Flagged for the SDS: Q464 puts version 0.3.0 at Stage 1's sign-off, `plan.md` §1 at Stage 2's
+  end; M2 (to 11-20) is tight with Stage 2 ending about 11-12.
+- Then the SDS's remarks on the page: summarise the essence of the updates and the SDS's key
+  decisions, not the rounds; give the key decisions as much room as the open ones; no timelines.
+  `sync.md` rewritten around the decisions (flags act at both levels, notes inform; no sampling,
+  one counts table and one engine; the lag check and the look-ahead flag; the layout and no bumps
+  in 0.x), each a "Decision: …" review item; dates removed. Rules extended in
+  `worknotes/README.md` and `.claude/commands/brief.md`.
+- Then (the SDS): each review item names the doc's Level 1 plus the sections and tables that
+  carry the decision, by heading (as the SDS reviewed EDA and Feature Checks); the four decision
+  items and the Stage 1 item rewritten so; the rule added to `worknotes/README.md`.
+- The LDS's answers: no other example modes needed for now (`run_modes.md`, item 5); the model
+  documentation question dropped (`roadmap.md`, Phase 3 wishlist).
+
+### 2026-11-03 — Stage 2 plan revised after the SDS's remarks (R1–R9); the build waits
+- The SDS read the plan and the spec and sent nine remarks (recorded verbatim with what was done at
+  the end of `worknotes/m2_2_understanding/answers.md`); the build does not start yet. Their 09:24
+  commit ("Stage 2 initial plan") took the doc edits below with it; the plan and record revisions
+  are uncommitted.
+- **Routing budget (R2):** Fable may take a third to half of the stage's tokens and the hardest
+  code pieces; `xhigh` effort on every model where a wrong answer is costly; architecture over
+  rewrites. `plan.md` §3 rewritten: Fable takes m1.3 (frames and counts), m1.4 (statistics), m2.3
+  (EDA stage) and m3.2 (decisions and Feature Checks stage); every §4 Opus piece and its reviews at
+  `xhigh`; the notebooks to Opus `xhigh`. D-072 (l) and `CLAUDE.md` §1 extended.
+- **Notebook guides (R8):** the guide text is the notebooks' main deliverable; rule extended in
+  `notebooks/README.md`; m2.4/m3.4 content and the done criteria name it.
+- **Tests (R7):** the SDS reads code, not tests; the review guide marks at most two "read this
+  test" per major step (`plan.md` §4 item 6).
+- **`lag_drop` → `lagged_signal_drop` (R3)** in `feature_checks.md` and `test_harness.md`.
+- **`psi_latest` (R4, V13):** pinned to the window's last period against the latest period,
+  whatever `eda.snapshot` says (`feature_checks.md`, `feature_ledger.md`, D-135).
+- **The one-bucket symptom (R5, V14, T25):** quantile edges collapse on zero-inflated or discrete
+  columns. The edges rule: mass points (share ≥ `1 / bins`) as singleton bins, quantile edges over
+  the rest; charts merge cells by cumulative share, a mass point its own bar. Unit tests on three
+  constructed columns, the m1.0 bin-count measurement and an acceptance-test assertion
+  (`eda.md`, `dataset.md`, `reporting.md`, the glossary, `test_harness.md`, `lessons.md` T25, D-135,
+  `plan.md` m1.0, m1.3, m1.4, m3.3, §7).
+- **Chart sampling (R6, V15):** no chart draws clients (cells and quartiles only), so nothing is
+  sampled; a rule for any future row-level chart in `reporting.md` requirement 5.
+- **Null register (R1):** moved to the owner docs in the spec step; N10 added to `dataset.md`, N17
+  to `training.md`; the register's intro lists every owner.
+- **V1 confirmed (R9)** with the wording "for Training, a held feature acts as an excluded feature
+  without a final decision" in `feature_checks.md`, `feature_ledger.md`, `training.md`, the glossary,
+  `notebooks/README.md`, D-134 and the plan's notebook 03 step.
+- Timeline shifted one day (`plan.md` §8); SDS reviews 11-06, 11-10, 11-12. Nothing coded.
+
 ### 2026-11-02 — Stage 2 design settled: round 4 answered, the spec written, the plan drafted
 - The SDS answered round 4 (Q490 at the default with 100 bins and an `eda.bins` switch that turns
   the binning off for small populations; Q491–Q493 at the defaults; Q477 confirmed by silence) and

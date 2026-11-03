@@ -438,7 +438,7 @@ Planned layout; final names in the plan.
 - `core_modelling/ledger.py`: `resolve_features(ledger: pd.DataFrame, resolved: UseCaseConfig) ->
   list[str]`; reading and appending columns ([feature ledger](feature_ledger.md)).
 - `core_modelling/statistics/`: `pool_periods`, `two_way_table`, `concordance_from_table`,
-  `concordance_se`, `cochran_q`, `merge_to_deciles`, `psi`, `new_level_share` ([EDA](eda.md)).
+  `concordance_se`, `cochran_q`, `merge_bins`, `psi`, `new_level_share` ([EDA](eda.md)).
 - `core_modelling/artifacts.py`: EDA's artifact read, the digest check, the temporary folder.
 
 **Call flow of one run:** `run_feature_checks` → resolve the config → `artifacts` reads `eda/` and

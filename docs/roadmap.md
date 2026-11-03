@@ -161,8 +161,7 @@ Long-term targets, not planned into Phase 2 (D-072). Each item names where it ca
   per-family check alone (D-051).
 - A rank score beside the calibrated probability, for comparing scores across products (OD-28).
 - Model documentation generated from the model card in the internal documentation standard (only
-  after a model is trained and saved; checks that the necessary inputs exist — what the Lead DS
-  means by "necessary inputs" is still to be asked).
+  after a model is trained and saved; checks that the necessary inputs exist).
 - A question: which source of people logs (who signs off, who approves a model) should the
   framework build in? Phase 2 builds none; approvals stay in the PR and the change request (D-033).
 - A question: do we want to gate data to prevent the validation month's use, e.g. computing the

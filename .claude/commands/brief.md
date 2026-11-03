@@ -13,16 +13,18 @@ memory, so it works in a fresh chat.
 2. Catch up. If `git log` shows commits that the log doesn't cover (a turn that forgot to log), add
    entries for them from the commit messages and diffs. Mention uncommitted work (`git status`).
 3. Reply with, for the period "$ARGUMENTS" (default: since the last briefing):
-   - **What happened:** 3–7 guiding bullets, newest first, each with why it matters.
+   - **What happened:** 3–7 guiding bullets, newest first, each with why it matters: the essence
+     of the updates and the SDS's key decisions, never how many rounds or reviews it took.
    - **To try:** the notebook or command the LDS can run themselves, and what to look for. If
      nothing runnable exists yet, say which doc section to walk through.
    - **Discuss:** the open questions for this sync, most blocking first (OD-numbers, one line of
      context each, plus our current leaning).
    - **Risks / needs a decision:** anything blocked, unverified or drifting from the goals.
 4. Refresh `sync.md` following the rules in `worknotes/README.md` → "Writing `sync.md` for the LDS":
-   "In short" at the top in plain words without references, one line pointing to the short-term
-   open decisions above an untagged review list by importance then recency (tick or remove only
-   items the user says the LDS finished), "last 2 working days" (soft ceiling 40 lines, hard 50) and
+   "In short" at the top in plain words without references, focused on the key decisions made,
+   one line pointing to the short-term open decisions above an untagged review list by importance
+   then recency that gives the SDS's recent key decisions as much room as the open ones (tick or
+   remove only items the user says the LDS finished), no timelines anywhere on the page, "last 2 working days" (soft ceiling 40 lines, hard 50) and
    "last 7 working days" (at most one page) pruned to the important changes, the open-questions
    table and "To try" updated, and `last sync` set. Don't commit anything; the user
    commits and pushes.

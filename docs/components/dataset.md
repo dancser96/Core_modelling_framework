@@ -406,7 +406,7 @@ Its path is local until the M2.4 transport.
 | Area | Effect |
 |---|---|
 | EDA | Snapshot views on every client of one window period after the analysis filters, labels included (D-030); the window's statistics, the lag and the client-constant shares as Spark aggregates over the eligible rows of the compared periods, the label kept in the window only (D-135); base rate per period (population level, for seasonality) over the window periods only, because later periods' target windows overlap the validation period's (D-030) |
-| Feature Checks | Reads EDA's artifacts only, every eligible client, labels included in the window (D-030); stability across the window's periods; label-free PSI between named periods (the snapshot and the latest), never `v`; the periods compared are recorded in its stage `run` entry (D-088, D-135) |
+| Feature Checks | Reads EDA's artifacts only, every eligible client, labels included in the window (D-030); stability across the window's periods; label-free PSI between named periods (the window's first and last; the window's last and the latest), never `v`; the periods compared are recorded in its stage `run` entry (D-088, D-135) |
 | Training | Train/test client split, after Feature Checks (D-030); calibration folds grouped by client; FLAML's trial selection grouped by client (D-106); the collect printout and declared sampling |
 | Calibration | Prior shift from the effective training rate (the sampled rate in Phase 2, D-049) to the unsampled train split's true rate (D-098); per-period base rates reported (seasonality); optional general calibration step out-of-fold inside train (D-049) |
 | Evaluation | Test (unseen clients, same periods) vs validation (OOT): for a run nothing was picked on, the gap separates overfitting from decay over time, apart from the cost of EDA and Feature Checks on every client (D-030); a sweep's winner states that its gap mixes overfitting with selection (D-083). Optional: validation on test clients only (unseen clients and an unseen period) |
@@ -650,8 +650,7 @@ is one entity's area and the data-definition hash carries the entity (D-136; [ED
   (the printout, the callout above the budget worded for the frame (req. 5), the collect, the
   measured size).
 - `counts.py`, the Spark side of EDA's counts table ([counts passes](#counts-passes-d-135)):
-  `compared_periods(cfg, panel_periods) -> dict`; `bin_edges_from_snapshot(snapshot, kinds,
-  bins) -> dict`; `window_levels(rows, categoricals) -> dict` (`LEVEL_CAP = 50`);
+  `compared_periods(cfg, panel_periods) -> dict`; `bin_edges(snapshot, kinds, bins) -> dict`; `window_levels(rows, categoricals) -> dict` (`LEVEL_CAP = 50`);
   `count_cells(rows, edges, levels, target_bins) -> pd.DataFrame` (pass 1);
   `count_lagged_cells(rows, edges, levels, target_bins) -> pd.DataFrame` and
   `client_constant_shares(rows, features) -> pd.DataFrame` (pass 2); `population_counts(panel,

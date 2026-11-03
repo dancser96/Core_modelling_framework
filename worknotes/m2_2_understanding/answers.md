@@ -7,8 +7,10 @@ build plan is written from, kept complete through context compaction (the SDS, 2
 open round is in `questions.md` beside it · cited decisions are summarised in brackets (D-072 (k))
 · the folder is deleted when the stage is done_
 
-**Where it stands (2026-11-02): every round answered (Q418–Q493); the design is settled and written
-into the component docs; the build plan is `plan.md` beside this file. New questions start at Q494.** Stage 2 is M2.2 Understanding:
+**Where it stands (2026-11-03): every round answered (Q418–Q493) and the SDS's remarks of
+2026-11-03 (R1–R9, at the end) applied; the design is settled and written into the component
+docs; the build plan is `plan.md` beside this file, revised, waiting for approval (V13–V15 open to
+veto). New questions start at Q494.** Stage 2 is M2.2 Understanding:
 EDA, Feature Checks, the feature ledger and Reporting, with their two notebooks and the trap
 acceptance test. The plan sized it at four days (11-03 – 11-06) and "thin" (D-022 (the Phase 2
 plan: skeleton first, two deepening rounds)). You asked for something between thin and deep with
@@ -2138,9 +2140,13 @@ _The list as the SDS saw it; the status of each item after the answers follows t
 # Null-value assumptions (register, kept current)
 _Opened 2026-11-02 at the SDS's request (A31): every assumption about null values the design or the
 code makes, numbered N1 onwards, with its source and status. "Decision" = already settled in
-`docs/decisions.md` or an answered question; "assumption" = mine, open to the SDS's veto. The spec
-step moves this register into a "Nulls" section of `eda.md` and `feature_checks.md`; new assumptions
-are added here the moment they are made._
+`docs/decisions.md` or an answered question; "assumption" = mine, open to the SDS's veto. **Moved
+into the owner docs** (the spec step, 2026-11-02; N10 and N17 on 2026-11-03 after the SDS asked,
+R1): `eda.md` "Nulls" owns N1–N9, N13–N16 and N19; `feature_checks.md` "Nulls" repeats the ones
+it relies on (N4–N6, N11, N12, N15, N18); `dataset.md` owns N10 (the population counts) and N11
+(the lag pass); `training.md` owns N17 (the predefined path's imputation rule). This table stays
+the numbered index until the stage is built and the folder is deleted; a new assumption is added
+here and in its owner doc the moment it is made._
 
 | # | Assumption | Source | Status |
 |---|---|---|---|
@@ -2363,3 +2369,102 @@ be very specific what kinds of models you will use for which items, because as m
 want to be able to keep the main thread on Fable without running out of Fable (but not of other
 model) token allowance." → the plan's routing table names the agent type, model and effort for
 every minor step and every review (D-072 (l)).
+
+---
+
+# Remarks round (2026-11-03): R1–R9
+_The SDS's remarks on the plan and the spec, 2026-11-03, each verbatim with what was done · no new
+question was asked; the decisions made in response are V13–V15 in `plan.md` §9, open to veto · the
+SDS: "Make changes with regards to my points above, don't start the build yet"_
+
+**R1.** "The things in answers.md which have to be recorded in some other documents (like Null value
+assumptions), when are you going to do it?"
+
+**Done:** it was done in the spec step for 17 of the 19 assumptions (`eda.md` and
+`feature_checks.md` have a "Nulls" section each, `dataset.md` N11) and two had no owner: N10 (a row
+with a null target is in the population counts and out of every labelled statistic) is now in
+`dataset.md`'s population counts, N17 (a family that imputes must impute outside the value range
+with a missing indicator) in `training.md`'s predefined path. The register's intro now lists the
+owner of every number. Everything else in this record that the docs must carry (the answers'
+outcomes) went into the docs in the spec step; the record itself is history and is deleted with the
+folder when the stage is done.
+
+**R2.** "You are allowed to use extra high effort for Opus and all other models as well if needed, and
+also between a third and half of the tokens can be Fable, so you are allowed to reallocate some of
+the more creative/complex bits to that. I would rather have you use a bit more tokens on properly
+architecting code rather than needing multiple rewrites"
+
+**Done:** `plan.md` §3 rewritten. Fable takes four code pieces besides the main thread: m1.3 (the
+frames and counts passes), m1.4 (the statistics engine), m2.3 (the EDA stage and report) and m3.2
+(the decisions and the Feature Checks stage): the architecture the stage stands on and the two
+integrations. Every §4 code path on Opus runs at `xhigh`, so do `code-reviewer` on those steps and
+`silent-failure-hunter`; the notebooks move to Opus `xhigh` (R8). Expected balance Fable 40%, Opus
+45%, Sonnet 15%; if Fable runs ahead of a half after major step 1, m3.2 moves to Opus. D-072 (l)
+and `CLAUDE.md` §1 carry the budget.
+
+**R3.** "Rename lag_drop to lagged_signal_drop"
+
+**Done:** `feature_checks.md` (the finding table, the compared periods, the step → finding map, the
+nulls section) and `test_harness.md` (the acceptance mapping). The earlier rounds of this record keep
+the old name verbatim.
+
+**R4.** "Does psi_latest check last training window snapshot versus the last data snapshot?"
+
+**Answer:** yes, by default: the snapshot defaults to the window's last period, and the latest
+period is the most recent period the data holds (counted only when it lies after the validation
+period). Pinned by rule now (V13): `psi_latest` always compares the window's last period with the
+latest period, whatever `eda.snapshot` is set to, so the note means the same thing in every run.
+`feature_checks.md`, `feature_ledger.md` and D-135 say so.
+
+**R5.** "One question on the Bucketizer: Might be irrelevant, but in your EDA plot code, quite a few
+numeric columns ended up not properly bucketized (it was just one bucket for the whole data), how
+will you ensure that does not repeat?"
+
+**Answer and change (V14, T25):** relevant. The symptom comes from quantile edges on a zero-inflated
+or discrete column (90% zeros put ninety of a hundred edges on 0; `pd.qcut(duplicates="drop")`
+then leaves one bucket for everything else), or from fixed-width edges on a skewed column (nearly
+every row in the first bucket). The counts table's edges rule now is: the mass points (values
+holding at least `1 / bins` of the non-null rows; 0 and the dominant value whenever they reach it)
+are singleton bins, and the `bins − n_mass` quantile edges are taken over the remaining values,
+deduplicated, so no bin but a singleton holds more than about `2 / bins` of the rows. Charts merge
+cells by cumulative row share (a mass point stays its own bar), never by equal width. Three guards:
+unit tests on constructed columns (90% zeros with a long tail, Poisson counts, continuous), the
+m1.0 spike reports the bin-count distribution over every canonical numeric, and the acceptance test
+asserts on every numeric candidate of the synthetic data that a column with at least `bins`
+distinct values gets at least `bins / 2` bins and no non-singleton bin above 5%.
+
+**R6.** "I don't understand why chart sampling has been left out; I have said that I want the EDA to
+run on the whole population but obviously for any charts that is client-level I don't want you to
+plot all of the points"
+
+**Answer (V15):** there is no client-level chart in the design: every chart is drawn from the cells
+(bars, lift, PSI, per-period lines) or from precomputed quartiles (the box plots), so no client is
+ever plotted and nothing needs sampling, while every statistic uses the whole population. That is
+why the config field went. `reporting.md` requirement 5 now says this, and adds the rule for a
+row-level chart should one ever be added: a seeded sample of at most 10,000 rows, stated in the
+caption. `pivot_target` returns a table, not points.
+
+**R7.** "Generic additional note that while I try to look at the actual code as much as possible (you
+do see I've had remarks before on it), I won't really look at the tests unless you specifically say
+that checking out this test is very important"
+
+**Done:** `plan.md` §4 item 6: the review guide lists code to read in order; it names a test only
+when reading it matters, marked "read this test", at most two per major step (the hold-out test in
+step 1, the trap acceptance test in step 3). Kept as a working preference.
+
+**R8.** "The guide part of notebooks is very important, allocate resources to concisely but thoroughly
+explain steps"
+
+**Done:** `notebooks/README.md`'s guide-cell rule extended (before every step: what it does, what
+to look at, how to read each number, which decision to take and how to record it, at both
+automation levels; concise, nothing a first-time user needs left out); m2.4 and m3.4 moved to Opus
+`xhigh` with the guide text as the deliverable and the brief carrying the outline per cell; the main
+thread reads every guide line in the integration; the done criteria (§6) name it.
+
+**R9.** "V1: I agree with this, but make sure you include in the notebook/docs that in effect of
+training, a held feature acts as an excluded feature without a final decision"
+
+**Done:** the sentence is in `feature_checks.md` (the hold-out), `feature_ledger.md` (the `held`
+column), `training.md` (the feature set), the glossary (held), `notebooks/README.md`, D-134 and the
+plan's notebook 03 content (m3.4) and done criteria; the report, Training's log and the ledger's
+`held` column carry it in the build.

@@ -1,20 +1,41 @@
 # Sync page
-_For the SDS and the LDS · last updated: 2026-10-29 (questions answered; the use case name freed; two example use cases in one model input; worknotes cleaned up) · last sync: 2026-10-26_
+_For the SDS and the LDS · last updated: 2026-11-03 (Stage 2's key decisions: flags that act, no sampling, one statistics engine) · last sync: 2026-11-03_
 
-**In short (10-28 to 10-29):** Stage 1 is complete and reviewed by the SDS; your one to-do is
-to start reviewing it. Yesterday's addendum made the unit of analysis (month, week or day) a
-parameter and let one saved model input serve several use cases. Today that is visible: the
-Target Factory notebook builds a credit card and a term deposit use case into one table and
-reads it back for each. The SDS's questions were answered; a source column that shares a name
-with one the framework adds is now kept under a prefixed name instead of refused, and a use
-case's name is free of the old naming rule. The working notes now hold only what is current.
+**In short (11-02 to 11-03):** The SDS settled how Stage 2 (EDA, Feature Checks, the feature
+ledger and the reports) behaves; nothing of it is coded yet. A flag now has teeth: a flagged
+feature is held out of training at every automation level, including autonomous, until a person
+keeps or excludes it; signals that are only worth a look (drift, near-duplicate features, odd
+null patterns) are notes and hold nothing out. Nothing is sampled: the statistics over the whole
+observation window are computed in Spark as one table of counts, and the latest snapshot is
+analysed on every client. One statistics engine serves both tasks, with concordance (AUC for
+binary, its generalisation for regression) as the single ranking scale. Leakage in time is
+caught by checking whether a feature keeps its signal when lagged by one period. Columns full of
+zeros or a few repeated values get those values as their own bins, so no feature collapses into
+one bucket. No config format versions are bumped while the framework is pre-release.
 
 Detail behind each item: `worknotes/log.md`. How this page is written: `worknotes/README.md`.
 
 ## For the LDS: to review (most important first, then newest)
-**Your one to-do: start reviewing Stage 1.** Nothing else is waiting on you.
-- [ ] **Stage 1 (M2.1 Foundation), as built** — the design: D-129–D-133, `docs/components/dataset.md`
-      → Model input, `docs/components/config.md` → the layout; the ML logic:
+**Decisions needed from you: the short-term open decisions** in `docs/roadmap.md` → Open decisions (OD-01, OD-06, OD-08, OD-12, OD-18, OD-23)
+- [ ] **Decision: an open flag holds the feature out of training at both levels** — D-134;
+      `docs/components/feature_checks.md` → Level 1, then "Flags act: the hold-out" and "The two
+      automation levels and the review"; `docs/components/feature_ledger.md` → Level 1 and the
+      "Example rows" table — feedback wanted: is holding out at autonomous right for you, and is
+      the flag / note split the right line?
+- [ ] **Decision: the checks and their thresholds** — `docs/components/feature_checks.md` →
+      "The finding table" (per step: each finding, flag or note, its default and why) and the
+      "Trap acceptance test" table — feedback wanted: would any flag hold out a feature you'd
+      keep on a card or deposit model, and is a check you'd expect missing?
+- [ ] **Decision: no sampling; the window as a Spark counts table, the snapshot whole** — D-135;
+      `docs/components/eda.md` → Level 1, then "The counts table", the table in "The statistics"
+      and the list in "The views" — feedback wanted: are these the views you'd want first, and
+      is concordance the ranking scale you'd read?
+- [ ] **Decision: artifacts under root → use case → layer; no format version bumps in 0.x** —
+      D-136; `data/README.md` — feedback wanted: does that layout work for how use cases share a
+      data area?
+- [ ] **Stage 1 (M2.1 Foundation), as built** — the design: D-129–D-133;
+      `docs/components/dataset.md` → Purpose, "Time model" and "Model input";
+      `docs/components/config.md` → "Layout" and the "Worked example"; the ML logic:
       `target_factory.py` → `build_targets`, `dataset/eligibility.py` → `apply_eligibility`,
       `dataset/panel.py` → `prepare_panel`, `dataset/split.py` → `assign_split`, `sample_train`,
       `dataset/frames.py` → `build_frames`, `dataset/contract.py` → `check_contract` — feedback
@@ -22,86 +43,74 @@ Detail behind each item: `worknotes/log.md`. How this page is written: `worknote
       several use cases match how you'd define and model card and deposit acquisition?
 
 ## Questions for the LDS
-- **Example notebooks:** beyond running as a pipeline and through notebooks, anything more you want
-  from the release examples? (`docs/components/run_modes.md`)
-- **Model documentation (Phase 3):** what did you mean by "checks that the necessary inputs exist"?
+None open.
 
 ## Open questions for both of us
 
 | Question | Context | Current leaning | Needs |
 |---|---|---|---|
-| Is MLflow available inside the bank (OD-08)? | MLflow in Phase 2 is the goal; its shape is settled (D-111): M2.4's records map onto it, it goes in with the integrations in M4 | Ask at the platform learn session, by 11-06 | SDS + LDS, with the platform / MLOps team |
+| Is MLflow available inside the bank (OD-08)? | MLflow in Phase 2 is the goal; its shape is settled (D-111): M2.4's records map onto it, it goes in with the integrations in M4 | Ask at the platform learn session | SDS + LDS, with the platform / MLOps team |
+| Has the Phase 2 plan been agreed with stakeholders (OD-01)? | Stages and depth per component are a working assumption; nothing in the repo records the buy-in | Confirm, then move the plan into the roadmap | SDS + LDS, then stakeholders |
 
-## Last 2 working days (10-28 to 10-29)
-- **Two example use cases in one model input; the SDS's questions answered (10-29).** A
-  second example, `td_acquisition` (term deposit), shares `retail_acquisition_input` with
-  `cc_acquisition`: the notebook saves both targets in one table and reads it back per use
-  case, each with its own eligibility (the card's income filter applies to the card only). A
-  source column named like one the framework adds (`unit_id`, `period`, `target`, `split`,
-  `eligible`) is read as `source_<name>` instead of refused, and a use case's own upstream label
-  is dropped on the read side, so no eligibility condition can name it; reviewed by three
-  fresh-context reviewers, findings fixed. The use case's name is letters, digits, `_` and `-`
-  in any case, compared ignoring case (D-128 replaced). Missing periods are a Phase 3 wish. The stage folder now holds
-  the review guide alone. Full suite 286 passed; the notebook runs on the dev data in 34 s. —
-  look at: `notebooks/01_target_factory.ipynb`;
-  D-128, D-129; `docs/components/dataset.md` → Model input
-- **The Stage 1 addendum, built and reviewed (10-28).** From the SDS's second and third
-  rounds: the unit of analysis is `time.period` (month, week or day; the key column `period`,
-  the `time` fields `observation_window`, `target_window`, `validation_period`; one dict of
-  period arithmetic in `periods.py`, never a bare `add_months`); the model input is the sources
-  joined plus one target column per use case (`target_<use_case>`), saved for one config or a
-  list, with eligibility, candidates, contract and split derived on read from the reader's
-  config (a changed eligibility no longer forces a rebuild; sidecar schema 3; the freeze point
-  narrows to the data part); `revert` in the audit log; the id cast to string at load so the
-  split's draw survives an upstream type change (T22). Built by five agents on disjoint files
-  from one spec; four reviews (code, silent failures, compatibility, ML audit) found no
-  invariant broken and tightened refusals: `task` in the hashes, a feature source matching
-  nothing, a reserved column name, a validation period outrunning the saved target source, a
-  `revert` laundering a rule's exclude. Full suite 252 passed, 9 deselected, 4 min 56 s; the notebook runs on the dev
-  data in 30 s; two configs save one table with two target columns. — look at:
-  `worknotes/m2_1_foundation/review_guide.md`; D-088, D-125, D-129, D-131
-- **The SDS's review of steps 2 and 3, applied (10-28).** Labels kept in every period Target
-  Factory can build (an upstream target would look the same; the framework does not police a
-  DS); the two config knobs for source data quality went (`null_as`, `leavers`): a null never
-  counts as an event and the contract's callout points upstream; eligibility is two ordered
-  lists, `analysis` filters dropping rows before EDA and `modelling` filters tagging them until
-  Feature Checks, which runs on the eligible rows; the split and the sampling as one salted hash
-  draw in [0, 1); one coverage check for the spine and the target source; the template's comment
-  rule. — look at: D-029, D-030, D-129, D-131
+## Last 2 working days (11-02 to 11-03)
+- **Flags act; notes inform (11-02 → 11-03).** An open flag holds the feature out of training at
+  both levels until a `keep` or `exclude` entry; the held set is written into the resolved
+  config, so two runs with different held features never share a hash. For Training, a held
+  feature acts as an excluded one without a final decision. Flags: quality (all null, constant,
+  ≥ 95% null, ≥ 99% one value, over 50 levels), leakage (too strong, nulls that predict the target, a rare value
+  with a large lift), time alignment, unstable signal across periods. Notes: drift (PSI), near-
+  duplicate pairs, null patterns. Drift is a note because a flag would hold every trending
+  legitimate feature out of an autonomous model. — look at: D-134; `feature_checks.md` (summary)
+- **No sampled analysis; one statistics engine (11-02 → 11-03).** EDA and Feature Checks use
+  every client: the window and the later periods as one Spark counts table (feature, period,
+  bin, target bin, lagged, n, sum of target), the snapshot collected whole for the pairwise
+  matrix and the row-level views. Every statistic is read from counts: concordance, the
+  best-order concordance (the signal of a non-monotone feature like an inverted-U age), shares,
+  Wilson intervals, PSI between named periods (window start to end; window end to the latest
+  period). 100 bins by default, switchable off for small populations; a value holding a large
+  share gets its own bin (T25). No chart draws individual clients. — look at: D-135; `eda.md`
+  (summary)
+- **Time alignment as a lag check; a look-ahead finding (11-02).** A feature that loses more
+  than half its signal when lagged by one period is flagged (it may be stamped after the fact);
+  a feature constant per client yet predictive is flagged as possible look-ahead (the
+  feature-store stand-in's trap). This replaces the earlier backward-label check, which
+  degenerates under a precondition eligibility. — look at: D-029, D-134; `feature_checks.md`
+- **Layout and compatibility while pre-release (11-02).** Artifacts under root (the entity's
+  area) → use case → layer; config and log formats change in place, no version bumps or
+  migrations until user testing starts. — look at: D-136
+- **What Stage 2 ships (11-03).** EDA and Feature Checks with their reports, the feature ledger
+  (one wide row per candidate), notebooks 02 and 03 whose guide text is a main deliverable,
+  regression handled for real on a variant config, the synthetic traps as an acceptance test.
+  The plan waits for the SDS's approval. — look at: D-137; `worknotes/m2_2_understanding/plan.md` §1
+
 ## To try
+- Nothing of Stage 2 runs yet. Walk through the summary level of `docs/components/eda.md` and
+  `docs/components/feature_checks.md` · the list of checks and views, the flag thresholds, what a
+  flag does at the autonomous level.
 - `notebooks/01_target_factory.ipynb` on the synthetic dev data, or
   `python -m core_modelling run conf/base/cc_acquisition.yml conf/base/td_acquisition.yml --stages
-  target_factory --env conf/local/environment.yml` — look at the two target summaries, the one
-  table with `target_cc_acquisition` and `target_td_acquisition`, and how each use case's read
-  drops the other's target and applies its own eligibility.
-- The audit log's worked example, `pytest tests/test_audit_log.py -q`, with `revert` — look at
-  how entries become the resolved config.
+  target_factory --env conf/local/environment.yml` · the two target summaries, the one table with
+  both target columns, each use case's own eligibility on read, and the feature-store stand-in
+  joined as a source with its own key names.
+- `pytest tests/test_source_mistakes.py -q` · one test per planted source mistake (padded ids,
+  periods dated on the 15th, a column shared with the mart, another id system…); read the
+  messages a DS would see.
 
-## Last 7 working days (10-21 to 10-27)
-- 10-26 → 10-27 — **Stage 1 (M2.1 Foundation) built end to end, version 0.2.0**: the config
-  spine, Target Factory, the dataset, `run` and the first guided notebook; traps T20, T21 —
-  D-129–D-133, `docs/components/dataset.md`
-- 10-23 → 10-25 — **Inconsistency sweep answered and closed**: 21 decision rows extended; EDA and
-  Feature Checks use all clients and the client split comes after them (D-030, `CLAUDE.md` §4.4);
-  production retrains the recipe by default, checked against its parent (D-033, D-052); one
-  sign-off gate (D-031); sampling only when declared (D-117); the validation month in the config
-  (D-088) — the rows changed on 10-23 in `docs/decisions.md`
-- 10-25 — **Your synthetic to-dos built as ten trap columns** (0.5.0), on in every preset; the
-  package goes into the bank as code, tests generate their data from a seed (D-041, D-064) —
-  `docs/components/test_harness.md` → Trap summary
-- 10-23 → 10-26 — **Stage 1 designed and planned**: the config layout, the environment file, the
-  model input, the automation-level mapping, the collect printout (D-129–D-133; OD-25 closed) —
-  `docs/decisions.md`
-- 10-22 — **Decision log compacted; inconsistency sweep; LDS reading list**: 128 rows → 58 in a
-  high-impact and a low-impact table, so IDs may have moved (mapping in `worknotes/log.md`) —
-  `docs/decisions.md`
-- 10-22 — **Planning thread closed**: plan as working assumption, audit log in `config.md`;
-  D-022, D-024, D-052, D-125, D-128 — `worknotes/timeline_proposal.md`, `docs/components/config.md`
-- 10-22 — **Fourth answers; plan adjusted**: registry records (D-111), monitoring frame (D-040),
-  sampling kept simple (D-117), the Phase 3 wishlist — `docs/roadmap.md`
-- 10-21 — **Third answers; plan reshaped; synthetic data accepted by the LDS**: the master layer
-  (D-016), calibration a release requirement (D-049), outputs-only compatibility (D-007) —
-  `worknotes/timeline_proposal.md`
-- 10-21 — **No pickle only at promotion**: D-051 — `docs/components/lifecycle.md` → Open questions
-- 10-21 — **Holistic review, second answers**: per-month evaluation (D-098), trial budgets (D-094),
-  M2 engineering shape (D-100); doc-hygiene pass — `docs/decisions.md`
+## Last 7 working days (10-26 to 10-30)
+- 10-30 — **Integrations narrowed**: data observability only gets a production model's source
+  tables at deploy; the feature store leans towards an extract joined like any other source;
+  built: per-source key names, a feature-store stand-in with a look-ahead trap, mistake tests
+  for every source guardrail — D-021, D-129, OD-26
+- 10-30 — **Stage 2 scope**: between thin and deep with every key component in; the AUC
+  standard-error rule in the lessons was 1.7× too conservative — `docs/context/lessons.md`
+- 10-29 — **Two example use cases in one model input**; a source column named like a framework
+  column read as `source_<name>`; the use case name rule freed — D-128, D-129
+- 10-29 — **Working rules**: the LDS reads the important code and tries the notebooks; stage
+  notes are written for the SDS — D-072 (i)
+- 10-28 — **Stage 1 addendum**: the unit of analysis as `time.period` (month, week, day); the
+  model input as sources plus one target per use case, eligibility and split derived on read;
+  `revert` in the audit log — D-129, D-131, `worknotes/m2_1_foundation/review_guide.md`
+- 10-28 — **Stage 1 review applied**: two eligibility lists, the null-handling knobs removed, the
+  split and sampling as one hash draw — D-029, D-030, D-131
+- 10-26 → 10-27 — **Stage 1 (M2.1 Foundation) built end to end, version 0.2.0** — D-129–D-133,
+  `docs/components/dataset.md`

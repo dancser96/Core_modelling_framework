@@ -1,15 +1,18 @@
 # Stage 2 (M2.2 Understanding): the build plan
-_Written 2026-11-02 for the SDS's approval · from the spec in `docs/components/eda.md`,
+_Written 2026-11-02 for the SDS's approval, revised 2026-11-03 after their remarks (the routing
+budget, the notebooks' guides, `lagged_signal_drop`, the edges rule, V13–V15) · from the spec in `docs/components/eda.md`,
 `feature_checks.md`, `feature_ledger.md`, `reporting.md`, `config.md`, `dataset.md` and the decision
 rows D-134–D-137 · the design record is `answers.md` beside this file · nothing is coded before the
 SDS approves this plan (`CLAUDE.md` §1 step 1) · the holistic review's outcomes are folded in (§9, with the
-decisions the spec step made without the SDS, V1–V12, to veto by number)_
+decisions the spec step made without the SDS, V1–V15, to veto by number)_
 
-**Where it stands (2026-11-02): the design is settled and specified; this plan is waiting for
-approval.** Three major steps, each ending in the SDS's review with a review guide; sixteen minor
-steps, each ending in the review subagents; one routing table that keeps Fable on the main thread
-(the plan, the briefs, reading every diff, the integration, the ML-correctness audit, the reports to
-the SDS) and sends every other piece to Opus, Sonnet or Haiku (D-072 (l)).
+**Where it stands (2026-11-03): the design is settled and specified; this plan, revised after the
+SDS's remarks, is waiting for approval.** Three major steps, each ending in the SDS's review with a
+review guide; sixteen minor steps, each ending in the review subagents; one routing table that
+keeps Fable on the main thread (the plan, the briefs, reading every diff, the integration, the
+ML-correctness audit, the reports to the SDS) and on the four architecturally hardest code pieces,
+between a third and half of the stage's tokens, and sends the rest to Opus and Sonnet at the effort
+the cost of a wrong answer warrants (D-072 (l), extended 2026-11-03).
 
 ## 1. What is built, and what is deliberately left out
 **Built (version 0.3.0 at the end):** the Stage 2 config fields and the audit-log changes; the
@@ -24,7 +27,9 @@ artifacts and the `init` command (M2.4, Q471, Q487); the model card and the ledg
 synthetic trap kind (M4, D-064); the theme file in `conf/local/` (M4); the time-alignment screen on
 the eligibility `define` columns (a known limit, `feature_checks.md`); readable labels and the
 source per feature (Q452); any migration (no bumps in 0.x, D-136); any sampling of the analysis
-population (D-135); `psi_gap`, chart sampling, a `08_reporting` copy of the reports; exact
+population (D-135); `psi_gap`; chart sampling (no chart draws clients: every chart comes from cells
+or quartiles, [reporting](../../docs/components/reporting.md) requirement 5); a `08_reporting` copy
+of the reports; exact
 row-level statistics outside the tests (D-135); the bank-side timing (unverified until the
 pre-release).
 
@@ -58,11 +63,14 @@ on the synthetic data, the statistics against their oracles, the ledger's hold-o
   log axis with a zero quartile; the plotly fragment size and `div_id` uniqueness; Styler
   `background_gradient` needing matplotlib; parquet list columns on pyarrow 19.0.1; `binomtest`
   timing against the closed-form Wilson; `lstsq` on exact identities; `DataFrame.query` with
-  bank-style names; `linkage` with missing pairs; `rank` with nulls.
+  bank-style names; `linkage` with missing pairs; `rank` with nulls; the edges rule
+  (`quantile_edges` with mass points, T25) over every numeric of the canonical snapshot: the
+  bin-count distribution and the largest non-singleton bin's share, so the one-bucket symptom the
+  SDS saw in earlier plot code cannot recur unnoticed.
 - Acceptance: a table item → result → consequence; one Spark job at a time (the 8 GB Mac).
 - Leaves out: any code in `src/`.
 
-**m1.1 ∥ The config schema's Stage 2 fields** · `general-purpose` · Opus · high (same agent as m1.2)
+**m1.1 ∥ The config schema's Stage 2 fields** · `general-purpose` · Opus · xhigh (same agent as m1.2)
 - Owns: `src/core_modelling/config/schema.py`, `levels.py`, `conf/base/TEMPLATE.yml`,
   `cc_acquisition.yml`, `td_acquisition.yml`, `tests/test_config_schema.py`.
 - Functions and models: `Eda(snapshot: Literal["last"] | date = "last", bins: int | None = 100,
@@ -83,7 +91,7 @@ on the synthetic data, the statistics against their oracles, the ledger's hold-o
 - Leaves out: the audit-log operations (m1.2).
 
 **m1.2 The audit log: `keep`, `flag`, `run`, the held set, the paths** (after m1.1, same agent) ·
-Opus · high
+Opus · xhigh
 - Owns: `config/replay.py`, `config/audit_log.py`, `config/__init__.py`, `__main__.py`,
   `environment.py` (the paths), `tests/test_audit_log.py`, `tests/test_environment.py`.
 - Functions: `Entry` gains `finding: str | None` and `findings: list[str] | None`, `periods:
@@ -107,7 +115,7 @@ Opus · high
   only where the canonical form changed (D-088's carve-out).
 - Leaves out: writing `flag` entries from a stage (m3.2).
 
-**m1.3 ∥ The frames and the counts passes** · `general-purpose` · Opus · high
+**m1.3 ∥ The frames and the counts passes** · `general-purpose` · Fable · xhigh
 - Owns: `dataset/frames.py`, new `dataset/counts.py`, `dataset/__init__.py`, `tests/test_frames.py`,
   new `tests/test_counts.py`.
 - Functions: `Frames(snapshot, rows, train, test, validation, log, meta)`; `build_frames(...,
@@ -116,7 +124,8 @@ Opus · high
   without `feature_checks`; the collect callout per frame kind. In `counts.py`: `LEVEL_CAP = 50`;
   `compared_periods(cfg, available: list[date]) -> dict[str, list[date]]` (`window`, `gap`,
   `latest`; the validation period never inside); `bin_edges(snapshot, kinds, bins: int | None) ->
-  dict[str, np.ndarray | None]` (singletons for 0 and the mode); `window_levels(rows,
+  dict[str, np.ndarray | None]` (through `statistics.quantile_edges`: mass points as singleton
+  bins, quantile edges over the rest, T25); `window_levels(rows,
   categoricals) -> dict[str, list[str]]`; `count_cells(rows, edges, levels, target_edges,
   window_periods) -> pd.DataFrame`; `count_lagged_cells(rows, edges, levels, target_edges,
   window_periods) -> pd.DataFrame` (lag by period index); `client_constant_shares(rows, features,
@@ -128,10 +137,11 @@ Opus · high
   rows for three features and two periods; the cell estimate refuses a planted `MAX_CELLS` of 10; no label outside the window and no validation row in
   `rows`; `eda.bins: null` gives one cell per distinct value; the lagged cells null for the first
   window period and for a missing previous period; the client-constant share of a static column
-  is 1; the population counts equal Target Factory's summary where both exist.
+  is 1; the population counts equal Target Factory's summary where both exist; `Bucketizer` on
+  the edges of a 90%-zero column gives the zero bin plus at least `bins / 2` non-empty bins.
 - Leaves out: any statistic (m1.4).
 
-**m1.4 ∥ The statistics engine and the regression entries** · `general-purpose` · Opus · high
+**m1.4 ∥ The statistics engine and the regression entries** · `general-purpose` · Fable · xhigh
 - Owns: new `src/core_modelling/statistics/` (`cells.py`, `concordance.py`, `distributions.py`,
   `intervals.py`, `association.py`), `tasks.py` (the new entries), new `tests/test_statistics.py`,
   `tests/test_target_factory.py` only where the spec's keys change.
@@ -141,8 +151,11 @@ Opus · high
   `kendall_null_se(units)`, `SE_FLOOR = 0.005`, `best_order_concordance(table, k_rows, base_rate)`,
   `cochran_q(values, ses) -> float`, `encode_levels(level_table, levels, k_rows) -> dict[str,
   float]`, `concordance_exact(cells) -> float` (the `eda.bins: null` regression path through
-  `kendalltau` on expanded cells); `quantile_edges(values, bins)`, `bin_labels(edges)`,
-  `merge_to_deciles(cells, decile_edges)`, `psi(expected, actual)`, `new_level_share(cells,
+  `kendalltau` on expanded cells); `quantile_edges(values, bins) -> np.ndarray` (the mass points,
+  values holding ≥ `1 / bins` of the rows, as singleton bins, `bins − n_mass` quantile edges over
+  the remaining values, deduplicated; T25), `bin_labels(edges)`, `merge_bins(cells, groups) ->
+  pd.DataFrame` (by cumulative row share in `bin_order`; a mass point stays its own group),
+  `psi(expected, actual)`, `new_level_share(cells,
   window_levels, period)`, `standardised_difference(a, b)`; `wilson_interval(k, n)`,
   `t_interval(mean, sd, n)`; `PAIRWISE_ROWS = 200_000`, `MIN_SHARED_ROWS = 1_000`,
   `spearman_matrix(frame)`, `cramers_v(a, b)`, `correlation_ratio(numeric, categorical)`,
@@ -159,10 +172,13 @@ Opus · high
   for two levels; `psi` on known shares; `wilson_interval` against `binomtest`; `cochran_q` against
   `scipy.stats.chi2`; the best-order value of an inverted-U column beats its plain value by ≥
   0.05 and a null control's stays below 0.55; `explained_by_others` reads 1 on an exact identity;
-  the regression `summarise_group` on the variant fixture.
+  the regression `summarise_group` on the variant fixture; `quantile_edges` on three constructed
+  columns (90% zeros with a long tail, Poisson counts, continuous): at least `bins / 2` bins and no
+  non-singleton bin above `2 / bins` where the distinct count allows; `merge_bins` keeps a 90% mass
+  point as one group and splits the rest into the other nine.
 - Leaves out: anything that reads a frame or a file.
 
-**m1.5 ∥ The artifacts and the ledger** · `general-purpose` · Opus · high
+**m1.5 ∥ The artifacts and the ledger** · `general-purpose` · Opus · xhigh
 - Owns: new `src/core_modelling/artifacts.py`, new `ledger.py`, new `tests/test_artifacts.py`,
   new `tests/test_ledger.py`.
 - Functions: `StageResult(tables, ledger, log, meta, paths, views, frame, config)`;
@@ -203,7 +219,7 @@ notebook 02, the ranking against the trap list by eye.
   `(0, 1.25 × max)`; a null bar is labelled `null`; the report opens as a file (size reported).
 - Leaves out: any stage content.
 
-**m2.2 ∥ The EDA modules** · `general-purpose` · Opus · high
+**m2.2 ∥ The EDA modules** · `general-purpose` · Opus · xhigh
 - Owns: new `src/core_modelling/eda/` (`population.py`, `ranking.py`, `deep_dives.py`), new
   `tests/test_eda_modules.py`.
 - Functions: `detect_kinds(schema, overrides, candidates) -> dict[str, str]`;
@@ -221,7 +237,7 @@ notebook 02, the ranking against the trap list by eye.
   with a backticked name; the greyed cells below `MIN_BIN_SUPPORT`.
 - Leaves out: the stage function and the report (m2.3).
 
-**m2.3 The EDA stage, its report and `run`** (after m2.1 and m2.2) · `general-purpose` · Opus · high
+**m2.3 The EDA stage, its report and `run`** (after m2.1 and m2.2) · `general-purpose` · Fable · xhigh
 - Owns: new `eda/run.py`, `eda/__init__.py`, `run.py`, new `tests/test_eda.py`, `tests/test_run.py`.
 - Functions: `run_eda(cfg, entity, env, spark) -> StageResult` (the flow of `eda.md` Level 2);
   `_views(tables, resolved) -> dict`; `_sections(result) -> list[dict]` (summary → core → extended
@@ -232,12 +248,19 @@ notebook 02, the ranking against the trap list by eye.
   eda` on two configs.
 - Leaves out: Feature Checks.
 
-**m2.4 Notebook 02** (after m2.3) · `general-purpose` · Sonnet · high
+**m2.4 Notebook 02** (after m2.3) · `general-purpose` · Opus · xhigh
 - Owns: new `notebooks/02_eda.ipynb`, `notebooks/README.md` (the line), the Public API test's
   notebook list.
-- Content: the guide cell (what to look at; concordance in plain words; the decisions to record),
-  the setup cell (`CONFIG`), `run_eda`, the display cells over `result.views`, `pivot_target`.
-- Tests: the existing notebook test (imports the Public API only, defines nothing).
+- Content: the guide cell (what the stage is for, what to look at, the concordance in plain words,
+  the decisions to record and how), the setup cell (`CONFIG`), `run_eda`, the display cells over
+  `result.views`, `pivot_target`. **The guide text is the deliverable** (the SDS, 2026-11-03;
+  `notebooks/README.md`): before every step a short markdown cell says what the step does, what to
+  look at in its output, how to read each number (the ranking columns, the intervals, the greyed
+  cells, the warnings), which decision to take and how to record it, at both automation levels;
+  concise, nothing a first-time user needs left out. The brief carries the outline per cell; the
+  main thread reads every guide line in the integration and rewrites what is vague.
+- Tests: the existing notebook test (imports the Public API only, defines nothing); the notebook
+  is run end to end on the `dev` preset in JupyterLab during the review (no runner dependency).
 
 **End of major step 2:** the full suite, the review guide extended, the SDS's review (the report
 and notebook 02 are what the SDS tries). Estimated size: about 1,000 lines of code and 500 of tests.
@@ -246,7 +269,7 @@ and notebook 02 are what the SDS tries). Estimated size: about 1,000 lines of co
 What the SDS reviews at the end: the findings on the synthetic traps, the held set, the proposed
 decisions and the `keep` round trip, the acceptance test's mapping, the two reports side by side.
 
-**m3.1 ∥ The five steps** · `general-purpose` · Opus · high
+**m3.1 ∥ The five steps** · `general-purpose` · Opus · xhigh
 - Owns: new `src/core_modelling/feature_checks/steps.py`, new `tests/test_feature_checks_steps.py`.
 - Functions: `FINDING_COLUMNS`, `FINDING_KINDS` (finding → `flag | note`), `STEPS` (name →
   function, in the fixed order); `check_quality(ledger, tables, params, task) -> pd.DataFrame`,
@@ -259,7 +282,7 @@ decisions and the `keep` round trip, the acceptance test's mapping, the two repo
   supported period (no test, no crash); the regression variant's `rare_effect`.
 - Leaves out: the entries and the stage.
 
-**m3.2 ∥ The decisions and the stage** · `general-purpose` · Opus · high (the stage after m3.1)
+**m3.2 ∥ The decisions and the stage** · `general-purpose` · Fable · xhigh (the stage after m3.1)
 - Owns: new `feature_checks/decisions.py`, new `feature_checks/run.py`, `feature_checks/__init__.py`,
   `run.py` (the stage), new `tests/test_feature_checks.py`.
 - Functions: `flag_entries(findings, entries) -> list[dict]` (one per finding when the set
@@ -273,7 +296,7 @@ decisions and the `keep` round trip, the acceptance test's mapping, the two repo
   the proposed decisions; the refusal without an EDA artifact and on a digest mismatch; the
   report opens; `run --stages eda feature_checks`.
 
-**m3.3 The trap acceptance test** (after m2.3 and m3.2) · `general-purpose` · Opus · high
+**m3.3 The trap acceptance test** (after m2.3 and m3.2) · `general-purpose` · Opus · xhigh
 - Owns: new `tests/test_traps.py`, `tests/conftest.py` (a session fixture generating the `dev`
   preset into a temporary folder), `tests/README.md`.
 - Content: the mapping of `test_harness.md` keyed by trap kind and target (kind → step.finding for
@@ -281,16 +304,22 @@ decisions and the `keep` round trip, the acceptance test's mapping, the two repo
   view, no config for the loan target, off by default), the rule that an unlisted pair fails; the
   false-positive bound: at most two non-trap candidates held on the card config, named on failure; assertions on the `*_window` ledger columns; the null
   controls below 0.55; the D-088 counts compared from `eda.json`; the term-deposit config without
-  per-period findings; only `client_constant` for the look-ahead trap.
+  per-period findings; only `client_constant` for the look-ahead trap; the bin-count assertion on
+  every numeric candidate (at least `eda.bins / 2` bins where the distinct count allows, no
+  non-singleton bin above 5%; T25).
 - Tests: itself; runtime reported (about a minute expected, Q486).
 
-**m3.4 Notebook 03** (after m3.2) ∥ with m3.3 · `general-purpose` · Sonnet · high
+**m3.4 Notebook 03** (after m3.2) ∥ with m3.3 · `general-purpose` · Opus · xhigh
 - Owns: new `notebooks/03_feature_checks.ipynb`, the notebook list.
 - Content: the guide cell, the setup cell, `run_feature_checks`, the findings and held features,
   the proposed decisions with the `record_decision` call text (the `CONFIG` placeholder; no
-  commented-out cell), a markdown cell on what to do at each level.
+  commented-out cell), a markdown cell on what to do at each level. The guide rules of m2.4 apply;
+  the guide says in words that, for Training, a held feature acts as an excluded feature without a
+  final decision: the model is built without it until the person keeps or excludes it (V1, the
+  SDS's condition of 2026-11-03), and walks through one `keep` and one `exclude` on the synthetic
+  traps.
 
-**m3.5 Docs, version and the review guide** (last) · Sonnet · medium for the propagation; the
+**m3.5 Docs, version and the review guide** (last) · Sonnet · high for the propagation; the
 main thread for `decisions.md`, `UPDATES.md`, `roadmap.md`, `log.md`, the review guide
 - Owns: every doc whose Status or Interface changes from "planned" to "built"; `__version__` →
   `0.3.0`; `docs/architecture.md`'s Public API table; the `doc-sync` skill at the end.
@@ -299,37 +328,42 @@ main thread for `decisions.md`, `UPDATES.md`, `roadmap.md`, `log.md`, the review
 `compat-guardian` on every artifact and the Public API, the review guide, the SDS's review.
 Estimated size: about 800 lines of code and 600 of tests.
 
-## 3. The routing table (D-072 (l))
-Fable does what needs the whole picture and nothing else: this plan, each brief, reading every
-diff and test output, the integration fixes, the `ml-correctness-auditor`, the review guides, the
-log and sync entries, the reports to the SDS. Everything below runs on a cheaper model; a piece is
-escalated to Opus only when a Sonnet attempt failed once (never retried on the same model).
+## 3. The routing table (D-072 (l), extended 2026-11-03)
+Fable keeps what needs the whole picture and the pieces whose architecture is hardest to get right
+the first time: this plan, each brief, reading every diff and test output, the integration fixes,
+the `ml-correctness-auditor`, the review guides, the log entries, the reports to the SDS, and four
+code pieces (the counts passes, the statistics engine, the two stage functions that integrate
+everything). The SDS's budget (2026-11-03): Fable between a third and half of the stage's tokens,
+spent on architecting properly rather than on rewrites; `xhigh` effort on every model wherever a
+wrong answer is costly. A Sonnet piece that fails once is escalated to Opus, never retried on the
+same model. Fable agents are spawned as `general-purpose` with `model: fable`, never as forks: a
+fresh context reads the brief and the docs, not this chat.
 
 | Piece | Agent type | Model · effort | Why |
 |---|---|---|---|
-| m1.0 the facts spike | `general-purpose` | Sonnet · high | fact checks of one API each against the pinned version; a test or a number checks each |
-| m1.1 + m1.2 the schema and the audit log | `general-purpose` | Opus · high | a §2 surface and the held set that feeds §4.6; compat-guardian reviews it |
-| m1.3 the frames and counts passes | `general-purpose` | Opus · high | the dataset is a §4 path (the label drop, the periods) |
-| m1.4 the statistics engine and the regression entries | `general-purpose` | Opus · high | the numbers every later stage trusts; oracles check them, judgement writes them |
-| m1.5 the artifacts and the ledger | `general-purpose` | Opus · high | `resolve_features` is the hold-out (§4.6); the IO is reviewed by silent-failure-hunter |
-| m2.1 the reporting primitives | `general-purpose` | Sonnet · high | a complete brief with signatures; not a §4 path; the LDS reads the output, so code-reviewer on Opus checks it |
-| m2.2 the EDA modules | `general-purpose` | Opus · high | the ranking and the key features feed choices (D-030) |
-| m2.3 the EDA stage and report | `general-purpose` | Opus · high | integrates frames, counts, statistics, ledger, artifacts, reporting |
-| m2.4, m3.4 the notebooks | `general-purpose` | Sonnet · high | display over the Public API from a given cell list |
-| m3.1 the five steps | `general-purpose` | Opus · high | §4.6: what gets flagged |
-| m3.2 the decisions and the stage | `general-purpose` | Opus · high | the entries that hold features out; §4.6 |
-| m3.3 the trap acceptance test | `general-purpose` | Opus · high | a §4 invariant test |
-| m3.5 the doc propagation | `general-purpose` | Sonnet · medium | text whose substance is settled |
-| `code-reviewer` (every minor step) | that agent | Opus · high | fresh-context review |
-| `silent-failure-hunter` (m1.2, m1.3, m1.5, m2.3, m3.2) | that agent | Opus · high | IO, validation, fallbacks |
+| m1.0 the facts spike | `general-purpose` | Sonnet · high | one fact per item against the pinned version; a number or a test checks each |
+| m1.1 + m1.2 the schema and the audit log | `general-purpose` | Opus · xhigh | a §2 surface and the held set that feeds §4.6, fully specified; compat-guardian reviews it |
+| m1.3 the frames and counts passes | `general-purpose` | Fable · xhigh | the Spark architecture the whole stage stands on (two passes, the edges rule, the lag by period index): the piece a rewrite would cost most |
+| m1.4 the statistics engine and the regression entries | `general-purpose` | Fable · xhigh | the numbers every later stage trusts; the cell algebra and the shrunk encoding are design as much as code |
+| m1.5 the artifacts and the ledger | `general-purpose` | Opus · xhigh | IO and the hold-out read (§4.6), fully specified; silent-failure-hunter reviews it |
+| m2.1 the reporting primitives | `general-purpose` | Sonnet · high | a complete brief with signatures; not a §4 path; code-reviewer on Opus checks it |
+| m2.2 the EDA modules | `general-purpose` | Opus · xhigh | the ranking and the key features feed choices (D-030); specified column by column |
+| m2.3 the EDA stage, report and `run` | `general-purpose` | Fable · xhigh | integrates frames, counts, statistics, ledger, artifacts and reporting: the whole picture |
+| m2.4, m3.4 the notebooks | `general-purpose` | Opus · xhigh | the guide cells are the notebooks' main deliverable (the SDS, 2026-11-03); Fable reads every guide line in the integration |
+| m3.1 the five steps | `general-purpose` | Opus · xhigh | §4.6: what gets flagged; the rules are a table |
+| m3.2 the decisions and the stage | `general-purpose` | Fable · xhigh | the hold-out mechanics (flag entries, the held set, the hash) and the stage integration |
+| m3.3 the trap acceptance test | `general-purpose` | Opus · xhigh | a §4 invariant test from a given mapping |
+| m3.5 the doc propagation | `general-purpose` | Sonnet · high | text whose substance is settled |
+| `code-reviewer` (every minor step) | that agent | Opus · xhigh on the §4 paths (m1.1–m1.5, m2.2, m2.3, m3.1–m3.3), high elsewhere | fresh-context review |
+| `silent-failure-hunter` (m1.2, m1.3, m1.5, m2.3, m3.2) | that agent | Opus · xhigh | IO, validation, fallbacks |
 | `compat-guardian` (m1.1, m1.2, m1.5, m2.3, m3.2, m3.5) | that agent | Opus · high | schema, artifacts, Public API |
-| `ml-correctness-auditor` (m1.3, m1.4, m2.2, m2.3, m3.1, m3.2, m3.3; the whole stage at the end) | that agent | Fable · xhigh | the one review Fable keeps (D-072 (l)) |
+| `ml-correctness-auditor` (m1.3, m1.4, m2.2, m2.3, m3.1, m3.2, m3.3; the whole stage at the end) | that agent | Fable · xhigh | the review Fable keeps (D-072 (l)) |
 | `simplicity-review` on every diff | skill, main thread | Fable | reading the diff is the integration anyway |
 | the briefs, the integration, the review guides, the SDS reports | main thread | Fable | needs the whole picture |
 
-Every `Agent` call passes `model` and `effort` explicitly; the review agents get `model: opus`
-except the ML auditor. Expected balance: Fable about a quarter of the stage's tokens (plan,
-briefs, diffs, audits), Opus about a half, Sonnet the rest.
+Every `Agent` call passes `model` and `effort` explicitly. Expected balance: Fable about 40% of
+the stage's tokens (the main thread, the four code pieces, the audits), Opus about 45%, Sonnet the
+rest. If Fable's share runs ahead of a half after major step 1, m3.2 moves to Opus · xhigh.
 
 ## 4. How each minor step is checked
 1. The agent runs its own files' tests and `ruff check` on them and reports the output (never the
@@ -341,6 +375,10 @@ briefs, diffs, audits), Opus about a half, Sonnet the rest.
    appended.
 5. At a major step's end: the full suite in the background on the main thread; the review guide;
    the SDS's review; the fixes from it before the next major step starts.
+6. The review guide lists the code to read, in order, and what right looks like. It names a test
+   only when reading it matters, marked "read this test" (at most two per major step: the hold-out
+   test in step 1, the trap acceptance test in step 3); the SDS reads code, not tests (2026-11-03).
+   The notebooks' guide cells are listed as code to read.
 
 ## 5. Order and parallelism
 1. m1.0 alone (it uses local Spark on the canonical window; one memory-heavy job at a time).
@@ -363,6 +401,10 @@ briefs, diffs, audits), Opus about a half, Sonnet the rest.
 - The synthetic traps: every mapped kind flagged on the `dev` preset's card config; the null
   controls unflagged; the look-ahead trap caught by `client_constant`.
 - A `keep` entry recorded from notebook 03 brings the feature back into `resolve_features`.
+- Notebooks 02 and 03 carry a guide cell before every step (what it does, what to look at, how to
+  read the numbers, what to decide, how to record it, at both levels), and notebook 03 says in
+  words that a held feature acts, for Training, as an excluded feature without a final decision.
+- Every numeric candidate of the synthetic data is binned (the bin-count assertion, T25).
 - The docs say "built" where it is built; D-134–D-137 unchanged or extended in place; `log.md`
   carries the trail; `sync.md` only through `/brief`.
 
@@ -370,6 +412,12 @@ briefs, diffs, audits), Opus about a half, Sonnet the rest.
 - **The explode pass is slow on the Mac** (m1.0 measures): fallback a per-feature `groupBy` over a
   cached frame, the same table.
 - **`Bucketizer` rejects singleton splits:** fallback `F.when` chains built from the edges.
+- **A numeric lands in one bucket** (the symptom the SDS saw in earlier plot code: quantile edges
+  collapse on a zero-inflated or discrete column, fixed-width edges on a skewed one): the edges
+  rule (mass points as singleton bins, quantile edges over the rest; T25) is unit-tested on three
+  constructed columns, m1.0 reports the bin-count distribution over every canonical numeric, and
+  the acceptance test asserts it on the `dev` preset. If a real column still collapses, the rule
+  iterates the mass-point extraction once more; a decision for the SDS if that is not enough.
 - **The regression counts table is large** (20 target bins × 100 bins): read per feature with
   parquet filters; if still heavy, 10 target bins (a decision for the SDS).
 - **The `dev` preset's generation time makes the suite slow:** mark `test_traps.py` with a pytest
@@ -383,11 +431,12 @@ briefs, diffs, audits), Opus about a half, Sonnet the rest.
   `dev` preset's null controls in m3.1; moved to events if it flags.
 
 ## 8. Timeline (estimate, working days)
-- 11-03: m1.0 (morning), m1.1–m1.5 spawned (afternoon).
-- 11-04: integration, reviews, the full suite, review guide 1. SDS review 1 on 11-05 (morning).
-- 11-05 to 11-06: m2.1–m2.4. SDS review 2 on 11-09 (morning).
-- 11-09 to 11-10: m3.1–m3.5. SDS review 3 on 11-11.
-- 11-12: buffer; M2.3 starts.
+- 11-03: the plan revised after the SDS's remarks; approval.
+- 11-04: m1.0 (morning), m1.1–m1.5 spawned (afternoon).
+- 11-05: integration, reviews, the full suite, review guide 1. SDS review 1 on 11-06 (morning).
+- 11-06 to 11-09: m2.1–m2.4. SDS review 2 on 11-10 (morning).
+- 11-10 to 11-11: m3.1–m3.5. SDS review 3 on 11-12.
+- 11-13: buffer; M2.3 starts.
 
 ## 9. The holistic review's outcomes, and the decisions the spec step made (veto by number)
 The review (Opus, fresh context, 2026-11-02; verdict "proceed with changes") found ten
@@ -399,6 +448,9 @@ writers' findings. Silence confirms them.
   and `kept`, refused in a config file), so a `flag` entry changes the input and the run's
   resolved-input hash sees the held set; `resolve_features(ledger, resolved)` reads it there.
   Without it two Training runs with different held sets would share one hash (D-134 extended).
+  **Confirmed by the SDS (2026-11-03)** with one condition, applied: the notebooks, the reports,
+  Training's log and the docs say in words that, for Training, a held feature acts as an excluded
+  feature without a final decision.
 - **V2** The ranking value is the plain concordance unless the feature is marked `non_monotone`
   (best-order ≥ plain + 0.03); only then the best-order value is used, and M2.3's floor follows
   the same rule. The review showed that "the larger of the two" would give every noise feature a
@@ -432,6 +484,22 @@ writers' findings. Silence confirms them.
   operation's rename.
 - **V12** Inside the bank one environment file serves one entity (the root names the entity's area);
   on the laptop one file may serve several entities under one root, kept apart by the hash (D-136).
+- **V13** (2026-11-03) `psi_latest` compares the **window's last period**, not `eda.snapshot`, with
+  the latest period. The SDS asked whether it checks the last training-window snapshot against the
+  last data snapshot: yes by default, and now by rule, so setting `eda.snapshot` to an earlier
+  period never changes the note's meaning (D-135).
+- **V14** (2026-11-03) The edges rule: the mass points (values holding at least `1 / bins` of the
+  rows; 0 and the dominant value when they reach it) are singleton bins and the quantile edges are
+  taken over the remaining values, so no bin but a singleton holds more than about `2 / bins`;
+  charts merge cells by cumulative row share and a mass point stays its own bar. This answers the
+  SDS's `Bucketizer` question: the one-bucket symptom comes from quantile edges collapsing on ties
+  (or fixed-width edges on skew), and the rule, three unit tests, the m1.0 measurement and the
+  acceptance test's bin-count assertion close it (T25, D-135).
+- **V15** (2026-11-03) Chart sampling stays out because no chart draws clients: every chart is
+  drawn from cells or quartiles, so nothing needs sampling, while every statistic uses the whole
+  population. Should a row-level chart ever be added, it draws a seeded sample of at most 10,000
+  rows and says so in its caption (reporting requirement 5). The SDS's question ("why has chart
+  sampling been left out") is answered by this, not by a config field.
 Applied without a decision: `environment.md`'s paths and functions, `architecture.md` §4, §9, §10
 and the stage table, `evaluation.md`'s support rule (`strata.min_events`) and OD-12 scope,
 `monitoring.md`'s PSI pointer, `training.md`'s signature and the train-only ranking inside a

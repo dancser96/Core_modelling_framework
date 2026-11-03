@@ -36,7 +36,7 @@ so users can see and debug what happens under the hood.
    reviewing as the proxy user (D-022). Notebooks 02 (EDA) and 03 (Feature Checks) exist from
    Stage 2 with first-draft guidance (D-137).
 5. **Example notebooks on release** = the guided notebooks run end to end on the synthetic dataset,
-   outputs included.
+   outputs included. No other example modes are needed for now (the LDS, 2026-11-03).
 6. **Users may copy the notebooks and explore.** Production runs, registered models and reports never
    depend on notebook code (D-039).
 7. Entry points apply the environment adapter first (compat shim, Spark session).

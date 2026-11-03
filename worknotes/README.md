@@ -26,13 +26,21 @@ the functionality and the notebooks, and reviews; they never write code (D-072 (
   second-to-last working day up to today and runs to now, so weekend work always falls inside it
   (on a Monday: Friday to Monday). The 7-day window opens at the seventh-to-last working day.
   Each section heading carries its dates.
+- **The essence, not the process.** "In short" and the 2-day bullets summarise what the updates
+  and the SDS's key decisions are (how flags behave, whether the analysis is sampled, …), never
+  how many question or review rounds it took. No timelines, dates of future reviews or estimates
+  on the page; those live in the stage's plan and `docs/roadmap.md`.
 - **"In short" first: what actually happened, in plain words.** Three to eight lines on the 2-day
-  window: what was done, settled or found, and what it means for the LDS. Context only: no D-, OD-
-  or Q-numbers and no paths; the references sit in the bullets below.
+  window: what was settled, built or found, and what it means for the LDS. Context only: no D-,
+  OD- or Q-numbers and no paths; the references sit in the bullets below.
 - **Review list: most important first, then newest, without tags.** One bold line above the list
   points to the decisions the LDS must take: the short-term open decisions in `docs/roadmap.md`,
-  by OD-number. A decision never appears as a review item or a tag; the items are things to read,
-  each short (about three lines): what, where, the feedback wanted. A code item names the few
+  by OD-number. The SDS's key decisions get as much room as the open ones: each recent key
+  decision is a review item ("Decision: …", its D-number and owner doc, the feedback wanted). An
+  open decision never appears as a review item or a tag; the items are things to read,
+  each short (about three lines): what, where, the feedback wanted. "Where" is precise: the
+  doc's Level 1 plus the few sections and tables that carry the decision (by heading), never a
+  whole doc. A code item names the few
   functions that carry the ML logic (`path` → `function`), never a whole module or "the code in
   full". An item stays until the SDS says the LDS has finished it (that news usually arrives a day
   later), or the SDS drains the list.
