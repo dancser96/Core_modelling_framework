@@ -1,7 +1,7 @@
 # Run modes: CLI, Python API, guided notebooks
-**Status:** built thin (Stage 1, 2026-10-27: `run` with its one stage, the CLI `run` and `decide`, the first guided notebook) · **Legacy:** `run_product.py`, `notebooks/`
+**Status:** built thin (Stage 1, 2026-10-27: `run` with its one stage, the CLI `run` and `decide`, the first guided notebook; Stage 2 adds the `eda` and `feature_checks` stages and notebooks 02 and 03) · **Legacy:** `run_product.py`, `notebooks/`
 **Related:** [config](config.md) · [environment](environment.md) · [dataset](dataset.md) (experiment sweeps) ·
-`notebooks/README.md` · D-006, D-022, D-024, D-039, D-047, D-083, D-125 · OD-02, OD-04
+`notebooks/README.md` · D-006, D-022, D-024, D-039, D-047, D-083, D-125, D-137 · OD-02, OD-04
 
 ## Purpose
 The same functions, used two ways: guided notebooks for interactive work and learning, and a CLI / Python
@@ -33,7 +33,8 @@ so users can see and debug what happens under the hood.
    decisions to record in the decision audit log (`record_decision`, D-125), and links to the
    docs. Then: load config → call the stage → display the artifacts. Written as instructions, not
    commentary. Thin in M2 (load, call, display); the guidance text is written in M3 with the LDS
-   reviewing as the proxy user (D-022).
+   reviewing as the proxy user (D-022). Notebooks 02 (EDA) and 03 (Feature Checks) exist from
+   Stage 2 with first-draft guidance (D-137).
 5. **Example notebooks on release** = the guided notebooks run end to end on the synthetic dataset,
    outputs included.
 6. **Users may copy the notebooks and explore.** Production runs, registered models and reports never
@@ -51,11 +52,18 @@ Built in Stage 1 (2026-10-27), in `core_modelling/run.py`, `core_modelling/__mai
   stages (default: every built one, in `STAGES` order) for the entities of the config (default:
   all it lists); per entity and stage what the stage returned. An unknown stage or entity fails
   before anything runs. `STAGES` is the dict stage name → function `(cfg, entity, env, spark)`;
-  Stage 1 holds `target_factory`: `run_target_factory`, then `save_model_input` when the config
-  names a model input (D-131). The later stages take the resolved config (D-125) and join as they
-  are built.
+  From Stage 2 it holds `target_factory` (`run_target_factory`, then `save_model_input` when the
+  config names a model input, D-131), `eda` (`run_eda`) and `feature_checks`
+  (`run_feature_checks`), in that order; each stage function resolves the config itself
+  (`resolve_config`) and saves the resolved config with its artifacts (Q422). The later stages
+  join as they are built.
 - CLI: `python -m core_modelling run <config>… [--stages …] [--entity …] [--env …]` and `decide`
-  ([config](config.md)); `__main__` parses and calls.
+  ([config](config.md)), which gains `--keep` and `--findings`; `__main__` parses and calls.
+  `init <folder>` is planned for M2.4: it copies the shipped notebooks out of the wheel and
+  refuses to overwrite (D-137).
+- Public API additions in Stage 2: `run_eda`, `run_feature_checks`, `StageResult` and
+  `pivot_target` (the table in [architecture](../architecture.md#public-api)); the stage
+  functions return a `StageResult` that the notebooks display.
 - `notebooks/01_target_factory.ipynb`: the guide cell, the setup cell (`load_environment`,
   `get_spark_session`, `load_config`), `run_target_factory`, `save_model_input`,
   `build_frames(stage="eda")` with the funnel and the frame's head. `tests/test_run.py` checks

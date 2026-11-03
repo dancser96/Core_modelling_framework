@@ -11,7 +11,7 @@ spark:
   time_zone: UTC             # spark.sql.session.timeZone; the bank sets its own
   extra: {}                  # any other spark.* setting, key and value verbatim
 roots:
-  data: /ABSOLUTE/PATH/data  # the layers of data/README.md (01_raw … 08_reporting) hang off it
+  data: /ABSOLUTE/PATH/data  # one entity's area; under it <use_case>/<layer> (data/README.md)
   registered: null           # the registered tier's root: set when M2.4 builds register / promote
   production: null           # the production tier's root: M2.4
 sources:                     # entity → logical name (as the use-case config says it) → physical

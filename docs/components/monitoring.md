@@ -18,7 +18,7 @@ flags, and where they are written. The content is a few health and drift measure
 | Layer | What | Phase 2 depth |
 |---|---|---|
 | 1. Operational | Scoring ran; row counts; eligible population size vs history; score distribution; share of unseen categorical levels | **deep frame**, a few measures with flags |
-| 2. Drift | Input and score drift vs the drift reference saved at training, computed on the true population (PSI for numeric features; for categoricals, PSI on level shares with `__other__`) | **deep frame**, a few measures with flags |
+| 2. Drift | Input and score drift vs the drift reference saved at training, computed on the true population (one PSI definition, `statistics/distributions.psi` in [eda](eda.md): fixed bins from the reference's quantile edges plus a null bin, categoricals by level with the pooled `__other__` and `__new__`; the drift reference saved at training (M2.3) stores the edges in the same shape so Monitoring reuses the function, D-135) | **deep frame**, a few measures with flags |
 | 3. Realised performance | Scores joined to matured outcomes (labels from Target Factory for the scored periods, or the upstream target column, D-054); metrics in the targeted slices vs baselines (population base rate for business reporting; previous model and historic predicted rate internally) | **thin**: must work quickly once conversion labels arrive |
 | 4. Business impact | Campaign results; needs campaign outcome data from the campaign system | **stub** |
 

@@ -2,6 +2,150 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-11-02 — Stage 2 design settled: round 4 answered, the spec written, the plan drafted
+- The SDS answered round 4 (Q490 at the default with 100 bins and an `eda.bins` switch that turns
+  the binning off for small populations; Q491–Q493 at the defaults; Q477 confirmed by silence) and
+  asked for the spec, the holistic review and the plan with a routing table that keeps the main
+  thread on Fable. Recorded at the end of `worknotes/m2_2_understanding/answers.md`;
+  `questions.md` is a stub (new questions start at Q494).
+- **The spec, written into the component docs** by five Opus doc writers and one Sonnet
+  propagator from one design brief, every result read and corrected on the main thread:
+  `eda.md` (446 lines, three levels), `feature_checks.md` (493), `feature_ledger.md` (244),
+  `reporting.md` (215), `config.md` (the Stage 2 fields, the `keep` / `flag` / `run` entries, the
+  worked example, the folder order), `dataset.md` (the snapshot and `rows` frames, the counts
+  passes), `test_harness.md` (the acceptance test), `data/README.md`, the glossary (concordance,
+  best-order concordance, counts table, snapshot, compared periods, flag / note / held, kinds,
+  bins), `lessons.md` (the SE lesson corrected; T23 a screen that flags without acting; T24
+  sampling the analysis population), `notebooks/README.md`, `run_modes.md`, `training.md`,
+  `lifecycle.md`, `architecture.md` (§2, §3, §11, the Public API, the artifact inventory, the
+  data folders), `docs/README.md`, `CLAUDE.md` §4.6 (D-134's wording).
+- **Decisions:** D-134 (flags hold features out at both levels; `keep` with `findings`; replay
+  writes `features.held` into the resolved config so the run hash sees it), D-135 (the window
+  stays in Spark as one counts table, the snapshot collected whole, `eda.bins`, one statistics
+  engine, `concordance_best_order`, the two PSI notes between named periods), D-136 (root → use
+  case → layer, the artifact files, local paths until M2.4, no schema bumps in 0.x), D-137 (the
+  Stage 2 engineering shape); D-007, D-029, D-030, D-031, D-050, D-064, D-082, D-088, D-125,
+  D-132, D-133 extended in place. OD-11 settled and removed; OD-12 narrowed to Evaluation.
+- **Decided while integrating the writers' findings:** the open flags' features enter the
+  resolved config as `features.held` (a config agent's catch: trail-only flags would have left
+  two runs with different held sets on one hash); `resolve_features(ledger, resolved)` reads it;
+  the clusters are Feature Checks' table, cut from EDA's correlation table, with
+  `explained_by_others` as the multiple correlation from the correlation submatrix (no rows
+  needed); `pivot_target(result, rows, columns, where)` reads the task and strata from the
+  stage result; the lag is by period index and the window's first period has no lagged value;
+  `SE_FLOOR = 0.005`; the five steps run in a fixed order (a deviation from Q488's "YAML order",
+  stated in the record); the replayed list `features.kept_despite_flags` becomes `features.kept`.
+- **The plan:** `worknotes/m2_2_understanding/plan.md`: three major steps (foundations; EDA;
+  Feature Checks), sixteen minor steps with files, signatures, tests and what is left out, the
+  routing table (Opus for every §4 path, Sonnet for reporting, notebooks, the facts spike and the
+  doc propagation, Fable only for the plan, the briefs, the diffs, the integration and the ML
+  audit), the order and parallelism, the done criteria, the risks, a timeline estimate
+  (SDS reviews 11-05, 11-09, 11-11). Waiting for the SDS's approval.
+- **The holistic review** (Opus, fresh context, read-only; verdict "proceed with changes") found
+  ten contradictions between the freshly written docs, four knock-on effects on docs not updated
+  (`environment.md`'s paths, `architecture.md` §4/§9/§10, `evaluation.md`'s support rule,
+  `monitoring.md`'s PSI), four shape risks and four gaps. All applied (a Sonnet propagation pass,
+  verified on the main thread). The ones that needed a decision are the plan's veto list
+  V1–V12: the held set in the resolved config; the ranking value is the plain concordance unless
+  the feature is `non_monotone` (the review showed "the larger" would boost every noise
+  feature); a cell-count guard for `eda.bins: null`; the clusters as Feature Checks' table; the
+  reserved `__other__` / `__new__` bins; the fixed step order; `concordance_unstable` kept a flag
+  with a false-positive bound in the acceptance test; the regression lift only for a positive
+  mean; the latest period only after the validation period; one environment file per entity
+  inside the bank. Routed to the build's reviews: the best-order optimism and the train-only
+  ranking inside a cluster (ML auditor), the in-place schema and path changes (compat-guardian).
+- Quick check after the doc work: `pytest tests/test_environment.py tests/test_config_schema.py
+  tests/test_code_rules.py` → 64 passed (the configs and the code are unchanged until the build).
+
+### 2026-11-02 — Stage 2 round 3 answered; no sampled EDA: the window stays in Spark; round 4 opened
+- The SDS answered Q478–Q489 (Q477 not listed: taken as its default (A), confirmation asked),
+  mostly at the defaults: the finding table, the folder order, guidance only for forward-looking
+  names, mixed pairs now, the `dev`-preset trap test, local paths until M2.4, `feature_checks` as
+  a typed mapping. Two departures: **no schema bumps in 0.x** (Q483: the `feature_checks` shape,
+  the `keep` rename and the new entry fields change in place; the first bump when user testing is
+  under way) and **no sampled EDA** (Q482 rejected: "that defeats the purpose of some reports").
+  Recorded verbatim with the outcomes at the end of `worknotes/m2_2_understanding/answers.md`.
+- The SDS's rule replaces Q482: the window's statistics are computed in Spark and only aggregated
+  tables come to pandas; the snapshot analysis runs on every client in pandas; the Mac's
+  100,000-client snapshot stands for the bank's full retail snapshot. Round 4's Q490 is the design:
+  one counts table (feature, period, bin, target bin, lagged, n, sum of target) from a
+  `Bucketizer` + explode + `groupBy` pass over the window, gap and latest periods, a second
+  client-sorted pass for the lag check and `client_constant`, every window statistic read from the
+  table; the snapshot collected whole for the pairwise matrix, kinds, edges, pivots and the
+  row-level views. `eda.sample_share`, `eda.snapshot: window` and `Frames.drift` go. Q491 asks
+  whether the snapshot's statistics come from the same table (one engine, default yes); Q493
+  answers "shouldn't drift be measured between specific months": two PSI notes between named
+  periods, `psi_gap` dropped, `concordance_unstable` keeps every window period.
+- Q489 was not understood; Q492 explains it in plain words (the inverted-U age; the concordance a
+  ten-leaf tree would reach) and renames it `concordance_best_order`.
+- On A31 the SDS asked to keep track of every null-value assumption: a numbered register (N1–N18)
+  now closes `answers.md` and moves into the spec's "Nulls" sections later. The facts to check are
+  mine (the plan's first spike); the list in `questions.md` carries their status, with the Q490
+  items added.
+
+### 2026-11-02 — Stage 2 round 2 answered; the flags must act; round 3 opened
+- The SDS answered Q466–Q476, mostly at the defaults: EDA on one snapshot by default
+  (`eda.snapshot: last`), N = 10 key features with the correlation skip, the loggable
+  `features.kinds`, the notebooks shipped in the wheel with an `init` command (M2.4), the
+  redundancy clusters with `explained_by_others`, the `client_constant` finding for the 0.5.3
+  look-ahead trap, `time.validation_period: null` for EDA-only configs. Recorded verbatim with the
+  outcomes at the end of `worknotes/m2_2_understanding/answers.md`, which now holds both rounds.
+- One design change: "what's the point of flagging if for an autonomous run they are not getting
+  excluded?" Round 3's Q477 proposes that an open flag holds the feature out of training at both
+  levels until a person keeps or excludes it (visible everywhere, reversible by one entry); Q478
+  sorts every finding into flag or note and splits the null-indicator statistic into a leak flag
+  (0.70) and a `nulls_informative` note (0.55). Q468 becomes two quality notes (`nulls_may_be_zeros`,
+  `nulls_informative`) and no doctrine beyond D-029 (c).
+- Two restatements: the folder order (Q479: the root is already the entity's area, so
+  `<root>/<use_case>/<layer>/…` with no entity segment) and the other use case's label (Q480: a
+  backward-looking event flag is an ordinary candidate; the name nudge is optional).
+- Gaps found before the plan, asked in round 3: mixed-kind pairs now (Q481, A14 withdrawn), a
+  client sample for EDA and Feature Checks at a real size (Q482), config and log schema bumps
+  with migrations (Q483). A fresh-context gap analysis (Opus, read-only, 34 minutes) then
+  corrected two draft questions (Q484 withdrawn: `forward_sum` already is the regression
+  variant, Q420; Q483 re-aimed at the real break, the `feature_checks` shape) and added five
+  (Q485 snapshot and window statistics both computed in EDA; Q486 the trap test on the `dev`
+  preset with window assertions and an explicit scope dict; Q487 local artifact paths until
+  M2.4; Q488 `feature_checks` as a mapping with typed, loggable thresholds; Q489 a binned
+  concordance for non-monotone signal). Its settled plan defaults are listed for veto (A19–A36:
+  flag entries per finding with an empty entry closing one, no lineage entry, verdicts derived
+  at render, staleness digests, compared periods as run entries, the artifact files, report
+  order, `StageResult.views`, regression specifics, pseudo-event shrinkage, nulls per
+  statistic) and its library checks join the facts list. Two corrections to the record:
+  `roc_auc_score` on a constant score returns 0.5 (sklearn 1.8), and `eda.snapshot` is a window
+  period. `docs/context/environment.md` no longer says the collect fails loud (D-133: callout,
+  then proceeds).
+
+### 2026-11-02 — Stage 2 round 1 answered; the record file; round 2 opened
+- The SDS answered Q418–Q462: mostly the defaults. Settled: the in-between depth and the longer
+  stage (Q418, Q419: M2.3 from about 11-12); real regression functions on a variant config;
+  `statistics/` and `reporting/` as subfolders of reusable functions that every stage imports,
+  the stage modules orchestrating only (Q421); the stage function resolves the config itself; one
+  `StageResult`; concordance as the one scale (pending the explanation); shrunk level encoding;
+  no imputation; Wilson intervals, 20 events per bin; the lag check for time alignment; PSI 0.10
+  and Cochran's Q; Feature Checks requiring EDA's artifact; the SE lesson corrected; the wide
+  ledger; two reports; two notebooks; the trap acceptance test.
+- Changed by the SDS: N = 10 key features at both levels with a correlation skip (Q436); the
+  proposed-decisions table without a suggested operation and a simpler decision model (Q448,
+  Q449); every default explained in the template (Q446); the folder order root (entity) → use
+  case → layer (Q424); column kinds displayed, validated and overridable (Q426).
+- Open from the generic remarks: EDA on one snapshot by default and EDA-only configs; a
+  correlation view weighing redundancy against predictiveness with second-order effects; how
+  users get the notebooks from a Nexus package; the 0.5.3 look-ahead trap (constant per client,
+  below the oracle's AUC) needs a finding of its own; "nulls that mean zero" as a quality
+  finding; another use case's label as a candidate (a §4.1 caveat raised).
+- The record: `worknotes/m2_2_understanding/answers.md` holds every round-1 question verbatim
+  with the SDS's answer verbatim and the outcome for the plan (the SDS asked for it before
+  compacting the chat); `questions.md` is rewritten for round 2 (Q466–Q476; Q463–Q465 were the
+  other chat's) with the explanations asked for (the ledger, concordance as Somers' D, the
+  flag / exclude / keep model, the drift frame, `missingness_leak`).
+- Files: `worknotes/m2_2_understanding/answers.md` (new), `questions.md` (round 2),
+  `worknotes/log.md`, `docs/UPDATES.md` (status rows).
+- Decisions / open decisions: none written yet; D-134 onward with the plan (D-029 (d), D-030's
+  EDA scope, D-082's SE, D-132's N, the template defaults, the folder layout).
+- Still open: round 2; then the spec into the component docs, the holistic review and the plan
+  with the routing table.
+
 ### 2026-10-30 — Stage 2 (M2.2 Understanding) design opened: four surveys and Q418–Q462
 - The SDS asked to start Stage 2 (EDA, Feature Checks, the feature ledger, Reporting) between
   thin and deep with every key component in, and to name every check and view explicitly. The

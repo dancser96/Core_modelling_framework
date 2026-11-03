@@ -32,6 +32,9 @@ harness, an environment adapter and explicit invariants. Legacy file references 
 | T20 | A sampling draw that shares the split's input | `client_sample` drawn from `xxhash64(unit_id, seed)` with the split drawn the same way and the same default seed would keep, among the train clients (a draw of 0.3 or more), only those below 0.5: 29% of them, not the 50% asked, and always the same slice of the split. Found in Stage 1's dataset build (2026-10-27), before any run relied on it | Every draw on the keys carries its own salt (`'split'`, `'sample'`) beside the seed (`split._hash_uniform`); a test checks the client sample's share with the two seeds equal |
 | T21 | A sidecar file in a parquet folder | Spark's listing skips files whose name starts with `_` or `.`, except `_metadata` and `_common_metadata`, which it reads as parquet summaries: a `_metadata.json` beside the model input's partitions failed the read with "not a Parquet file". Found in Stage 1's dataset build (2026-10-27) | A sidecar in a table folder is named `_<something>.json`, never starting with `_metadata`; the model input's is `_model_input.json` |
 | T22 | A hash draw on the id column's bytes | The split's draw (`xxhash64` over `unit_id`) hashes the column's bytes, so the same digits as a string (`'12345'`) and as a long (`12345`) draw differently: an upstream change of the id column's type would move every client between train and test, silently. Found by the hash check on structured ids (2026-10-28), before any run relied on it | `read_keyed_source` casts `unit_id` to string at load, so the draw is independent of the id's storage type for integer, long and string ids. A double or decimal id casts to `'12345.0'`, so an upstream move from integer to decimal still moves every client; the source log's `id_type` shows it. A test reads an integer id back as a string and the pinned draw (`'12345'`, salt `split`, seed 42 → 0.322993) is unchanged |
+| T23 | A screen that flags without acting | At the `autonomous` level a flag that only annotated left leaking features in the model (Stage 2 design, 2026-11-02) | Flags hold a feature out of training until a person keeps or excludes it (D-134); every check states what it changes at `autonomous` |
+| T24 | Sampling the analysis population | A client sample before the collect would have made the report's statistics approximate (Stage 2 design, Q482 rejected) | Window statistics are Spark aggregates (the counts table); the snapshot is collected whole; never sample the analysis population (D-135) |
+| T25 | Quantile bins that collapse into one bucket | `pd.qcut(..., duplicates="drop")` on a zero-inflated or discrete column puts most quantile edges on one value and leaves one bucket for everything else; fixed-width `pd.cut` on a skewed column puts nearly every row into the first bucket. Seen in EDA plot code (the SDS, 2026-11-03), before the counts table was built | The edges rule: values holding at least `1 / bins` of the rows (mass points) are singleton bins and the quantile edges are taken over the remaining values; charts merge cells by cumulative row share, never by equal width; a test asserts the bin count on constructed columns and on every synthetic numeric (`docs/components/eda.md`, D-135) |
 
 ## Statistical lessons
 
@@ -40,9 +43,10 @@ harness, an environment adapter and explicit invariants. Legacy file references 
   Rank features with univariate AUC (base-rate agnostic) and read direction from target-rate
   deciles. Don't compute MI on downsampled data: it silently changes the joint distribution.
 - **Univariate AUC floor.** Direction-agnostic AUC < ~0.515 is a drop candidate. Treat this mainly
-  as a speed lever (more FLAML trials per budget). Its standard error is ≈
-  `0.5/sqrt(n_positive_events)`, counting distinct converting clients rather than rows (D-082), so
-  with ~800 events the third decimal is noise.
+  as a speed lever (more FLAML trials per budget). Its standard error is the
+  Hanley–McNeil formula in positive events (distinct converting clients, not rows, D-082): about
+  `0.5 / sqrt(events)` only as a rough order of magnitude near 0.5; with about 800 events the
+  third decimal is noise.
 - **Downsampling.** Keep all positives; the negative:positive ratio is mostly a compute lever that
   barely moves ranking. The positive *count* is the real ceiling (e.g. ~800 for a 0.04% product
   is low-confidence at any ratio). Set the ratio per use case. Stratified negative sampling is the

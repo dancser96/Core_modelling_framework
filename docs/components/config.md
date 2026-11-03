@@ -1,10 +1,14 @@
 # Config spine
-**Status:** built (M2.1, 2026-10-26; for the SDS's review) · **Legacy:** `configs/_schema.py`, `configs/_TEMPLATE.yaml`
+**Status:** built (M2.1, 2026-10-26; for the SDS's review); the Stage 2 fields and audit-log changes
+specified 2026-11-02 and built in Stage 2's first step (this doc shows that target state; the
+template and the example configs change with the schema code in that step); `schema_version` stays
+1 (no bumps in 0.x until user testing, D-136 extending D-007 (c)) · **Legacy:** `configs/_schema.py`,
+`configs/_TEMPLATE.yaml`
 **Related:** [dataset](dataset.md) (time model, frames, the model input) · [feature ledger](feature_ledger.md) ·
 [lifecycle](lifecycle.md) · [run modes](run_modes.md) · [environment](environment.md) (the environment file) ·
 [target factory](target_factory.md) (the target spec) · D-006, D-007, D-020, D-021, D-023, D-024, D-030,
 D-031, D-032, D-034, D-043, D-047, D-050, D-052, D-088, D-091, D-125, D-128, D-129, D-130, D-131, D-132,
-D-133 · OD-02, OD-11, OD-26
+D-133, D-134, D-135, D-136 · [eda](eda.md) · [feature checks](feature_checks.md) · OD-02, OD-26
 
 ## Purpose
 The whole definition of a use case, validated at load. It is the framework's most important contract
@@ -34,11 +38,11 @@ defaults, so a first run needs only the shared sections.
 | `decision` | Training, Evaluation, lifecycle | How the scores are used; the metric, gate metric and baselines derived from it or overridden, all declared before any result (`CLAUDE.md` §4.3) |
 | `entities` | every stage | Which entities the use case applies to; their logical sources |
 | `data` | every stage | Keys, eligibility, target, the client split, the contract band, the saved model input |
-| `time` | every stage | The unit of analysis (`period`), the observation window, `w`, the validation period |
-| `features` | every stage | The candidates (patterns) |
+| `time` | every stage | The unit of analysis (`period`), the observation window, `w`, the validation period (may be null: an EDA-only config) |
+| `features` | every stage | The candidates (patterns) and the kind overrides |
 | `strata` | EDA, Evaluation, Monitoring | The stratification variables, level cap, minimum events (D-038) |
-| `eda` | EDA | Key features, chart sampling |
-| `feature_checks` | Feature Checks | The ordered check steps and their thresholds |
+| `eda` | EDA | The snapshot, the bins, the key features |
+| `feature_checks` | Feature Checks | The five steps' thresholds, one typed mapping |
 | `training` | Training | Modelling path, model families, budgets, seeds, search ranges, automated selection, categoricals, calibration, sampling |
 | `evaluation` | Evaluation | Metric slices, extra views |
 | `lifecycle` | register, promote | The promotion gate's threshold |
@@ -50,7 +54,8 @@ the template with every option's when-to-use is `conf/base/TEMPLATE.yml`). A sec
 `conf/base/td_acquisition.yml` (term deposit), shares its model input: same sources, keys,
 period and `model_input`, its own target and eligibility. A `null` on a level
 path (`levels.py`) takes the level default; any other `null` is off or derived (the template's
-reading key).
+reading key). `features.kinds`, `eda` and `feature_checks` show the Stage 2 defaults, which reach
+the template and the examples in Stage 2's first step.
 
 ```yaml
 schema_version: 1
@@ -98,28 +103,43 @@ time:
   period: month                          # the unit of analysis: month | week | day; one row per unit per period
   observation_window: {first: 2025-03-01, last: 2025-08-01}   # t1 … tk; a period is held as its last day
   target_window: 3                       # w: targets look at periods t+1 … t+w (D-129)
-  validation_period: 2025-11-01          # v ≥ tk + w, by period index; v + w ≤ the sources' last period
+  validation_period: 2025-11-01          # v ≥ tk + w, by period index; v + w ≤ the sources' last period;
+                                         # null allowed (an EDA-only config): EDA runs, Training refuses
 
 features:
+  # exclude: list every column that looks forward from the period (other use cases' targets,
+  # 'next N months' flags; CLAUDE.md §4.1); lineage and unsupported types leave automatically
   candidates: {include: ["*"], exclude: []}             # glob patterns over the feature sources' columns
+  kinds: {}                              # {<column>: numeric | categorical}; overrides the Spark-schema default
 
 strata:
   variables: [segment, onboarding_channel]
-  max_levels: 10                         # the rest pooled as other
-  min_events: 50                         # fewer positive events in a stratum: shown as insufficient (D-082)
+  max_levels: 10                         # the rest pooled as `__other__`
+  min_events: 50                         # fewer positive events in a stratum (regression: units with a non-zero target): shown as insufficient (D-082); also the shrinkage weight of the level encoding
 
 eda:
-  key_features: {top_n: null, include: []}   # top-N by univariate ranking (level default) plus the listed ones
-  chart_sample_share: null               # optional: charts on a share of clients, stated in the report
+  snapshot: last                         # last (the window's last period) | a period inside the window
+  bins: 100                              # quantile bins for every numeric; null = binning off, every value
+                                         # its own bin and every statistic exact (small populations)
+  # top-N of the ranking plus the listed ones; a candidate associated above max_correlation
+  # with a chosen key feature is skipped and shown as represented by it
+  key_features: {top_n: 10, include: [], max_correlation: 0.9}
 
+# The five steps run in a fixed order; a step left out of a present mapping is not run, the section
+# left out runs every step with its defaults. Every threshold is a loggable leaf, the same at both
+# levels. Flags hold a feature out of training until a person decides; notes inform (D-134).
 feature_checks:
-  steps:                                 # ordered; each flags and logs, never drops (CLAUDE.md §4.6); thresholds low (D-031)
-    - {name: quality, params: {}}
-    - {name: leakage, params: {}}
-    - {name: time_alignment, params: {}}
-    - {name: eligibility_constant, params: {}}
-    - {name: stability, params: {psi_max: 0.25}}
-    - {name: redundancy, params: {}}
+  # quality: all-null, constant, near-constant, high-missing, high-cardinality (flags); two null notes
+  quality:        {dominant_share_max: 0.99, missing_share_max: 0.95, max_levels: 50,
+                   nulls_may_be_zeros: {missing_min: 0.2, zero_share_max: 0.005}, nulls_informative_min: 0.55}
+  # leakage: too strong, missingness leak, rare-value leak (flags)
+  leakage:        {concordance_max: 0.80, null_concordance_max: 0.70, rare_effect_max: 5}
+  # time alignment: signal lost when lagged one period; constant within the client and predictive (flags)
+  time_alignment: {signal_kept_min: 0.5, constant_clients_min: 0.99, concordance_min: 0.6}
+  # stability: power unstable across the window (flag); PSI and new levels (notes)
+  stability:      {psi_max: 0.10, heterogeneity_p_max: 0.01, concordance_range_min: 0.05, new_level_share_max: 0.01}
+  # redundancy: correlated and associated pairs, shown as clusters (notes)
+  redundancy:     {correlation_max: 0.90, association_max: 0.90}
 
 training:
   path: automl                           # FLAML, the only path in Phase 2 (D-020)
@@ -208,8 +228,10 @@ What it holds, what its reader refuses and when it is written: [dataset](dataset
    next to a mart; the release example shows all three settings, two of them commented out, and a
    `feature_store` source is refused until OD-26 is designed (D-021). Physical names never appear
    in the config: the environment file maps each logical name per entity (D-130).
-6. **Stepwise sections:** eligibility and feature-check steps are ordered and named, and each
-   produces a log entry (rows/cols in → out, reason). Eligibility is two ordered lists of Spark
+6. **Stepwise sections:** eligibility steps are ordered and named, and each produces a log entry
+   (rows in → out, reason); Feature Checks' five steps run in a fixed order (quality, leakage,
+   time alignment, stability, redundancy), one typed entry each in the `feature_checks` mapping,
+   and each logs its findings ([feature checks](feature_checks.md)). Eligibility is two ordered lists of Spark
    SQL entries, `data.eligibility.analysis` and `data.eligibility.modelling`, run as one order,
    analysis first, with step names unique across both (D-129). An entry is either a `define` (a
    named boolean condition that the entries after it, in either list, reuse by name, dropped
@@ -225,22 +247,29 @@ What it holds, what its reader refuses and when it is written: [dataset](dataset
    own column is refused with that hint); `data.target.column` alone names an upstream target
    as the source does, `target` included, never a key name
    ([dataset](dataset.md#sources-and-joins-d-129)).
-7. **Features:** candidates are explicit lists or patterns. Human decisions go both ways: `exclude`
-   and `keep_despite_flag` (which also protects against automated pruning). They are entries in the
-   decision audit log, one per group with one required reason, never edits to the config (D-043,
-   D-125). Automated decisions are *not* written into the config as outcomes: the config holds the
-   rules that make them (ordered, named steps, like eligibility), and their outcomes are rule
-   entries in the log and columns in the feature ledger (D-043, D-125).
+7. **Features:** candidates are explicit lists or patterns; `features.kinds` overrides a column's
+   kind (`numeric` or `categorical`; the default comes from the Spark schema, [eda](eda.md)), and
+   an override naming a column that is not a candidate fails loud. Human decisions go both ways:
+   `exclude` (out of every later run), `include` (reverses an exclude) and `keep` (settles the open
+   flags it names and protects from automated pruning; D-134). They are entries in the decision
+   audit log, one per group with one required reason, never edits to the config (D-043, D-125).
+   Automated decisions are *not* written into the config as outcomes: the config holds the rules
+   that make them (named steps and their thresholds), and their outcomes are entries in the log
+   (Feature Checks' `flag` entries, Training's `dropped`) and columns in the feature ledger (D-043,
+   D-125). `features.kinds`, every `eda` field and every `feature_checks` threshold are loggable at
+   their stage (`set`, the list below), so a reassessment reruns from that stage.
 8. **Time:** `time` holds the unit of analysis (`period`: `month`, `week` or `day`; one row per
    unit per period, the key column `period`), the observation window (`observation_window
    {first, last}`), the target window `w` (`target_window`, in periods, one number read by the
    target builder and the time checks alike) and the validation period (`validation_period`);
-   the inference period is a run argument (D-088, D-129). The validation period sits outside the
-   data-definition hash (EDA never reads it; Feature Checks reads it only to leave it out of its
-   comparisons), so moving it never changes the data-definition hash. After the config freezes,
+   the inference period is a run argument (D-088, D-129). The validation period may be `null`, an
+   EDA-only config: EDA runs, Feature Checks compares with the latest period only, and Training
+   refuses, naming the field; a later `set` entry or a new config adds it. It sits outside the
+   data-definition hash (EDA and Feature Checks read it only to leave it out of the compared
+   periods), so moving it never changes the data-definition hash. After the config freezes,
    the validation period changes only through a `set` entry in the audit log, refused when any
-   Feature Checks run compared that period (Feature Checks records the periods it compared,
-   [feature_checks](feature_checks.md); D-088). A Phase 2 production retrain moves only the
+   Feature Checks `run` entry lists that period among the periods it compared (D-088;
+   [feature checks](feature_checks.md)). A Phase 2 production retrain moves only the
    inference period (D-052).
    A period is held as its **last day**, the framework's one convention. The typo rule at load
    depends on `time.period`: a month is written as its first or its last day (any other day is
@@ -250,11 +279,13 @@ What it holds, what its reader refuses and when it is written: [dataset](dataset
    through one dict of period specs (`periods.PERIODS`), never `add_months` or added days (T19).
    Checked at config load (D-129):
    - window order (`first ≤ last`) and `w ≥ 1`;
-   - `v ≥ tk + w` by period index (no overlapping target windows).
+   - `v ≥ tk + w` by period index (no overlapping target windows), when `v` is set;
+   - `eda.snapshot` is `last` or a period inside the observation window.
 
    Checked when the frames are built, since only the data knows ([dataset](dataset.md)):
    - the window and `v + w` lie inside the sources' periods, so every validation label has
-     matured (otherwise partial maturity would null validation labels quietly). This replaces the
+     matured (otherwise partial maturity would null validation labels quietly); with `v` null,
+     the window's last period plus `w`. This replaces the
      backward-window check, which the framework can't make for upstream features.
 9. **Data-definition hash:** computed from `task`, entity, sources, eligibility, target spec, the
    period, the observation window, the target window and candidates (D-088; the section
@@ -308,19 +339,21 @@ any extension-point entry.
 |---|---|---|
 | person | `exclude`: drop features from the candidates | changes the input |
 | person | `include`: reverse a person's `exclude` | changes the input |
-| person | `keep_despite_flag`: resolve a flag; also protects from automated pruning | changes the input |
+| person | `keep`: settles the open flags it names (`findings`, default every open flag on those features); also protects from automated pruning | changes the input |
 | person | `set`: change one listed setting (next section) | changes the input |
 | person | `revert`: go back to the state after an earlier entry (`to_seq`; 0 is the config as written) | changes the input: replay restarts from there |
 | person | `sign_off`: approve a run's final feature list (D-031) | trail |
 | person | `register`, `promote`: written by those commands | trail |
-| rule | `exclude`: lineage, quality filters | changes the input |
-| rule | `flag`: one entry per check step | trail; flags never drop (`CLAUDE.md` §4.6) |
+| rule | `exclude`: none written in Phase 2 (lineage and unsupported types leave through the candidate resolution, never as entries; D-134) | changes the input |
+| stage | `flag`: written by Feature Checks, one per finding (`finding: <step>.<finding>`) with its features, only when that set differs from the finding's latest entry; an empty set closes the finding | changes the input: replay writes the open flags' features into `features.held`, which Training holds out of its feature set ([feature checks](feature_checks.md), D-134) |
 | rule | `dropped`: a run output, e.g. automated selection | trail |
-| stage | `run`: a marker with `run_id`, the entry it replayed up to and the input hash | trail |
+| stage | `run`: a marker with `run_id`, the entry it replayed up to and the input hash; Feature Checks' carries the `periods` it compared (D-088) | trail |
 
-- Only `exclude`, `include`, `keep_despite_flag`, `set` and `revert` change the resolved input;
-  the rest are the trail and are no-ops at replay. A flag stays open until a person's entry
-  resolves it.
+- Only `exclude`, `include`, `keep`, `set`, `revert` and `flag` (through `features.held`) change
+  the resolved input; the rest are the trail and are no-ops at replay. A flag stays open until a `keep` names its finding, an
+  `exclude` takes the feature out, or the finding's latest `flag` entry no longer lists the
+  feature. Notes are never entries: they live in Feature Checks' findings table. Which findings
+  are flags and how the hold-out works: [feature checks](feature_checks.md) (D-134).
 - A `revert` entry, `{op: revert, to_seq: 8, reason}`, goes back to an earlier state without
   deleting anything: at replay the state restarts from the config with entries 1 … 8 applied,
   and the entries after the revert continue from there. The undone entries stay in the log as
@@ -341,29 +374,37 @@ any extension-point entry.
   features. The check runs over the **effective** entries (every `revert` applied): `include`
   is refused when any effective entry is a rule's `exclude` of the feature, so neither a revert
   nor a person's no-op `exclude` on top of the rule's can launder it. A rule's `exclude` is
-  reversed by changing the rule (a listed threshold); a lineage exclusion is never reversed
-  (`CLAUDE.md` §4.6). A flagged feature was never dropped:
-  `keep_despite_flag` settles the flag.
+  reversed by changing the rule (a listed threshold); lineage is never an entry and never
+  reversed (`CLAUDE.md` §4.6). A flagged feature was never dropped, only held: `keep` settles
+  the flag.
 - A write is refused at once when a feature isn't a candidate, the reason is missing, the change
-  touches the data definition, the setting isn't listed, the value fails the schema, or it moves
-  the validation period to one Feature Checks compared (D-088).
+  touches the data definition, the setting isn't listed, the value fails the schema, `findings`
+  comes without `keep`, or it moves the validation period to one a Feature Checks `run` entry
+  lists (D-088).
 - An entry's evidence may cite train and test results only: the validation period never informs a
   choice (`CLAUDE.md` §4.4).
 
 ### Which settings a `set` may touch, and maintaining the list
-`LOGGABLE_SETTINGS` is a plain dict next to the config schema, mapping each allowed setting path to
-its stage. Planned (Stage 1):
+`LOGGABLE_SETTINGS` is a plain dict in `config/replay.py`, mapping each allowed setting path to its
+stage. The list after Stage 2's first step (the Stage 1 code still lists `eda.chart_sample_share`
+and `feature_checks.steps`, which that step removes):
 
 ```python
 LOGGABLE_SETTINGS = {
     "automation_level": "eda",  # a level move reruns every stage from EDA (D-132)
+    "features.kinds": "eda",  # how a column is read; outside the data-definition hash
     "strata.variables": "eda",
     "strata.max_levels": "eda",
     "strata.min_events": "eda",
+    "eda.snapshot": "eda",
+    "eda.bins": "eda",
     "eda.key_features.top_n": "eda",
     "eda.key_features.include": "eda",
-    "eda.chart_sample_share": "eda",
-    "feature_checks.steps": "feature_checks",
+    "eda.key_features.max_correlation": "eda",
+    "feature_checks.quality.dominant_share_max": "feature_checks",
+    "feature_checks.quality.nulls_may_be_zeros.missing_min": "feature_checks",
+    "feature_checks.leakage.concordance_max": "feature_checks",
+    # ... every other threshold leaf of the five steps, 18 in all, at stage "feature_checks"
     "training.estimator_list": "training",
     "training.max_iter": "training",
     "training.time_budget_s": "training",
@@ -373,7 +414,7 @@ LOGGABLE_SETTINGS = {
     "training.categoricals.min_level_count": "training",
     "training.calibration.method": "training",
     "training.sampling": "training",
-    "time.validation_period": "evaluation",  # refused once a Feature Checks run compared it (D-088)
+    "time.validation_period": "evaluation",  # refused when a Feature Checks run entry lists it (D-088)
     "evaluation.slices.top_pct": "evaluation",
     "evaluation.slices.top_n": "evaluation",
     "evaluation.views": "evaluation",
@@ -415,7 +456,7 @@ from the new resolved input.
 APPLY_BY_OP = {
     "exclude": _apply_exclude,
     "include": _apply_include,
-    "keep_despite_flag": _apply_keep,
+    "keep": _apply_keep,
     "set": _apply_set,
     "flag": _leave_unchanged,
     "dropped": _leave_unchanged,
@@ -440,17 +481,20 @@ the resolved file points at the entries still in force.
   entries a `revert` undid are still there for `upto` below it.
 - **Stale entries fail loud:** an entry naming a feature that is no longer a candidate stops the
   replay, citing the entry number.
-- **Rule entries can be checked:** rerunning the rules on unchanged data reproduces their entries.
-  When restated data makes a rule decide differently, the rerun appends the step's new outcome;
-  replay shows the difference and flags the person entries that cited the old rule entry (entry 6
-  cites entry 4 below) for a look, rather than applying them silently.
+- **Rule and stage entries can be checked:** rerunning a stage on unchanged data writes no new
+  entry. When restated data or a changed threshold changes a finding's feature set, the rerun
+  appends the finding's new `flag` entry (an empty one closes it); replay shows the difference
+  and flags the person entries that cited the old entry (entry 6 cites entry 3 below) for a look,
+  rather than applying them silently. A `keep` stays valid for the same finding with new values;
+  a different finding on a kept feature opens again (D-134).
 - **The trail never changes the input:** run outputs, sign-offs, register and promote are recorded
   but leave the resolved config alone.
 
 The replay code is expected to be a few dozen lines. That is a design target, not measured.
 
 ### Verbosity
-- A rule writes one entry per step, with its list of features.
+- Feature Checks writes one `flag` entry per finding whose feature set changed, plus one `run`
+  entry per run; a Training rule writes one entry per step, with its list of features.
 - A person writes one entry per group, with one reason (D-043's one note per group).
 - So a use case's road to production is tens of entries, not hundreds; the worked example below
   has 16.
@@ -459,13 +503,31 @@ The replay code is expected to be a few dozen lines. That is a design target, no
 
 ### One entry
 Fields: `seq`, `time`, `by` (`kind`: person / rule / stage, plus `id`), `stage`, `op`, then
-`features`, `path` / `from` / `to` (`to` may be null, e.g. sampling off) or `to_seq` (a
-`revert`), plus `reason`,
-`evidence`, `data_definition_hash`, `hash_version` (the recipe that computed it) and
-`log_schema_version`. Run markers add `run_id`, `replayed_to` and `resolved_input_hash`. An
-operand that doesn't belong to the operation is refused. Evidence
-cites earlier entries as `#n`, which is how replay finds the person entries that cite a rule
-entry. Entry 6 of the worked example, as stored:
+`features` (empty only in a `flag` entry, which closes the finding), `path` / `from` / `to` (`to`
+may be null, e.g. sampling off) or `to_seq` (a `revert`), `finding` (a `flag`:
+`<step>.<finding>`), `findings` (a `keep`: the findings it settles, default every flag open on its
+features when written), plus `reason`, `evidence`, `data_definition_hash`, `hash_version` (the
+recipe that computed it) and `log_schema_version` (still 1: the Stage 2 fields change in place,
+D-136). Run markers add `run_id`, `replayed_to` and `resolved_input_hash`; Feature Checks' run
+marker adds `periods` (the periods it compared) and has no `run_id` yet. An operand that doesn't
+belong to the operation is refused. Evidence cites earlier entries as `#n`, which is how replay
+finds the person entries that cite a rule or stage entry. Entries 3 and 6 of the worked example,
+as stored:
+
+```json
+{
+  "seq": 3,
+  "time": "2026-10-27T15:10:00",
+  "by": {"kind": "stage", "id": "feature_checks"},
+  "stage": "feature_checks",
+  "op": "flag",
+  "finding": "leakage.too_strong",
+  "features": ["cc_preapproval_score_trap_leak", "cc_campaign_response_score_trap_leak"],
+  "reason": "Concordance 0.97 and 0.88, above leakage.concordance_max 0.80",
+  "data_definition_hash": "d_A",
+  "log_schema_version": 1
+}
+```
 
 ```json
 {
@@ -476,7 +538,7 @@ entry. Entry 6 of the worked example, as stored:
   "op": "exclude",
   "features": ["cc_preapproval_score_trap_leak", "cc_campaign_response_score_trap_leak"],
   "reason": "Set after the offer, so not known at scoring time",
-  "evidence": ["#4", "feature_checks report: Leakage"],
+  "evidence": ["#3", "feature_checks report: Leakage"],
   "data_definition_hash": "d_A",
   "log_schema_version": 1
 }
@@ -489,8 +551,11 @@ line `# entry 14 reverted to the state after #8`. It is a view, regenerated on d
 edited back. Every run already saves its resolved config with its artifacts.
 
 ### Storage
-- **Locally:** one small JSON file per entry, `decisions/<seq>.json`, per instance, under a folder
-  keyed by the data-definition hash and the entity (the root comes from the environment adapter).
+- **Locally:** one small JSON file per entry, per instance, at
+  `<roots.data>/<use_case>/04_feature/<ddh>/decisions/<seq>.json`: root, then use case, then
+  layer; the root is the entity's area and the framework adds no entity segment, since the
+  data-definition hash `<ddh>` carries the entity (D-136; the folder's other artifacts:
+  [feature ledger](feature_ledger.md), [eda](eda.md), [feature checks](feature_checks.md)).
   The file is `<seq>.json`, zero-padded to four digits. No append is needed (HDFS append may be
   off in the bank: unverified). Two simultaneous writers can't interleave: each write is
   create-if-absent, and on a clash the write fails and the person re-runs the decision, since
@@ -522,53 +587,66 @@ record_decision(
     entity="entity_a",
     exclude=["cc_preapproval_score_trap_leak", "cc_campaign_response_score_trap_leak"],
     reason="Set after the offer, so not known at scoring time",
-    evidence=["#4", "feature_checks report: Leakage"],
+    evidence=["#3", "feature_checks report: Leakage"],
+)
+record_decision(
+    "conf/base/cc_acquisition.yml",
+    entity="entity_a",
+    keep=["login_digital_mobile_cnt", "login_digital_mobile_cnt_0_2_months_avg"],
+    findings=["stability.concordance_unstable"],  # optional: default every open flag on them
+    reason="Digital adoption grew after the app relaunch; monitoring watches it",
+    evidence=["#4", "feature_checks report: Stability"],
 )
 ```
 
-Going back to an earlier state is the fifth operation, `record_decision(…, revert_to=8,
-reason=…)` or `decide --revert-to 8`; exactly one of the five (`exclude`, `include`,
-`keep_despite_flag`, `set`, `revert_to`) per call (the `revert` bullet above).
+The CLI does the same with `decide --exclude …` or `decide --keep … --findings …`. Going back to
+an earlier state is the fifth operation, `record_decision(…, revert_to=8, reason=…)` or
+`decide --revert-to 8`; exactly one of the five (`exclude`, `include`, `keep`, `set`,
+`revert_to`) per call (the `revert` bullet above).
 
 `show_decisions(cfg, entity, env)` prints the log as the table below (a `revert` shows `to #8`
 in `what`). Each report's choices block shows the entries up to its run, and the model card the
 registered slice.
 
 ### Worked example
-Card acquisition within 3 months on the synthetic mart, entity A.
+Card acquisition within 3 months on the synthetic mart, entity A. The target column `cc_flag`
+(lineage) and the unsupported types leave through the candidate resolution and are never entries
+(D-134).
 
 | # | Date | By | Stage | Op | What | Reason | Evidence |
 |---|---|---|---|---|---|---|---|
-| 1 | 10-27 | rule `target_lineage` | Target Factory | exclude | `cc_flag` | Builds the target | lineage file |
-| 2 | 10-27 | rule `quality.all_null` | Feature Checks | exclude | 1 feature | No values in the window | checks log, step 1 |
-| 3 | 10-27 | rule `quality.near_constant` | Feature Checks | exclude | 1 feature | 99.9% one value | checks log, step 2 |
-| 4 | 10-27 | rule `leakage.too_strong` | Feature Checks | flag | 2 features | Univariate AUC 0.97 and 0.88 | report → Leakage |
-| 5 | 10-27 | rule `stability.psi` | Feature Checks | flag | 5 features | PSI above 0.25 across the window | report → Stability |
-| 6 | 10-27 | person (DS) | Feature Checks | exclude | the 2 flagged in #4 | Set after the offer, so not known at scoring time | #4; report → Leakage |
-| 7 | 10-27 | person (DS) | Feature Checks | keep_despite_flag | the 5 flagged in #5 | Digital adoption trend; monitoring watches it | #5; report → Stability |
-| 8 | 10-28 | stage | Training | run `r1` | input = config + #1–7 | — | model results report (Evaluation) |
+| 1 | 10-27 | stage `feature_checks` | Feature Checks | flag `quality.all_null` | 1 feature | Every value null | report → Quality |
+| 2 | 10-27 | stage `feature_checks` | Feature Checks | flag `quality.near_constant` | 1 feature | 99.9% one value | report → Quality |
+| 3 | 10-27 | stage `feature_checks` | Feature Checks | flag `leakage.too_strong` | 2 features | Concordance 0.97 and 0.88 | report → Leakage |
+| 4 | 10-27 | stage `feature_checks` | Feature Checks | flag `stability.concordance_unstable` | 5 features | Power differs across the window's periods | report → Stability |
+| 5 | 10-27 | stage `feature_checks` | Feature Checks | run | periods: the 6 window periods, the gap 2025-09 and 2025-10, the latest 2026-02 | — | Feature Checks report |
+| 6 | 10-27 | person (DS) | Feature Checks | exclude | the 2 flagged in #3 | Set after the offer, so not known at scoring time | #3; report → Leakage |
+| 7 | 10-27 | person (DS) | Feature Checks | keep, findings `stability.concordance_unstable` | the 5 flagged in #4 | Digital adoption grew after the app relaunch; monitoring watches it | #4; report → Stability |
+| 8 | 10-28 | stage | Training | run `r1` | input = config + #1–7; the 2 flagged in #1–2 held | — | model results report (Evaluation) |
 | 9 | 10-28 | rule `selection.importance` | Training | dropped | 71 features | Below the importance floor | ledger, run `r1` |
 | 10 | 10-28 | person (DS) | Training | set | `training.max_iter` 200 → 300 | AUC still rising at the last trials | model results report (Evaluation), `r1` |
 | 11 | 10-29 | stage | Training | run `r2` | input = config + #1–10 | — | model results report (Evaluation) |
 | 12 | 10-29 | person (DS) | Sign-off | exclude | `nationality` | Not used for product targeting | sign-off view, `r2` |
 | 13 | 10-29 | stage | Training | run `r3` | input = config + #1–12 | — | model results report (Evaluation) |
-| 14 | 10-30 | person (DS) | Sign-off | sign_off | the 61 features of `r3` | Each defensible; flags reviewed | sign-off view, `r3` |
+| 14 | 10-30 | person (DS) | Sign-off | sign_off | the 61 features of `r3` | Each defensible; the 2 held features stay out | sign-off view, `r3` |
 | 15 | 10-30 | person (DS) | register | register | `r3` as version 1 | Candidate for production | model card |
 | 16 | 11-02 | person (DS) | promote | promote | version 1 | Promotion PR approved | registry record |
 
 **Replay, state after each entry.** Each row is exactly what a run started at that point would
-train on.
+train on. Replay writes the open flags' features into `features.held`, so the input hash moves with them and
+Training holds them out ([feature checks](feature_checks.md)). The
+two features flagged in #1–2 are never decided: they stay held, which the sign-off view and the
+model card list, and `register` needs no entry for them (D-134).
 
-| After | Excluded | Kept despite a flag | Open flags | `max_iter` | Input hash |
+| After | Excluded | Kept | Held (open flags) | `max_iter` | Input hash |
 |---|---|---|---|---|---|
 | config only | — | — | — | 200 | `h0` |
-| #3 | 3 (#1 lineage, #2–3 quality) | — | — | 200 | `h3` |
-| #5 | 3 | — | 7 (#4 leakage 2, #5 stability 5) | 200 | `h5` |
-| #6 | 5 (+2 leaks) | — | 5 | 200 | `h6` |
-| #7 → run `r1` | 5 | 5 | 0 | 200 | `h7` |
+| #5 | — | — | 9 (#1–2 quality 2, #3 leakage 2, #4 stability 5) | 200 | `h5` |
+| #6 | 2 (the leaks) | — | 7 | 200 | `h6` |
+| #7 → run `r1` | 2 | 5 | 2 (#1–2) | 200 | `h7` |
 | #9 | unchanged: a run output, not an input | | | | `h7` |
-| #10 → run `r2` | 5 | 5 | 0 | 300 | `h10` |
-| #12 → run `r3` | 6 (+`nationality`) | 5 | 0 | 300 | `h12` |
+| #10 → run `r2` | 2 | 5 | 2 | 300 | `h10` |
+| #12 → run `r3` | 3 (+`nationality`) | 5 | 2 | 300 | `h12` |
 | #14–16 | unchanged: the sign-off, register and promote are the trail | | | | `h12` |
 
 `resolve_config(cfg, entity, env, upto=12)` gives the state run `r3` trained on, each value pointing
@@ -578,40 +656,42 @@ at the entry that set it:
 # resolved: cc_acquisition.yml + entries 1–12 (input hash h12)
 features:
   excluded:
-    - cc_flag                                  # 1, rule target_lineage
-    - legacy_risk_grade_trap_all_null          # 2, rule quality.all_null
-    - paper_statement_flag_trap_near_constant  # 3, rule quality.near_constant
     - cc_preapproval_score_trap_leak           # 6, person: set after the offer
     - cc_campaign_response_score_trap_leak     # 6
     - nationality                              # 12, person: not used for targeting
-  kept_despite_flags:
+  kept:                                        # 7, person
     - login_digital_mobile_cnt                 # 7, person: digital adoption trend
     - login_digital_mobile_cnt_0_2_months_avg  # 7 (and three more rollups)
+  held:                                        # written by replay from the open flags (D-134)
+    - legacy_risk_grade_trap_all_null   # 1, stage: every value null
+    - paper_statement_flag_trap_near_constant   # 2, stage: 99.9% one value
 training:
   max_iter: 300                                # 10, person: AUC still rising
 ```
 
 ### Decision points and the automation levels (D-132)
 "Rule" = decided by a rule in the config, "person" = a human decision. `LOGGABLE_SETTINGS` works
-from the same list. The two levels differ at four points only (D-132); the numbers (N, the
-budgets) are reversible defaults, set as each stage is built.
+from the same list. The two levels differ only where the table's two columns differ (D-132); the
+numbers (N, the budgets) are reversible defaults, set as each stage is built.
 
 | Decision point | `autonomous` | `assisted` |
 |---|---|---|
 | Target spec; eligibility, split, sampling, collect budget | the config (person); rules apply it | same |
 | Null targets at the panel edge; degenerate target | rule | rule |
 | Run EDA and Feature Checks before training (D-031) | automatically, default content | the person runs them and reads the reports |
-| Key features in EDA | rule: top-N (N = 10) | rule: top-N (N = 20) plus the person's list |
-| Resolving Feature Checks' flags | not awaited: open flags go to the sign-off view and the model card | the stage ends in a flag review; keep / exclude entries before training |
+| Key features in EDA | rule: top-N (N = 10, a correlated candidate skipped) plus the person's list | same |
+| Resolving Feature Checks' flags | open flags hold their features out of training; a person reviews them at the sign-off (D-134) | open flags hold their features out of training; the stage ends in the flag review, `keep` / `exclude` entries before training |
 | Training budgets (`max_iter`, seeds), calibration | smaller level defaults | larger level defaults; a person may `set` through the log |
 | Automated selection drops; search result; gates; monitoring flags | rule | rule |
 | Feature sign-off; register; promote; retrain / retire / roll back; a level move | person, always | person, always |
 | deploy | the change-request process | same |
 | Which version scores | production, or a pin in the config | same |
 
-Top-N is the N highest candidates in EDA's univariate ranking (binary: direction-agnostic AUC
-against the target, on the window's eligible rows, D-030), plus the features the person lists:
-EDA's key features, each with a deep dive ([eda](eda.md)). A move between levels is a config edit
+Top-N walks down EDA's ranking on the snapshot (the concordance, or the best-order concordance for
+a feature marked `non_monotone`, D-030, D-135), skipping a candidate associated above
+`eda.key_features.max_correlation` with a key feature already chosen, plus the features the person
+lists in `eda.key_features.include`: EDA's key features, each with a deep dive ([eda](eda.md)).
+A move between levels is a config edit
 before the config freezes and a `set` on `automation_level` in the audit log after it, which
 reruns every stage from EDA (D-132); at replay the move re-fills exactly the fields the level
 filled at load (recorded as `housekeeping.level_filled`), and explicit values stay, including a
@@ -635,9 +715,9 @@ regression no longer shares a digest.
 | Identity | Covers | Excludes | Changes when |
 |---|---|---|---|
 | config hash | the use-case definition: every section after level resolution | the housekeeping block; the environment file (tables, paths, Spark, theme; D-130); the audit log's entries | the config file changes, which after Target Factory means a new config; decisions in the log leave it unchanged |
-| data-definition hash | `task`, entity, sources, eligibility steps, target spec, the `time` part `period`, `observation_window`, `target_window`, candidates | the validation period (in the config; EDA never reads it, Feature Checks only to leave it out); the inference period (a run argument); the stage sections | the population, the target, the unit of analysis, the window or the candidates change. It keys the EDA and Feature Checks artifacts training needs (D-031) |
+| data-definition hash | `task`, entity, sources, eligibility steps, target spec, the `time` part `period`, `observation_window`, `target_window`, candidates | the validation period (in the config; EDA and Feature Checks read it only to leave it out of the compared periods, and a `set` to a compared period is refused); `features.kinds` (how a column is read, not which); the inference period (a run argument); the stage sections | the population, the target, the unit of analysis, the window or the candidates change. It keys the folder `<use_case>/04_feature/<ddh>/` under the entity's root: the audit log and the EDA and Feature Checks artifacts training needs (D-031, D-136) |
 | target-spec hash | `task`, the target spec, the keys, the target window, the entity's target source: what one label column depends on | everything else | the label's meaning changes (the same upstream column read as binary and as regression is two labels); it keys each use case in the model input's sidecar (D-131) |
-| resolved-input hash | the config plus entries 1–n, resolved (the run's one input) | the housekeeping block; the environment file; trail entries, which change nothing | every entry that changes the input: `exclude`, `include`, `keep_despite_flag`, `set`, `revert` |
+| resolved-input hash | the config plus entries 1–n, resolved (the run's one input) | the housekeeping block; the environment file; the trail entries, which change nothing (`flag` entries are not trail: the hash sees `features.held`) | every entry that changes the input: `exclude`, `include`, `keep`, `set`, `revert`, and `flag` through `features.held` |
 | `run_id` | resolved-input hash + entity + timestamp | — | every training run of one instance |
 | `recipe_hash` | resolved config + final features + hyperparameters + encoder levels + calibration spec | the fitted numbers | the recipe changes; a retrain in production keeps it (D-052) |
 | `model_hash` | the bundle's per-part hashes | — | any part changes, a retrain included (D-094) |
@@ -652,7 +732,8 @@ A worked example, one use case on two entities:
    the data-definition hash `d_A`.
 2. Training on entity A finds `d_A`'s artifacts, replays the entries so far into the resolved input
    `i1`, and runs with `run_id = i1 + A + <timestamp>`. The same config on entity B needs its own
-   EDA and checks (`d_B`: the entity is part of the hash), its own log and its own `run_id`.
+   EDA and checks (`d_B`: the entity is part of the hash), its own log and its own `run_id`;
+   under one laptop root the two sit side by side as `<use_case>/04_feature/d_A/` and `…/d_B/`.
 3. The DS records a human `exclude` for one feature: an entry in the audit log, not a config edit.
    The config hash stays `c1` and the candidates are unchanged, so `d_A` stays and no EDA rerun is
    needed. The resolved-input hash becomes `i2`, and training reruns with a new
@@ -681,7 +762,8 @@ were its best ideas. They now become candidates + decisions + the feature ledger
 time checks.
 
 ## Interface
-Built in Stage 1's major step 1 (2026-10-26; under the SDS's review). Package:
+Built in Stage 1's major step 1 (2026-10-26; under the SDS's review); the items marked "Stage 2
+step 1" change in Stage 2's first step, in place (no schema or log bump, D-136). Package:
 `core_modelling/config/` (`schema.py`, `levels.py`, `migrations.py`, `identities.py`,
 `replay.py` (the entry model, the operations, the replay), `audit_log.py` (storage and the public
 functions)); the CLI command `decide` in `core_modelling/__main__.py`.
@@ -695,8 +777,14 @@ functions)); the CLI command `decide` in `core_modelling/__main__.py`.
   `target` has `column` (any source column name, `target` included) with an optional `rule`
   (its name is checked against the task's spec
   when the target is built) and an optional `lineage`, `sampling` with its parameters, `metric`
-  in FLAML's names when set (T9), `test_share` in (0, 1).
-- `LEVEL_DEFAULTS: dict[str, dict[str, dict]]` (path → {autonomous, assisted}), `MIGRATIONS:
+  in FLAML's names when set (T9), `test_share` in (0, 1). Stage 2 step 1: `time.validation_period`
+  may be null (the `v` rules then skip); `eda.snapshot` is `last` or a period inside the window;
+  `feature_checks` is a mapping of five typed step models with a default for every parameter, so an
+  unknown parameter or step fails loud; `features.kinds` values are `numeric` or `categorical`;
+  `eda.chart_sample_share`, `feature_checks.steps` and the `eligibility_constant` step of the
+  Stage 1 schema go.
+- `LEVEL_DEFAULTS: dict[str, dict[str, dict]]` (path → {autonomous, assisted}; Stage 2 step 1
+  removes `eda.key_features.top_n`, now a plain default of 10), `MIGRATIONS:
   dict[int, Callable[[dict], dict]]` (empty at `schema_version: 1`; a version above the current
   one fails loud).
 - The hashes (`identities.py`): `config_hash(cfg)`, `data_definition_hash(cfg, entity)`,
@@ -705,8 +793,10 @@ functions)); the CLI command `decide` in `core_modelling/__main__.py`.
   paths and `run_id`. The config hash excludes `housekeeping` and the two replay-written lists;
   the resolved-input hash excludes `housekeeping` only.
 - The audit log (public, D-024): `record_decision(config_path, entity, *, exclude=None,
-  include=None, keep_despite_flag=None, set=None, revert_to=None, reason, evidence=(),
-  stage=None, env_path=None) -> Entry` (exactly one of the five operations; the writer is the
+  include=None, keep=None, findings=None, set=None, revert_to=None, reason, evidence=(),
+  stage=None, env_path=None) -> Entry` (Stage 2 step 1: `keep` replaces the Stage 1
+  `keep_despite_flag`, and `findings` goes with `keep` only, defaulting to every flag open on
+  those features; the replayed list becomes `features.kept`) (exactly one of the five operations; the writer is the
   current user id; rule and stage entries get their own writers with their stages; a feature op
   checks its names against the saved model input's candidate list when the config names one and
   it is saved, else against the candidate patterns, saying so; `revert_to` writes a `revert`
@@ -715,9 +805,9 @@ functions)); the CLI command `decide` in `core_modelling/__main__.py`.
   UseCaseConfig` reads a saved resolved config back as is (no level defaults, its replayed lists
   and housekeeping kept), which `load_config` refuses, since a config file carries intent only; `resolve_config(cfg, entity, env, upto=None, save_to=None) ->
   UseCaseConfig`; `show_decisions(cfg, entity, env) -> pd.DataFrame`; the CLI command `decide`
-  (`--revert-to N` writes a revert).
-  Entries live at `04_feature/<use_case>/<entity>/<data_definition_hash>/decisions/<seq>.json`
-  ([environment](environment.md)), `seq` zero-padded to four digits, written create-if-absent with
+  (`--revert-to N` writes a revert; Stage 2 step 1: `--keep … --findings …`).
+  Entries live at `<roots.data>/<use_case>/04_feature/<ddh>/decisions/<seq>.json` (Stage 2 step 1,
+  D-136; [environment](environment.md)), `seq` zero-padded to four digits, written create-if-absent with
   a retry on a clash; an entry under another data definition, a gap in the numbering, an unknown
   operation or another `log_schema_version` fails loud. A `set` may write `null` (e.g. sampling
   off). `resolve_config` fills the housekeeping block (framework version, time, entity, the three
@@ -726,15 +816,13 @@ functions)); the CLI command `decide` in `core_modelling/__main__.py`.
   the entries replayed (one line per revert: `# entry 14 reverted to the state after #8`) and
   the entry behind each changed value. The rule and stage entries
   (`flag`, `dropped`, `run`, `sign_off`, `register`, `promote`) get their writers with their
-  stages; replay already accepts them.
+  stages; replay already accepts them. Stage 2 step 1: a `flag` entry carries `finding` and may
+  have an empty feature set (no other feature operation may); a Feature Checks `run` entry carries
+  `periods`; `time.validation_period` is refused when any run entry lists the period.
 
 ## Open questions
 - `training.calibration.method` defaults to `platt` for every task; regression needs its own
   default (likely `none`) through the per-task spec, decided when Training is built (M2.3).
-- Feature Checks (M2.2): how a rerun with a changed threshold supersedes the step's earlier
-  `exclude` entry (a rule-written `include`, or a step's latest outcome replacing its earlier
-  one), and whether a person may overrule a quality rule for one feature (a rare flag that is
-  99.9% zeros) without changing the threshold for all.
 - The decision audit log: whether a person entry that cites a superseded rule entry blocks
   register until a person confirms it (today it is only flagged at replay).
 - The log folder is keyed by the short data-definition hash, so a change of the hash recipe

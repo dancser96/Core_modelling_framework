@@ -60,15 +60,20 @@ is refused (T5). Credentials references, if any, also live here and never in the
    `write_text`, `put_file`, `fetch_dir_to_local`): M2.4, with the registered and production
    roots.
 4. Path construction from the environment file's roots, by string joining, never with `pathlib`
-   (T2). The local layout under `roots.data` (the layers of `data/README.md`):
-   - `04_feature/<use_case>/<entity>/<data_definition_hash>/`: the decision audit log under
-     `decisions/` (Stage 1) and, from M2.2, the EDA and Feature Checks artifacts;
+   (T2). `roots.data` is one entity's area: inside the bank one environment file serves one
+   entity and the root names the entity's area; on the laptop one file may serve several
+   entities under one root, which the data-definition hash keeps apart (D-136). The local
+   layout under it is root → use case → layer, with no entity segment (the layers of
+   `data/README.md`):
+   - `<use_case>/04_feature/<data_definition_hash>/`: the decision audit log under `decisions/`
+     (Stage 1) and, from M2.2, `eda/`, `feature_checks/`, `ledger.parquet` and `_ledger.json`;
    - `05_model_input`: where the environment file's source entry for `data.model_input` points
      (D-131), e.g. `05_model_input/<use_case>/<entity>`;
-   - `06_models/<use_case>/<entity>/<run_id>/`: local-tier runs (M2.3).
+   - `<use_case>/06_models/<run_id>/`: local-tier runs (M2.3); `<use_case>/07_model_output/`
+     (M2.4).
 
-   The registered and production roots are `null` until M2.4; the bank-side layout per entity ×
-   domain is OD-06.
+   The registered and production roots are `null` until M2.4; they follow the same shape
+   (OD-06 keeps the permission question).
 5. Source resolution per entity: `entities.<e>.sources` in the use-case config names logical
    sources, and `sources.<entity>.<name>` in the environment file maps each to a parquet path or a
    table. The example maps three for `entity_a`: `retail_mart` (the governing spine),
@@ -112,11 +117,13 @@ functions and their YAML source mapping.
   loud naming both.
 - `get_spark_session(env: EnvironmentConfig) -> SparkSession` (public, D-024): req. 1.
 - `read_source(spark, env, entity: str, name: str) -> DataFrame`: parquet by path or a table.
-- `data_path(env, layer: str, *parts: str) -> str`; `audit_log_dir(env, use_case, entity,
-  data_definition_hash) -> str`.
+- `data_path(env, use_case: str, layer: str, *parts: str) -> str`; `audit_log_dir(env, cfg,
+  entity: str) -> str` (the entity enters only through the data-definition hash);
+  `stage_dir(env, cfg, entity: str, stage: str) -> str` (the stage's folder under
+  `04_feature/<ddh>/`; Stage 2 step 1).
 - `tests/conftest.py`: the `spark` fixture, one real session per test run through
   `get_spark_session` (T15), and `unit_env`, an environment on the written `unit` preset.
 
 ## Open questions
-- The bank-side folder layout for the registered/production tiers per entity × domain (OD-06).
-  Whether storage permissions differ per entity is the platform's (D-079).
+- Whether storage permissions differ per entity or domain in the registered/production tiers
+  (OD-06; the platform's, D-079).

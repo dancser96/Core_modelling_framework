@@ -138,9 +138,9 @@ decides.
 - Retail scale is ~2M rows per period × ~50 columns per model (ceiling ~5M × 400).
   Single-node pandas and FLAML are fine **if** columns and rows are pruned in Spark first. With
   multi-period observation windows this becomes e.g. ~24M unit-periods for 12 periods, beyond the row
-  budget. Sampling happens only when the config declares it (D-117); when the rows exceed the
-  budget with no sampling declared, the dataset step fails loud, naming the row count, the budget
-  and the two sampling options (`docs/components/dataset.md`).
+  budget. Sampling happens only when the config declares it (D-117); when the estimate exceeds the
+  budget, the collect prints a callout naming the rows, the estimate, the budget and the two
+  sampling options, and proceeds (D-133; `docs/components/dataset.md`).
 - `toPandas()` of the full width is the main OOM risk. Downsampling after collection won't prevent
   an OOM, so declared sampling runs in Spark before collecting (whichever sampling option,
   `docs/components/dataset.md`).

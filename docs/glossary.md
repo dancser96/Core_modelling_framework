@@ -87,11 +87,23 @@ Whether this glossary is also published to the wider unit is part of the open do
   `define` names a boolean condition that the entries after it, in either list, reuse by name
   and is dropped before the candidates are resolved; a `filter` keeps the rows where its
   condition is true (a null counts as false), with a required reason, and logs rows in → out.
-- **Frames:** what the dataset hands a stage: `Frames(window, train, test, validation, log,
-  meta)`. The window frame (every unit-period in the observation window after the analysis
-  filters, the modelling tags as columns, every client, labels included) serves EDA; its
-  eligible rows serve Feature Checks; train / test / validation serve Training on
-  (D-030; `docs/components/dataset.md`).
+- **Frames:** what the dataset hands a stage: `Frames(snapshot, rows, train, test, validation,
+  log, meta)`. `snapshot` is the one period EDA collects (every unit of it after the analysis
+  filters, the modelling tags as columns, labels included); `rows` is the Spark frame of the
+  compared periods' eligible rows, never collected; train / test / validation serve Training on
+  (D-030, D-135; `docs/components/dataset.md`).
+- **Snapshot:** `eda.snapshot`, the one period EDA collects and analyses, default the window's
+  last. Every snapshot statistic is that period's (D-135).
+- **Compared periods:** the window periods, the gap periods and the latest period the data holds,
+  never the validation period. Recorded in the Feature Checks run entry; outside the window the
+  comparison is label-free (D-088, D-135).
+- **Counts table / cells:** the one table of counts per feature, period, bin and target bin that
+  EDA builds in Spark and that every window statistic is read from; a cell is one row of it
+  (D-135; `docs/components/eda.md`).
+- **Bins:** `eda.bins`, the quantile bins a numeric is cut into for the counts table, default 100;
+  a **mass point** (a value holding at least `1 / bins` of the rows, such as 0) is its own
+  singleton bin and the quantile edges are taken over the remaining values (T25); `null` turns
+  binning off (D-135).
 - **Model input:** one saved table per name (`data.model_input`), written by `save_model_input`
   from the Target Factory notebook or `run a.yml b.yml --stages target_factory` for one or
   several use cases that share the entity's feature sources, keys and period: the sources
@@ -140,12 +152,23 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Features (model inputs):** what the model finally uses. See the resolution rule in
   `docs/components/feature_ledger.md`.
 - **`__other__`:** the reserved categorical level that rare and unseen levels map to, counted
-  wherever it is used (D-037).
+  wherever it is used (D-037). It is also the counts table's pooled bin for rare levels, and
+  `__new__` the bin for a level unseen in the window (D-135).
 - **Target lineage:** the columns a target was built from. They are excluded automatically.
-- **Flag:** a check's finding. A flag never drops a feature by itself.
-- **Human decision:** either *exclude* or *keep* (despite a flag or against automated pruning),
-  in groups with one note per group, recorded as entries in the decision audit log (D-125;
-  `docs/components/config.md`).
+- **Flag:** a check's finding of the kind that holds a feature out of training until a person
+  keeps or excludes it; a flag never removes a feature from the candidates (D-134).
+- **Note:** a check's finding of the other kind: information only; never affects training
+  (D-134).
+- **Finding:** what a Feature Checks step reports about a feature: `<step>.<finding>`, a flag or a
+  note, with its value and threshold (`docs/components/feature_checks.md`).
+- **Held:** a candidate with an open flag: out of training at both automation levels until a
+  person records `keep` or `exclude`; for Training it acts as an excluded feature without a
+  final decision; visible in the ledger, the reports, the sign-off view and the model card
+  (D-134).
+- **Human decision:** `exclude`, `include` or `keep`, in groups with one note per group, recorded
+  as entries in the decision audit log (D-125; `docs/components/config.md`). `keep` settles the
+  flags it names (`findings`) and protects the features from automated pruning; `include`
+  reverses an exclude (D-134).
 - **Human gate:** the feature sign-off's place in the flow: one gate, after training and before
   register, at every automation level (D-031). At the `assisted` level Feature Checks ends in a
   review of its flags, whose keep / exclude decisions go into the audit log; that review is not the
@@ -162,10 +185,18 @@ Whether this glossary is also published to the wider unit is part of the open do
   checks (D-031, D-125).
 - **Automated selection:** relevance pruning inside Training, on the train split only; its
   importance pruning reuses the calibration step's client-grouped out-of-fold folds (D-106).
-- **Feature ledger:** the table recording every candidate's path through EDA, checks, decisions,
-  selection and use in the model.
-- **Key features:** the top-N features by univariate ranking, plus the ones the user lists. EDA
-  deep-dives them.
+- **Feature ledger:** one wide row per candidate per data definition, recording its path through
+  EDA, checks, decisions, selection and use in the model. It stores the statistics and the flags;
+  `held / kept / excluded / verdict` are derived from the audit log at render time
+  (`docs/components/feature_ledger.md`, D-134).
+- **Key features:** the top N = 10 by the ranking value (the concordance, or the best-order
+  concordance for a `non_monotone` feature) at both levels, skipping a
+  candidate correlated above `max_correlation` with one already chosen, plus the person's
+  `include` list. EDA deep-dives them (D-135).
+- **Kinds:** `numeric`, `categorical` or `unsupported`, decided from the Spark schema and
+  overridable by `features.kinds` (`docs/components/config.md`).
+- **Unsupported column:** a date, timestamp, array, map, struct or binary column: automatically
+  excluded like lineage, never a finding.
 - **Feature signature:** a hash of the final feature list.
 
 ## Config and guidance
@@ -200,7 +231,9 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Decision audit log:** the append-only record of every decision taken after Target Factory, by
   a person or a rule; the config itself never changes (D-125). Replaying the config plus entries
   1–n gives the **resolved config**, a run's one input; it can be saved as one file. The feature
-  ledger is its per-feature part (`docs/components/config.md`).
+  ledger is its per-feature part (`docs/components/config.md`). Feature Checks writes stage
+  entries: a `flag` entry per finding (with its `finding` name) and a `run` entry with the
+  `periods` it compared; `keep` is the person's entry that settles flags (D-134).
 - **Revert:** the audit-log operation that goes back to the state after an earlier entry
   (`to_seq`; 0 is the config as written): replay restarts from there and the later entries
   continue; the undone entries stay in the log as the trail, and `upto` still reproduces every
@@ -212,7 +245,8 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Decision (business decision):** how the scores will be used (e.g. top-N list, threshold, ranking,
   probability). It drives the optimisation metric, the gates and what reports emphasise.
 - **Choices block:** the opening section of every report: what was chosen, the alternatives, and
-  rule-based warnings.
+  rule-based warnings. It is one table (label, value, alternatives, when to move) built from the
+  resolved config (`docs/components/reporting.md`).
 
 ## Stages and modelling
 
@@ -220,9 +254,10 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Notebook mode / config mode:** Target Factory's two ways of running one spec: build, inspect
   and save the model input that later stages read, or hand the result to the next stage in memory
   with the spec's hash recorded (`docs/components/target_factory.md`, D-131).
-- **EDA**, **Feature Checks**, **Training**, **Evaluation**, **Inference**, **Monitoring** (earlier
-  name: Tracking): the stages, in run order with the lifecycle steps between Evaluation and
-  Inference.
+- **EDA:** computes: the snapshot in pandas, the window as Spark counts (D-135).
+- **Feature Checks:** judges: it reads EDA's artifacts only and collects nothing (D-135).
+- **Training**, **Evaluation**, **Inference**, **Monitoring** (earlier name: Tracking): the other
+  stages, in run order with the lifecycle steps between Evaluation and Inference.
 - **Due-diligence gate:** Training refuses to run unless EDA and Feature Checks artifacts exist for
   the same data-definition hash; the `autonomous` level runs them first (`CLAUDE.md` §4.13, D-031).
 - **Modelling path:** `automl` (FLAML, the only path in Phase 2) or `predefined` (a named model
@@ -333,6 +368,24 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Stratified metrics:** every metric overall and per level of the configured variables.
 - **Baselines:** population base rate (business reporting); previous model and historic predicted
   rate (internal metrics).
+- **Concordance:** the one ranking statistic on one scale for both tasks: Somers' D of the feature
+  with respect to the target, rescaled to [0.5, 1] after the direction is taken out. For a 0/1
+  target it is exactly the univariate AUC (the share of positive–negative pairs the feature orders
+  correctly), for an amount the share of concordant pairs. It is computed from the counts table's
+  cells, so on 100 quantile bins unless `eda.bins` is null; the binary name is the univariate AUC
+  (D-135; `docs/components/eda.md`).
+- **Best-order concordance:** `concordance_best_order`: the bins ordered by their shrunk target
+  rate instead of by value, then the same statistic: what a ten-leaf tree on that one feature
+  would reach. `non_monotone` when it beats the plain value by ≥ 0.03; the ranking and Training's
+  floor use it only for features marked `non_monotone` (D-135).
+- **Null concordance:** the concordance of the null indicator against the target:
+  `nulls_informative` from 0.55, `missingness_leak` from 0.70.
+- **PSI:** the population stability index, with one definition: a null bin and the Lewis bands
+  0.10 / 0.25 as labels, not tests. Feature Checks' two PSI notes compare named periods (D-135).
+- **Shrunk level encoding:** a categorical's levels scored by their target rate shrunk towards the
+  base rate, fitted on the pooled window (D-135). Binary: `k_rows = strata.min_events /
+  base_rate`, so the prior weighs `min_events` pseudo-events; regression: `k_rows =
+  strata.min_events` rows.
 
 ## Process
 

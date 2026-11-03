@@ -107,9 +107,9 @@ which model takes which piece, the brief template, integration); in short:
 - keep on the main thread only what needs the whole picture or must happen in order;
 - run at most one memory-heavy job at a time (the dev machine's memory is the limit);
 - on a Fable session, start every major task with a routing plan shown with the plan: each piece
-  with its agent, model and effort. Fable keeps design, integration and the ML-correctness
-  audit; Opus, Sonnet and Haiku take the other subagent work, so the tokens don't all go to
-  Fable (D-072 (l)).
+  with its agent, model and effort. Fable keeps design, integration, the ML-correctness audit
+  and the architecturally hardest code pieces (a third to half of the tokens); Opus, Sonnet and
+  Haiku take the rest, at `xhigh` effort where a wrong answer is costly (D-072 (l)).
 
 0. **Major steps start wide.** A major step is a new component, config section, public function or
    dependency, or anything the user calls a significant redesign or extension. Before the plan:
@@ -224,8 +224,9 @@ The 0.x pre-release promises nothing; shared formats freeze from release 1.0's f
    except the validation period (D-030).
 5. **Checks wrap the engine.** The modelling engine sees only the vetted feature set; validation runs
    outside the engine.
-6. **Leakage screens flag, never auto-drop.** Columns used to build the target are excluded
-   automatically (lineage), not by memory.
+6. **Screens flag; a flag never removes a feature from the candidates.** It holds the feature out
+   of training, at both automation levels, until a person keeps or excludes it (D-134). Columns
+   used to build the target are excluded automatically (lineage), not by memory.
 7. **Downsampling is train-only.** Whenever sampling happened, a prior-shift offset is applied,
    computed from the true rate and the effective (weighted) training rate, so it is zero when sampling
    didn't change the class balance. A separate calibration step (e.g. Platt or isotonic) is fitted on

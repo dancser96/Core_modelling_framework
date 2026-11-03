@@ -14,7 +14,10 @@ package functions and a way to learn how things work under the hood (D-039,
 - Every notebook has the same shape:
   1. **Guide cell:** what this stage is for, what to look at, which decisions to record in the
      decision audit log (`record_decision`, D-125), and links to the docs. Written as
-     instructions, not commentary.
+     instructions, not commentary. The guide text is the notebook's main deliverable (the SDS,
+     2026-11-03): before every step a short markdown cell says what the step does, what to look
+     at in its output, how to read each number, which decision to take and how to record it, at
+     both automation levels; concise, but nothing a first-time user needs is left out.
   2. **Setup cell:** environment adapter (compat shim + Spark) and config load.
   3. **One call per step:** `run_<stage>(cfg)` or another Public API function, each preceded by a
      short markdown cell saying what to check in its output.
@@ -31,9 +34,16 @@ Anything worth keeping moves into the config, an audit-log entry or the package.
 
 Notebooks: `00_synthetic_data` (exists; dev only and temporary: a visual tour of the synthetic data,
 with its checks in an appendix, see `docs/components/test_harness.md`; not a guided stage notebook).
-`01_target_factory` (built with Stage 1: the targets, the model input saved, the window
-frame). Planned, created as their stages are built: `02_eda`, `03_feature_checks`,
-`04_training`, `05_evaluation`, `06_register_promote`, `07_inference`, `08_monitoring`. No notebook
-deploys: the change-request process runs `deploy` (D-033). The feature sign-off is recorded after
-training and before register, at every automation level; at the `assisted` level `03_feature_checks`
-ends in a review of the flags, whose keep / exclude decisions go into the audit log (D-031).
+`01_target_factory` (built with Stage 1: the targets, the model input saved, the frames).
+`02_eda` and `03_feature_checks` are built with Stage 2. In `02_eda` the guide cell explains
+concordance in plain words, then `run_eda`, the views and `pivot_target`. In `03_feature_checks`:
+`run_feature_checks`, the findings, and the proposed decisions with the `record_decision` call
+text, using a `CONFIG` placeholder the setup cell defines (no commented-out cell). Planned,
+created as their stages are built: `04_training`, `05_evaluation`, `06_register_promote`,
+`07_inference`, `08_monitoring`. No notebook deploys: the change-request process runs `deploy`
+(D-033). The feature sign-off is recorded after training and before register, at every automation
+level. At the `assisted` level the review's `keep` / `exclude` entries precede training; at
+`autonomous` the held features (open flags) stay out of training until the sign-off (D-031,
+D-134); notebook 03's guide says in words that, for Training, a held feature acts as an excluded
+feature without a final decision. The notebooks ship inside the wheel, and `python -m core_modelling init <folder>` copies
+them out (M2.4, D-137).

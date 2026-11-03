@@ -2,7 +2,7 @@
 **Status:** legacy-only · **Legacy:** `src/run.py`, `src/dataset.py`, `src/calibration.py`, `src/contract.py`
 **Related:** [dataset](dataset.md) · [feature ledger](feature_ledger.md) · [evaluation](evaluation.md) ·
 [config](config.md) · [lifecycle](lifecycle.md) · [monitoring](monitoring.md) (drift reference) · D-020, D-030, D-031, D-032, D-033,
-D-037, D-049, D-050, D-051, D-052, D-054, D-082, D-083, D-088, D-094, D-100, D-106, D-117 · OD-27
+D-037, D-049, D-050, D-051, D-052, D-054, D-082, D-083, D-088, D-094, D-100, D-106, D-117, D-134, D-135 · OD-27
 
 ## Purpose
 Fit a model on the train split of the observation window, using only vetted features, through the
@@ -12,7 +12,7 @@ model results report comes from [evaluation](evaluation.md) (D-036).
 
 ## Phase 2 requirements
 1. **Due-diligence gate:** refuse to train unless EDA and Feature Checks artifacts exist for the same
-   data-definition hash. The `autonomous` level runs them first (D-031). After training, a person
+   data-definition hash and EDA's settings digest matches the current resolved config (A22). The `autonomous` level runs them first (D-031). After training, a person
    signs off the model's final feature list before register, in one gate at every level (D-031,
    [feature checks](feature_checks.md)).
 2. **One small model interface:** the function triple per family (`fit`, `predict`, `describe`,
@@ -56,7 +56,18 @@ model results report comes from [evaluation](evaluation.md) (D-036).
    out-of-fold folds (D-106). Pruning comes first; then the final features are fixed and
    calibration's out-of-fold predictions are made on the same folds with them.
    People's `keep` decisions (audit-log entries the run replays, never config content, D-125) are
-   respected, and every drop is recorded in the ledger.
+   respected, and every drop is recorded in the ledger. Training's feature set is `candidates −
+   lineage − unsupported − excluded − held`: an open flag holds a feature out at both levels
+   (D-134, owned by [feature checks](feature_checks.md)); in effect a held feature is, for
+   Training, an excluded feature without a final decision, and the run log says so in those
+   words. The set is read through `resolve_features(ledger,
+   resolved)` (it reads `features.held` and `features.excluded` from the resolved config). The
+   floor uses the plain `concordance`, or `concordance_best_order` for a feature marked
+   `non_monotone` (the same rule as EDA's ranking), recomputed on the train split (D-030, D-135).
+   The ledger's `cluster` column is label-free but computed on the snapshot's rows, test clients
+   included, so the "top member per cluster" rule ranks inside a cluster on the train split only
+   (D-030). The per-run part of the ledger is a separate file under
+   `<use_case>/06_models/<run_id>/`, joined on `feature` ([feature ledger](feature_ledger.md)).
 6. **Categorical handling by the framework:**
    - levels are frozen from train;
    - rare levels (below a minimum count) → `__other__`; missing → `__missing__`;
@@ -107,7 +118,8 @@ model results report comes from [evaluation](evaluation.md) (D-036).
     (D-052, D-088). Its parameters differ only because production data differs from sandpit data.
     Before it scores, it passes a check against its evaluated parent: label-free agreement on the
     inference period; its own test-split AUC and calibration (mean predicted against observed rate)
-    per window period; per-period rows and positive events against the parent's EDA artifact; each
+    per window period; per-period rows and positive events against the parent's EDA artifact (the
+    population counts in `eda.json`, D-088); each
     within tolerances declared in the config before the run, never on the validation period.
     Failing keeps whatever production model is current and is recorded; at a first deploy the
     deploy fails loud (D-052). Whether production has the data and compute, determinism and what "deployed" records
@@ -128,6 +140,10 @@ interface:
 - an optional two-objective search (in-time metric vs overfitting gap), shown as a **trade-off
   chart**. The user (or a level's rule) picks a point, and the pick is recorded. The chart weighs
   train and test metrics; the validation period never chooses (D-083).
+- nulls: Phase 2's tree families take nulls natively, which the `nulls_informative` advice
+  ("keep them as their own group", [feature checks](feature_checks.md)) relies on; a family
+  that imputes must impute outside the value range with a missing indicator, never the median
+  (N17 of the Stage 2 record; decided when this path is built).
 
 ## Lessons from the crunch
 T9, T14; downsampling, calibration and FLAML-search lessons in `docs/context/lessons.md`.

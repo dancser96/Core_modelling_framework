@@ -1,9 +1,9 @@
 # Dataset: observation window, frames, splits, sampling
-**Status:** built thin (M2.1, 2026-10-27; for the SDS's review with Target Factory) · **Legacy:** `src/io.py` (load + prune in Spark), `src/dataset.py` (labelled frames, downsampling)
+**Status:** built thin (M2.1, 2026-10-27); Stage 2's frames (`snapshot`, `rows`) and the counts passes designed (M2.2, D-135), not built · **Legacy:** `src/io.py` (load + prune in Spark), `src/dataset.py` (labelled frames, downsampling)
 **Related:** [config](config.md) (the `data` and `time` sections) · [environment](environment.md) (sources, the collect budget) ·
 [target factory](target_factory.md) · [training](training.md) · [evaluation](evaluation.md) ·
 [feature checks](feature_checks.md) · [EDA](eda.md) · [test harness](test_harness.md) · D-030, D-049, D-052, D-054,
-D-082, D-083, D-088, D-091, D-098, D-106, D-117, D-129, D-130, D-131, D-133 · OD-17
+D-082, D-083, D-088, D-091, D-098, D-106, D-117, D-129, D-130, D-131, D-133, D-135, D-136 · OD-17
 
 ## Purpose
 Builds the frames every stage works on, from one data definition: the governing spine and the
@@ -11,12 +11,13 @@ other sources joined, eligibility applied, the target attached, the client split
 collected from Spark with a printout of what is about to leave it. Eligibility is two ordered
 lists (D-129): an **analysis filter** drops its rows before EDA; a **modelling filter** keeps
 them for EDA, tagged by the step's name, so EDA can compare the excluded group (e.g. current
-holders) with the modelling population, and drops them before Feature Checks. Two frame shapes
-come from the same definition (D-030): the **window frame** (every unit-period in the observation
-window after the analysis filters, the modelling tags as columns, every client, labels included)
-for EDA, its eligible rows for Feature Checks, and **train / test / validation** (eligible rows
-only) from Training on. The frames can be built in memory on every call or read from the
-saved **model input** that Target Factory's notebook writes, one table for one or several use
+holders) with the modelling population, and leaves them out of every statistic that feeds a
+choice and of the modelling frames. The frames come from the same definition (D-030, D-135): for
+EDA the **snapshot** (one period collected whole: every row after the analysis filters, the
+modelling tags as columns, labels included) and **`rows`** (the Spark frame of the eligible rows
+of the compared periods, never collected, which EDA's counts passes aggregate); **train / test /
+validation** (eligible rows only) from Training on. Feature Checks reads EDA's artifacts and gets
+no frame. The frames can be built in memory on every call or read from the saved **model input** that Target Factory's notebook writes, one table for one or several use
 cases (D-131). The unit of analysis is a **period** (`time.period`: month, week or day; one row
 per unit per period, held as its last day, D-129). Training on a window of periods instead of a
 single one is a Phase 2 big-ticket item (D-030). This doc owns its downstream effects.
@@ -43,9 +44,11 @@ to latest:
 - Features are as-of each observation period; targets look forward `(1, w)` (§4.1).
 - The observation window (`time.observation_window`), `w` (`time.target_window`, in periods, one
   number shared by the target builder and the time checks) and the validation period
-  (`time.validation_period`) are set in the config (D-129). The validation period sits outside
-  the data-definition hash (EDA never reads it; Feature Checks reads it only to leave it out of
-  its comparisons and records the periods it compared). Moving it changes the config hash before
+  (`time.validation_period`) are set in the config (D-129); the validation period may be null in
+  a config that only runs EDA and Feature Checks (Training refuses it, [config](config.md)). The
+  validation period sits outside the data-definition hash: EDA reads it only to leave it out of
+  the compared periods (`Frames.rows`), and Feature Checks records the periods it compared in its
+  stage `run` entry (D-088, D-135). Moving it changes the config hash before
   the config freezes and the resolved-input hash after (an audit-log entry), never the
   data-definition hash. The inference period is a run argument. Changing the validation period
   after the config freezes is an audit-log entry, refused when any Feature Checks run compared
@@ -53,8 +56,8 @@ to latest:
   inference period moves, since inference always runs on the latest period (D-088, D-052).
 - Checked at load: `first ≤ last` and `v ≥ tk + w` by period index; checked when the panel is
   built, by one function (`check_periods_covered`, `sources.py`): the spine has every period
-  from the window's first to `v`, the target source to `v + w` (D-129; [config](config.md)
-  req. 8).
+  from the window's first to `v`, the target source to `v + w`; with a null `v`, the spine to the
+  window's last period and the target source to `tk + w` (D-129; [config](config.md) req. 8).
 - Default window: 6 periods with `w = 3`, in the examples and as level defaults (D-091).
 - Validation is a single period for panel tasks. Series tasks will need rolling validation
   (later).
@@ -65,15 +68,26 @@ to latest:
   - validation month = 14, labels mature by 17;
   - months 18–21 are free to test scoring plus monitoring with matured labels.
 
-## Frames (D-030, D-131)
-`Frames(window, train, test, validation, log, meta)`, built by `build_frames(cfg, entity, env,
-spark, stage)`, which collects only what the stage asks for:
-- `window`: every unit-period in the observation window after the analysis filters, with
-  `target`, the modelling tag columns and `eligible` (every modelling filter passed), for EDA
-  (`stage` `eda`): every client, labels included, so EDA's population and reference-group views
-  use every row and the tags as strata (D-030). For Feature Checks (`stage` `feature_checks`)
-  the same frame's eligible rows only (`eligible = 1`): every eligible client, labels included,
-  no split yet.
+## Frames (D-030, D-131, D-135)
+`Frames(snapshot, rows, train, test, validation, log, meta)`, built by `build_frames(cfg, entity,
+env, spark, stage)` for `stage` `eda`, `training` or `evaluation`, which builds only what the
+stage asks for (Feature Checks is no frame stage: it reads EDA's artifacts only, [feature
+checks](feature_checks.md)):
+- `snapshot` (`eda`): the one period EDA collects, `eda.snapshot` (default `last`, the window's
+  last period; else a window period, checked at load): every row of that period after the
+  analysis filters, with the modelling tag columns, `eligible` (every modelling filter passed)
+  and `target`, every client, labels included (D-030), so EDA's population, reference-group and
+  pairwise views use every row and the tags as strata. Only the supported candidates come along:
+  the lineage and the unsupported columns (date, timestamp and nested types, [EDA](eda.md)) are
+  dropped before the collect.
+- `rows` (`eda`): a Spark frame, never collected, of the **eligible** rows of the **compared
+  periods**: every window period, the gap periods (after the window, before the validation
+  period) and the latest period the data holds (the spine's last, only when it lies after the
+  validation period); never the validation period. It carries the keys, the supported candidates
+  and `target`, which is set to null outside the window: the label is dropped before any
+  aggregation, since the gap periods' target windows overlap the validation period's and no
+  label after the window may inform a choice (D-030). EDA's two counts passes run on it ([below](#counts-passes-d-135)); what they compute
+  and what the statistics mean is [EDA](eda.md)'s.
 - `train` and `test`: the window split by client; `validation`: every eligible unit at `v`, with
   the `split` column so Evaluation can also show test clients only (`stage` `training` /
   `evaluation`). Rows with a null target are dropped from these modelling frames, with the share
@@ -83,16 +97,69 @@ spark, stage)`, which collects only what the stage asks for:
   collect estimate and measured size per frame (D-133); the per-period rows, positive rows and
   positive events (D-082) are Target Factory's summary.
 
+The sizing rule (D-135): the window's statistics are Spark aggregates and only their result
+tables reach pandas, while the snapshot analysis runs on every client in pandas. The Mac's
+100,000-client snapshot (about 0.2 GB in pandas, 0.4 GB at the conversion peak) stands for the
+bank's full retail snapshot.
+
 Whether the panel is read from the model input or built in memory, the frames are the same: the
 saved table holds only the sources joined plus the target columns, and everything the config
 derives from them (eligibility, the candidates, the contract checks, the split) is computed on
-read by the same functions (D-131, the section below).
+read by the same functions (D-131, the section below). The panel runs from the window's first
+period to the spine's last and carries `target` wherever the forward window was complete; `rows`
+keeps the label of the window periods only, by construction (above), not by discipline.
 
-Feature Checks also reads the gap periods and the latest period, label-free, from the model
-input (or the in-memory panel), which runs from the window's first period to the spine's last.
-Those periods carry `target` wherever the forward window was complete, like every other period
-of the panel (an upstream target would too): the reads are label-free by discipline (D-030), not
-because the labels are absent.
+### Counts passes (D-135)
+`dataset/counts.py` holds the Spark side of EDA's counts table: two passes over `Frames.rows`
+that leave Spark only as result tables. EDA calls them and writes the tables; the statistics read
+from them are [EDA](eda.md)'s (its statistics section). The functions (the plan's names):
+- `compared_periods(cfg, panel_periods) -> dict`: the window periods, the gap periods and the
+  latest period, by label, from the config and the periods the panel holds; never the validation
+  period; with a null `validation_period` the window and the latest period only. `rows` is
+  filtered to these periods and EDA records them in `eda.json`.
+- `bin_edges(snapshot, kinds, bins) -> dict`: per numeric candidate, the edges `Bucketizer`
+  applies, taken from the collected snapshot's non-null values through the statistics package's
+  `quantile_edges` (default 100 bins: the mass points, values holding at least `1 / bins` of the
+  rows, as singleton bins, quantile edges over the remaining values; a numeric with at most
+  `eda.bins` distinct values uses its values; `eda.bins: null` makes every distinct value a bin;
+  the rule and why: [EDA](eda.md), T25).
+- `window_levels(rows, categoricals) -> dict`: per categorical, the levels seen in any window
+  period, capped at the 50 most frequent (`LEVEL_CAP = 50`), the rest `__other__`; a level unseen in
+  the window is `__new__`; null is a level.
+- `count_cells(rows, edges, levels, target_bins) -> pd.DataFrame`: pass 1. Every numeric is
+  bucketed by one `pyspark.ml.feature.Bucketizer` over every column (`handleInvalid="keep"`, so
+  null and NaN get their own bucket), every categorical mapped to its level, the target to its
+  target bin (null where the label is dropped or unknown); then `explode(array(struct(feature,
+  bin)))` and `groupBy(feature, period, bin, target_bin).agg(count, sum(target))`, whose partial
+  aggregation keeps the shuffle to cells, not rows.
+- `count_lagged_cells(rows, edges, levels, target_bins) -> pd.DataFrame`: pass 2. Over the rows
+  ordered by client (`Window.partitionBy("unit_id").orderBy("period")`), each feature's value one
+  period back (`F.lag`), binned on the same edges and levels, counted against the current
+  period's target as `lagged = true` cells. The lag is by period index: the previous row counts
+  only when its period index is the current one minus one, otherwise the lagged value is null;
+  the window's first period has no previous period in `rows`, so its lagged cells are null and
+  the lagged concordance pools the window periods that have one (N11).
+- `client_constant_shares(rows, features) -> pd.DataFrame`: in the same client-ordered pass,
+  `min == max` per client and feature over the window periods: `feature, constant_share,
+  clients` (the share of clients with at least two non-null values whose value never changes).
+- `population_counts(panel, cfg) -> pd.DataFrame`: the D-088 counts per compared period (the
+  labelled counts inside the window only) on the
+  full population, before any sample: rows after the analysis filters, eligible rows, eligible
+  rows with a known target, positive rows, positive events (distinct units with a positive
+  label; regression: with a non-zero target), non-event units. EDA puts them in `eda.json`; the
+  trap acceptance test and Training's count check read them there. A row whose target is null
+  (the forward window not matured, or the client gone before it closed) is in the eligible counts
+  and out of every labelled statistic; the gap and latest periods are label-free by construction
+  (N10 of the Stage 2 record; D-131, D-030).
+
+The counts table's columns are `feature, period, lagged, bin, bin_order, is_null, target_bin, n,
+sum_y`, one row per cell. The passes use Spark SQL functions and JVM transformers (`Bucketizer`)
+only, never a pandas UDF: the legacy crunch never ran Python on the executors, so nothing else is
+proven inside the bank (bank parity; the passes' runtime on real sizes is unverified). A test
+asserts that no label outside the window and no validation-period row reaches the passes, and
+that `eda.bins: null` gives the exact values. With `eda.bins: null` the cell count is estimated
+from `approx_count_distinct` per column before the pass, and above `MAX_CELLS = 50_000_000` the
+pass fails loud naming `eda.bins`.
 
 ## Sources and joins (D-129)
 - `entities.<e>.sources.features` is an ordered list; the first source is the **governing spine**
@@ -207,7 +274,7 @@ Its path is local until the M2.4 transport.
   `target` beside a `source_target`) fails at save, not at every later read. A name the
   framework uses is refused where a data scientist would mean the source's column: in
   `data.target.column` or `lineage` a key name (`unit_id`, `period`), in `features.excluded` or
-  `kept_despite_flags` a key or helper name; each message names the `source_<name>` to write.
+  `kept` a key or helper name; each message names the `source_<name>` to write.
 - A reader is refused, naming `save_model_input`, on: no table or
   sidecar; another schema or hash version; other feature sources, keys or period; a use case the
   table lacks; another target-spec hash for its use case; periods that don't cover
@@ -222,6 +289,11 @@ Its path is local until the M2.4 transport.
   name against its candidate list once it is saved ([config](config.md)).
 - No separate targets table: the model input carries the targets. Labels for scored periods
   (M4) build their own.
+- Another use case's label is dropped on read only when that use case shares the model input.
+  Built alone, a backward-looking event flag of another use case ("took a term deposit this
+  period") is an ordinary candidate; a forward-looking column is excluded by the DS's
+  `features.candidates.exclude`, whose template comment asks for every column that looks
+  forward from the period (§4.1; [config](config.md)).
 - Inference reads the **sources**, never the model input, and applies the model's own
   eligibility, both lists, to the inference period (§4.9): it scores the eligible units.
 
@@ -261,19 +333,24 @@ Its path is local until the M2.4 transport.
    CV inside train is grouped by client, as the calibration step's out-of-fold predictions are
    (D-094), and FLAML's trial selection gets the client groups, so no fold mixes a client's rows
    ([training](training.md),
-   D-106). EDA uses every client of the window after the analysis filters and Feature Checks
-   every eligible client, labels included; the split applies from Training on, where fitting,
+   D-106). EDA uses every client of its snapshot after the analysis filters and every eligible
+   client of the compared periods in its counts passes, labels included in the window only, and
+   Feature Checks reads EDA's artifacts; the split applies from Training on, where fitting,
    automated selection, calibration and every choice use train-split clients only (D-030).
 4. Validation is the OOT period, scored by models trained on train only. It never informs
    selection or tuning (§4.4).
-5. **The collect printout** (D-133). Prune columns and rows, and sample, in Spark before
-   collecting. Before a frame leaves Spark the dataset counts its rows exactly, measures bytes per
-   row on a 10,000-row sample (`memory_usage(deep=True)`), doubles the product for the
+5. **The collect printout** (D-133). Prune columns and rows, and sample where the config
+   declares it, in Spark before collecting. Before a frame leaves Spark the dataset counts its
+   rows exactly, measures bytes per row on a 10,000-row sample (`memory_usage(deep=True)`), doubles the product for the
    conversion peak, and prints rows, columns, the estimate and `collect_budget_gb` from the
    environment file, in a notebook and from a function call alike. Above the budget the printout
-   becomes a **callout**: declare sampling (`negative_downsampling` for rare binary targets,
-   `client_sample` for common targets and regression) or raise the budget and the Spark settings
-   (`spark.driver.maxResultSize`, which caps the Arrow collect, and the driver memory). The collect
+   becomes a **callout**, worded for the frame. For the training frames: declare
+   `training.sampling` (`negative_downsampling` for rare binary targets, `client_sample` for
+   common targets and regression) or raise the budget and the Spark settings
+   (`spark.driver.maxResultSize`, which caps the Arrow collect, and the driver memory). For the
+   snapshot: raise the budget and the Spark settings, or pick a smaller `eda.snapshot` population
+   through eligibility (which changes the data-definition hash and reruns EDA); the framework never samples the analysis population (the SDS, Q482;
+   D-135), since a sample defeats some of EDA's views. The collect
    proceeds; there is no fail-loud on the budget, since inside the bank one simply raises the
    Spark settings. The estimate and the measured size both go into `meta`, so every run checks the
    estimate. The adapter does not derive `maxResultSize` from the budget.
@@ -328,8 +405,8 @@ Its path is local until the M2.4 transport.
 
 | Area | Effect |
 |---|---|
-| EDA | Population and reference-group views on every client of the window after the analysis filters; the univariate ranking and the label statistics that feed a choice on its eligible rows (D-030); base rate per period (population level, for seasonality) over every period up to the window's end, because later periods' target windows overlap the validation period's (D-030) |
-| Feature Checks | Runs on the window's eligible rows, every eligible client, labels included (D-030); stability across the window's periods (per-period AUC range, PSI); the periods it compared are recorded (D-088); label-free PSI against the gap periods between window and `v` and the latest period, never `v` |
+| EDA | Snapshot views on every client of one window period after the analysis filters, labels included (D-030); the window's statistics, the lag and the client-constant shares as Spark aggregates over the eligible rows of the compared periods, the label kept in the window only (D-135); base rate per period (population level, for seasonality) over the window periods only, because later periods' target windows overlap the validation period's (D-030) |
+| Feature Checks | Reads EDA's artifacts only, every eligible client, labels included in the window (D-030); stability across the window's periods; label-free PSI between named periods (the snapshot and the latest), never `v`; the periods compared are recorded in its stage `run` entry (D-088, D-135) |
 | Training | Train/test client split, after Feature Checks (D-030); calibration folds grouped by client; FLAML's trial selection grouped by client (D-106); the collect printout and declared sampling |
 | Calibration | Prior shift from the effective training rate (the sampled rate in Phase 2, D-049) to the unsampled train split's true rate (D-098); per-period base rates reported (seasonality); optional general calibration step out-of-fold inside train (D-049) |
 | Evaluation | Test (unseen clients, same periods) vs validation (OOT): for a run nothing was picked on, the gap separates overfitting from decay over time, apart from the cost of EDA and Feature Checks on every client (D-030); a sweep's winner states that its gap mixes overfitting with selection (D-083). Optional: validation on test clients only (unseen clients and an unseen period) |
@@ -420,41 +497,51 @@ This is answered by a **window ablation**, a nice to have in M4, not a Phase 2 r
   the same way: on train and test, never on validation (D-083).
 
 ## Design constraints
-- Spark does every row and column reduction. `toPandas` runs only on the pruned, sampled frame
+- Spark does every row and column reduction. `toPandas` runs only on the pruned frame (sampled
+  where the config declares it) and on the counts passes' result tables, never on the window
   (`CLAUDE.md` §5; a full-width `toPandas` was the crunch's main OOM risk, see
   `docs/context/environment.md`), and never without the collect printout (D-133).
 - One function builds each frame from the config; stages never assemble their own.
 - The framework never samples on its own (D-117).
 
 ## Interface
-Built in Stage 1's major step 3 (2026-10-27; for the SDS's review together with Target Factory).
+Built in Stage 1's major step 3 (2026-10-27); Stage 2's changes (the `eda` frames `snapshot` and
+`rows`, `counts.py`, the callout text) are designed, not built (M2.2, D-135).
 Package: `core_modelling/dataset/` (`panel.py`, `eligibility.py`, `split.py`, `contract.py`,
-`frames.py`, `model_input.py`); the keys and the helper columns are `sources.py`'s; the
-contract checks' task-specific functions sit in the per-task spec (`tasks.py`, D-050).
+`frames.py`, `counts.py`, `model_input.py`); the keys and the helper columns are `sources.py`'s;
+the contract checks' task-specific functions sit in the per-task spec (`tasks.py`, D-050). The
+dataset writes no artifact under `roots.data`: the model input goes where the environment's
+source entry for `data.model_input` points, and EDA writes the counts tables under
+`<roots.data>/<use_case>/04_feature/<ddh>/eda/tables/`, with no entity segment, since the root
+is one entity's area and the data-definition hash carries the entity (D-136; [EDA](eda.md)).
 - `build_frames(cfg, entity, env, spark, stage: str) -> Frames` (public, D-024): `stage` is
-  `eda` (the window frame), `feature_checks` (its eligible rows) or `training` / `evaluation`
-  (train, test, validation); anything else fails naming the four. With `data.model_input` set
+  `eda` (`snapshot` collected, `rows` left in Spark) or `training` / `evaluation` (train, test,
+  validation); anything else fails naming the three. With `data.model_input` set
   the panel is the saved model input read through `read_model_input` (checked, below), else it
   is built in memory (`panel.build_panel`); either way the derived part is `prepare_panel`:
   `apply_eligibility` → the candidates → `check_contract` → `assign_split`; `target` stays
-  wherever Target Factory could build it. The window frame is every row of the window after the
-  analysis filters; Feature Checks gets its rows with `eligible = 1`. The modelling frames are
-  the eligible rows with a known target, the null-target share per period logged and printed;
-  train (sampled when declared) and test are the window's rows by `split`, validation the
-  validation period's. Each frame leaves Spark through `collect_frame`.
-- `@dataclass Frames(window, train, test, validation, log, meta)`: pandas frames, `None` when
-  the stage didn't ask for them, all with the same columns: `unit_id` (a string), `period` (a
-  date, the period's last day), the candidates, the modelling tags, `eligible`, `target`,
-  `split`; a future frame goes last, since the fields are positional. `log` is the list of
-  entries in order, each with a fixed `step`: `join` (one per source: the spine's rows per
+  wherever Target Factory could build it. The snapshot is every row of the `eda.snapshot` period
+  after the analysis filters, the lineage and unsupported columns dropped before the collect;
+  `rows` is the eligible rows of `counts.compared_periods` with the keys, the supported
+  candidates and `target`, null outside the window. The modelling frames are the eligible rows
+  with a known target, the null-target share per period logged and printed; train (sampled when
+  declared) and test are the window's rows by `split`, validation the validation period's. Each
+  pandas frame leaves Spark through `collect_frame`.
+- `@dataclass Frames(snapshot, rows, train, test, validation, log, meta)`, in that order:
+  `snapshot`, `train`, `test` and `validation` are pandas frames and `rows` a Spark `DataFrame`,
+  each `None` when the stage didn't ask for it; the pandas frames carry `unit_id` (a string),
+  `period` (a date, the period's last day), the candidates (the snapshot the supported ones), the
+  modelling tags, `eligible`, `target`, `split`; `period` stays a date and the stages add
+  `period_label` through the period spec where they group by period. A future frame goes last,
+  since the fields are positional. `log` is the list of entries in order, each with a fixed `step`: `join` (one per source: the spine's rows per
   period, or the rows a source matched per period and the share; plus, per target column, the
   null share with its `population`: the target source's rows in the window with a complete
   target window, before eligibility), `rename` (one per source column read as `source_<name>`
   on the read side), `eligibility` (one per filter: its `name`,
   `kind` (`analysis` / `modelling`), the reason, rows per period, the rows whose condition was
   null and the rows out or tagged 1), `contract` (one per check), then `null_target`,
-  `sampling` and `collect` for the modelling frames (`frame`: `window` for EDA,
-  `eligible_window` for Feature Checks, `train`, `test`, `validation`). Per-period values are
+  `sampling` for the modelling frames, and one `collect` per collected frame (`frame`:
+  `snapshot`, `train`, `test`, `validation`). Per-period values are
   dicts keyed by the period's label (`2025-06`, `2025-W23` or `2025-06-15`, by `time.period`),
   built by `periods.label_by_period(rows, field, spec)` and `periods.period_labels(first, last,
   spec)`, the two functions every log entry uses.
@@ -518,7 +605,7 @@ contract checks' task-specific functions sit in the per-task spec (`tasks.py`, D
   as one `drop` and one `rename` entry (each only when non-empty),
   then `apply_eligibility`, `resolve_candidates` with the
   lineage from `targets` under its read names, the named-feature check (a name in
-  `features.excluded` / `kept_despite_flags` that is not a column, or is a key or helper name,
+  `features.excluded` / `kept` that is not a column, or is a key or helper name,
   fails loud), `modelling_tags`, `check_contract`
   with the use case's null share, `assign_split`, and the select `[*KEYS, *candidates, *tags,
   "eligible", "target", "split"]`; the meta's keys are `PANEL_META_KEYS`
@@ -560,7 +647,16 @@ contract checks' task-specific functions sit in the per-task spec (`tasks.py`, D
 - `frames.py`: `estimate_collect(frame, name) -> dict` (the exact rows, bytes per row from a
   10,000-row sample's `memory_usage(deep=True)`, the estimate at twice the product; an empty
   frame fails loud naming it); `collect_frame(frame, name, env) -> tuple[pd.DataFrame, dict]`
-  (the printout, the callout above the budget, the collect, the measured size).
+  (the printout, the callout above the budget worded for the frame (req. 5), the collect, the
+  measured size).
+- `counts.py`, the Spark side of EDA's counts table ([counts passes](#counts-passes-d-135)):
+  `compared_periods(cfg, panel_periods) -> dict`; `bin_edges_from_snapshot(snapshot, kinds,
+  bins) -> dict`; `window_levels(rows, categoricals) -> dict` (`LEVEL_CAP = 50`);
+  `count_cells(rows, edges, levels, target_bins) -> pd.DataFrame` (pass 1);
+  `count_lagged_cells(rows, edges, levels, target_bins) -> pd.DataFrame` and
+  `client_constant_shares(rows, features) -> pd.DataFrame` (pass 2); `population_counts(panel,
+  cfg) -> pd.DataFrame` (the D-088 counts per compared period; the labelled counts inside the window only). Each returns a result table, never
+  rows.
 - `model_input.py`: `read_model_input_metadata(cfg, entity, env) -> dict` (refuses, in order
   and each naming `save_model_input`: no table or sidecar; another `schema_version`, with the
   version note; another `hash_version`; other feature sources, keys or period; a use case the
@@ -577,8 +673,9 @@ contract checks' task-specific functions sit in the per-task spec (`tasks.py`, D
   sidecar's lineage, no Spark; `None` when
   the config names no model input or none is saved yet; a mapping the environment lacks fails
   loud).
-- Tested on the unit preset end to end (the window frame with the holders tagged, the Feature
-  Checks frame as its eligible rows, the modelling frames split by client, the model input round
+- Tested on the unit preset end to end (the snapshot with the holders tagged and the lineage
+  dropped, `rows` holding no label outside the window and no validation-period row, the counts
+  passes with `eda.bins: null` equal to the exact values, the modelling frames split by client, the model input round
   trip equal to the frames built in memory, the stale-input refusals, the callout above a tiny
   budget, regression with client sampling) and on
   hand-made panels for the join, every eligibility rule, the split and sampling statistics, and
@@ -590,15 +687,8 @@ contract checks' task-specific functions sit in the per-task spec (`tasks.py`, D
   joins and the target's window function; a read of the model input recomputes the derived
   part (eligibility, contract, split) on every read. On the unit preset a stage's frames take
   about ten seconds; whether to persist the panel inside the bank is decided when a real source
-  is read (M2.4).
-- Another use case's label is dropped on read only when that use case shares the model input;
-  built alone, the same column is an ordinary candidate, and its leak is left to Feature Checks'
-  leakage screen (§4.6: screens flag). So under one data-definition hash the candidate list can
-  depend on which use cases were saved together. Whether a use case should declare other
-  labels it knows about (e.g. a `data.exclude_labels` list) is decided with Feature Checks
-  (M2.2; found in the 10-29 ML audit).
-- `period` reaches pandas as `datetime.date` objects (Spark's `DateType` through Arrow); whether
-  EDA wants `datetime64` is settled when EDA is built (M2.2).
+  is read (M2.4). The counts passes' runtime on local Spark is measured in Stage 2's first spike;
+  on real sizes it is unverified (Spark CPU in proportion to rows × features, no new primitive).
 - The window ablation details (OD-17; a nice to have in M4). Sampling is settled for Phase 2
   (D-117); smarter downsampling, including low-value rows with weights that calibrate back, comes
   later.

@@ -19,8 +19,8 @@ practical set of metrics and charts, produced reliably for every model family.
    is not untouched by them; the validation period, whose labels EDA and Feature Checks never see,
    stays the one honest number. Test
    metrics are shown per observation period first and pooled second, so test compares with the
-   single validation period (D-098); a per-period statistic is shown only for periods with at least
-   50 positive events (D-091). Optional:
+   single validation period (D-098); a per-period statistic is shown only for periods with at
+   least `strata.min_events` positive events (default 50), the dataset's support rule (D-091). Optional:
    validation on test clients only (unseen clients and an unseen period), the cleanest estimate.
 3. **Stratified metrics are mandatory** (D-038). Every metric is shown overall and per level of each
    configured variable. Levels are capped (top levels + "other"), and strata below the per-task
@@ -63,7 +63,7 @@ with raw-string categoricals. SHAP failed across the original estimator set and 
 
 ## Open questions
 - **To decide when Evaluation is built (M2.3):** the mandatory core set per task (OD-12, which
-  covers the EDA, Feature Checks and Evaluation reports).
+  covers Evaluation's core views only; EDA's and Feature Checks' are settled, D-135).
   Proposal for binary: core = gains / lift, reliability (correct calibration is a release
   requirement, D-049), score distribution, the stratified metrics table, permutation importance,
   one feature-effects slot (SHAP's tree explainer, which covers all three M2 families); extended

@@ -1,7 +1,7 @@
 # Lifecycle: register, promote, deploy
 **Status:** designing · **Legacy:** `src/inference.py` (`promote_model`, `verify_model`, manifests) — promotion was coupled to inference in the crunch
 **Related:** [inference](inference.md) · [monitoring](monitoring.md) · [reporting](reporting.md) (model card) ·
-[environment](environment.md) · D-016, D-021, D-031, D-033, D-034, D-047, D-051, D-052, D-073, D-079, D-111, D-125 · OD-06, OD-08, OD-14,
+[environment](environment.md) · D-016, D-021, D-031, D-033, D-034, D-047, D-051, D-052, D-073, D-079, D-111, D-125, D-134 · OD-06, OD-08, OD-14,
 OD-23, OD-27
 
 ## Purpose
@@ -13,7 +13,10 @@ recorded transitions, and a clear view of what is registered and what is in prod
 Three tiers in order, each with the step(s) that move a model on to the next:
 
 1. **LOCAL**: experiments; cheap, disposable.
-   - `register`: one gate, the human feature sign-off (D-031). A registered model is any
+   - `register`: one gate, the human feature sign-off (D-031), and no open flag on a feature of
+     the model's final list; held features (open flags on features the model did not use) are
+     listed on the model card and may stay held (D-134, [feature
+     checks](feature_checks.md)). A registered model is any
      model a person has defended and wants to keep (D-033). It packs the run's slice of the
      decision audit log (the entries up to its run marker, any later validation-period entry its
      Evaluation was scored with, plus the sign-off) into one file inside
@@ -53,9 +56,9 @@ Three tiers in order, each with the step(s) that move a model on to the next:
   table stays out, since monitoring checks each batch (M2.4).
 - **Production paths are separate from the sandpit** (D-033, D-051). The sandpit is the local and
   registered (HDFS) tiers; anything saved there may be in any format, pickle included. What moves
-  from the sandpit to production is never pickle. The folder layout per entity × domain is OD-06.
-- **Sign-offs, kept apart:** the **feature sign-off** (D-031) gates `register` and is
-  recorded with the run; the **promotion sign-off** is the approved PR (code review by the project
+  from the sandpit to production is never pickle. The sandpit data root's layout is settled (D-136); the registered and production layout is OD-06.
+- **Sign-offs, kept apart:** the **feature sign-off** (D-031) gates `register`, together with
+  the clean final feature list (D-134), and is recorded with the run; the **promotion sign-off** is the approved PR (code review by the project
   owner/lead) behind `promote`; the CR process approves and runs `deploy`. The framework builds no log
   of who signs off or approves a model: the PR and CR approvals stay in the PR and the change
   request, outside the framework. The feature sign-off stays an audit-log entry that `register`
@@ -90,8 +93,9 @@ Three tiers in order, each with the step(s) that move a model on to the next:
 6. Retirement and rollback are recorded, not deleted.
 
 ## Design constraints
-- Paths go through the environment adapter. The bank-side folder layout per entity × domain is
-  open (OD-06); per-entity storage permissions are the platform's (D-079).
+- Paths go through the environment adapter. D-136 settled the sandpit data root's layout (root =
+  the entity's area → use case → layer); `roots.registered` and `roots.production` follow the same
+  shape in M2.4. Per-entity storage permissions are open (OD-06) and the platform's (D-079).
 - Registry records are versioned artifacts (`CLAUDE.md` §2).
 
 ## Lessons from the crunch
@@ -106,8 +110,10 @@ Promote-on-inference coupling; hash verification; manifest reproduction; T2–T4
 - The exact CR steps (who runs what, windows, approvals) are not known in detail yet; the current
   design assumes the CR process runs the framework's `deploy` command. Confirm with the platform
   / MLOps team.
-- OD-06: folder layout per entity × domain. Keep the current folder structure that emulates the
-  permission barriers? Whether storage permissions differ per entity is the platform's (D-079).
+- OD-06: only the permission question remains, since D-136 settled the layout (root = the
+  entity's area → use case → layer; `roots.registered` and `roots.production` follow the same
+  shape in M2.4). Keep the current folder structure that emulates the permission barriers?
+  Whether storage permissions differ per entity is the platform's (D-079).
 - OD-08: whether MLflow is available in the bank, and when it goes in (M4, with the other
   integrations). The own records (append-only events, `production.json`, D-111) map one-to-one onto
   MLflow concepts, and `production.json` stays the pointer for the whole of major version 1.

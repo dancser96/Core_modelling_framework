@@ -40,8 +40,8 @@ them in order (D-028).
 | Stage | Consumes | Produces | Doc |
 |---|---|---|---|
 | **target_factory** (optional) | The target source (or a feature source's column) | Targets + target lineage, passed on in memory or saved with the joined sources as the model input, one table for one or several use cases (D-131); labels for scored periods, for monitoring (M4) | [target_factory](components/target_factory.md) |
-| **eda** | Data definition (entity, sources, eligibility, target spec, observation window, candidates) | EDA report; ledger columns (univariate ranking, key features) | [eda](components/eda.md) |
-| **feature_checks** | Same + EDA ledger | Check log, flags, proposed decisions, ledger columns, report | [feature_checks](components/feature_checks.md) |
+| **eda** | Data definition (entity, sources, eligibility, target spec, observation window, candidates); `eda.*`, `strata.*`, `features.kinds` | The snapshot collected whole and the window as one Spark counts table; the statistics, ranking and key features; the ledger created; `eda.json`, the tables, the EDA report (D-135) | [eda](components/eda.md) |
+| **feature_checks** | EDA's artifacts only (the counts table, the correlation table, the `client_constant` table, `eda.json`, the ledger) + `feature_checks.*` | Findings (flags that hold features out of training, notes), the flag and run entries in the audit log, the proposed decisions, the ledger's check columns, `feature_checks.json`, the report (D-134) | [feature_checks](components/feature_checks.md) |
 | **training** | Resolved features + train split | Local-tier run: model bundle, selection in the ledger, training metadata, drift reference (no refit on more data in Phase 2, D-052) | [training](components/training.md) |
 | **evaluation** | Model + test + OOT validation + baselines | Metrics (overall and stratified), views, comparisons, card sections, report | [evaluation](components/evaluation.md) |
 | **register** | Local run + the feature sign-off (its one gate, D-033) | Registered version (immutable, hashed) | [lifecycle](components/lifecycle.md) |
@@ -104,8 +104,10 @@ source tables, with nothing built for it.
   override; what each level decides by rule and by a person is D-132 (the table in
   [config](components/config.md)). The **decision** drives the metric, the gates and what reports
   emphasise (D-032).
-- **Stepwise sections:** eligibility and feature checks are ordered lists of named steps, and each
-  step logs rows/columns in → out and the reason. The feature ledger carries the per-feature trail.
+- **Stepwise sections:** eligibility is an ordered list of named steps that log rows in → out and
+  the reason; the feature checks are one typed mapping of five steps run in a fixed order, each
+  logging its findings per feature with the value and the threshold (D-137). The feature ledger
+  carries the per-feature trail.
 - **Resolved config:** the config with the audit-log entries replayed, saved with every artifact
   and report as plain data, with a housekeeping block (framework and library versions, time,
   identities). Reports and reproduction use only resolved configs, and `recipe_hash` covers it.
@@ -128,9 +130,10 @@ target window never overlaps a training target window. Inference periods come af
 full timeline, span by span, is owned by [dataset](components/dataset.md#time-model).
 
 Features are as-of each observation period; targets look forward `(1, w)` periods. Validation is
-a single period for panel tasks (series tasks will need rolling validation). EDA uses every
-client of the window after the analysis filters and Feature Checks every eligible client, labels
-included, and label-based views never show periods after it; the
+a single period for panel tasks (series tasks will need rolling validation). EDA analyses one
+snapshot period of the window on every client and reads the window and the later compared periods
+as Spark counts over the eligible rows; Feature Checks judges EDA's artifacts (D-135). Labels are
+included, and label-based views never show periods after the window; the
 train/test client split happens after Feature Checks, and from Training on, fitting, automated
 selection, calibration and every choice use train-split clients only. Label-free comparisons may
 use later periods except `v` (D-030). The cost, stated in the model results report: feature
@@ -242,7 +245,7 @@ The stages that write reports (EDA, Feature Checks, the model results in Evaluat
 plus the model card; D-036) render through one shared writer as self-contained HTML (pandas Styler
 tables + plotly with embedded plotly.js). Each report has a summary page with a choices block, then
 core views, extended views ("not available: reason" where a view is incompatible) and an appendix;
-the core views per task of the EDA, Feature Checks and Evaluation reports are OD-12. Chart axes
+the core views per task of the Evaluation report are OD-12 (EDA's and Feature Checks' views are settled, D-135). Chart axes
 follow the data. Details: [reporting](components/reporting.md), [evaluation](components/evaluation.md).
 
 ## 10. Environment adapter
@@ -251,7 +254,7 @@ One module owns:
 - the Spark session
 - the compat shim
 - the transport (filesystem vs `hdfs dfs`; M2.4)
-- path construction, per tier and entity
+- path construction, per tier and use case (the root is the entity's area, D-136)
 - source resolution per entity (logical source → a parquet path or table, or the feature store:
   OD-26)
 - the report theme location
@@ -291,19 +294,37 @@ built.
   - `dataset/`: `panel.py` (the build side: sources joined, one target column per use case; the
     read side, `prepare_panel`: eligibility, candidates, contract, split), `eligibility.py`
     (who is in: the eligibility steps, the modelling tags, the candidates), `split.py` (the
-    client split and sampling), `contract.py` (the contract checks), `frames.py` (`Frames`, the
-    collect with its printout), `model_input.py` (the model input saved and read)
+    client split and sampling), `contract.py` (the contract checks), `frames.py` (`Frames`:
+    the snapshot collected with its printout, the Spark rows of the compared periods, the
+    modelling frames), `counts.py` (the two Spark passes that build the counts table, the
+    client-constant shares and the population counts per period, D-135), `model_input.py`
+    (the model input saved and read)
   - `run.py`: `run`, `STAGES`
-  - `eda/`: population/target profile, univariate ranking, key features, pivots
-  - `feature_checks/`: check steps, stability, lineage guard
-  - `ledger.py`: feature ledger (create, append, resolve the final feature list)
+  - `statistics/`: every statistical calculation, shared by EDA, Feature Checks and later
+    Training, Evaluation and Monitoring (D-137): `cells.py` (the counts table read as cells),
+    `concordance.py` (the concordance from the two-way table, its standard error, the direction,
+    the best-order concordance, Cochran's Q, the shrunk level encoding), `distributions.py`
+    (quantile edges, PSI, new levels, standardised differences), `intervals.py` (Wilson,
+    t-interval), `association.py` (Spearman, Cramér's V, the correlation ratio, the clusters)
+  - `artifacts.py`: `StageResult`, the stage folder, the tables and json written and read, the
+    settings digest, the temporary folder renamed on success (D-136)
+  - `eda/`: `population.py` (the funnel, the target per period and by stratum, the reference
+    groups), `ranking.py` (the kinds, the ranking, the key features), `deep_dives.py` (bins,
+    level tables, `pivot_target`), `run.py` (`run_eda`)
+  - `feature_checks/`: `steps.py` (the `STEPS` dict and the five step functions), `decisions.py`
+    (flag entries, open flags, held features, the proposed decisions), `run.py`
+    (`run_feature_checks`)
+  - `ledger.py`: the feature ledger (create, append, save, read, the decisions derived at render
+    time, `resolve_features`)
   - `training/`: model interface, AutoML path (FLAML), automated selection, categorical encoding,
     calibration; the predefined path (Optuna) later
   - `evaluation/`: metrics by task, stratified metrics, baselines, view slots, comparison
   - `lifecycle/`: register, promote, deploy, registry records
   - `inference/`: scoring, batch outputs, manifests
   - `monitoring/`: health, drift, outcome joins, impact vs baselines
-  - `reporting/`: HTML writer, plotly charts, styled tables, model card, themes
+  - `reporting/`: `html.py` (the writer, plotly.js embedded once), `charts.py` (the chart
+    primitives with the chart rules), `blocks.py` (the choices table, headline, warnings,
+    appendix), `theme.py` (the neutral palette); the model card later (M2.3)
 - `conf/base/`: `cc_acquisition.yml`, `TEMPLATE.yml`, `environment.example.yml`
 - `synthetic/`: dev-only synthetic data package (top level; not part of `core_modelling`)
 
@@ -323,7 +344,8 @@ deprecation; in 0.x they change freely (D-007 (c)). The table is filled in as it
 Stage 1 (M2.1) makes these public (D-024): `load_config`, `load_environment`,
 `get_spark_session`, `run_target_factory`, `build_frames`, `save_model_input`,
 `record_decision`, `show_decisions`, `resolve_config`, `read_resolved_config` and `run`, plus the
-CLI commands `run` and `decide`; the table lists them all (Stage 1 is built, 2026-10-27). Planned beyond Stage 1: one function per later stage and the CLI
+CLI commands `run` and `decide`; the table lists them all (Stage 1 is built, 2026-10-27). Stage 2 (M2.2, planned) adds `run_eda`, `run_feature_checks`, `StageResult` and `pivot_target`
+(D-137). Planned beyond: one function per later stage and the CLI
 commands `register`, `promote` and `deploy`. Signatures: [config](components/config.md#interface),
 [environment](components/environment.md#interface),
 [target factory](components/target_factory.md#interface), [dataset](components/dataset.md#interface).
@@ -340,6 +362,10 @@ The frames and the model input are what a DS explores in a notebook copy, which 
 | `build_frames`, `save_model_input` (one config or a list), `Frames` | `core_modelling.dataset` | 0.2.0 (Stage 1) |
 | `run` (one or several config paths) | `core_modelling.run` | 0.2.0 (Stage 1) |
 | CLI `run` (one or several configs) | `python -m core_modelling run` | 0.2.0 (Stage 1) |
+| `run_eda`, `pivot_target` | `core_modelling.eda` | 0.3.0 (Stage 2, planned) |
+| `run_feature_checks` | `core_modelling.feature_checks` | 0.3.0 (Stage 2, planned) |
+| `StageResult` | `core_modelling.artifacts` | 0.3.0 (Stage 2, planned) |
+| `record_decision` gains `keep` and `findings` (`keep_despite_flag` renamed); CLI `decide --keep --findings` | `core_modelling.config.audit_log` | 0.3.0 (Stage 2, planned) |
 
 ## Artifact inventory
 
@@ -355,9 +381,14 @@ docs).
 | Audit log entry | [config](components/config.md) | `log_schema_version`, `hash_version` | `record_decision`, later the stages | `resolve_config`, `show_decisions` | append-only; another version fails naming the file; an entry under another data definition fails |
 | Resolved config | [config](components/config.md) | `schema_version` (the config's) + `housekeeping.hash_version` | `resolve_config` | every stage after Target Factory, the reports | read back as is through `read_resolved_config` |
 | Model input (`_model_input.json` + the parquet table) | [dataset](components/dataset.md) | `schema_version` (`MODEL_INPUT_SCHEMA_VERSION`, 3), `hash_version` | `save_model_input` (Target Factory), for one or several use cases (an empty list refused) | every later stage, the audit log's feature decisions | refused on another schema or hash version, other sources, keys or period, a use case the table lacks, another target spec, uncovered periods or a validation period whose target window reaches beyond the saved target source's last period: rebuild with `save_model_input` (the migration until 1.0); not refused on a changed eligibility, window, split or candidate list, which are derived on read (D-131) |
-| Model bundle, model card, manifest, scores, feature ledger, drift reference, registry records, monitoring tables | their owner docs | `schema_version` (+ `framework_version` on shared-table rows) | their stages (M2.2–M2.4, M4) | later stages, monitoring | D-007 (b): rows only gain nullable columns within a major version |
+| EDA artifacts (`eda.json`, `tables/*.parquet`, `resolved_config.yml`, `report.html`) | [eda](components/eda.md) | `schema_version` (1) | `run_eda` | Feature Checks (refuses on a digest mismatch), Training (the population counts, D-088), the acceptance test | local paths, rewritten whole per run (Stage 2, planned; D-136) |
+| Feature Checks artifacts (`feature_checks.json`, `tables/`, `resolved_config.yml`, `report.html`) | [feature_checks](components/feature_checks.md) | `schema_version` (1) | `run_feature_checks` | Training (through the ledger and the audit log), the sign-off view | as EDA's (Stage 2, planned) |
+| Feature ledger (`ledger.parquet` + `_ledger.json`) | [feature_ledger](components/feature_ledger.md) | `ledger_schema_version` (1) | EDA creates, Feature Checks appends; the per-run part (M2.3) is a separate file | Training, Evaluation, the reports, the model card | stages append and never rewrite another stage's columns; decisions derived from the audit log at render time (Stage 2, planned) |
+| Model bundle, model card, manifest, scores, drift reference, registry records, monitoring tables | their owner docs | `schema_version` (+ `framework_version` on shared-table rows) | their stages (M2.2–M2.4, M4) | later stages, monitoring | D-007 (b): rows only gain nullable columns within a major version |
 
 ## Data folders
 
-`data/` keeps the Kedro-style numbered layers as a naming convention (no Kedro dependency). See
-`data/README.md`.
+`data/` keeps the Kedro-style numbered layers as a naming convention (no Kedro dependency). The
+root is one entity's area; under it use case first, then the layer: `<use_case>/04_feature/<ddh>/`
+for the audit log, the EDA and Feature Checks artifacts and the ledger, `<use_case>/06_models/`,
+`<use_case>/07_model_output/`; reports live beside their artifacts (D-136). See `data/README.md`.

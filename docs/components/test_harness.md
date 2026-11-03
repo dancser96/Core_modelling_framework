@@ -884,7 +884,7 @@ each within its check's tolerance (2026-10-25).
 | Any | Drift (monitoring) | no | login columns | [Time effects](#time-effects) | PSI > 0.25 after panel month 16, ≈ 0 before |
 | Any | Collinearity | no | rollups and identities | Rollups of one measure over `0_2` and `0_5`; `<product>_status == "active"` ⇔ `<product>_flag`; `product_cnt` = product flags + loan counts > 0; inflow − outflow = change in `casa_bal`; subcategories sum to their total | Correlation views and VIF flag the clusters (infinite for the identities) |
 | Any | Dirty switches, off by default | no | — | Duplicate client-months; a month with the login columns null (an outage); income × 12 from one month on (a unit change); a few `casa_bal` typos × 1,000 | Contract checks fail loud; operational monitoring flags them (tests on the `unit` preset only). Known limit: the rollups stay clean, while a real upstream mart would roll up its own bad values (stated, not built) |
-| Any | Look-ahead (in the extract) | yes | `holding_cnt_trap_lookahead` in `fs_extract` | The six holding flags held in the client's last panel month, stamped on every month | Strongly predictive of acquisitions (card AUC ≈ 0.81 at w = 3, below the oracle's 0.86; above the oracle for the term deposit; 5k clients, 2026-10-30); constant per client while the flags move; Feature Checks' leakage and time-alignment screens must flag it |
+| Any | Look-ahead (in the extract) | yes | `holding_cnt_trap_lookahead` in `fs_extract` | The six holding flags held in the client's last panel month, stamped on every month | Strongly predictive of acquisitions (card AUC ≈ 0.81 at w = 3, below the oracle's 0.86; above the oracle for the term deposit; 5k clients, 2026-10-30); constant per client while the flags move; Feature Checks' `time_alignment.client_constant` flags it; its concordance sits at the `leakage.too_strong` threshold, so that flag is not asserted (Q486) |
 | Any | Extra columns, off by default | yes | `extra_{nnnn}_trap_weak` / `_trap_noise` | 10% weak (a trait plus noise, rank correlation 0.1–0.3), the rest pure noise | Scale tests; weak ones rank above noise |
 
 Later (not in M1): an interaction-only feature.
@@ -1138,22 +1138,50 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
     exception in `notebooks/README.md`).
   - The guided EDA notebook replaces it once EDA exists.
 
-Framework tests assert against the ground truth, from M2.2:
-- screens flag every trap: the trap list in `truth.json` is the acceptance list, and a test in
-  `tests/` maps each kind to the Feature Checks step that must flag it (the mapping lives there,
-  not in this package). The planned mapping: quality ← constant, near_constant, all_null,
-  low_fill, high_cardinality; leakage ← leak, missing_leak, process_leak, upstream_target,
-  lookahead; time alignment ← shifted; redundancy ← redundant. The look-ahead column's card AUC
-  (≈ 0.81) is below the oracle's and it is constant per client, so neither a near-perfect
-  separator test nor a forward-vs-backward check sees it: Feature Checks needs a look-ahead tell
-  (e.g. a column constant within a client while the holdings move), or the kind is remapped (ML
-  audit, 2026-10-30; an input to the M2.2 design);
-- null controls carry no signal;
-- no model beats the oracle AUC.
+Framework tests assert against the ground truth, from M2.2 (D-064, D-137). The **trap acceptance
+test** runs EDA and Feature Checks on the `dev` preset (20,000 clients: about 380 positive card
+rows per period; the `unit` preset's 5,000 clients leave a null control's concordance only 1.7
+standard errors below 0.55), generated from its seed in the test run:
+- **The acceptance list is `truth.json`'s trap list.** A test in `tests/` maps each trap kind,
+  keyed by kind **and** target, to the check that must catch it (the mapping lives there, not in
+  this package): rows whose target is one of the run configs' (card, term deposit, "any product")
+  are mapped, rows with another target (the personal loan's `inverted_u`, `rare_level`,
+  `hidden_openings` and its `eligibility_defining`) go to `NOT_CHECKS`. It asserts on
+  the window statistics (the ledger's `*_window` columns, about 1,100 positive rows, a standard
+  error near 0.015), not the snapshot's:
 
-They run on the `unit` preset (or `dev`), generated from its seed in the test run. They compare
-against the spec and the oracle, never against stored values, so the same tests run inside the
-bank, where the package goes as code and no dataset is copied in (D-041).
+  | Check | Trap kinds |
+  |---|---|
+  | `quality` | `constant`, `near_constant`, `all_null`, `low_fill`, `high_cardinality`, `eligibility_defining` |
+  | `leakage` | `leak`, `missing_leak`, `process_leak`, `upstream_target` |
+  | `time_alignment` | `shifted` (`lagged_signal_drop`), `lookahead` (`client_constant`) |
+  | `stability` | `drift` (the `psi_latest` note: the latest synthetic period is after the relaunch) |
+  | `redundancy` | `redundant`, `collinearity` |
+  | kind `numeric` | `decimal_type` |
+
+- **The look-ahead trap asserts `client_constant` only.** Its card concordance (≈ 0.81) sits at
+  `leakage.too_strong`'s 0.80 threshold, so asserting that flag would flap.
+- **No per-period finding is asserted for the term-deposit config**: about 35 events per period
+  leave every per-period statistic below `strata.min_events`.
+- **`NOT_CHECKS`** is an explicit dict, trap kind (and target) → reason: an EDA view (`simpson`,
+  `onboarding`, `null_income_eligibility`), "no config: loan target" (the loan-target rows
+  named above), off by default (`dirty`, `extra`). A trap kind that is neither mapped, nor `null_control` (asserted below),
+  nor in `NOT_CHECKS` fails the test, so a new trap kind cannot slip past it.
+- The D-088 counts per period are compared from `eda.json` (EDA's population counts), not from
+  Target Factory's summary, which covers every row before eligibility.
+- **Bin count:** every numeric candidate with at least `eda.bins` distinct non-null values gets at
+  least `eda.bins / 2` bins, and no bin but a singleton holds more than 5% of its non-null rows
+  (the edges rule, T25); the failure names the feature and its bin count.
+- **False-positive bound:** on the `dev` preset's card config at most two non-trap candidates
+  may be held, named in the failure message, so `concordance_unstable` and the other flags are
+  checked against legitimate features too.
+- **The inverted-U age** (a loan-target trap) is covered by a unit test on a synthetic column
+  built in the test ([EDA](eda.md)), not by the acceptance test.
+- Null controls (`null_control`) carry no signal: concordance below 0.55.
+- No model beats the oracle (M2.3).
+
+The tests compare against the spec and the oracle, never against stored values, so the same
+tests run inside the bank, where the package goes as code and no dataset is copied in (D-041).
 
 Already in place: a code rule (`tests/test_code_rules.py`) asserts that `src/core_modelling/`
 never contains `_trap_`. The framework finds traps from their statistics, never from names, since
