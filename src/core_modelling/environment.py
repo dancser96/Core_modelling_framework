@@ -9,9 +9,9 @@ and the report theme. From it come the Spark session, source reading and path co
 (docs/components/environment.md).
 
 The adapter keeps its own `extra="forbid"` base instead of importing `config.schema.StrictModel`:
-it must not depend on the config schema, so an environment fact can never be validated as a
-modelling setting or the reverse. The one shared piece is the version-migration mechanics in
-`config.migrations`.
+its schema must not build on the config schema, so an environment fact can never be validated as
+a modelling setting or the reverse. The shared pieces are the version-migration mechanics in
+`config.migrations` and, for the paths, the config's use case and data-definition hash.
 """
 
 import os
@@ -30,7 +30,9 @@ from pydantic import (
 )
 from pyspark.sql import DataFrame, SparkSession
 
+from core_modelling.config.identities import data_definition_hash, short
 from core_modelling.config.migrations import migrate
+from core_modelling.config.schema import UseCaseConfig
 
 ENVIRONMENT_VARIABLE = "CORE_MODELLING_ENVIRONMENT"
 ENVIRONMENT_SCHEMA_VERSION = 1
@@ -213,13 +215,22 @@ def read_source(spark: SparkSession, env: EnvironmentConfig, entity: str, name: 
     return spark.table(source.table)
 
 
-def data_path(env: EnvironmentConfig, layer: str, *parts: str) -> str:
-    """`roots.data/<layer>/<parts…>`, joined as strings so an `hdfs://` root survives (T2)."""
-    return "/".join([env.roots.data.rstrip("/"), layer, *parts])
+def data_path(env: EnvironmentConfig, use_case: str, layer: str, *parts: str) -> str:
+    """`<roots.data>/<use_case>/<layer>/<parts…>`, the arguments in that order: no entity segment,
+    since the root is one entity's area (D-136). The use case is lower-cased, so names differing
+    only in case share one folder on every file system; joined as strings so an `hdfs://` root
+    survives (T2)."""
+    return "/".join([env.roots.data.rstrip("/"), use_case.lower(), layer, *parts])
 
 
-def audit_log_dir(
-    env: EnvironmentConfig, use_case: str, entity: str, data_definition_hash: str
-) -> str:
-    """Where the decision audit log of one use case, entity and data definition lives."""
-    return data_path(env, "04_feature", use_case, entity, data_definition_hash, "decisions")
+def feature_dir(env: EnvironmentConfig, cfg: UseCaseConfig, entity: str, *parts: str) -> str:
+    """`<use_case>/04_feature/<ddh>`, the folder of one data definition, or a folder in it
+    (`decisions`, `eda`, `feature_checks`; the ledger sits in it). The entity enters only through
+    the hash."""
+    definition = short(data_definition_hash(cfg, entity))
+    return data_path(env, cfg.use_case, "04_feature", definition, *parts)
+
+
+def audit_log_dir(env: EnvironmentConfig, cfg: UseCaseConfig, entity: str) -> str:
+    """Where the decision audit log of one use case and data definition lives."""
+    return feature_dir(env, cfg, entity, "decisions")

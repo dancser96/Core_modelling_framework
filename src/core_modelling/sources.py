@@ -17,7 +17,8 @@ keeps its name here and is renamed or, as a label, dropped on the read side
 The log says how the source tagged its periods and what was renamed, for the join log
 (docs/components/dataset.md, "Sources and joins"), and `check_periods_covered` is the one
 check that a source has every period a caller needs: the spine up to the validation period, the
-target source up to the validation period + w.
+target source up to the validation period + w (the window's last period stands in for a null
+`time.validation_period`, an EDA-only config).
 """
 
 from datetime import date

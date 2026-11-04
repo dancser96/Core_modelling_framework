@@ -106,7 +106,7 @@ Built: `core_modelling/_compat.py`, the `np.NaN` alias applied on package import
 2026-10-14: without it, `import pyspark.pandas` fails on the pinned numpy 2.3.5 + PySpark 3.4.3).
 
 Built in Stage 1's major step 1 (2026-10-26; under the SDS's review), in
-`core_modelling/environment.py` (176 lines). They replace the M1 private session and source
+`core_modelling/environment.py` (235 lines; the paths changed in Stage 2's m1.2, 2026-11-03). They replace the M1 private session and source
 functions and their YAML source mapping.
 - `EnvironmentConfig` (Pydantic, `extra="forbid"`): `spark: SparkSettings` (master,
   driver_memory, shuffle_partitions, time_zone, extra), `roots: Roots` (data, registered,
@@ -117,10 +117,16 @@ functions and their YAML source mapping.
   loud naming both.
 - `get_spark_session(env: EnvironmentConfig) -> SparkSession` (public, D-024): req. 1.
 - `read_source(spark, env, entity: str, name: str) -> DataFrame`: parquet by path or a table.
-- `data_path(env, use_case: str, layer: str, *parts: str) -> str`; `audit_log_dir(env, cfg,
-  entity: str) -> str` (the entity enters only through the data-definition hash);
-  `stage_dir(env, cfg, entity: str, stage: str) -> str` (the stage's folder under
-  `04_feature/<ddh>/`; Stage 2 step 1).
+- `data_path(env, use_case: str, layer: str, *parts: str) -> str`: `<roots.data>/<use_case>/
+  <layer>/<parts…>`, in that argument order, the use case lower-cased (names differing only in
+  case share one folder on every file system), joined as strings (T2).
+- `feature_dir(env, cfg, entity: str, *parts: str) -> str`: `<use_case>/04_feature/<ddh>`
+  through `data_path`, `<ddh>` the 12-character data-definition hash, so the entity enters only
+  through the hash; with parts, a folder in it: `feature_dir(env, cfg, entity, "eda")` and
+  `"feature_checks"` are the stage folders, the ledger sits in `feature_dir(env, cfg, entity)`
+  itself. One function in place of a separate `stage_dir`, so the ledger needs no parent of a
+  stage path.
+- `audit_log_dir(env, cfg, entity: str) -> str`: `feature_dir(…, "decisions")`.
 - `tests/conftest.py`: the `spark` fixture, one real session per test run through
   `get_spark_session` (T15), and `unit_env`, an environment on the written `unit` preset.
 

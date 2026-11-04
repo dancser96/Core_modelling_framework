@@ -14,10 +14,11 @@ definition behind, and a failed sidecar write leaves a table without one, refuse
 sidecar's name starts with `_` so Spark's listing skips it, and never with `_metadata`, which
 Spark reads as a parquet summary (T21). Reading checks the sidecar first: another schema or
 hash version, another join definition, a use case the table lacks, another target spec, a
-target source ending before the validation period's labels are known, or periods it doesn't
-cover are refused naming `save_model_input`, the rebuild being the migration until release
-1.0. Saving is the moment the configs freeze (D-125). The path is local until the M2.4
-transport.
+target source ending before the last labelled period's labels are known (the validation
+period, or the window's last in an EDA-only config), or periods it doesn't cover are refused
+naming `save_model_input`, the rebuild being the migration until release 1.0. A sidecar
+records each use case's validation period, null for an EDA-only config. Saving is the moment
+the configs freeze (D-125). The path is local until the M2.4 transport.
 """
 
 import json
@@ -35,6 +36,7 @@ from core_modelling.dataset.panel import load_panel, prepare_panel, read_side_co
 from core_modelling.environment import EnvironmentConfig
 from core_modelling.periods import period_spec
 from core_modelling.sources import feature_source_names, feature_sources_dump
+from core_modelling.target_factory import last_labelled_period
 
 # Bumped when the sidecar's keys, the log entries' keys or a column's meaning change: an older
 # table is refused by name, not by chance. 3: the table is the sources joined plus one
@@ -111,8 +113,9 @@ def read_model_input_metadata(cfg: UseCaseConfig, entity: str, env: EnvironmentC
     """The saved model input's metadata, checked in order: a missing table, another schema or
     hash version, another join definition (the feature sources, the keys, the period), a use
     case the table lacks, another target spec for it, or periods not covering the window's
-    first to the validation period fail naming `save_model_input`. A changed eligibility,
-    window, split or candidate list is derived on read and never refused."""
+    first to the last labelled period (`last_labelled_period`) fail naming
+    `save_model_input`. A changed eligibility, window, split or candidate list is derived on
+    read and never refused."""
     path = _model_input_path(cfg, entity, env)
     file = Path(path, METADATA_FILE)
     if not file.is_file():
@@ -154,7 +157,7 @@ def _check_join_definition(metadata: dict, cfg: UseCaseConfig, entity: str, path
 
 def _check_target(metadata: dict, cfg: UseCaseConfig, entity: str, path: str) -> None:
     """The table carries the use case's target, built from the config's target spec, and its
-    target source reached far enough for the config's validation period to be labelled."""
+    target source reached far enough for the config's last labelled period to be labelled."""
     targets = metadata["targets"]
     if cfg.use_case not in targets:
         raise ValueError(
@@ -172,32 +175,34 @@ def _check_target(metadata: dict, cfg: UseCaseConfig, entity: str, path: str) ->
 
 
 def _check_labels_reach(target: dict, cfg: UseCaseConfig, path: str) -> None:
-    """The target source the table was built from ends at or after the validation period + w,
-    so the validation period's labels are known (a later `time.validation_period` than the one
-    the table was saved with needs a rebuild)."""
-    spec, w, v = period_spec(cfg), cfg.time.target_window, cfg.time.validation_period
+    """The target source the table was built from ends at or after the last labelled period
+    + w (`last_labelled_period`: the validation period, or the window's last in an EDA-only
+    config), so its labels are known; the refusal names the field used."""
+    spec, w = period_spec(cfg), cfg.time.target_window
+    last, field = last_labelled_period(cfg)
     target_last = date.fromisoformat(target["target_last"])
-    if spec.index(v) + w > spec.index(target_last):
+    if spec.index(last) + w > spec.index(target_last):
         known_until = spec.from_index(spec.index(target_last) - w)
-        needed = spec.from_index(spec.index(v) + w)
+        needed = spec.from_index(spec.index(last) + w)
         raise ValueError(
             f"model input at {path}: the target source of {cfg.use_case!r} ends at "
             f"{spec.label(target_last)}, so labels are known up to {spec.label(known_until)}; "
-            f"time.validation_period {spec.label(v)} needs it to reach {spec.label(needed)}; "
+            f"{field} {spec.label(last)} needs it to reach {spec.label(needed)}; "
             "rebuild it with save_model_input"
         )
 
 
 def _check_periods(metadata: dict, cfg: UseCaseConfig, path: str) -> None:
-    """The saved periods cover the window's first to the validation period. The labels sort
-    chronologically (`YYYY-MM`, `YYYY-Www`, `YYYY-MM-DD`), so they compare as strings."""
+    """The saved periods cover the window's first to the last labelled period (the validation
+    period, or the window's last in an EDA-only config). The labels sort chronologically
+    (`YYYY-MM`, `YYYY-Www`, `YYYY-MM-DD`), so they compare as strings."""
     spec, saved = period_spec(cfg), metadata["periods"]
     first = spec.label(cfg.time.observation_window.first)
-    validation = spec.label(cfg.time.validation_period)
-    if saved["first"] > first or saved["last"] < validation:
+    last, field = last_labelled_period(cfg)
+    if saved["first"] > first or saved["last"] < spec.label(last):
         raise ValueError(
             f"model input at {path} covers the periods {saved['first']} … {saved['last']}, not "
-            f"{first} (time.observation_window.first) … {validation} (time.validation_period); "
+            f"{first} (time.observation_window.first) … {spec.label(last)} ({field}); "
             "rebuild it with save_model_input"
         )
 

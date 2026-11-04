@@ -1,5 +1,5 @@
 # Dataset: observation window, frames, splits, sampling
-**Status:** built thin (M2.1, 2026-10-27); Stage 2's frames (`snapshot`, `rows`) and the counts passes designed (M2.2, D-135), not built · **Legacy:** `src/io.py` (load + prune in Spark), `src/dataset.py` (labelled frames, downsampling)
+**Status:** built thin (M2.1, 2026-10-27); Stage 2's frames (`snapshot`, `rows`, the kinds), the counts passes and the callout per frame built and reviewed (M2.2 m1.3, 2026-11-03, D-135); EDA calls them from m2.3 · **Legacy:** `src/io.py` (load + prune in Spark), `src/dataset.py` (labelled frames, downsampling)
 **Related:** [config](config.md) (the `data` and `time` sections) · [environment](environment.md) (sources, the collect budget) ·
 [target factory](target_factory.md) · [training](training.md) · [evaluation](evaluation.md) ·
 [feature checks](feature_checks.md) · [EDA](eda.md) · [test harness](test_harness.md) · D-030, D-049, D-052, D-054,
@@ -75,27 +75,42 @@ stage asks for (Feature Checks is no frame stage: it reads EDA's artifacts only,
 checks](feature_checks.md)):
 - `snapshot` (`eda`): the one period EDA collects, `eda.snapshot` (default `last`, the window's
   last period; else a window period, checked at load): every row of that period after the
-  analysis filters, with the modelling tag columns, `eligible` (every modelling filter passed)
-  and `target`, every client, labels included (D-030), so EDA's population, reference-group and
-  pairwise views use every row and the tags as strata. Only the supported candidates come along:
-  the lineage and the unsupported columns (date, timestamp and nested types, [EDA](eda.md)) are
-  dropped before the collect.
+  analysis filters, with the modelling tag columns, `eligible` (every modelling filter passed),
+  `target` and `split`, every client, labels included (D-030), so EDA's population,
+  reference-group and pairwise views use every row and the tags as strata. `split` is
+  label-free (the seed's draw, prepared on read); a notebook may slice by it, which D-030's
+  note on EDA seeing test clients covers. Only the supported candidates come along: the lineage
+  and the unsupported columns (date, timestamp and nested types, [EDA](eda.md)) are dropped
+  before the collect. An `eda` build whose candidates are all unsupported fails loud naming
+  their types and `features.candidates`, and one without a row of the snapshot period fails
+  naming `eda.snapshot` and the analysis filters, before the collect (the contract's
+  `eligible_rows` check already requires eligible rows in every window period).
 - `rows` (`eda`): a Spark frame, never collected, of the **eligible** rows of the **compared
   periods**: every window period, the gap periods (after the window, before the validation
   period) and the latest period the data holds (the spine's last, only when it lies after the
   validation period); never the validation period. It carries the keys, the supported candidates
   and `target`, which is set to null outside the window: the label is dropped before any
   aggregation, since the gap periods' target windows overlap the validation period's and no
-  label after the window may inform a choice (D-030). EDA's two counts passes run on it ([below](#counts-passes-d-135)); what they compute
-  and what the statistics mean is [EDA](eda.md)'s.
+  label after the window may inform a choice (D-030). It is a lazy plan over the panel: the EDA
+  stage persists it for its passes (m2.3's call). EDA's two counts passes run on it
+  ([below](#counts-passes-d-135)); what they compute and what the statistics mean is
+  [EDA](eda.md)'s.
 - `train` and `test`: the window split by client; `validation`: every eligible unit at `v`, with
   the `split` column so Evaluation can also show test clients only (`stage` `training` /
   `evaluation`). Rows with a null target are dropped from these modelling frames, with the share
   logged per period. `train` is sampled when the config declares sampling (req. 6).
-- `log`: the join, eligibility, contract, null-target, sampling and collect logs, in order.
+- `log`: the join, eligibility, contract, compared-periods (`eda`: the labels per group, and
+  `missing_window` when the panel lacks a window period, T19), null-target, sampling and collect
+  logs, in order.
 - `meta`: the hashes, the lineage, the candidates, the tags, the sampling record and the
-  collect estimate and measured size per frame (D-133); the per-period rows, positive rows and
-  positive events (D-082) are Target Factory's summary.
+  collect estimate and measured size per frame (D-133); for `eda` also `kinds` (candidate →
+  `numeric` / `categorical`, from the Spark schema with the `features.kinds` overrides),
+  `unsupported` (column → type), `snapshot_period` (the label) and `population` (the D-088
+  counts table of `counts.population_counts`, computed here since only the frames hold the
+  panel). Target Factory's summary counts every row of the target source before eligibility;
+  `population` counts the panel after the analysis filters (its labelled counts the eligible
+  rows), so the two agree on the window periods' positive rows and events only where no
+  analysis or modelling filter drops rows.
 
 The sizing rule (D-135): the window's statistics are Spark aggregates and only their result
 tables reach pandas, while the snapshot analysis runs on every client in pandas. The Mac's
@@ -112,54 +127,105 @@ keeps the label of the window periods only, by construction (above), not by disc
 ### Counts passes (D-135)
 `dataset/counts.py` holds the Spark side of EDA's counts table: two passes over `Frames.rows`
 that leave Spark only as result tables. EDA calls them and writes the tables; the statistics read
-from them are [EDA](eda.md)'s (its statistics section). The functions (the plan's names):
-- `compared_periods(cfg, panel_periods) -> dict`: the window periods, the gap periods and the
-  latest period, by label, from the config and the periods the panel holds; never the validation
-  period; with a null `validation_period` the window and the latest period only. `rows` is
-  filtered to these periods and EDA records them in `eda.json`.
-- `bin_edges(snapshot, kinds, bins) -> dict`: per numeric candidate, the edges `Bucketizer`
-  applies, taken from the collected snapshot's non-null values through the statistics package's
-  `quantile_edges` (default 100 bins: the mass points, values holding at least `1 / bins` of the
-  rows, as singleton bins, quantile edges over the remaining values; a numeric with at most
-  `eda.bins` distinct values uses its values; `eda.bins: null` makes every distinct value a bin;
-  the rule and why: [EDA](eda.md), T25).
-- `window_levels(rows, categoricals) -> dict`: per categorical, the levels seen in any window
-  period, capped at the 50 most frequent (`LEVEL_CAP = 50`), the rest `__other__`; a level unseen in
-  the window is `__new__`; null is a level.
-- `count_cells(rows, edges, levels, target_bins) -> pd.DataFrame`: pass 1. Every numeric is
-  bucketed by one `pyspark.ml.feature.Bucketizer` over every column (`handleInvalid="keep"`, so
-  null and NaN get their own bucket), every categorical mapped to its level, the target to its
-  target bin (null where the label is dropped or unknown); then `explode(array(struct(feature,
-  bin)))` and `groupBy(feature, period, bin, target_bin).agg(count, sum(target))`, whose partial
-  aggregation keeps the shuffle to cells, not rows.
-- `count_lagged_cells(rows, edges, levels, target_bins) -> pd.DataFrame`: pass 2. Over the rows
-  ordered by client (`Window.partitionBy("unit_id").orderBy("period")`), each feature's value one
-  period back (`F.lag`), binned on the same edges and levels, counted against the current
-  period's target as `lagged = true` cells. The lag is by period index: the previous row counts
-  only when its period index is the current one minus one, otherwise the lagged value is null;
-  the window's first period has no previous period in `rows`, so its lagged cells are null and
-  the lagged concordance pools the window periods that have one (N11).
-- `client_constant_shares(rows, features) -> pd.DataFrame`: in the same client-ordered pass,
-  `min == max` per client and feature over the window periods: `feature, constant_share,
-  clients` (the share of clients with at least two non-null values whose value never changes).
-- `population_counts(panel, cfg) -> pd.DataFrame`: the D-088 counts per compared period (the
-  labelled counts inside the window only) on the
-  full population, before any sample: rows after the analysis filters, eligible rows, eligible
-  rows with a known target, positive rows, positive events (distinct units with a positive
-  label; regression: with a non-zero target), non-event units. EDA puts them in `eda.json`; the
-  trap acceptance test and Training's count check read them there. A row whose target is null
-  (the forward window not matured, or the client gone before it closed) is in the eligible counts
-  and out of every labelled statistic; the gap and latest periods are label-free by construction
-  (N10 of the Stage 2 record; D-131, D-030).
+from them are [EDA](eda.md)'s (its statistics section). The functions:
+- `compared_periods(cfg, available: list[date]) -> dict[str, list[date]]`: `window` (the
+  available periods inside the observation window, by period index), `gap` (after the window and
+  strictly before the validation period; empty without one) and `latest` (at most one: the
+  latest available period when it lies after the validation period, or after the window when
+  there is none); the validation period itself never appears. `build_frames` calls it on the
+  periods the prepared panel holds, filters `rows` to these periods and logs the labels per group
+  (`compared_periods` entry); a window period the panel lacks is absent and named in the entry's
+  `missing_window` (T19). EDA records the groups in `eda.json`.
+- `bin_edges(snapshot, kinds, bins: int | None) -> dict[str, np.ndarray | None]`: per numeric
+  candidate, the interior edges `Bucketizer` splits on, taken from the non-null values of the
+  collected snapshot's **eligible** rows (`eligible == 1`: the cells count eligible rows, so the
+  mass points and the `2 / bins` guarantee are cut on them; [EDA](eda.md)) through the
+  statistics package's `quantile_edges` (default 100 bins: the mass points, values holding at
+  least `1 / bins` of the rows, as singleton bins, quantile edges over the remaining values; a
+  numeric with at most `eda.bins` distinct values uses its values; `eda.bins: null` calls it
+  with the number of distinct values, so every value is a bin; the rule and why: [EDA](eda.md),
+  T25). Whenever 0 occurs among the values it is its own `= 0` singleton,
+  mass point or not, since the zero share is read from that cell. A column without a non-null
+  eligible snapshot value gets `None`: its rows fall in the null bin, and a value seen in a
+  later period in one `all` bin.
+- `window_levels(rows, categoricals, window_periods) -> tuple[dict[str, list[str]],
+  list[str]]`: first, per categorical, the non-null levels seen in any window period as their
+  bin labels, the most frequent first (ties by label), from one exploded pass ranked in Spark;
+  the passes keep the first `LEVEL_CAP = 50` and pool the rest as `__other__`, a level unseen in
+  the window is `__new__`, and null is always its own bin (it takes no place in the list). The
+  pooled set has to be known to tell a pooled level from an unseen one, so the list holds every
+  window level up to a ceiling, `POOLED_LEVEL_CAP = 10_000`. Second, the categoricals past that
+  ceiling (an id-like string): each lists its kept levels only, and both passes count every
+  other level of it as `__other__`, never `__new__`, since seen and unseen can't be told apart
+  without the full list; EDA records the list in `eda.json` and Feature Checks shows their
+  `new_levels` as "not available: more than 10,000 window levels" (decided up front, §1.8);
+  `quality.max_levels` flags such a column anyway. A level is a string; a float NaN (a float
+  column counted as categorical through `features.kinds`) is null (N2); a real level named like
+  a reserved bin (`null`, `__other__`, `__new__`; `RESERVED_BINS`) is quoted in the list and
+  in its bin (`'null'`), so every bin label is distinct. An empty `window_periods` fails loud,
+  here and in both passes.
+- `count_cells(rows, edges, levels, over_ceiling, target_edges, window_periods, spec) ->
+  pd.DataFrame`: pass 1 (`levels` and `over_ceiling` are `window_levels`' pair). The label is
+  read for the window periods only (belt and braces to `rows`, §4.4); passes with no feature
+  fail loud. Every numeric with edges is bucketed by one `pyspark.ml.feature.Bucketizer` over
+  all columns (`handleInvalid="keep"`: a NaN lands in the extra bucket and a null gives a null
+  bucket, measured on 3.4.3; both are the null bin, N2), the values normalised with `+ 0.0`
+  first, since Java orders `-0.0` below `0.0` and it would miss the `= 0` singleton (measured);
+  every categorical is mapped to its level (a kept level at its frequency rank, `__other__`,
+  `__new__`, null last; a NaN and the quoted reserved names as in `window_levels`); the target
+  to `"0"` / `"1"` (`target_edges` None: a binary target, a 0 or 1 read as an int first; any
+  other value makes the pass fail loud after the collect) or to the label of its bucket on
+  `target_edges` (regression; the caller builds them with
+  `TASK_SPECS[task]["target_bins"](known_targets, exact)` of `tasks.py`: 20 quantile bins with
+  0 its own); then `explode(array(struct(feature, bin, bin_order, is_null)))` and one
+  `groupBy(feature, period, bin, bin_order, is_null, target_bin).agg(count, sum(target))`, whose
+  partial aggregation keeps the shuffle to cells, not rows. The numerics' `bin` labels join in
+  pandas from `bin_labels` by bucket index; `period` is the label of `spec`.
+- `count_lagged_cells(rows, edges, levels, over_ceiling, target_edges, window_periods, spec)
+  -> pd.DataFrame`: pass 2. Over the window rows ordered by client (`Window.partitionBy("unit_id")`
+  by period index), each feature's value one period back (`F.lag`), binned on the same edges and
+  levels, counted against the current period's target as `lagged = true` cells. The lag is by
+  period index and runs on `rows`, the eligible rows: the previous row counts only when its
+  period index is the current one minus one, so a client with no eligible row in the previous
+  period (eligible at t but not at t − 1) has a null lagged value; the window's first period
+  has no previous period in `rows`, so its lagged cells are null and the lagged concordance
+  pools the window periods that have one (N11).
+- `client_constant_shares(rows, features, window_periods) -> pd.DataFrame`: `min == max` per
+  client and feature over the window periods: `feature, constant_share, clients` (the share of
+  clients with at least two non-null values whose value never changes, and their count; a float
+  NaN counts as null, N2, since Spark's `max` would read it as the largest value). A
+  `groupBy(unit_id)` in chunks of `CONSTANT_CHUNK = 50` columns, one job each: one job over 139
+  columns spilled 2.2 GB and filled the 2 GB heap in the plan's spike, so the cost grows as one
+  window scan per 50 columns (six at 300 bank columns).
+- `population_counts(panel, cfg, periods) -> pd.DataFrame`: the D-088 counts per compared period
+  (the labelled counts inside the window only, null elsewhere) on the full population, before any
+  sample: `period` (label), `rows` after the analysis filters, `eligible_rows`, `known_target`,
+  `positive_rows`, `positive_events` (distinct units with a positive label), `non_event_units`;
+  positive is a non-zero label, for a flag and an amount alike. The unit counts are plain
+  counts: one row per unit and period (`read_keyed_source` refuses a repeated key), so within a
+  period a row is a unit; the labelled counts are set to null in pandas outside the window.
+  `build_frames` computes it for the `eda` stage as `Frames.meta["population"]`; EDA puts it in
+  `eda.json`; the trap acceptance test and Training's count check read it there. A row whose target is null (the forward window not
+  matured, or the client gone before it closed) is in the eligible counts and out of every
+  labelled statistic; the gap and latest periods are label-free by construction (N10 of the
+  Stage 2 record; D-131, D-030).
+- `estimate_cells(rows, kinds, bins: int | None, window_periods) -> int`: the cell count of
+  both passes from `approx_count_distinct` per candidate and for the target (a numeric's
+  distinct values capped at `bins`, a categorical's at `LEVEL_CAP` plus the pooled bins, each
+  plus the null bin, times the target bins, times the periods of pass 1 plus the window periods
+  of pass 2); with `bins` None above `MAX_CELLS = 50_000_000` it fails loud naming `eda.bins`
+  (V3), so the template's "refused above 50 million cells" is about the cells written.
 
 The counts table's columns are `feature, period, lagged, bin, bin_order, is_null, target_bin, n,
-sum_y`, one row per cell. The passes use Spark SQL functions and JVM transformers (`Bucketizer`)
-only, never a pandas UDF: the legacy crunch never ran Python on the executors, so nothing else is
-proven inside the bank (bank parity; the passes' runtime on real sizes is unverified). A test
-asserts that no label outside the window and no validation-period row reaches the passes, and
-that `eda.bins: null` gives the exact values. With `eda.bins: null` the cell count is estimated
-from `approx_count_distinct` per column before the pass, and above `MAX_CELLS = 50_000_000` the
-pass fails loud naming `eda.bins`.
+sum_y` (`CELL_COLUMNS`), one row per cell; `period` is the period's label, `bin` the
+`bin_labels` text, a level (a reserved name quoted) or `null`, `bin_order` the bucket index or
+the level's rank (the null bin last), `target_bin` a string or null, `sum_y` null where no
+label. The passes use Spark SQL
+functions and JVM transformers (`Bucketizer`) only, never a pandas UDF: the legacy crunch never
+ran Python on the executors, so nothing else is proven inside the bank (bank parity; the passes'
+runtime on real sizes is unverified; on the Mac 15–18 s for the six-month canonical window). A
+test asserts that no label outside the window and no validation-period row reaches the passes,
+and that `eda.bins: null` gives the exact values.
 
 ## Sources and joins (D-129)
 - `entities.<e>.sources.features` is an ordered list; the first source is the **governing spine**
@@ -505,8 +571,8 @@ This is answered by a **window ablation**, a nice to have in M4, not a Phase 2 r
 - The framework never samples on its own (D-117).
 
 ## Interface
-Built in Stage 1's major step 3 (2026-10-27); Stage 2's changes (the `eda` frames `snapshot` and
-`rows`, `counts.py`, the callout text) are designed, not built (M2.2, D-135).
+Built in Stage 1's major step 3 (2026-10-27); Stage 2's `eda` frames (`snapshot`, `rows`, the
+kinds), `counts.py` and the callout per frame built in M2.2's m1.3 (2026-11-03, D-135).
 Package: `core_modelling/dataset/` (`panel.py`, `eligibility.py`, `split.py`, `contract.py`,
 `frames.py`, `counts.py`, `model_input.py`); the keys and the helper columns are `sources.py`'s;
 the contract checks' task-specific functions sit in the per-task spec (`tasks.py`, D-050). The
@@ -516,14 +582,17 @@ source entry for `data.model_input` points, and EDA writes the counts tables und
 is one entity's area and the data-definition hash carries the entity (D-136; [EDA](eda.md)).
 - `build_frames(cfg, entity, env, spark, stage: str) -> Frames` (public, D-024): `stage` is
   `eda` (`snapshot` collected, `rows` left in Spark) or `training` / `evaluation` (train, test,
-  validation); anything else fails naming the three. With `data.model_input` set
+  validation); anything else fails naming the three, `training` / `evaluation` with a null
+  `time.validation_period` (an EDA-only config) fail before the panel is built, and `eda` with
+  no supported candidate or no row of the snapshot period fails before the collect. With
+  `data.model_input` set
   the panel is the saved model input read through `read_model_input` (checked, below), else it
   is built in memory (`panel.build_panel`); either way the derived part is `prepare_panel`:
   `apply_eligibility` → the candidates → `check_contract` → `assign_split`; `target` stays
   wherever Target Factory could build it. The snapshot is every row of the `eda.snapshot` period
-  after the analysis filters, the lineage and unsupported columns dropped before the collect;
-  `rows` is the eligible rows of `counts.compared_periods` with the keys, the supported
-  candidates and `target`, null outside the window. The modelling frames are the eligible rows
+  after the analysis filters, the lineage and unsupported columns (`detect_kinds` over the Spark
+  schema) dropped before the collect; `rows` is the eligible rows of `counts.compared_periods`
+  with the keys, the supported candidates and `target`, null outside the window. The modelling frames are the eligible rows
   with a known target, the null-target share per period logged and printed; train (sampled when
   declared) and test are the window's rows by `split`, validation the validation period's. Each
   pandas frame leaves Spark through `collect_frame`.
@@ -539,15 +608,17 @@ is one entity's area and the data-definition hash carries the entity (D-136; [ED
   target window, before eligibility), `rename` (one per source column read as `source_<name>`
   on the read side), `eligibility` (one per filter: its `name`,
   `kind` (`analysis` / `modelling`), the reason, rows per period, the rows whose condition was
-  null and the rows out or tagged 1), `contract` (one per check), then `null_target`,
-  `sampling` for the modelling frames, and one `collect` per collected frame (`frame`:
-  `snapshot`, `train`, `test`, `validation`). Per-period values are
+  null and the rows out or tagged 1), `contract` (one per check), then for `eda`
+  `compared_periods` (`window`, `gap`, `latest` as labels, `missing_window` when any) and for
+  the modelling frames `null_target` and `sampling`, and one `collect` per collected frame
+  (`frame`: `snapshot`, `train`, `test`, `validation`). Per-period values are
   dicts keyed by the period's label (`2025-06`, `2025-W23` or `2025-06-15`, by `time.period`),
   built by `periods.label_by_period(rows, field, spec)` and `periods.period_labels(first, last,
   spec)`, the two functions every log entry uses.
   `meta`: the data-definition and target-spec hashes with `hash_version`, the lineage, the
-  candidates, the tags, the sampling record and the collect entries. The per-period label
-  counts are Target Factory's summary, not repeated here.
+  candidates, the tags, for `eda` the kinds, the unsupported columns, the snapshot period and
+  the population counts ([Frames](#frames-d-030-d-131-d-135)), the sampling record and the
+  collect entries.
 - `save_model_input(cfgs: UseCaseConfig | list[UseCaseConfig], entity, env, spark) -> str`
   (public, `model_input.py`): one config is the one-element list, an empty list is refused;
   the panel of `load_panel` (the sources joined plus the target columns) written to the path
@@ -644,18 +715,32 @@ is one entity's area and the data-definition hash carries the entity (D-136; [ED
   the share it is given, no column scan: above 0, the callout text (a null never counts as an
   event; fill nulls that mean a value upstream); `None` with a note for an upstream target. A
   failing check raises with its numbers; each entry prints one line.
-- `frames.py`: `estimate_collect(frame, name) -> dict` (the exact rows, bytes per row from a
-  10,000-row sample's `memory_usage(deep=True)`, the estimate at twice the product; an empty
-  frame fails loud naming it); `collect_frame(frame, name, env) -> tuple[pd.DataFrame, dict]`
-  (the printout, the callout above the budget worded for the frame (req. 5), the collect, the
-  measured size).
+- `frames.py`: `STAGE_FRAMES = {"eda": "snapshot", "training": "modelling", "evaluation":
+  "modelling"}`; `detect_kinds(schema: StructType, candidates, overrides) -> dict[str, str]`
+  (`numeric` for every Spark numeric type, decimals included, `categorical` for a string or a
+  boolean, `unsupported` for the rest, then the `features.kinds` overrides: a key naming no
+  candidate, an override to `numeric` on a non-numeric column (nothing is cast) and an override
+  on an unsupported column fail loud naming the column; never a pandas dtype, N13);
+  `estimate_collect(frame, name) -> dict` (the exact rows, bytes per row from a 10,000-row
+  sample's `memory_usage(deep=True)`, the estimate at twice the product; an empty frame fails
+  loud naming it); `collect_frame(frame, name, env) -> tuple[pd.DataFrame, dict]` (the
+  printout, above the budget the callout of `CALLOUTS[name]` (req. 5: the snapshot's names the
+  budget, the Spark settings and a smaller `eda.snapshot` population through eligibility, never
+  sampling; a modelling frame's names `training.sampling`), the collect, the measured size).
 - `counts.py`, the Spark side of EDA's counts table ([counts passes](#counts-passes-d-135)):
-  `compared_periods(cfg, panel_periods) -> dict`; `bin_edges(snapshot, kinds, bins) -> dict`; `window_levels(rows, categoricals) -> dict` (`LEVEL_CAP = 50`);
-  `count_cells(rows, edges, levels, target_bins) -> pd.DataFrame` (pass 1);
-  `count_lagged_cells(rows, edges, levels, target_bins) -> pd.DataFrame` and
-  `client_constant_shares(rows, features) -> pd.DataFrame` (pass 2); `population_counts(panel,
-  cfg) -> pd.DataFrame` (the D-088 counts per compared period; the labelled counts inside the window only). Each returns a result table, never
-  rows.
+  `LEVEL_CAP = 50`, `MAX_CELLS = 50_000_000`, `OTHER = "__other__"`, `NEW = "__new__"`,
+  `NULL_BIN = "null"`, `RESERVED_BINS`, `POOLED_LEVEL_CAP = 10_000`, `CONSTANT_CHUNK = 50`,
+  `CELL_COLUMNS`; `compared_periods(cfg, available) -> dict[str, list[date]]`;
+  `bin_edges(snapshot, kinds, bins) -> dict[str, np.ndarray | None]` (the eligible rows);
+  `window_levels(rows, categoricals, window_periods) -> tuple[dict[str, list[str]],
+  list[str]]` (the levels, and the categoricals over `POOLED_LEVEL_CAP`);
+  `count_cells(rows, edges, levels, over_ceiling, target_edges, window_periods, spec) ->
+  pd.DataFrame` (pass 1); `count_lagged_cells(rows, edges, levels, over_ceiling, target_edges,
+  window_periods, spec) -> pd.DataFrame` (pass 2); `client_constant_shares(rows, features,
+  window_periods) -> pd.DataFrame`; `population_counts(panel, cfg, periods) -> pd.DataFrame`
+  (the D-088 counts per compared period; the labelled counts inside the window only);
+  `estimate_cells(rows, kinds, bins, window_periods) -> int` (both passes). Each returns a
+  result table, never rows.
 - `model_input.py`: `read_model_input_metadata(cfg, entity, env) -> dict` (refuses, in order
   and each naming `save_model_input`: no table or sidecar; another `schema_version`, with the
   version note; another `hash_version`; other feature sources, keys or period; a use case the
@@ -673,12 +758,21 @@ is one entity's area and the data-definition hash carries the entity (D-136; [ED
   the config names no model input or none is saved yet; a mapping the environment lacks fails
   loud).
 - Tested on the unit preset end to end (the snapshot with the holders tagged and the lineage
-  dropped, `rows` holding no label outside the window and no validation-period row, the counts
-  passes with `eda.bins: null` equal to the exact values, the modelling frames split by client, the model input round
-  trip equal to the frames built in memory, the stale-input refusals, the callout above a tiny
-  budget, regression with client sampling) and on
-  hand-made panels for the join, every eligibility rule, the split and sampling statistics, and
-  each contract refusal.
+  dropped, `rows` holding no label outside the window and no validation-period row, the
+  compared periods logged, pass 1 equal to a pandas groupby and pass 2 to a shift by client on
+  the collected rows, the client-constant shares, the population counts equal to Target
+  Factory's summary where both exist, the snapshot's rows equal to the last analysis step's rows
+  out and to the population's rows, an EDA-only config comparing the window and the latest
+  period, `eda.bins: null` giving one bin per value and refusing a
+  planted cell cap, the kinds from the Spark schema, the modelling frames split by client, the
+  model input round trip equal to the frames built in memory, the stale-input refusals, the
+  callout per frame above a tiny budget, regression with client sampling) and on hand-made
+  panels for the join, every eligibility rule, the split and sampling statistics, each contract
+  refusal, the lag by period index, the level pooling and its ceiling, reserved level names, a
+  NaN in a categorical and in the client-constant shares, the edges rule through the
+  `Bucketizer` on the eligible rows (T25), `-0.0` (measured through the `Bucketizer` unnormalised,
+  then normalised), null and NaN, a regression target's bins, a non-binary flag, the empty-window,
+  no-feature, no-supported-candidate and empty-snapshot refusals and an unsupported date column.
 
 ## Open questions
 - Performance on real sizes: the in-memory panel is a lazy plan over the sources, so every

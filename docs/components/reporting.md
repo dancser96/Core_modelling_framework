@@ -158,10 +158,14 @@ The report never suggests dropping a feature (Q472) or a verb for a flag (Q449).
 3. **Grey out, never hide,** bins and cells with too little support, and say so: bins and levels
    below `MIN_BIN_SUPPORT = 20` in the deep dives, periods below `strata.min_events` in
    per-period lines. The interval is still drawn.
-4. **Quantile groups** for numeric features, merged from the cells by cumulative row share (ten
-   for lift, twenty for histograms); a mass point (a value holding at least `1 / bins` of the
-   rows, 0 and the dominant value among them) stays its own bar, never widened into a
-   neighbour; never equal-width bins (T25); **log axes** for heavy tails.
+4. **Quantile groups** for numeric features, merged from the cells by cumulative row share
+   (`merge_bins`: about ten groups for lift, twenty for histograms); a bin holding at least
+   `1 / groups` of the rows (0 and the dominant value whenever they reach it) stays its own bar,
+   never widened into a neighbour, so the count can exceed the target by such interior bars;
+   never equal-width bins (T25). A group's label joins its first and last bin labels (`< e`,
+   `[e, e)`, `≥ e`, `= v`, `(v, e)`, `> v`; six significant digits). **Log axes** for heavy
+   tails, never with a zero quartile or a zero bar on them (T30): offset, linear axis or a
+   separate zero share.
 5. **No chart whose bars are all near zero.** Switch to lift, a log axis or a table.
 6. **One colour per target class, segment or model** across a whole report; comparisons overlay
    on shared axes.

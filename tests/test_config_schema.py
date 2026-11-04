@@ -20,6 +20,7 @@ from core_modelling.config.levels import (
     unmark_level_filled,
 )
 from core_modelling.config.migrations import MIGRATIONS
+from core_modelling.config.schema import EVERY_CHECK, snapshot_period
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "conf/base/cc_acquisition.yml"
@@ -41,7 +42,7 @@ PLACEHOLDERS = {
     "<validation_period>": "2025-11-01",
     "<strata_variable>": "segment",
 }
-REPLAY_ONLY = {"features.excluded", "features.kept_despite_flags", "housekeeping"}
+REPLAY_ONLY = {"features.excluded", "features.kept", "features.held", "housekeeping"}
 
 
 @pytest.fixture
@@ -67,12 +68,21 @@ def _error(tmp_path: Path, raw: dict) -> str:
 def test_example_loads_with_level_defaults_and_explicit_values() -> None:
     """Null level fields take the assisted defaults; explicit values stay."""
     cfg = load_config(EXAMPLE)
-    assert cfg.eda.key_features.top_n == 20
     assert cfg.training.max_iter == 200
     assert cfg.evaluation.slices.top_pct == [0.01, 0.10]  # explicit, not the level's list
     assert cfg.training.calibration.method == "platt"
     assert cfg.features.excluded == []
-    assert cfg.housekeeping == {"level_filled": ["eda.key_features.top_n", "training.max_iter"]}
+    assert cfg.housekeeping == {"level_filled": ["training.max_iter"]}
+
+
+def test_top_n_is_a_plain_default_at_both_levels(tmp_path: Path, raw: dict) -> None:
+    """EDA's key features are ten at either level, the `eda` section left out included."""
+    del raw["eda"]
+    for level in LEVELS:
+        raw["automation_level"] = level
+        cfg = _load(tmp_path, raw)
+        assert cfg.eda.key_features.top_n == 10
+        assert "eda.key_features.top_n" not in cfg.housekeeping["level_filled"]
 
 
 def test_autonomous_level_gives_its_own_defaults(tmp_path: Path, raw: dict) -> None:
@@ -98,12 +108,12 @@ def test_levels_match_the_schema_and_a_bad_level_fails_before_validation(raw: di
 
 def test_a_set_on_a_section_unmarks_the_level_paths_under_it_only() -> None:
     """A section path takes its level paths off the list; a mere name prefix does not."""
-    raw = {"housekeeping": {"level_filled": ["eda.key_features.top_n", "training.max_iter"]}}
-    assert unmark_level_filled(raw, "eda.key")["housekeeping"]["level_filled"] == [
-        "eda.key_features.top_n",
+    raw = {"housekeeping": {"level_filled": ["evaluation.slices.top_pct", "training.max_iter"]}}
+    assert unmark_level_filled(raw, "evaluation.sl")["housekeeping"]["level_filled"] == [
+        "evaluation.slices.top_pct",
         "training.max_iter",
     ]
-    assert unmark_level_filled(raw, "eda.key_features")["housekeeping"]["level_filled"] == [
+    assert unmark_level_filled(raw, "evaluation.slices")["housekeeping"]["level_filled"] == [
         "training.max_iter"
     ]
 
@@ -122,8 +132,8 @@ def test_filled_template_loads(tmp_path: Path) -> None:
 
 
 def _section(field: FieldInfo) -> type[BaseModel] | None:
-    """The section model a field holds (`Sampling | None`, `dict[str, Entity]`, also the item of
-    `list[CheckStep]`, though lists are compared whole), else None."""
+    """The section model a field holds (`Sampling | None`, `Quality | None`, `dict[str, Entity]`),
+    else None."""
     for arg in (field.annotation, *get_args(field.annotation)):
         if isinstance(arg, type) and issubclass(arg, BaseModel):
             return arg
@@ -445,7 +455,8 @@ def test_file_with_replay_fields_refused(tmp_path: Path, raw: dict) -> None:
     """The replayed lists and housekeeping come from the audit log, never from the file (D-125)."""
     for field, text in (
         ("excluded", "record an exclude entry"),
-        ("kept_despite_flags", "record a keep_despite_flag entry"),
+        ("kept", "record a keep entry"),
+        ("held", "record a keep or an exclude entry"),
     ):
         raw["features"][field] = ["cc_flag"]
         with pytest.raises(
@@ -533,3 +544,155 @@ def test_target_source_keyed_unlike_its_feature_entry_refused(
         assert "is also a feature source: key it exactly as" in _error(tmp_path, raw)
     else:
         _load(tmp_path, raw)
+
+
+def test_stage_2_fields_round_trip(tmp_path: Path, raw: dict) -> None:
+    """Every Stage 2 field set off its default loads as written and survives the JSON dump that
+    the replay validates again."""
+    raw["features"]["kinds"] = {"branch_code": "categorical", "segment_code": "numeric"}
+    raw["eda"] = {
+        "snapshot": date(2025, 6, 30),
+        "bins": 20,
+        "key_features": {"top_n": 5, "include": ["age"], "max_correlation": 0.8},
+    }
+    nulls = {"missing_min": 0.3}  # the other parameter keeps its default
+    raw["feature_checks"]["quality"] = {"max_levels": 30, "nulls_may_be_zeros": nulls}
+    raw["time"]["validation_period"] = None
+    cfg = _load(tmp_path, raw)
+    assert cfg.features.kinds == {"branch_code": "categorical", "segment_code": "numeric"}
+    assert cfg.eda.model_dump(mode="json") == {
+        "snapshot": "2025-06-30",
+        "bins": 20,
+        "key_features": {"top_n": 5, "include": ["age"], "max_correlation": 0.8},
+    }
+    quality = cfg.feature_checks.quality
+    assert (quality.max_levels, quality.dominant_share_max) == (30, 0.99)
+    assert quality.nulls_may_be_zeros.model_dump() == {"missing_min": 0.3, "zero_share_max": 0.005}
+    assert cfg.feature_checks.stability.psi_max == 0.25  # the example's override
+    assert cfg.time.validation_period is None
+    assert UseCaseConfig.model_validate(cfg.model_dump(mode="json")) == cfg
+
+
+def test_feature_checks_left_out_runs_every_step_with_its_defaults(
+    tmp_path: Path, raw: dict
+) -> None:
+    """Without the section, all five steps run with the finding table's defaults."""
+    del raw["feature_checks"]
+    checks = _load(tmp_path, raw).feature_checks
+    assert checks == EVERY_CHECK
+    assert (checks.leakage.concordance_max, checks.stability.psi_max) == (0.80, 0.10)
+    assert checks.quality.nulls_may_be_zeros.zero_share_max == 0.005
+
+
+def test_step_left_out_of_a_present_mapping_is_not_run(tmp_path: Path, raw: dict) -> None:
+    """A present mapping runs only the steps it names, each with its defaults filled (V6)."""
+    raw["feature_checks"] = {"leakage": {"concordance_max": 0.9}}
+    checks = _load(tmp_path, raw).feature_checks
+    assert (checks.leakage.concordance_max, checks.leakage.rare_effect_max) == (0.9, 5)
+    left_out = [checks.quality, checks.time_alignment, checks.stability, checks.redundancy]
+    assert left_out == [None] * 4
+
+
+def test_present_mapping_naming_no_step_refused(tmp_path: Path, raw: dict) -> None:
+    """`feature_checks: {}` would run no check at all (§4.5): refused naming the five steps."""
+    raw["feature_checks"] = {}
+    message = _error(tmp_path, raw)
+    assert "must name at least one step" in message
+    assert "quality, leakage, time_alignment, stability, redundancy" in message
+
+
+def test_nulls_informative_min_must_lie_below_the_leak_bound(tmp_path: Path, raw: dict) -> None:
+    """With both steps run, the note's floor above the leak flag's bound is refused naming both
+    values; the default pair loads."""
+    raw["feature_checks"] = {"quality": {}, "leakage": {}}
+    checks = _load(tmp_path, raw).feature_checks
+    assert (checks.quality.nulls_informative_min, checks.leakage.null_concordance_max) == (
+        0.55,
+        0.70,
+    )
+    raw["feature_checks"] = {
+        "quality": {"nulls_informative_min": 0.9},
+        "leakage": {"null_concordance_max": 0.6},
+    }
+    message = _error(tmp_path, raw)
+    assert "nulls_informative_min 0.9 must be below" in message
+    raw["feature_checks"] = {"quality": {"nulls_informative_min": 0.75}}
+    assert "must be below feature_checks.leakage.null_concordance_max 0.7" in _error(tmp_path, raw)
+    assert "null_concordance_max 0.6" in message
+
+
+def test_unknown_step_or_parameter_refused_naming_it(tmp_path: Path, raw: dict) -> None:
+    """A misspelt parameter or a step that doesn't exist fails by its path."""
+    raw["feature_checks"]["stability"]["psi_maximum"] = 0.2
+    raw["feature_checks"]["eligibility_constant"] = {}
+    message = _error(tmp_path, raw)
+    assert "feature_checks.stability.psi_maximum" in message
+    assert "feature_checks.eligibility_constant" in message
+
+
+def test_retired_stage_1_fields_refused_naming_them(tmp_path: Path, raw: dict) -> None:
+    """`feature_checks.steps` and `eda.chart_sample_share` went in place, with no migration
+    (D-136): an old config fails naming them."""
+    raw["feature_checks"] = {"steps": [{"name": "quality", "params": {}}]}
+    raw["eda"]["chart_sample_share"] = None
+    message = _error(tmp_path, raw)
+    assert "feature_checks.steps" in message and "eda.chart_sample_share" in message
+
+
+def test_snapshot_is_held_as_its_period_end(tmp_path: Path, raw: dict) -> None:
+    """`last` resolves to the window's last period; a month written as its first day is held as
+    its last, and any other day is a likely typo."""
+    assert snapshot_period(_load(tmp_path, raw)) == date(2025, 8, 31)
+    raw["eda"]["snapshot"] = date(2025, 6, 1)
+    cfg = _load(tmp_path, raw)
+    assert cfg.eda.snapshot == snapshot_period(cfg) == date(2025, 6, 30)
+    raw["eda"]["snapshot"] = date(2025, 6, 15)
+    assert "eda.snapshot 2025-06-15 must be the first or the last day of a month" in _error(
+        tmp_path, raw
+    )
+
+
+@pytest.mark.parametrize(("snapshot", "label"), [(date(2025, 9, 1), "2025-09"),
+                                                 (date(2025, 2, 28), "2025-02")])  # fmt: skip
+def test_snapshot_outside_the_window_refused(
+    tmp_path: Path, raw: dict, snapshot: date, label: str
+) -> None:
+    """A snapshot after the window's last or before its first period fails naming both."""
+    raw["eda"]["snapshot"] = snapshot
+    message = _error(tmp_path, raw)
+    assert f"eda.snapshot {label} is outside the observation window 2025-03 … 2025-08" in message
+
+
+def test_weekly_snapshot_compares_by_period_index(tmp_path: Path, raw: dict) -> None:
+    """Any day of the window's last week is inside it; the next Monday is the next week (T19)."""
+    raw["time"]["period"] = "week"
+    raw["time"]["observation_window"] = {"first": date(2025, 3, 5), "last": date(2025, 8, 13)}
+    raw["time"]["validation_period"] = date(2025, 9, 15)
+    raw["eda"]["snapshot"] = date(2025, 8, 16)
+    assert _load(tmp_path, raw).eda.snapshot == date(2025, 8, 17)
+    raw["eda"]["snapshot"] = date(2025, 8, 18)
+    assert "eda.snapshot 2025-W34 is outside" in _error(tmp_path, raw)
+
+
+def test_bins_null_turns_binning_off_and_one_bin_is_refused(tmp_path: Path, raw: dict) -> None:
+    """`null` makes every value its own bin; one bin would hold everything."""
+    raw["eda"]["bins"] = None
+    assert _load(tmp_path, raw).eda.bins is None
+    raw["eda"]["bins"] = 1
+    assert "eda.bins" in _error(tmp_path, raw)
+
+
+def test_validation_period_null_is_an_eda_only_config(tmp_path: Path, raw: dict) -> None:
+    """`null` is accepted and skips the v rules; the line itself stays required."""
+    raw["time"]["validation_period"] = None
+    assert _load(tmp_path, raw).time.validation_period is None
+    del raw["time"]["validation_period"]
+    message = _error(tmp_path, raw)
+    assert "time.validation_period" in message and "Field required" in message
+
+
+def test_kind_override_must_be_numeric_or_categorical(tmp_path: Path, raw: dict) -> None:
+    """A kind other than the two fails naming its column."""
+    raw["features"]["kinds"] = {"branch_code": "categorical", "age": "integer"}
+    message = _error(tmp_path, raw)
+    assert "features.kinds.age" in message and "features.kinds.branch_code" not in message

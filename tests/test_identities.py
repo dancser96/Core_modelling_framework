@@ -117,12 +117,21 @@ def test_training_budget_moves_only_the_config_and_resolved_input(cfg: UseCaseCo
     assert _changed(cfg, _variant(cfg, "training.max_iter", 7)) == {"config", "resolved_input"}
 
 
+def test_kinds_and_eda_settings_leave_the_data_definition_alone(cfg: UseCaseConfig) -> None:
+    """How a column is read and EDA's knobs are outside the data-definition hash (D-088)."""
+    categorical = _variant(cfg, "features.kinds", {"age": "categorical"})
+    assert _changed(cfg, categorical) == {"config", "resolved_input"}
+    assert _changed(cfg, _variant(cfg, "eda.bins", 20)) == {"config", "resolved_input"}
+
+
 def test_replayed_exclusions_move_the_resolved_input_not_the_config(cfg: UseCaseConfig) -> None:
     """A decision in the audit log leaves the config hash unchanged (D-088)."""
     resolved = _variant(cfg, "features.excluded", ["nationality"])
     assert _changed(cfg, resolved) == {"resolved_input"}
-    kept = _variant(cfg, "features.kept_despite_flags", ["age"])
+    kept = _variant(cfg, "features.kept", ["age"])
     assert _changed(cfg, kept) == {"resolved_input"}
+    held = _variant(cfg, "features.held", ["income"])
+    assert _changed(cfg, held) == {"resolved_input"}
 
 
 def test_housekeeping_changes_nothing(cfg: UseCaseConfig) -> None:

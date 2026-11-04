@@ -94,6 +94,9 @@ Whether this glossary is also published to the wider unit is part of the open do
   (D-030, D-135; `docs/components/dataset.md`).
 - **Snapshot:** `eda.snapshot`, the one period EDA collects and analyses, default the window's
   last. Every snapshot statistic is that period's (D-135).
+- **Last labelled period:** the validation period, or the window's last period when
+  `time.validation_period` is null (an EDA-only config); the sources must reach it, plus `w` for
+  the target source (`target_factory.last_labelled_period`).
 - **Compared periods:** the window periods, the gap periods and the latest period the data holds,
   never the validation period. Recorded in the Feature Checks run entry; outside the window the
   comparison is label-free (D-088, D-135).
@@ -376,7 +379,7 @@ Whether this glossary is also published to the wider unit is part of the open do
   (D-135; `docs/components/eda.md`).
 - **Best-order concordance:** `concordance_best_order`: the bins ordered by their shrunk target
   rate instead of by value, then the same statistic: what a ten-leaf tree on that one feature
-  would reach. `non_monotone` when it beats the plain value by ≥ 0.03; the ranking and Training's
+  would reach. `non_monotone` when it beats the plain value by ≥ max(0.03, 4 · SE); the ranking and Training's
   floor use it only for features marked `non_monotone` (D-135).
 - **Null concordance:** the concordance of the null indicator against the target:
   `nulls_informative` from 0.55, `missingness_leak` from 0.70.

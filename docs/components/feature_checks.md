@@ -65,7 +65,8 @@ levels ≥ 1%; |association| ≥ 0.90.
 2. Read `eda/` and the ledger for the data-definition hash; refuse, naming `run_eda`, on a missing
    artifact or a settings-digest mismatch.
 3. Run the five steps in their fixed order over the ledger's EDA columns and EDA's tables; a step
-   left out of a present `feature_checks` mapping is skipped and the report says so.
+   left out of a present `feature_checks` mapping is skipped and the report says so; a present
+   mapping that names no step is refused at load (running zero checks is a mistake, §4.5).
 4. Stack their findings into one `findings` table.
 5. Write to the audit log: per finding, a `flag` entry when its flagged feature set differs from
    that finding's latest entry (an empty set closes it); then one stage `run` entry with the
@@ -83,8 +84,13 @@ levels ≥ 1%; |association| ≥ 0.90.
 - `feature_checks/run.py`: `run_feature_checks`, the stage function.
 - It imports `statistics/` (every calculation), `ledger.py` (read, append, `resolve_features`),
   `artifacts.py` (EDA's artifact, the digest check, the temporary folder), `reporting/` (the
-  writer, charts, the choices block) and `config` (the entry writer, `open_flags`,
-  `held_features`).
+  writer, charts, the choices block) and `config` (the entry writer
+  `audit_log.record_stage_entry(cfg, entity, env, *, stage, op, reason, features, finding,
+  periods, …)`, `replay.open_flags`, `replay.held_features`). Its folder is
+  `environment.feature_dir(env, cfg, entity, "feature_checks")`; it reads the ledger with
+  `read_ledger(folder, resolved.housekeeping["data_definition_hash"])` and refuses one without
+  EDA's columns; it saves the ledger first and writes its folder last (the stage json is the
+  commit marker, D-136).
 
 ### How it is checked
 - **The hold-out:** `resolve_features` leaves held features out and takes them back after a
@@ -199,7 +205,9 @@ independently.
   framework never imputes."
 - **`nulls_informative`** · note · `nulls_informative_min: 0.55`. `0.55 ≤
   null_concordance_window < leakage.null_concordance_max`, with at least 20 null and 20 non-null
-  rows. "Whether the value is filled carries information; keep the nulls as their own group; a
+  rows; with `leakage` left out of a present mapping the upper bound is `Leakage()`'s default
+  (0.70), and the config refuses a `nulls_informative_min` at or above the bound in use (the note
+  could never fire). "Whether the value is filled carries information; keep the nulls as their own group; a
   family that imputes must impute outside the value range, never the median."
 
 #### `leakage`
@@ -255,9 +263,12 @@ there is nothing to lose or to stamp.
   roll-ups after the app relaunch).
 - **`new_levels`** · note · `new_level_share_max: 0.01`. The share, in the latest period, of the
   levels unseen in any window period ≥ 0.01. "Levels unseen in the window cover more than 1% of the
-  latest rows."
-- PSI: ten bins merged from the cells on the snapshot's quantile edges plus the null bin;
-  categoricals on the window's levels with `__other__`; each share floored at 1e-4; the Lewis bands
+  latest rows." For a categorical with more than 10,000 window levels (EDA's `over_ceiling` list)
+  the note reads "not available: more than 10,000 window levels", decided up front (D-035).
+- PSI: ten groups merged from the cells (`merge_bins` on the first compared period's cells, the
+  same `bin_order` ranges applied to the other period) plus the null bin; categoricals on the
+  window's levels with `__other__`; `psi` takes shares in [0, 1] (counts are refused), floors each
+  at `PSI_FLOOR = 1e-4` and never renormalises; the Lewis bands
   0.10 / 0.25 are labels, not tests. Drift is a note because it is Monitoring's concern: a flag at
   0.10 would hold every trending legitimate feature out of an `autonomous` model.
 
@@ -269,13 +280,15 @@ there is nothing to lose or to stamp.
   (0.99997 with `relationship_days`) and `collinearity`.
 - **Shown as clusters:** average linkage on 1 − |association|, cut at 1 − `correlation_max`; per
   cluster the members sorted by concordance, each with |association| with the best member and
-  `explained_by_others` (the within-cluster R² on ranks, computed from the correlation table as the
-  multiple correlation of the member with the other members: the correlation submatrix solved
-  with a small ridge, so an exact identity reads 1; a VIF without imputation and without rows). A
-  pair with
-  fewer than 1,000 shared non-null rows is "not compared" and never linked. The report never
-  suggests dropping either of two strong features: boosted trees lose little accuracy to
-  collinearity but split their importance, so a person decides.
+  `explained_by_others` (the within-cluster R² on ranks: the multiple correlation of the member
+  with the cluster's other Spearman members, from the correlation submatrix by least squares, so an
+  exact identity reads 1, T32; a VIF without imputation and without rows; "not available" for a
+  cluster holding a pair that was not compared, for the non-numeric members of a mixed-kind
+  cluster, and when the pairwise-complete correlations are inconsistent, R² outside [0, 1]). A pair with fewer than 1,000 shared non-null rows is "not compared": it sits at
+  distance 1, which average linkage links only inside a cluster of near-identical members (single
+  linkage would chain it through one strong neighbour, Q472). The report never suggests dropping
+  either of two strong features: boosted trees lose little accuracy to collinearity but split
+  their importance, so a person decides.
 
 ### Nulls
 The framework never fills a null (D-029 (c)); the full register lives in [EDA](eda.md). The rules
@@ -312,8 +325,12 @@ Feature Checks relies on:
   - `keep`: the finding is accepted; the feature returns to the next training run and is
     protected from Training's automated pruning. The entry carries `findings`, the flags it
     settles; when the call names none, the writer fills in every flag open on those features at
-    that moment, so the stored entry is explicit. A different finding raised later opens again;
-    the same finding with new values does not.
+    that moment, so the stored entry is explicit. Every stored (feature, finding) pair must be open
+    at write time: a named finding open on only some of the features, a default where the
+    features' open sets differ ("one keep per finding set"), and `findings=[]` while flags are
+    open are all refused, so a keep never settles in advance a finding raised later on another of
+    its features. A different finding raised later opens again; the same finding with new values
+    does not.
   - `exclude`: the person's decision; the feature is out of every later run.
   - `include`: reverses a person's `exclude`; a flag still open on the feature holds it again.
   - Each is one entry per group of features with one reason (D-125).
@@ -374,10 +391,12 @@ A `flag` entry as stored (fields as in [config](config.md#one-entry)):
   - the per-period table (`tables/per_period`): every compared period against the snapshot (PSI,
     missing share, concordance where labelled), shown for every candidate as information.
 - **The `run` entry:** one stage `run` entry per run (`by: {kind: stage, id: feature_checks}`, its
-  `replayed_to` and resolved-input hash) with a `periods` field listing every compared period.
-  `set time.validation_period` to any period a run entry lists, reverted or not, is refused
-  (D-088): a validation period whose drift was looked at would make the validation result look
-  better than production will be.
+  `replayed_to` and resolved-input hash) with a `periods` field listing every compared period as
+  the config's period labels (the writer refuses any other form, and an empty list). `set` or
+  `revert` moving `time.validation_period` to any period a run entry lists, reverted or not, is
+  refused, and `resolve_config` refuses as stale a resolved validation period a replayed run
+  entry lists (D-088): a validation period whose drift was looked at would make the validation
+  result look better than production will be.
 
 ### The report
 Standalone, beside its artifacts (`feature_checks/report.html`); the writer, the chart rules and

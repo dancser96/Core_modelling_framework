@@ -14,7 +14,6 @@ import copy
 LEVELS = ("autonomous", "assisted")
 
 LEVEL_DEFAULTS: dict[str, dict[str, object]] = {
-    "eda.key_features.top_n": {"autonomous": 10, "assisted": 20},
     "training.max_iter": {"autonomous": 50, "assisted": 200},
     "evaluation.slices.top_pct": {"autonomous": [0.01, 0.1], "assisted": [0.01, 0.05, 0.1]},
 }

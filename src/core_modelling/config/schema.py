@@ -4,10 +4,12 @@ The config is the use case's intent, validated at load and frozen once the targe
 (D-125). Every model forbids unknown keys, so a misspelt or retired field fails naming the key.
 Fields the automation level fills (`levels.py`) have no default here: a dict that skipped
 `apply_level_defaults` fails loud instead of carrying None. Values that an audit-log replay writes
-(`features.excluded`, `features.kept_despite_flags`, `housekeeping`) are empty in a config file, so
-the resolved config validates with this same schema (D-125). A period (the unit of analysis,
-`time.period`) is held as its last day, the framework's one convention; a config may write it as
-any day the period spec accepts (a month: its first or its last day, D-129).
+(`features.excluded`, `features.kept`, `features.held`, `housekeeping`) are empty in a config file,
+so the resolved config validates with this same schema (D-125, D-134). A period (the unit of
+analysis, `time.period`) is held as its last day, the framework's one convention; a config may
+write it as any day the period spec accepts (a month: its first or its last day, D-129). The
+Stage 2 fields (`eda`, `feature_checks`, `features.kinds`) changed in place, with no schema bump
+and no migration (D-136).
 """
 
 import re
@@ -221,33 +223,39 @@ class ObservationWindow(StrictModel):
     last: date
 
 
+def _accepted_period_end(value: date, period: str, path: str) -> date:
+    """The typo rule: a date the period may not be written as (a month: a day that is neither its
+    first nor its last) is refused naming `path`; an accepted date moves to its period's end."""
+    spec = PERIODS[period]
+    if not spec.accept(value):
+        raise ValueError(
+            f"{path} {value} must be the first or the last day of a {period}, "
+            f"e.g. {spec.end(value)}"
+        )
+    return spec.end(value)
+
+
 class Time(StrictModel):
     """The unit of analysis, the observation window, the target window `w` (periods t+1 … t+w)
-    and the validation period; the three dates are held as their period's last day."""
+    and the validation period, null for an EDA-only config (Training refuses it); the dates are
+    held as their period's last day."""
 
     period: Literal["month", "week", "day"] = "month"
     observation_window: ObservationWindow
     target_window: int = Field(ge=1)
-    validation_period: date
+    validation_period: date | None
 
     @model_validator(mode="after")
     def _move_to_period_end(self) -> "Time":
-        """The typo rule: a date the period may not be written as (a month: a day that is neither
-        its first nor its last) is refused; the accepted dates move to their period's end."""
-        spec = PERIODS[self.period]
-        window = self.observation_window
-        for path, value in (
-            ("observation_window.first", window.first),
-            ("observation_window.last", window.last),
-            ("validation_period", self.validation_period),
-        ):
-            if not spec.accept(value):
-                raise ValueError(
-                    f"time.{path} {value} must be the first or the last day of a {self.period}, "
-                    f"e.g. {spec.end(value)}"
-                )
-        window.first, window.last = spec.end(window.first), spec.end(window.last)
-        self.validation_period = spec.end(self.validation_period)
+        """The typo rule on the window's bounds and the validation period, when set; the accepted
+        dates move to their period's end."""
+        period, window = self.period, self.observation_window
+        window.first = _accepted_period_end(window.first, period, "time.observation_window.first")
+        window.last = _accepted_period_end(window.last, period, "time.observation_window.last")
+        if self.validation_period is not None:
+            self.validation_period = _accepted_period_end(
+                self.validation_period, period, "time.validation_period"
+            )
         return self
 
     @model_validator(mode="after")
@@ -261,7 +269,9 @@ class Time(StrictModel):
     @model_validator(mode="after")
     def _check_validation_after_window(self) -> "Time":
         """No training target window overlaps the validation period's: v ≥ tk + w (§4.2), counted
-        in periods by the spec's index."""
+        in periods by the spec's index; nothing to check without a validation period."""
+        if self.validation_period is None:
+            return self
         spec = PERIODS[self.period]
         gap = spec.index(self.validation_period) - spec.index(self.observation_window.last)
         if gap < self.target_window:
@@ -281,11 +291,17 @@ class Candidates(StrictModel):
 
 
 class Features(StrictModel):
-    """The candidates; the two lists are written by the audit log's replay, empty in a file."""
+    """The candidates and the kind overrides (`{column: numeric | categorical}`, over the
+    Spark-schema default; a key naming no candidate is refused when the frames are built, since
+    the candidates are patterns until then). `excluded`, `kept` and `held` are written by the
+    audit log's replay and empty in a file; for Training a held feature acts as an excluded
+    feature without a final decision (D-134)."""
 
     candidates: Candidates = Candidates()
+    kinds: dict[str, Literal["numeric", "categorical"]] = {}
     excluded: list[str] = []
-    kept_despite_flags: list[str] = []
+    kept: list[str] = []
+    held: list[str] = []
 
 
 class Strata(StrictModel):
@@ -297,40 +313,123 @@ class Strata(StrictModel):
 
 
 class KeyFeatures(StrictModel):
-    """EDA's key features: the top-N by univariate ranking plus the listed ones."""
+    """EDA's key features: the top-N of the ranking, skipping a candidate associated above
+    `max_correlation` with one already chosen, plus the listed ones."""
 
-    top_n: int = Field(ge=0)
+    top_n: int = Field(default=10, ge=0)
     include: list[str] = []
+    max_correlation: float = Field(default=0.9, gt=0, le=1)
 
 
 class Eda(StrictModel):
-    """EDA's knobs."""
+    """EDA's knobs: the snapshot period it collects whole, the quantile bins per numeric (null:
+    every value its own bin) and the key features (D-135)."""
 
-    key_features: KeyFeatures
-    chart_sample_share: float | None = Field(default=None, gt=0, le=1)
-
-
-class CheckStep(StrictModel):
-    """One ordered Feature Checks step: flags and logs, never drops (§4.6)."""
-
-    name: str
-    params: dict[str, object] = {}
+    snapshot: Literal["last"] | date = "last"
+    bins: int | None = Field(default=100, ge=2)
+    key_features: KeyFeatures = KeyFeatures()
 
 
-DEFAULT_CHECK_STEPS = [
-    CheckStep(name="quality"),
-    CheckStep(name="leakage"),
-    CheckStep(name="time_alignment"),
-    CheckStep(name="eligibility_constant"),
-    CheckStep(name="stability", params={"psi_max": 0.25}),
-    CheckStep(name="redundancy"),
-]
+class NullsMayBeZeros(StrictModel):
+    """The `nulls_may_be_zeros` note: many nulls and almost never a zero among the values."""
+
+    missing_min: float = Field(default=0.2, gt=0, le=1)
+    zero_share_max: float = Field(default=0.005, ge=0, le=1)
+
+
+class Quality(StrictModel):
+    """Feature Checks' `quality` step: all-null, constant, high-missing, near-constant and
+    high-cardinality flags, two null notes."""
+
+    dominant_share_max: float = Field(default=0.99, gt=0, le=1)
+    missing_share_max: float = Field(default=0.95, gt=0, le=1)
+    max_levels: int = Field(default=50, ge=2)
+    nulls_may_be_zeros: NullsMayBeZeros = NullsMayBeZeros()
+    nulls_informative_min: float = Field(default=0.55, ge=0.5, le=1)
+
+
+class Leakage(StrictModel):
+    """Feature Checks' `leakage` step: too strong, missingness leak, rare-value leak (flags)."""
+
+    concordance_max: float = Field(default=0.80, gt=0.5, le=1)
+    null_concordance_max: float = Field(default=0.70, gt=0.5, le=1)
+    rare_effect_max: float = Field(default=5.0, gt=1)
+
+
+class TimeAlignment(StrictModel):
+    """Feature Checks' `time_alignment` step: lagged signal drop, client constant (flags)."""
+
+    signal_kept_min: float = Field(default=0.5, gt=0, le=1)
+    constant_clients_min: float = Field(default=0.99, gt=0, le=1)
+    concordance_min: float = Field(default=0.6, ge=0.5, le=1)
+
+
+class Stability(StrictModel):
+    """Feature Checks' `stability` step: concordance unstable (flag); PSI and new levels
+    (notes)."""
+
+    psi_max: float = Field(default=0.10, gt=0)
+    heterogeneity_p_max: float = Field(default=0.01, gt=0, lt=1)
+    concordance_range_min: float = Field(default=0.05, ge=0, le=0.5)
+    new_level_share_max: float = Field(default=0.01, gt=0, le=1)
+
+
+class Redundancy(StrictModel):
+    """Feature Checks' `redundancy` step: correlated and associated pairs (notes), clustered."""
+
+    correlation_max: float = Field(default=0.90, gt=0, le=1)
+    association_max: float = Field(default=0.90, gt=0, le=1)
 
 
 class FeatureChecks(StrictModel):
-    """The ordered check steps and their thresholds."""
+    """The five steps' thresholds, one typed entry each. The steps run in a fixed order (quality,
+    leakage, time_alignment, stability, redundancy), so no order lives here; a step left out of a
+    present mapping is None and not run, and the section left out runs all five (D-137)."""
 
-    steps: Annotated[list[CheckStep], AfterValidator(_unique_names)] = DEFAULT_CHECK_STEPS
+    quality: Quality | None = None
+    leakage: Leakage | None = None
+    time_alignment: TimeAlignment | None = None
+    stability: Stability | None = None
+    redundancy: Redundancy | None = None
+
+    @model_validator(mode="after")
+    def _check_a_step_runs(self) -> "FeatureChecks":
+        """A present mapping names at least one step: Feature Checks running no check is a
+        mistake, since the checks wrap the engine (§4.5)."""
+        steps = list(type(self).model_fields)
+        if all(getattr(self, step) is None for step in steps):
+            raise ValueError(
+                f"a present feature_checks mapping must name at least one step "
+                f"({', '.join(steps)}); leave the section out to run all five"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_nulls_informative_below_leak(self) -> "FeatureChecks":
+        """`quality.nulls_informative_min` lies below the leak bound the quality step uses: the
+        `nulls_informative` note fires between the two, the leak flag above. With `leakage` left
+        out, the quality step takes `Leakage().null_concordance_max` (the default) as that bound,
+        so the check runs against it."""
+        if self.quality is None:
+            return self
+        low = self.quality.nulls_informative_min
+        high = (self.leakage or Leakage()).null_concordance_max
+        if low >= high:
+            raise ValueError(
+                f"feature_checks.quality.nulls_informative_min {low} must be below "
+                f"feature_checks.leakage.null_concordance_max {high}, or the nulls_informative "
+                "note can never fire"
+            )
+        return self
+
+
+EVERY_CHECK = FeatureChecks(
+    quality=Quality(),
+    leakage=Leakage(),
+    time_alignment=TimeAlignment(),
+    stability=Stability(),
+    redundancy=Redundancy(),
+)
 
 
 class Selection(StrictModel):
@@ -453,14 +552,31 @@ class UseCaseConfig(StrictModel):
     time: Time
     features: Features = Features()
     strata: Strata
-    eda: Eda
-    feature_checks: FeatureChecks = FeatureChecks()
+    eda: Eda = Eda()
+    feature_checks: FeatureChecks = EVERY_CHECK
     training: Training
     evaluation: Evaluation
     lifecycle: Lifecycle = Lifecycle()
     inference: Inference = Inference()
     monitoring: Monitoring = Monitoring()
     housekeeping: dict[str, object] | None = None
+
+    @model_validator(mode="after")
+    def _check_snapshot_in_window(self) -> "UseCaseConfig":
+        """`eda.snapshot` is `last` or a period inside the observation window, by period index
+        (T19); a date moves to its period's end under the typo rule, like the window's bounds."""
+        if self.eda.snapshot == "last":
+            return self
+        spec, window = PERIODS[self.time.period], self.time.observation_window
+        snapshot = _accepted_period_end(self.eda.snapshot, self.time.period, "eda.snapshot")
+        if not spec.index(window.first) <= spec.index(snapshot) <= spec.index(window.last):
+            raise ValueError(
+                f"eda.snapshot {spec.label(snapshot)} is outside the observation window "
+                f"{spec.label(window.first)} … {spec.label(window.last)}; name a period inside "
+                "it, or `last` for the window's last period"
+            )
+        self.eda.snapshot = snapshot
+        return self
 
     @model_validator(mode="after")
     def _check_sampling_suits_task(self) -> "UseCaseConfig":
@@ -485,3 +601,11 @@ class UseCaseConfig(StrictModel):
                 "'fx-activation'"
             )
         return value
+
+
+def snapshot_period(cfg: UseCaseConfig) -> date:
+    """The period EDA collects whole, as its last day: `eda.snapshot`, `last` being the window's
+    last period (a date was checked at load to lie inside the window)."""
+    if cfg.eda.snapshot == "last":
+        return cfg.time.observation_window.last
+    return cfg.eda.snapshot

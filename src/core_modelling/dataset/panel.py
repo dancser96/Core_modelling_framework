@@ -44,7 +44,7 @@ from core_modelling.sources import (
     rename_reserved,
     source_name,
 )
-from core_modelling.target_factory import load_targets, target_lineage
+from core_modelling.target_factory import last_labelled_period, load_targets, target_lineage
 
 PANEL_META_KEYS = ("data_definition_hash", "target_spec_hash", "hash_version", "lineage",
                    "candidates", "tags")  # what `prepare_panel` puts in the meta  # fmt: skip
@@ -138,38 +138,39 @@ def _check_shared_definition(cfgs: list[UseCaseConfig], entity: str) -> None:
 def _join_sources(
     cfgs: list[UseCaseConfig], entity: str, env: EnvironmentConfig, spark: SparkSession
 ) -> tuple[DataFrame, list[JoinedSource]]:
-    """The spine, checked to cover the earliest window's first period to the latest validation
-    period, with the other feature sources left-joined and marked; the joined sources, the
-    spine first."""
+    """The spine, checked to cover the earliest window's first period to the latest of the
+    configs' last labelled periods (`last_labelled_period`), with the other feature sources
+    left-joined and marked; the joined sources, the spine first."""
     cfg = cfgs[0]
     entries = cfg.entities[entity].sources.features
     panel, spine_log = read_keyed_source(cfg, entity, entries[0], env, spark)
     # A gap would drop a period of rows quietly; a validation period must exist to be scored.
     first = min(c.time.observation_window.first for c in cfgs)
-    last = max(c.time.validation_period for c in cfgs)
+    last, field = max((last_labelled_period(c) for c in cfgs), key=lambda reach: reach[0])
     spec = period_spec(cfg)
-    check_periods_covered(spine_log, first, last, "spine", "time.validation_period", spec)
+    check_periods_covered(spine_log, first, last, "spine", field, spec)
     joined = [JoinedSource(spine_log, None, "spine")]
     for entry in entries[1:]:
         name = source_name(entry)
         source, log = read_keyed_source(cfg, entity, entry, env, spark)
         _check_no_shared_column(panel, source, name)
-        _note_missing_periods(log, first, last, spec)
+        _note_missing_periods(log, first, last, field, spec)
         marker = f"_from_{name}"
         panel = panel.join(source.withColumn(marker, F.lit(True)), KEYS, "left")
         joined.append(JoinedSource(log, marker, "joined"))
     return panel, joined
 
 
-def _note_missing_periods(log: dict, first: date, last: date, spec: Period) -> None:
+def _note_missing_periods(log: dict, first: date, last: date, field: str, spec: Period) -> None:
     """A joined feature source may lack periods (the left join leaves its columns null there,
-    by design); which ones, up to the latest validation period, go into its log and are printed,
-    so a missing validation period is never a silent shift between test and validation."""
+    by design); which ones, up to the latest last labelled period (`field` names it), go into
+    its log and are printed, so a missing validation period is never a silent shift between
+    test and validation."""
     missing = missing_periods(log["periods"], first, last, spec)
     if missing:
         log["missing_periods"] = missing
-        print(f"source {log['source']!r} has no rows in {missing} (the latest validation period "
-              f"is {spec.label(last)}): its columns are null there")  # fmt: skip
+        print(f"source {log['source']!r} has no rows in {missing} (needed up to "
+              f"{spec.label(last)}, {field}): its columns are null there")  # fmt: skip
 
 
 def _join_targets(
@@ -204,9 +205,10 @@ def _join_targets(
 
 def _target_meta(cfg: UseCaseConfig, entity: str, column: str, target_log: dict) -> dict:
     """One use case's target as the meta records it: what `prepare_panel` and the model input's
-    checks need; dates as the period's labels, but the target source's last period as an ISO
-    date, which a reader turns back into a date to check its own validation period against."""
-    spec, window = period_spec(cfg), cfg.time.observation_window
+    checks need; dates as the period's labels (the validation period null in an EDA-only
+    config), but the target source's last period as an ISO date, which a reader turns back into
+    a date to check its own last labelled period against."""
+    spec, window, v = period_spec(cfg), cfg.time.observation_window, cfg.time.validation_period
     return {
         "column": column,
         "target_spec_hash": target_spec_hash(cfg, entity),
@@ -216,7 +218,7 @@ def _target_meta(cfg: UseCaseConfig, entity: str, column: str, target_log: dict)
         "upstream": cfg.data.target.rule is None,
         "observation_window": {"first": spec.label(window.first), "last": spec.label(window.last)},
         "target_window": cfg.time.target_window,
-        "validation_period": spec.label(cfg.time.validation_period),
+        "validation_period": None if v is None else spec.label(v),
     }
 
 
@@ -243,7 +245,7 @@ def _check_no_shared_column(panel: DataFrame, source: DataFrame, name: str) -> N
 def _check_named_features(panel: DataFrame, cfg: UseCaseConfig) -> None:
     """A name in the audit log's replayed lists that is a key, a column the dataset adds or not
     a column fails loud (it would otherwise exclude nothing)."""
-    for field in ("excluded", "kept_despite_flags"):
+    for field in ("excluded", "kept", "held"):
         framework = [n for n in getattr(cfg.features, field) if n in (*KEYS, *HELPER_COLUMNS)]
         if framework:
             raise ValueError(

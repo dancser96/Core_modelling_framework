@@ -152,6 +152,12 @@ T9, T14; downsampling, calibration and FLAML-search lessons in `docs/context/les
 *(fill when built)*
 
 ## Open questions
+- Training's D-088 count check against EDA's `population` table compares `eligible_rows`,
+  `known_target` and `positive_rows`, never `rows` (which counts ineligible rows after the analysis
+  filters too); its due-diligence check also compares EDA's recorded kinds (`meta["kinds"]`, from
+  the Spark schema, outside every hash) with the panel's schema and fails loud on a changed type.
+- Training's `run` marker in the audit log: `record_stage_entry` requires `periods` on every `run`
+  (Feature Checks' shape, Stage 2); relax it for Training's marker when M2.3 writes it.
 - Verify FLAML 2.7 + xgboost 3.2 before enabling xgboost by default.
 - Spike 1: verify FLAML 2.7's group split on the synthetic data (no sample weights in Phase 2,
   D-117); the fallback is in requirement 2 (D-106).

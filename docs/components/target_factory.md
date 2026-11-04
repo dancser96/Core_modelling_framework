@@ -153,9 +153,10 @@ Built in Stage 1's major step 2 (2026-10-26; under the SDS's review), in
 - `load_targets(cfg, entity, env, spark) -> tuple[DataFrame, dict]`: the target source (the spine
   when `targets` is omitted) read keyed and checked before anything is built: the target column
   exists and passes the task's check, and the source has every period from
-  `observation_window.first` to the validation period + `w` by index (`check_periods_covered`,
-  `until` = `time.validation_period + target_window`; a gap would null w targets; a short
-  source would leave the validation labels immature). Then the rule is built, or the upstream
+  `observation_window.first` to the last labelled period + `w` by index (`check_periods_covered`,
+  `until` = `time.validation_period + target_window`, or `time.observation_window.last +
+  target_window` when the validation period is null: `last_labelled_period(cfg)`; a gap would
+  null w targets; a short source would leave the validation labels immature). Then the rule is built, or the upstream
   `column` taken as `target`, refused when it has values in the source's last `w` periods
   (immature labels filled, or a shorter window than `w`) or none in the period before them (a
   longer window than `w`, whose target windows would overlap the validation period's, §4.2).

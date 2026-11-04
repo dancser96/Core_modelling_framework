@@ -1,6 +1,7 @@
 """The CLI (D-024): `python -m core_modelling run <config>… [--stages …] [--entity …]` runs the
 stages, and `decide <config> --entity E --reason R …` appends one decision to the audit log
-(D-125). Parsing only; the logic is `run` and `record_decision`.
+(D-125), e.g. `--keep F… --findings S…`. Parsing only; the logic is `run` and `record_decision`,
+which also refuses `--findings` without `--keep`.
 """
 
 import argparse
@@ -34,7 +35,10 @@ def _build_parser() -> argparse.ArgumentParser:
     decide.add_argument("--reason", required=True)
     decide.add_argument("--exclude", nargs="+", metavar="FEATURE")
     decide.add_argument("--include", nargs="+", metavar="FEATURE")
-    decide.add_argument("--keep-despite-flag", nargs="+", metavar="FEATURE")
+    decide.add_argument("--keep", nargs="+", metavar="FEATURE")
+    decide.add_argument(
+        "--findings", nargs="+", metavar="FINDING", help="with --keep: the flags it settles"
+    )
     decide.add_argument("--set", type=_parse_setting, metavar="PATH=VALUE")
     decide.add_argument("--revert-to", type=int, metavar="SEQ", help="0: the config as written")
     decide.add_argument("--evidence", nargs="*", default=(), metavar="TEXT")
@@ -56,7 +60,8 @@ def main(argv: list[str] | None = None) -> None:
         args.entity,
         exclude=args.exclude,
         include=args.include,
-        keep_despite_flag=args.keep_despite_flag,
+        keep=args.keep,
+        findings=args.findings,
         set=args.set,
         revert_to=args.revert_to,
         reason=args.reason,

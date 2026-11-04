@@ -3,21 +3,24 @@
 The target source (`entities.<e>.sources.targets`, else the spine) is read keyed
 (`sources.read_keyed_source`) and checked before any target is built: the target column exists
 and its type and values suit the task (`TASK_SPECS`), and the source has every period from the
-observation window's first to the validation period + w. With `data.target.rule` set, the task's
-rule compares the value at t with the forward window t+1 … t+w of the same unit, counted by the
-period spec's index (`periods.py`: a month, a week or a day, never `add_months`, T19), the
-current period never in it (T8) and `w` from config only (T13); the target is null wherever the
-unit lacks any of the w periods (the panel edge, a leaver, a gap; D-029 (c)); a null value
-follows SQL semantics (never an event; a null target when nothing can be compared) and is the
-source's business to fill, while `null_in_window` says whether the raw column held one at t or
-in the window, and is null where the window is incomplete, so its average is the share among
-complete windows. Without a rule, the upstream `column` is the target, refused when it has
-values in the source's last w periods, where no such target can be known yet. Targets are built
-over every row of the source, lazily in Spark, so every period with a complete window carries
-its label; the dataset selects the eligible rows and joins them
+observation window's first to the last labelled period + w (`last_labelled_period`: the
+validation period, or the window's last in an EDA-only config). With `data.target.rule` set,
+the task's rule compares the value at t with the forward window t+1 … t+w of the same unit,
+counted by the period spec's index (`periods.py`: a month, a week or a day, never `add_months`,
+T19), the current period never in it (T8) and `w` from config only (T13); the target is null
+wherever the unit lacks any of the w periods (the panel edge, a leaver, a gap; D-029 (c)); a
+null value follows SQL semantics (never an event; a null target when nothing can be compared)
+and is the source's business to fill, while `null_in_window` says whether the raw column held
+one at t or in the window, and is null where the window is incomplete, so its average is the
+share among complete windows. Without a rule, the upstream `column` is the target, refused
+when it has values in the source's last w periods, where no such target can be known yet.
+Targets are built over every row of the source, lazily in Spark, so every period with a
+complete window carries its label; the dataset selects the eligible rows and joins them
 (docs/components/target_factory.md). The lineage, the columns the target was built from, is
 excluded from the candidates (T12).
 """
+
+from datetime import date
 
 import pandas as pd
 from pyspark.sql import DataFrame, SparkSession, Window
@@ -93,6 +96,14 @@ def _check_upstream_tail(source: DataFrame, cfg: UseCaseConfig, log: dict) -> No
         )
 
 
+def last_labelled_period(cfg: UseCaseConfig) -> tuple[date, str]:
+    """The last period whose labels the config needs, with its field: the validation period, or
+    the window's last period in an EDA-only config (`time.validation_period` null)."""
+    if cfg.time.validation_period is None:
+        return cfg.time.observation_window.last, "time.observation_window.last"
+    return cfg.time.validation_period, "time.validation_period"
+
+
 def load_targets(
     cfg: UseCaseConfig, entity: str, env: EnvironmentConfig, spark: SparkSession
 ) -> tuple[DataFrame, dict]:
@@ -107,12 +118,13 @@ def load_targets(
     name = source_name(entry)
     source, log = read_keyed_source(cfg, entity, entry, env, spark)
     _check_target_column(source, cfg, name)
-    # Every period up to v + w: a gap nulls the w targets before it, a source ending earlier
-    # leaves the validation period's labels immature (one unbroken range; real panels have it).
-    spec, time = period_spec(cfg), cfg.time
-    matured = spec.from_index(spec.index(time.validation_period) + time.target_window)
-    check_periods_covered(log, time.observation_window.first, matured, "target source",
-                          "time.validation_period + target_window", spec)  # fmt: skip
+    # Every period up to the last labelled period + w: a gap nulls the w targets before it, a
+    # source ending earlier leaves its labels immature (one unbroken range; real panels have it).
+    spec = period_spec(cfg)
+    last, field = last_labelled_period(cfg)
+    matured = spec.from_index(spec.index(last) + cfg.time.target_window)
+    check_periods_covered(log, cfg.time.observation_window.first, matured, "target source",
+                          f"{field} + target_window", spec)  # fmt: skip
     if cfg.data.target.rule is None:
         _check_upstream_tail(source, cfg, log)
         column = F.col(cfg.data.target.column)

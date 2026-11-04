@@ -1,9 +1,11 @@
 # Config spine
 **Status:** built (M2.1, 2026-10-26; for the SDS's review); the Stage 2 fields and audit-log changes
-specified 2026-11-02 and built in Stage 2's first step (this doc shows that target state; the
-template and the example configs change with the schema code in that step); `schema_version` stays
-1 (no bumps in 0.x until user testing, D-136 extending D-007 (c)) · **Legacy:** `configs/_schema.py`,
-`configs/_TEMPLATE.yaml`
+specified 2026-11-02; the schema's Stage 2 fields, the template, the example configs and the
+`keep` rename built 2026-11-03 (Stage 2 m1.1), the audit log's `findings`, `flag`, `run`, the
+held set and the paths built 2026-11-03 (m1.2), m1.1's and m1.2's review fixes applied
+2026-11-03;
+`schema_version` stays 1 (no bumps in 0.x until user testing, D-136 extending D-007 (c)) ·
+**Legacy:** `configs/_schema.py`, `configs/_TEMPLATE.yaml`
 **Related:** [dataset](dataset.md) (time model, frames, the model input) · [feature ledger](feature_ledger.md) ·
 [lifecycle](lifecycle.md) · [run modes](run_modes.md) · [environment](environment.md) (the environment file) ·
 [target factory](target_factory.md) (the target spec) · D-006, D-007, D-020, D-021, D-023, D-024, D-030,
@@ -54,8 +56,9 @@ the template with every option's when-to-use is `conf/base/TEMPLATE.yml`). A sec
 `conf/base/td_acquisition.yml` (term deposit), shares its model input: same sources, keys,
 period and `model_input`, its own target and eligibility. A `null` on a level
 path (`levels.py`) takes the level default; any other `null` is off or derived (the template's
-reading key). `features.kinds`, `eda` and `feature_checks` show the Stage 2 defaults, which reach
-the template and the examples in Stage 2's first step.
+reading key). `features.kinds`, `eda` and `feature_checks` show the Stage 2 defaults, as the template
+does; the two examples write `{}` for each step (its defaults) and keep `stability: {psi_max:
+0.25}`, Monitoring's drift threshold.
 
 ```yaml
 schema_version: 1
@@ -231,8 +234,11 @@ What it holds, what its reader refuses and when it is written: [dataset](dataset
 6. **Stepwise sections:** eligibility steps are ordered and named, and each produces a log entry
    (rows in → out, reason); Feature Checks' five steps run in a fixed order (quality, leakage,
    time alignment, stability, redundancy), one typed entry each in the `feature_checks` mapping,
-   and each logs its findings ([feature checks](feature_checks.md)). Eligibility is two ordered lists of Spark
-   SQL entries, `data.eligibility.analysis` and `data.eligibility.modelling`, run as one order,
+   and each logs its findings ([feature checks](feature_checks.md)). A present mapping names at
+   least one step (running no check is a mistake, `CLAUDE.md` §4.5), and
+   `quality.nulls_informative_min` lies below `leakage.null_concordance_max` when both run.
+   Eligibility is two ordered lists of Spark SQL entries, `data.eligibility.analysis` and
+   `data.eligibility.modelling`, run as one order,
    analysis first, with step names unique across both (D-129). An entry is either a `define` (a
    named boolean condition that the entries after it, in either list, reuse by name, dropped
    before the candidates are resolved) or a `filter` with a required `reason`; a null condition
@@ -269,8 +275,9 @@ What it holds, what its reader refuses and when it is written: [dataset](dataset
    periods), so moving it never changes the data-definition hash. After the config freezes,
    the validation period changes only through a `set` entry in the audit log, refused when any
    Feature Checks `run` entry lists that period among the periods it compared (D-088;
-   [feature checks](feature_checks.md)). A Phase 2 production retrain moves only the
-   inference period (D-052).
+   [feature checks](feature_checks.md)) and when it sets `null`: a frozen training config does
+   not become EDA-only through the log, so `null` is written in the config file. A Phase 2
+   production retrain moves only the inference period (D-052).
    A period is held as its **last day**, the framework's one convention. The typo rule at load
    depends on `time.period`: a month is written as its first or its last day (any other day is
    refused as a likely typo), a week as any of its days, a day as itself; the three dates move to
@@ -339,7 +346,7 @@ any extension-point entry.
 |---|---|---|
 | person | `exclude`: drop features from the candidates | changes the input |
 | person | `include`: reverse a person's `exclude` | changes the input |
-| person | `keep`: settles the open flags it names (`findings`, default every open flag on those features); also protects from automated pruning | changes the input |
+| person | `keep`: settles the open flags it names (`findings`), each open on every feature it names; by default the features' open flags, which must then be the same on each (else one keep per finding set); also protects from automated pruning | changes the input |
 | person | `set`: change one listed setting (next section) | changes the input |
 | person | `revert`: go back to the state after an earlier entry (`to_seq`; 0 is the config as written) | changes the input: replay restarts from there |
 | person | `sign_off`: approve a run's final feature list (D-031) | trail |
@@ -350,10 +357,14 @@ any extension-point entry.
 | stage | `run`: a marker with `run_id`, the entry it replayed up to and the input hash; Feature Checks' carries the `periods` it compared (D-088) | trail |
 
 - Only `exclude`, `include`, `keep`, `set`, `revert` and `flag` (through `features.held`) change
-  the resolved input; the rest are the trail and are no-ops at replay. A flag stays open until a `keep` names its finding, an
-  `exclude` takes the feature out, or the finding's latest `flag` entry no longer lists the
-  feature. Notes are never entries: they live in Feature Checks' findings table. Which findings
-  are flags and how the hold-out works: [feature checks](feature_checks.md) (D-134).
+  the resolved input; the rest are the trail and are no-ops at replay. A flag stays open on a
+  feature until a `keep` naming that feature and its finding settles it, an `exclude` takes the
+  feature out, or the finding's latest `flag` entry no longer lists the feature. A `keep` stores
+  only (feature, finding) pairs open when it is written: each finding it names must be open on
+  every feature it names, so a keep never settles in advance a finding raised later on another
+  of its features; a `findings: []` named while flags are open on its features settles nothing
+  and is refused. Notes are never entries: they live in Feature Checks' findings table. Which
+  findings are flags and how the hold-out works: [feature checks](feature_checks.md) (D-134).
 - A `revert` entry, `{op: revert, to_seq: 8, reason}`, goes back to an earlier state without
   deleting anything: at replay the state restarts from the config with entries 1 … 8 applied,
   and the entries after the revert continue from there. The undone entries stay in the log as
@@ -362,7 +373,9 @@ any extension-point entry.
   with `record_decision(…, revert_to=8, reason=…)` or `decide --revert-to 8`, exactly one of
   the five operations; it is refused unless `to_seq` is an earlier state than the current one
   (0 … n−1), and it carries no features, path, `from` or `to` (no other operation takes
-  `to_seq`). Its default stage is the first undone entry's, overridable with `stage=`.
+  `to_seq`). The state it brings back is checked like a `set` of the validation period: refused
+  when it moves the validation period to `null` or to one a Feature Checks `run` entry lists
+  (D-088). Its default stage is the first undone entry's, overridable with `stage=`.
   `show_decisions` shows `to #8` in `what`; the resolved file's header adds one line per
   revert, `# entry 14 reverted to the state after #8`, and its per-value origins are those of
   the entries still in force. `log_schema_version` stays 1: a new op, old entries read as
@@ -378,16 +391,20 @@ any extension-point entry.
   reversed (`CLAUDE.md` §4.6). A flagged feature was never dropped, only held: `keep` settles
   the flag.
 - A write is refused at once when a feature isn't a candidate, the reason is missing, the change
-  touches the data definition, the setting isn't listed, the value fails the schema, `findings`
-  comes without `keep`, or it moves the validation period to one a Feature Checks `run` entry
-  lists (D-088).
+  touches the data definition, the setting isn't listed or sits under a `feature_checks` step the
+  config doesn't run, the value fails the schema, `findings` comes without `keep`, names a flag
+  not open on every one of the keep's features or is `[]` while flags are open on them, a
+  default keep's features have different open flags, or a `set` or a `revert` moves the
+  validation period to `null` or to one a Feature Checks `run` entry lists (D-088). At replay,
+  `resolve_config` refuses as stale a resolved validation period that a replayed `run` entry
+  lists, so a hand-written entry is caught too.
 - An entry's evidence may cite train and test results only: the validation period never informs a
   choice (`CLAUDE.md` §4.4).
 
 ### Which settings a `set` may touch, and maintaining the list
 `LOGGABLE_SETTINGS` is a plain dict in `config/replay.py`, mapping each allowed setting path to its
-stage. The list after Stage 2's first step (the Stage 1 code still lists `eda.chart_sample_share`
-and `feature_checks.steps`, which that step removes):
+stage. The list after Stage 2's first step (the Stage 1 entries `eda.chart_sample_share` and
+`feature_checks.steps` left the code with their fields in m1.1; the new leaves arrived with m1.2):
 
 ```python
 LOGGABLE_SETTINGS = {
@@ -505,14 +522,19 @@ The replay code is expected to be a few dozen lines. That is a design target, no
 Fields: `seq`, `time`, `by` (`kind`: person / rule / stage, plus `id`), `stage`, `op`, then
 `features` (empty only in a `flag` entry, which closes the finding), `path` / `from` / `to` (`to`
 may be null, e.g. sampling off) or `to_seq` (a `revert`), `finding` (a `flag`:
-`<step>.<finding>`), `findings` (a `keep`: the findings it settles, default every flag open on its
-features when written), plus `reason`, `evidence`, `data_definition_hash`, `hash_version` (the
-recipe that computed it) and `log_schema_version` (still 1: the Stage 2 fields change in place,
-D-136). Run markers add `run_id`, `replayed_to` and `resolved_input_hash`; Feature Checks' run
-marker adds `periods` (the periods it compared) and has no `run_id` yet. An operand that doesn't
-belong to the operation is refused. Evidence cites earlier entries as `#n`, which is how replay
-finds the person entries that cite a rule or stage entry. Entries 3 and 6 of the worked example,
-as stored:
+`<step>.<finding>`), `findings` (a `keep`: the findings it settles, each open on every feature it
+names when written; by default the features' open flags, the same on each), plus `reason`,
+`evidence`, `data_definition_hash`, `hash_version` (the recipe that computed it) and
+`log_schema_version` (still 1: the Stage 2 fields change in place, D-136). Run markers add
+`run_id`, `replayed_to` and `resolved_input_hash`; Feature Checks' run marker adds `periods` (the
+labels of the periods it compared, as `periods.PERIODS` writes them:
+`2025-06`, `2025-W23`, `2025-06-15`; the label form is part of the entry format, since the
+validation-period refusal compares labels) and has no `run_id` yet. An operand that doesn't
+belong to the operation is refused, also when given as `null`: `features` goes with the feature
+operations, `path` / `from` / `to` with `set`, `to_seq` with `revert`, `finding` with `flag`,
+`findings` with `keep`, and `periods`, `run_id`, `replayed_to`, `resolved_input_hash` with
+`run`. Evidence cites earlier entries as `#n`, which is how replay finds the person entries that
+cite a rule or stage entry. Entries 3 and 6 of the worked example, as stored:
 
 ```json
 {
@@ -525,6 +547,7 @@ as stored:
   "features": ["cc_preapproval_score_trap_leak", "cc_campaign_response_score_trap_leak"],
   "reason": "Concordance 0.97 and 0.88, above leakage.concordance_max 0.80",
   "data_definition_hash": "d_A",
+  "hash_version": 1,
   "log_schema_version": 1
 }
 ```
@@ -540,6 +563,7 @@ as stored:
   "reason": "Set after the offer, so not known at scoring time",
   "evidence": ["#3", "feature_checks report: Leakage"],
   "data_definition_hash": "d_A",
+  "hash_version": 1,
   "log_schema_version": 1
 }
 ```
@@ -763,7 +787,9 @@ time checks.
 
 ## Interface
 Built in Stage 1's major step 1 (2026-10-26; under the SDS's review); the items marked "Stage 2
-step 1" change in Stage 2's first step, in place (no schema or log bump, D-136). Package:
+step 1" change in Stage 2's first step, in place (no schema or log bump, D-136): the schema's
+fields, the template, the examples and the `keep` rename are built (m1.1, 2026-11-03), the audit
+log's `findings`, `flag`, `run`, the held set and the paths too (m1.2, 2026-11-03). Package:
 `core_modelling/config/` (`schema.py`, `levels.py`, `migrations.py`, `identities.py`,
 `replay.py` (the entry model, the operations, the replay), `audit_log.py` (storage and the public
 functions)); the CLI command `decide` in `core_modelling/__main__.py`.
@@ -778,47 +804,98 @@ functions)); the CLI command `decide` in `core_modelling/__main__.py`.
   (its name is checked against the task's spec
   when the target is built) and an optional `lineage`, `sampling` with its parameters, `metric`
   in FLAML's names when set (T9), `test_share` in (0, 1). Stage 2 step 1: `time.validation_period`
-  may be null (the `v` rules then skip); `eda.snapshot` is `last` or a period inside the window;
-  `feature_checks` is a mapping of five typed step models with a default for every parameter, so an
-  unknown parameter or step fails loud; `features.kinds` values are `numeric` or `categorical`;
-  `eda.chart_sample_share`, `feature_checks.steps` and the `eligibility_constant` step of the
-  Stage 1 schema go.
-- `LEVEL_DEFAULTS: dict[str, dict[str, dict]]` (path → {autonomous, assisted}; Stage 2 step 1
-  removes `eda.key_features.top_n`, now a plain default of 10), `MIGRATIONS:
+  is required but may be null (the `v` rules then skip); `eda.snapshot` is `last` or a period
+  inside the window by period index, a date held as its period's last day under the typo rule (a
+  `model_validator` on `UseCaseConfig`, since it needs `time`; the typo rule is one private
+  helper, `_accepted_period_end(value, period, path)`, shared with `Time`); `eda.bins` is null
+  or at least 2, `eda.key_features.max_correlation` in (0, 1]; `feature_checks` is a mapping
+  of five typed step models (`Quality`, `Leakage`, `TimeAlignment`, `Stability`, `Redundancy`,
+  the null note's `NullsMayBeZeros`) with a default for every parameter, so an unknown
+  parameter or step fails loud (each bounded: shares in (0, 1], concordance thresholds from
+  0.5, `psi_max` above 0, `rare_effect_max` above 1, `max_levels` at least 2); a step left out
+  of a present mapping is
+  `None` (not run), and the section left out is `EVERY_CHECK`, all five with their defaults;
+  a present mapping naming no step (`feature_checks: {}`) is refused naming the five, and
+  `quality.nulls_informative_min` at or above `leakage.null_concordance_max` is refused naming
+  both values when both steps are present (two `model_validator`s on `FeatureChecks`; with
+  `leakage` left out, the quality step takes `Leakage().null_concordance_max` as its bound);
+  `features.kinds` values are `numeric` or
+  `categorical` (a key naming no candidate is refused when the frames are built, since the
+  candidates are patterns at load); `features.kept` and `features.held` join `features.excluded`
+  as replay-written lists a config file may not carry; `eda.chart_sample_share`,
+  `feature_checks.steps` and the `eligibility_constant` step of the Stage 1 schema are gone, and a
+  config still carrying them fails naming the field.
+- `snapshot_period(cfg: UseCaseConfig) -> date` (`schema.py`): the period EDA collects whole, as
+  its last day; `last` resolves to the window's last period.
+- `LEVEL_DEFAULTS: dict[str, dict[str, object]]` (path → {autonomous, assisted}: `training.max_iter`
+  and `evaluation.slices.top_pct`; `eda.key_features.top_n` is a plain default of 10), `MIGRATIONS:
   dict[int, Callable[[dict], dict]]` (empty at `schema_version: 1`; a version above the current
   one fails loud).
 - The hashes (`identities.py`): `config_hash(cfg)`, `data_definition_hash(cfg, entity)`,
   `target_spec_hash(cfg, entity)` (both with `task` among their parts), `resolved_input_hash(resolved)`; sha256 over canonical JSON
   of a dict that names its parts, with `HASH_VERSION = 1`, 12-character prefixes (`short`) in
-  paths and `run_id`. The config hash excludes `housekeeping` and the two replay-written lists;
-  the resolved-input hash excludes `housekeeping` only.
+  paths and `run_id`. The config hash excludes `housekeeping` and the three replay-written lists
+  (`REPLAY_FIELDS = {"excluded", "kept", "held"}`); the resolved-input hash excludes
+  `housekeeping` only.
 - The audit log (public, D-024): `record_decision(config_path, entity, *, exclude=None,
   include=None, keep=None, findings=None, set=None, revert_to=None, reason, evidence=(),
   stage=None, env_path=None) -> Entry` (Stage 2 step 1: `keep` replaces the Stage 1
-  `keep_despite_flag`, and `findings` goes with `keep` only, defaulting to every flag open on
-  those features; the replayed list becomes `features.kept`) (exactly one of the five operations; the writer is the
-  current user id; rule and stage entries get their own writers with their stages; a feature op
+  `keep_despite_flag`, and `findings` goes with `keep` only, refused otherwise before anything is
+  read; each named finding must be open on every kept feature, and without `findings` the writer
+  stores the features' open flags, refused when they differ between the features (one keep per
+  finding set) and `[]` when none is open; a named `[]` while flags are open is refused; the
+  replayed list becomes `features.kept`) (exactly
+  one of the five operations; the writer is the current user id; a feature op
   checks its names against the saved model input's candidate list when the config names one and
   it is saved, else against the candidate patterns, saying so; `revert_to` writes a `revert`
-  entry with `to_seq`, its stage the first undone entry's unless `stage` is given);
+  entry with `to_seq`, its stage the first undone entry's unless `stage` is given, refused when
+  the state it brings back has a `null` validation period where the current one has a period,
+  or a period a `run` entry compared);
   `read_resolved_config(path) ->
   UseCaseConfig` reads a saved resolved config back as is (no level defaults, its replayed lists
-  and housekeeping kept), which `load_config` refuses, since a config file carries intent only; `resolve_config(cfg, entity, env, upto=None, save_to=None) ->
-  UseCaseConfig`; `show_decisions(cfg, entity, env) -> pd.DataFrame`; the CLI command `decide`
-  (`--revert-to N` writes a revert; Stage 2 step 1: `--keep … --findings …`).
-  Entries live at `<roots.data>/<use_case>/04_feature/<ddh>/decisions/<seq>.json` (Stage 2 step 1,
-  D-136; [environment](environment.md)), `seq` zero-padded to four digits, written create-if-absent with
-  a retry on a clash; an entry under another data definition, a gap in the numbering, an unknown
-  operation or another `log_schema_version` fails loud. A `set` may write `null` (e.g. sampling
+  and housekeeping kept), which `load_config` refuses, since a config file carries intent only;
+  `resolve_config(cfg, entity, env, upto=None, save_to=None) -> UseCaseConfig` (stale when a
+  replayed `run` entry lists the resolved validation period); `show_decisions(cfg, entity, env)
+  -> pd.DataFrame`; the CLI command `decide`
+  (`--revert-to N` writes a revert; Stage 2 step 1: `--keep … --findings …`, `--findings`
+  without `--keep` refused by `record_decision`).
+- `record_stage_entry(cfg, entity, env, *, stage, op: Literal["flag", "run"], reason,
+  features=None, finding=None, periods=None, evidence=(), run_id=None, replayed_to=None,
+  resolved_input_hash=None) -> Entry` (`audit_log.py`, Stage 2 step 1; Feature Checks calls it
+  from m3.2): `by = {kind: stage, id: stage}`, the same storage and data-definition check as a
+  person's entry; a `flag` needs `finding` (`<step>.<finding>`) and `features` (empty closes the
+  finding), a `run` needs `periods`, a non-empty list of labels in the form of the config's
+  period (`PERIOD_LABEL_FORMS`: `2025-06`, `2025-W23`, `2025-06-15`), else refused naming the
+  label; whether a `flag` is due (its finding's feature set changed) is the stage's call.
+- `open_flags(entries: list[Entry]) -> dict[str, list[str]]` and `held_features(entries) ->
+  list[str]` (`replay.py`, Stage 2 step 1): over the effective entries, per feature the findings
+  whose latest `flag` entry names it and which no `keep` naming the feature and that finding
+  settles; a feature with an `exclude` in force is left out. `replay` writes `features.excluded`,
+  `features.kept` and `features.held` sorted and once each, so the order of entries never moves
+  the resolved-input hash; a `set` under a `feature_checks` step the config leaves out is refused
+  at write and stops the replay as stale (`check_settable`).
+- Entries live at `<roots.data>/<use_case>/04_feature/<ddh>/decisions/<seq>.json` (Stage 2 step 1,
+  D-136; `audit_log_dir(env, cfg, entity)` in [environment](environment.md)), `seq` zero-padded to
+  four digits, written create-if-absent, a clash failing so the person re-runs the decision; the
+  writer of entry 1 prints `starting a new audit log at <folder>`, so a wrong root or a log left
+  at an old path shows itself. A corrupt file, an entry under another data definition, a gap in
+  the numbering, an unknown operation or another `log_schema_version` fails loud, naming the
+  file or the entry. A `set` may write `null` (e.g. sampling
   off). `resolve_config` fills the housekeeping block (framework version, time, entity, the three
   hashes, `replayed_to`, `hash_version`, the environment values used, `level_filled`) and, with
   `save_to`, writes the YAML with a header naming
   the entries replayed (one line per revert: `# entry 14 reverted to the state after #8`) and
-  the entry behind each changed value. The rule and stage entries
-  (`flag`, `dropped`, `run`, `sign_off`, `register`, `promote`) get their writers with their
-  stages; replay already accepts them. Stage 2 step 1: a `flag` entry carries `finding` and may
-  have an empty feature set (no other feature operation may); a Feature Checks `run` entry carries
-  `periods`; `time.validation_period` is refused when any run entry lists the period.
+  the entry behind each changed value (a held feature: the latest `flag` entry holding it).
+  `show_decisions`' `what` reads `a, b (settles leakage.too_strong)` for a `keep`,
+  `leakage.too_strong: a, b` for a `flag` and `periods 2025-03 … 2026-02` for a Feature Checks
+  `run`. The other rule and stage entries (`dropped`, Training's `run`, `sign_off`, `register`,
+  `promote`) get their writers with their stages; replay already accepts them. Stage 2 step 1: a
+  `flag` entry carries `finding` and may have an empty feature set (no other feature operation
+  may), a `keep` carries `findings`, a Feature Checks `run` entry `periods`, and an operand on
+  another operation is refused (`OPS_BY_OPERAND` in `replay.py`); a `set` of
+  `time.validation_period` is refused when it writes `null` (write it in the config file
+  instead) and when any `run` entry, reverted or not, lists the period (compared by its label),
+  and a `revert` is checked the same way on the state it brings back.
 
 ## Open questions
 - `training.calibration.method` defaults to `platt` for every task; regression needs its own

@@ -96,12 +96,17 @@ time:                                    # required
   observation_window: {first: <first_period>, last: <last_period>}   # required
   target_window: 3                       # required · w: periods t+1 … t+w; more for slow outcomes
   # the out-of-time period the model is judged on, at least w periods after the window's last so
-  # no target window overlaps; the sources must reach w periods beyond it (matured labels)
+  # no target window overlaps; the sources must reach w periods beyond it (matured labels).
+  # null: an EDA-only config (EDA and Feature Checks run, Training refuses until it is set)
   validation_period: <validation_period> # required
 
 features:
   # glob patterns over the feature sources' columns; exclude known non-features
   candidates: {include: ["*"], exclude: []}
+  # a candidate's kind over the Spark-schema default (numbers numeric; strings and booleans
+  # categorical): a numeric code such as a branch or product code is categorical, a number stored
+  # as a string numeric. A key naming no candidate fails; e.g. {branch_code: categorical}
+  kinds: {}
 
 strata:                                  # required · reported by every stage (D-038)
   variables: [<strata_variable>]         # required · categorical columns for metrics and drift
@@ -109,18 +114,59 @@ strata:                                  # required · reported by every stage (
   min_events: 50                         # fewer positives in a stratum: shown as insufficient
 
 eda:
-  # the deep dives: the top-N by univariate ranking plus the listed ones
-  key_features: {top_n: null, include: []}   # top_n null · level: autonomous 10 · assisted 20
-  chart_sample_share: null               # null: every client; a share for a large window, reported
+  # the one period EDA analyses whole, every client after the analysis filters (D-135). last: the
+  # window's last period, the closest to scoring | a period inside the window, e.g. one before a
+  # known disruption. A period with fewer clients changes every snapshot statistic
+  snapshot: last
+  # quantile bins per numeric for every statistic over the window's periods; a value on at least
+  # 1/bins of the rows (0, a dominant value) is its own bin. null: every value its own bin and every
+  # statistic exact, for small populations (a subsegment, SME, corporate); refused above 50 million
+  # cells
+  bins: 100
+  key_features:                          # the deep dives: the ranking's top-N plus the listed ones
+    top_n: 10                            # how many from the ranking; 0: only the listed ones
+    include: []                          # candidates always deep-dived, e.g. a business driver
+    # a candidate associated above this with a key feature already chosen is skipped and shown as
+    # represented by it; lower it for more variety, 1 skips none
+    max_correlation: 0.9
 
+# Feature Checks: five steps, always in this order. A step left out of this mapping is not run;
+# the section left out runs all five with these defaults. A flag holds its feature out of training
+# until a person records keep or exclude; a note only informs (D-134). A concordance is a feature's
+# ranking power in its own direction: 0.5 none, 1 perfect. After the config freezes, a value
+# changes through a set entry in the audit log
 feature_checks:
-  steps:                                 # ordered; each flags and logs, never drops (§4.6)
-    - {name: quality, params: {}}        # null share, constants, cardinality
-    - {name: leakage, params: {}}        # features that know the target
-    - {name: time_alignment, params: {}} # features that move with the target window
-    - {name: eligibility_constant, params: {}}   # constant on the eligible population
-    - {name: stability, params: {psi_max: 0.25}}   # drift across the window's periods
-    - {name: redundancy, params: {}}     # near-duplicates
+  quality:
+    dominant_share_max: 0.99             # flag near_constant: one value (null too) on this share
+    missing_share_max: 0.95              # flag high_missing: at least this share of nulls
+    max_levels: 50                       # flag high_cardinality: more levels (codes, free text?)
+    # note: many nulls and never a zero, so a null may mean 0; fill it upstream, never impute here
+    nulls_may_be_zeros:
+      missing_min: 0.2                   # the null share from which the note looks
+      zero_share_max: 0.005              # "never a zero": at most this share of zeros among values
+    nulls_informative_min: 0.55          # note: whether it is filled ranks the target this well
+  leakage:
+    # flag too_strong: one feature this strong is usually the target under another name; with every
+    # feature the synthetic card target's best possible model reaches 0.84. Raise it only for a
+    # target a single field is known to predict
+    concordance_max: 0.80
+    null_concordance_max: 0.70           # flag: whether it is filled predicts this well (ask how)
+    rare_effect_max: 5                   # flag: a value on < 1% of rows, its rate this × the rest's
+  time_alignment:                        # both flags look only at features with concordance_min+
+    signal_kept_min: 0.5                 # flag: keeps under this share of its signal once lagged
+    constant_clients_min: 0.99           # flag: this share of clients constant, and predictive
+    concordance_min: 0.6                 # the signal a feature needs before either flag looks
+  stability:
+    psi_max: 0.10                        # notes: PSI window first → last, and last → latest period
+    # flag concordance_unstable: power differs across the window's periods, when Cochran's p is at
+    # most heterogeneity_p_max and the concordance's range at least concordance_range_min (the
+    # range stops a large population from flagging everything)
+    heterogeneity_p_max: 0.01
+    concordance_range_min: 0.05
+    new_level_share_max: 0.01            # note: unseen levels on this share of the latest rows
+  redundancy:                            # notes, shown as clusters; a person decides what to keep
+    correlation_max: 0.90                # |Spearman| of a numeric pair; also the cluster cut
+    association_max: 0.90                # Cramér's V or η of a pair with a categorical member
 
 training:
   path: automl                           # FLAML, the only path in Phase 2

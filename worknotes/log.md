@@ -2,6 +2,123 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-11-03 — Major step 1 done: m1.3 and m1.4b built, reviewed and fixed; full suite 443 passed
+- **m1.4b (Opus, 59 tests at build):** `statistics/cells.py`, `concordance.py`, `intervals.py`,
+  `association.py` and the per-task entries in `tasks.py`. The ML audit (Fable) measured two
+  statistics failing at the bank's event counts and both were changed in the fix round (30 tests):
+  the fixed 0.03 non-monotone margin marked 42% of null numerics at 500 events (63% at 250), the
+  SE-scaled `max(0.03, 4 · SE)` marks 0–2% at every size while the inverted U stays marked; the
+  window-fitted level encoding read 0.53–0.57 on a null 20–50-level code at ~190 events per period
+  (above Training's 0.515 floor), the cross-fitted encoding (`cross_fitted_table`, each period's
+  levels ordered by the other periods' encoding) reads 0.49–0.52 and a predictive code loses under
+  0.01 (V16, D-135 changed in place; T33). Also from the reviews: `explained_by_others` over the
+  Spearman members only, "not available" for a not-compared pair, mixed kinds or inconsistent
+  correlations (V17); `cramers_v` plain; `shares()["bins"]`; `pool_periods` keeps unlabelled
+  `sum_y` null; `rare_effect` refuses a non-positive rest. Exact Spearman timing: 11 s at
+  139 × 200,000 with the realistic mask structure, 253 s with 76 distinct masks (recorded for the bank).
+- **m1.3 (Fable, 33 tests at build; resumed after the model's 5-hour limit):** `Frames(snapshot,
+  rows, …)`, `detect_kinds`, `dataset/counts.py` (compared periods, the edges, the levels, the two
+  passes, the client-constant shares in 50-column chunks, the population counts, the cell
+  estimate). The reviews (code, silent failures, ML: accept) led to the fix round (37 tests): the
+  edges cut on the snapshot's ELIGIBLE rows; a 10,000-level ceiling above which `new_levels` is
+  "not available" up front (`window_levels` returns the levels and the `over_ceiling` list, a
+  required argument of both passes); a literal `"null"` level quoted so it never shares the null
+  bin's label; NaN in a categorical as null; loud refusals (no supported candidate, empty window
+  periods, a missing snapshot period); NaN as null in the constant shares; plain counts in the
+  population table; binary target bins checked; the cell estimate covers both passes. Measured:
+  an unnormalised `-0.0` lands below the `= 0` singleton on PySpark 3.4.3 (T26).
+- **Notebook 01** reads `frames.snapshot` and `meta["population"]` (the frame rename).
+- **Docs:** `eda.md` (Pass 1 and 2 wording, the edges rule, the categorical ceiling, the statistics
+  section rewritten by m1.4b, the checks, the artifacts and write order), `dataset.md` (by m1.3),
+  `feature_checks.md` (redundancy wording, `new_levels`), `feature_ledger.md`, the glossary, D-135,
+  `plan.md` (§2 signatures as built, V2 margin, V16–V17), `lessons.md` T33 and T26's measurement,
+  `training.md` (notes for Training's D-088 and kinds checks), `review_guide.md` (ready).
+- **Verification:** `ruff check .` and `ruff format --check .` clean; the full suite 443 passed
+  (9 slow deselected) in 6 min 16 s. Nothing committed. Major step 1 goes to the SDS's review.
+
+### 2026-11-03 — Major step 1, build round 2: the fix rounds landed; m1.3 and m1.4b restarted
+- **Fix rounds (Opus `xhigh`, every one green and ruff clean):** m1.1 (127 tests: `feature_checks:
+  {}` refused; `nulls_informative_min` checked against the leak bound in use; `set
+  time.validation_period` to null refused; `_accepted_period_end`; `__version__ = 0.3.0.dev0`);
+  m1.4a (14 tests: `merge_bins` sums only `n` and `sum_y` and refuses other numeric columns;
+  `new_level_share` reads current cells only and never returns NaN; `psi` refuses shares outside
+  [0, 1]); m1.5 (29 tests: `save_ledger(ledger, folder, meta)` with the data-definition hash and the
+  stage digest in `_ledger.json`, `read_ledger(folder, ddh)`, the ledger saved first and the stage
+  json last as the commit marker, `tables` stamped and checked, `datetime64` and NaN handled in
+  JSON, unknown excluded/held/kept names refused, the failed-swap restore); the null validation
+  period (102 tests: `target_factory.last_labelled_period(cfg)` owns "v, or the window's last period
+  when null" for Target Factory, the panel, the contract and the model input; `held` checked like
+  `excluded`; the spine's reach without `+ w`, dataset.md's rule).
+- **m1.2's reviews** (compat: accept; code and silent-failure: fix first) found two real holes,
+  both confirmed by probe and closed in its fix round (155 tests): a `keep` on several features
+  settled findings in advance on features that never had them (every stored (feature, finding)
+  pair must now be open at write time: a keep with differing open sets is split), and a `revert`
+  restored a validation period a run had compared (the revert is checked like a `set`, and
+  `resolve_config` refuses a stale resolved period). Also: run `periods` must be the config's
+  period labels; `OPS_BY_OPERAND` refuses operands on the wrong op; a writer starting a new log
+  says where; `data_path` lower-cases the use case; a corrupt entry file is named.
+- **The two Fable builders (m1.3, m1.4b) hit the model's 5-hour limit before writing a file;**
+  resumed at 17:33: m1.3 on Fable (its context kept), m1.4b restarted on Opus `xhigh` so a second
+  outage cannot stall both. Their reviewers follow when they land.
+- **Docs propagated on the main thread** (the files no agent holds): `feature_checks.md` (the
+  empty-mapping refusal, the entry writer and paths, the null-informative bound, the PSI groups
+  and `psi`'s contract, the per-feature keep rule, the run entry's labels and the revert check),
+  `target_factory.md` (the last labelled period), the glossary (last labelled period), D-134 (the
+  keep rule), `training.md` (the run marker's `periods`), `architecture.md` (the inventory's
+  sidecar and stage-json fields), `sources.py`'s docstring. `eda.md` and `dataset.md` wait for
+  m1.3 and m1.4b, which own parts of them.
+
+### 2026-11-03 — Major step 1, build round 1: the spike and four of six pieces built and reviewed
+- **The facts spike (Sonnet, 17 items, every number measured on PySpark 3.4.3):** the explode
+  counts pass takes 15–18 s on the canonical six-month window (625,074 rows × 139 numerics →
+  115,695 cells, 2.8 MB shuffle, 0.9 GB heap) against 75 s for the per-feature loop at the heap
+  cap; the lag pass 19 s; the wide per-client `groupBy` spills 2.2 GB (chunk it, T27). `Bucketizer`
+  accepts `nextafter` singleton splits and needs no casts; a null input gives a null bucket, NaN
+  the extra one (T26). The edges rule leaves no canonical numeric collapsed (plain quantiles
+  collapse 33 of 139 columns to ≤ 5 bins). The table concordance equals the binned AUC to 1e-16
+  and the raw AUC within 0.0001; the regression τ-b is exact against binned rows, about 0.01 off
+  raw (T32). Rank-once is not the pairwise-complete Spearman when null masks differ (0.23 off;
+  T28). scipy's `association` fails on empty marginals (T29); plotly keeps a repeated `div_id`
+  and clamps a zero quartile on a log axis; jinja2 is not in the venv (T30); parquet list columns
+  come back as arrays (T31). Decisions and traps: D-135–D-137 extended, T26–T32, plan §7a.
+- **Built (tests pass, ruff clean):** m1.1 the schema (Opus; 113 tests): `Eda(snapshot, bins,
+  key_features)`, `Features.kinds/kept/held`, `Time.validation_period: date | None`, the typed
+  `FeatureChecks` with bounds on every threshold, `snapshot_period`, the `keep` rename across
+  the codebase, the template and both example configs. m1.4a `statistics/distributions.py`
+  (Fable; 12 tests): `quantile_edges`, `bin_labels`, `merge_bins`, `psi`, `new_level_share`,
+  `standardised_difference`. m1.2 the audit log (Opus; 134 tests): `Entry.finding/findings/
+  periods`, strict validation, `open_flags`, `held_features`, `features.held` in the resolved
+  config (the hash moves with it, measured), `record_stage_entry`, the 18 feature-check leaves
+  loggable, `check_settable`, the validation-period refusal, CLI `--keep --findings`,
+  `data_path(env, use_case, layer, *parts)`, `feature_dir`, `audit_log_dir(env, cfg, entity)`
+  (the planned `stage_dir` folded into `feature_dir`). m1.5 artifacts and ledger (Opus; 22
+  tests): `StageResult`, `write_stage`/`read_stage`, `settings_digest`/`settings_meta`,
+  `check_upstream`, `remove_stage`, `create_ledger`, `add_columns`, `save_ledger`, `read_ledger`,
+  `render_decisions`, `resolve_features`.
+- **Reviewed:** m1.1 (code-reviewer, compat-guardian: accept; `feature_checks: {}` would run no
+  check; the `nulls_informative_min` vs `null_concordance_max` bound; six readers still assume a
+  date for `v`), m1.4a (code-reviewer, ML auditor: accept; `merge_bins` sums any numeric column;
+  `new_level_share` double counts lagged cells and returns NaN at `n = 0`), m1.5 (code-reviewer,
+  silent-failure-hunter: fix first; compat-guardian: accept): `datetime64` written as nanoseconds,
+  NaN as a bare JSON token, unknown excluded/held names silently ignored, the ledger sidecar
+  without the data-definition hash, no write-order rule, list cells NaN in memory vs None on
+  disk. The usage limit stopped m1.3, m1.4b and m1.2's reviewers (7 of 19 agents).
+- **Decisions taken on the main thread (open to the SDS's veto, listed in the review guide):**
+  `feature_checks: {}` refused; the `nulls_informative_min < null_concordance_max` validator;
+  `set time.validation_period` to null refused; a `keep` naming a finding open on none of its
+  features refused; `quantile_edges` cuts the rest into `bins − n_mass` bins (exactly `bins` for a
+  continuous column); `merge_bins` gives "about `groups`" groups; the ledger is saved first and the
+  stage json last; `_ledger.json` carries the data-definition hash and the stage digest;
+  `resolve_features` refuses unknown names; `__version__ = 0.3.0.dev0` during the build; the
+  exact pairwise-complete Spearman grouped by null mask (T28). jinja2's pin is asked of the SDS.
+- **Round 2 launched (background):** m1.3 and m1.4b (Fable `xhigh`), the m1.2 reviewers (Opus),
+  and four fix agents (Opus `xhigh`): m1.1's findings, m1.4a's findings, m1.5's findings, and the
+  null-`v` readers (`target_factory.py`, `panel.py`, `contract.py`, `model_input.py`, with
+  `held` in the named-feature check). Docs updated on the main thread meanwhile: `lessons.md`
+  T26–T32, D-135–D-137, `architecture.md` (Public API rows built, `record_stage_entry`, the open
+  flags' home), `reporting.md` chart rule 4 (`1 / groups`, the label grammar, log axes),
+  `plan.md` (m1.2 paths, m1.4 halves, §7a).
+
 ### 2026-11-03 — Briefing for the LDS sync
 - `/brief`: `sync.md` refreshed (windows 11-02 to 11-03 and 10-26 to 10-30; last sync 11-03).
   Every commit since the last briefing is covered by this log; uncommitted: the plan and record
@@ -54,6 +171,15 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   without a final decision" in `feature_checks.md`, `feature_ledger.md`, `training.md`, the glossary,
   `notebooks/README.md`, D-134 and the plan's notebook 03 step.
 - Timeline shifted one day (`plan.md` §8); SDS reviews 11-06, 11-10, 11-12. Nothing coded.
+- **The SDS approved the plan ("let's go, start working on major step 1")** and committed the
+  revisions (`b694961`). The build of major step 1 started as one background workflow: the facts
+  spike (Sonnet), m1.1 the schema (Opus `xhigh`) and m1.4a the distribution statistics (Fable
+  `xhigh`; split off m1.4 because the counts passes need `quantile_edges` first) run first; m1.2
+  (Opus), m1.5 (Opus), m1.4b (Fable) and m1.3 (Fable, after the spike) follow as their inputs
+  land; each step's reviewers (code-reviewer, silent-failure-hunter, compat-guardian on Opus;
+  the ML auditor on Fable) run as soon as it returns. Briefs: one file per step in the session
+  scratchpad (`briefs/common.md` + `m1_*.md`), the main thread reads every diff and the
+  findings next. Status rows moved to "building" in `docs/UPDATES.md` and `docs/README.md`.
 
 ### 2026-11-02 — Stage 2 design settled: round 4 answered, the spec written, the plan drafted
 - The SDS answered round 4 (Q490 at the default with 100 bins and an `eda.bins` switch that turns

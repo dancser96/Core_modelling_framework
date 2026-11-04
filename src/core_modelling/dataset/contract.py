@@ -1,15 +1,15 @@
 """The contract checks: the eligible observation window before any sampling (§4.8).
 
 `check_contract` runs on the rows every modelling filter passes, in the window's periods, after
-checking that every window period and the validation period has some: the shared checks (unique
-keys; the null callout) and the task's own from the per-task spec (D-050: binary checks both
-classes and the rate band, regression a finite, non-constant target). A failure raises with its
-numbers. The one callout that never stops the run: a built target whose windows held nulls in
-the target column, so would-be negatives may be nulls that the modelling frames drop, to be
-filled upstream when a null means a value (docs/components/dataset.md, requirement 9). The
-share is over the target source's rows in the window with a complete target window, before
-eligibility, and comes from the panel's join log (`load_panel` keeps it per use case), so the
-saved model input needs no `null_in_window` column.
+checking that every window period and the validation period (when set) has some: the shared
+checks (unique keys; the null callout) and the task's own from the per-task spec (D-050: binary
+checks both classes and the rate band, regression a finite, non-constant target). A failure
+raises with its numbers. The one callout that never stops the run: a built target whose
+windows held nulls in the target column, so would-be negatives may be nulls that the modelling
+frames drop, to be filled upstream when a null means a value (docs/components/dataset.md,
+requirement 9). The share is over the target source's rows in the window with a complete target
+window, before eligibility, and comes from the panel's join log (`load_panel` keeps it per use
+case), so the saved model input needs no `null_in_window` column.
 """
 
 from pyspark.sql import DataFrame
@@ -29,10 +29,10 @@ def check_contract(
     panel: DataFrame, cfg: UseCaseConfig, null_in_window_share: float | None
 ) -> list[dict]:
     """Every contract check on the eligible rows of the observation window (`eligible = 1`),
-    after the check that every window period and the validation period has eligible rows; one
-    log entry each, printed; a failing check raises with its numbers. `null_in_window_share` is
-    the share of the target source's window rows (complete target window, before eligibility)
-    whose target window held a null (None: an upstream target)."""
+    after the check that every window period and the validation period (when set) has eligible
+    rows; one log entry each, printed; a failing check raises with its numbers.
+    `null_in_window_share` is the share of the target source's window rows (complete target
+    window, before eligibility) whose target window held a null (None: an upstream target)."""
     eligible = panel.where(F.col("eligible") == 1)
     window = cfg.time.observation_window
     in_window = eligible.where(F.col("period").between(window.first, window.last))
@@ -46,22 +46,21 @@ def check_contract(
 
 
 def _check_eligible_periods(eligible: DataFrame, cfg: UseCaseConfig) -> dict:
-    """Every period of the window and the validation period has eligible rows: a period without
-    any would leave the modelling frames quietly."""
-    spec, window, validation = (
-        period_spec(cfg),
-        cfg.time.observation_window,
-        cfg.time.validation_period,
-    )
-    periods = F.col("period").between(window.first, window.last) | (F.col("period") == validation)
+    """Every period of the window and the validation period, when set (an EDA-only config has
+    none), has eligible rows: a period without any would leave the modelling frames quietly."""
+    spec, window, v = period_spec(cfg), cfg.time.observation_window, cfg.time.validation_period
+    periods = F.col("period").between(window.first, window.last)
+    wanted = period_labels(window.first, window.last, spec)
+    if v is not None:
+        periods |= F.col("period") == v
+        wanted.append(spec.label(v))
     counts = eligible.where(periods).groupBy("period").count().orderBy("period").collect()
     per_period = label_by_period(counts, "count", spec)
-    wanted = period_labels(window.first, window.last, spec) + [spec.label(validation)]
     empty = [period for period in wanted if not per_period.get(period)]
     if empty:
         raise ValueError(
             f"no eligible row in the periods {empty}: every period of the window and the "
-            "validation period must have some"
+            "validation period (when set) must have some"
         )
     min_rows = min(per_period.values())
     return {"check": "eligible_rows", "min_rows": min_rows, "per_period": per_period}

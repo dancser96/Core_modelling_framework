@@ -7,6 +7,8 @@ import pytest
 from pydantic import ValidationError
 from pyspark.sql import SparkSession
 
+from core_modelling.config import UseCaseConfig
+from core_modelling.config.identities import data_definition_hash, short
 from core_modelling.environment import (
     ENVIRONMENT_VARIABLE,
     EnvironmentConfig,
@@ -15,6 +17,7 @@ from core_modelling.environment import (
     SparkSettings,
     audit_log_dir,
     data_path,
+    feature_dir,
     get_spark_session,
     load_environment,
     read_source,
@@ -164,14 +167,19 @@ def test_running_session_is_seen_from_another_thread(
     assert isinstance(outcome, RuntimeError) and "requested '16'" in str(outcome)
 
 
-def test_data_path_joins_strings(unit_env: EnvironmentConfig) -> None:
-    """Paths are string joins, so an hdfs:// root survives (pathlib would make it hdfs:/, T2)."""
-    hdfs = unit_env.model_copy(update={"roots": Roots(data="hdfs://namenode/data/")})
+@pytest.mark.parametrize("root", ["hdfs://namenode/data/", "/local/data"])
+def test_paths_run_root_use_case_layer(cc_config: UseCaseConfig, root: str) -> None:
+    """Root, use case (lower-cased), layer, with no entity segment: the entity enters through the
+    data-definition hash (D-136). String joins, so an hdfs:// root survives (pathlib would make it
+    hdfs:/, T2)."""
+    env = EnvironmentConfig(schema_version=1, roots=Roots(data=root))
+    base = root.rstrip("/")
     assert (
-        data_path(hdfs, "04_feature", "cc_acquisition")
-        == "hdfs://namenode/data/04_feature/cc_acquisition"
+        data_path(env, "CC_Acquisition", "06_models", "r1") == f"{base}/cc_acquisition/06_models/r1"
     )
-    assert audit_log_dir(hdfs, "cc_acquisition", "entity_a", "0123abcd") == (
-        "hdfs://namenode/data/04_feature/cc_acquisition/entity_a/0123abcd/decisions"
+    folder = (
+        f"{base}/cc_acquisition/04_feature/{short(data_definition_hash(cc_config, 'entity_a'))}"
     )
-    assert data_path(unit_env, "01_raw") == unit_env.roots.data + "/01_raw"
+    assert feature_dir(env, cc_config, "entity_a") == folder
+    assert feature_dir(env, cc_config, "entity_a", "eda") == f"{folder}/eda"
+    assert audit_log_dir(env, cc_config, "entity_a") == f"{folder}/decisions"

@@ -76,7 +76,11 @@ Spark passes from `dataset/counts.py`, the frames from `dataset/frames.py`, the 
 ### How it is checked
 - **Statistics against exact oracles:** `roc_auc_score`, `kendalltau`; the binned value within
   0.005 of the exact one on the synthetic snapshot, equal for discrete and categorical features;
-  `eda.bins: null` equal to the exact value; a 300-level random code below 0.55; η = |Spearman|
+  `eda.bins: null` equal to the exact value; a 300-level random code below 0.52 on the canonical
+  window and a 50-level one near 0.50 at 190 events per period with the cross-fitted encoding
+  (in-sample they read 0.54–0.57, above Training's floor: the build's audit, 2026-11-03); a null
+  numeric at 500 events is marked `non_monotone` in at most 1 of 50 seeds with the SE-scaled
+  margin (24 of 50 with a fixed 0.03); η = |Spearman|
   for two levels; a unit test on an inverted-U column built in the test (the loan target, which
   carries the synthetic inverted-U age, has no acceptance config): best-order concordance ≥ plain
   + 0.05; a null control's below 0.55.
@@ -168,8 +172,11 @@ target_bin (str|null), n (long), sum_y (double)`; one row per cell.
 **Edges and levels** (from the snapshot's eligible rows):
 - **Numeric** (`quantile_edges(values, bins)`, T25): first the **mass points**, the non-null
   values whose share is at least `1 / bins` (0 and the dominant value among them whenever they
-  reach it), each a singleton bin; then `bins − n_mass` quantile edges over the remaining values,
-  deduplicated. Plain quantile edges collapse on a zero-inflated or discrete column (90% zeros
+  reach it), each a singleton bin; 0 is a singleton bin whenever it occurs at all, so `zero_share`
+  is read from the `= 0` cell; then the remaining values are cut into `bins − n_mass` equal-share
+  bins (quantile edges, deduplicated), so a continuous column gets exactly `bins` bins (`bins` is
+  a target, a column may get one or two more). ±infinity is a value: it takes no edge and lands in
+  the outer bins (N2). Plain quantile edges collapse on a zero-inflated or discrete column (90% zeros
   put ninety edges on 0 and leave one bucket for the rest, the legacy symptom), and fixed-width
   edges put a skewed column into its first bucket; the rule guarantees that no bin except a
   singleton holds more than about `2 / bins` of the non-null rows. A numeric with at most
@@ -178,22 +185,29 @@ target_bin (str|null), n (long), sum_y (double)`; one row per cell.
   acceptance test on every numeric candidate of the synthetic data. The setting is meant for small populations: before the pass EDA
   estimates the cell count (a cell is one row of the counts table) from `approx_count_distinct`
   per column over `rows` and fails loud above `MAX_CELLS = 50_000_000`, naming `eda.bins`.
-- **Categorical:** the levels seen in any window period, capped at the 50 most frequent
-  (`LEVEL_CAP = 50`), the rest `__other__`; a level unseen in the window is `__new__`; null is a level.
+- **Categorical:** the levels seen in any window period, the 50 most frequent kept
+  (`LEVEL_CAP = 50`), the rest `__other__`; a level unseen in the window is `__new__`; null is a
+  level (a NaN in a numeric column declared categorical is null too). `window_levels` returns the
+  levels per categorical and the categoricals with more than `POOLED_LEVEL_CAP = 10_000` window
+  levels: for those only the kept levels are listed, every other level is `__other__` and
+  `new_levels` is "not available: more than 10,000 window levels", decided up front. A real level
+  named like a reserved bin (`null`, `__other__`, `__new__`) is quoted in its label (`'null'`).
 - **Target bins:** binary, the two values; regression, 20 quantile bins of the snapshot's known
   targets with 0 its own bin (with `eda.bins: null` the target keeps its values); null where the
   label is dropped (gap and latest periods) or the target is null.
 
 **Pass 1:** every numeric bucketed by one `pyspark.ml.feature.Bucketizer` over all columns
-(`handleInvalid="keep"`: null and NaN in their own bucket); then `explode(array(struct(feature,
-bin)))` and `groupBy(feature, period, bin, target_bin).agg(count, sum(target))`. Spark's partial
+(`handleInvalid="keep"`: a NaN lands in the extra bucket, a null input gives a null bucket, and the
+pass maps both to the one null bin, `is_null`, T26; `-0.0` is normalised to `0.0` first); then
+`explode(array(struct(feature, bin)))` and `groupBy(feature, period, bin, target_bin).agg(count, sum(target))`. Spark's partial
 aggregation collapses the exploded rows inside each partition, so the shuffle carries at most
 features × bins × target bins rows per partition.
 
 **Pass 2:** the same rows over `Window.partitionBy(unit_id).orderBy(period)`: `F.lag` values on
 the same edges become `lagged = true` cells with the current period's target; `min == max` per
 client and feature gives the **client-constant table** (`feature, constant_share, clients`: the
-share of clients with at least two non-null values whose values never change).
+share of clients with at least two non-null values whose values never change; a NaN counts as
+null, N2; the aggregates run in chunks of 50 columns, T27).
 
 **Population counts per period** (Spark, on the panel after the analysis filters; D-088): rows,
 eligible rows, eligible rows with a known target, positive rows, positive events (distinct units
@@ -214,21 +228,28 @@ definitions; Feature Checks uses the ones marked FC.
 | Statistic | Definition |
 |---|---|
 | `missing_share` | null rows / rows |
-| `zero_share` | rows equal to 0 / non-null rows |
+| `zero_share` | rows equal to 0 / non-null rows (the `= 0` bin's rows: exact when 0 is its own bin) |
 | `dominant_share`, `dominant_value` | the most common value's share, null counting as a value |
-| `levels` | distinct non-null values (the snapshot rows for a binned numeric) |
+| `levels` | distinct non-null values on the snapshot rows, before the level cap (not from the cells) |
 | `concordance` | Somers' D rescaled to [0.5, 1], direction taken out |
 | `direction` | `+`, `-`, or none below 0.5 + 2 SE |
 | `null_concordance` | the null indicator's concordance; missing share in [0.005, 0.995] |
-| `concordance_best_order` | bins merged to ten, ordered by shrunk rate, then the concordance |
-| `non_monotone` | best-order ≥ plain + 0.03 |
+| `concordance_best_order` | bins merged to ten, ordered by shrunk rate, then the concordance; not computed for categoricals (equal to the plain value by definition) |
+| `non_monotone` | best-order ≥ plain + max(0.03, 4 · SE) |
 
-- **Concordance** (`concordance_from_table(table)` on `two_way_table(cells)`: bins in
-  `bin_order` × target bins, null excluded). D = (concordant − discordant) / pairs in different
-  target bins; concordance = (1 + |D|) / 2, direction = sign of D. For a 0/1 target this is exactly
-  the AUC of the binned feature (pairs inside one bin count half); for a binned regression target
-  the pairs tied on the target bin are left out; with `eda.bins: null` and a regression target the
-  cells are expanded and Kendall's τ-b computed (`scipy.stats.kendalltau`).
+- **Concordance** (`concordance_from_table(table, sign=None)` on `two_way_table(cells,
+  order=None)`: bins in `bin_order`, or a categorical's levels in the order given, × target bins
+  ordered by their mean target `sum_y / n`, null excluded; `pool_periods(cells, periods,
+  lagged=False)` sums the periods first). D = (concordant − discordant) / pairs in different
+  target bins; concordance = (1 + |D|) / 2, direction = sign of D
+  (`direction_from_table(table, se)`); with `sign` (the window's direction) a per-period or
+  lagged value is read in that direction, `(1 + sign · D) / 2`, so a flip reads below 0.5. For a
+  0/1 target this is exactly the AUC of the binned feature (pairs inside one bin count half); for
+  a binned regression target the pairs tied on the target bin are left out (exact on the binned
+  rows, about 0.01 from the raw rows' value against the 20 target bins, T32); with `eda.bins:
+  null` and a regression target `concordance_exact(cells)` expands the cells and computes Somers'
+  D from Kendall's τ-b and the tie counts (`scipy.stats.kendalltau`, Q427), equal to the table's
+  value without the dense table.
 - **The binning, stated honestly:** at 100 quantile bins a continuous feature's concordance is
   pulled towards 0.5 by at most 1% of its distance from 0.5 (a true 0.70 reads no lower than
   0.698), usually far less; it is exact for numerics with at most 100 distinct values, for
@@ -240,45 +261,94 @@ definitions; Feature Checks uses the ones marked FC.
   infinite weight in Cochran's Q).
 - **Level encoding** (`encode_levels(cells, k_rows)`, Micci-Barreca): a level's value is
   (sum_y + k × base) / (n + k), shrinkage in pseudo-events: `k_rows = strata.min_events /
-  base_rate` (regression: `strata.min_events` rows). Fitted once on the pooled window cells, null
-  excluded, applied to every period and to the lagged cells. A categorical's `bin_order` is its
-  encoding order, so its plain and best-order concordances coincide. A concordance from more than
-  20 levels is marked "optimistic (in-sample encoding)".
-- **Best-order concordance** (`best_order_concordance(table, k_rows)`): what a ten-leaf tree on the
-  feature would reach, so an inverted U ranks where its information puts it. The shrinkage and the
-  0.03 margin keep null controls unmarked.
+  base_rate` (regression: `strata.min_events` rows), null excluded. Read on the rows it was fitted
+  on, the order flatters noise: a null 20–50-level code reads 0.53–0.57 at about 190 events a
+  period, above Training's floor. So a categorical's concordance is **cross-fitted by period**
+  (`cross_fitted_table(cells, periods, k_rows, read=None)`): each period's levels are ordered by
+  the encoding fitted on the other periods (a level unseen there scores their base), the
+  (period, level) rows pooled into one table, equal values sharing a row, and read in the
+  encoding's direction, `concordance_from_table(table, sign=1)`. The window's value pools every
+  window period; the snapshot's and each period's value is `read=[that period]`. A null 50-level
+  code then reads about 0.5 (0.52 at most over 20 seeds; folded by `|D|` it would reach 0.55), a
+  predictive one loses under 0.01. With a one-period window the encoding is fitted in sample and
+  the value is marked "optimistic (in-sample encoding)". The window-fitted `encode_levels` order
+  stays the lagged cells' order. The best-order value is not computed for a categorical: in its
+  encoding order it equals the plain value by definition.
+- **Best-order concordance** (`best_order_concordance(cells, k_rows)`): the non-null bins merged
+  into ten groups by `merge_bins` (a mass point its own group), ordered by their shrunk target
+  mean, then the concordance: what a ten-leaf tree on the feature would reach, so an inverted U
+  ranks where its information puts it. The merge to ten keeps the in-sample gain of ordering by
+  the data small, but a null control still gains about 2 SE on average (0.014 at 2,000 events,
+  0.028 at 500), so a fixed margin marks many of them at small sizes (0.03 marked 24 of 50 null
+  numerics at 500 events). The margin scales with the SE: `is_non_monotone(plain, best_order,
+  se)` and `ranking_value(plain, best_order, se)` mark a feature when best-order ≥ plain +
+  max(`NON_MONOTONE_MARGIN` = 0.03, `NON_MONOTONE_SE_MULTIPLE` = 4 × SE), `se` the feature's
+  `concordance_se` on the same cells; that marks 0–2% of null numerics at every size and every
+  inverted U of the tests. Not computed for a categorical.
 - **Twins:** `concordance_window`, `missing_share_window`, `null_concordance_window`,
   `zero_share_window`, `dominant_share_window` are the same functions on the window periods' cells.
 - **Per-period and heterogeneity (FC):** per-period concordances only for periods whose support
   reaches `strata.min_events`; `cochran_q(values, ses) -> p`, weights 1/SE², χ² with k − 1 degrees
   of freedom, none with fewer than two supported periods.
 - **Distributions:** `quantile_edges(values, bins)` (the edges rule above), `merge_bins(cells,
-  groups)` (cells merged in `bin_order` by cumulative row share into `groups` groups; a mass
-  point whose share reaches a group's stays its own group, never widened into a neighbour); `psi(
+  groups)` (one feature's cells, one row per `bin_order` summed over periods and target bins, merged
+  in `bin_order` by cumulative row share into about `groups` groups; a bin whose share reaches
+  `1 / groups` stays its own group, never widened into a neighbour, so an interior mass point adds
+  a group; only `n` and `sum_y` are summed, any other numeric column is refused); `psi(
   expected_shares, actual_shares)` (FC) over ten bins merged from the cells plus the null bin
   (categoricals: the window's levels with `__other__`), each share floored at 1e-4 before the log, the
-  0.10 / 0.25 bands as labels, not tests; `new_level_share(cells, period)` (FC);
+  0.10 / 0.25 bands as labels, not tests; `new_level_share(cells, window_levels, period)` (FC);
   `standardised_difference(a, b)`: Cohen's d on non-null values, (mean_a − mean_b) /
-  √((sd_a² + sd_b²) / 2); for a categorical the largest level-share difference. A chart that
-  shows a distribution from the cells merges them to twenty groups by the same rule.
-- **Intervals:** `wilson_interval(k, n)` (closed form, 95%); `t_interval(mean, sd, n)`.
+  √((sd_a² + sd_b²) / 2); for a categorical the largest level-share difference
+  (`level_share_difference(a_cells, b_cells)`, null a level). `group_shares(cells, groups)` reads
+  one period's shares over the groups `merge_bins` cut on another (by `bin_order` range, the null
+  bin last), so the two PSI vectors align bin for bin. A chart that shows a distribution from the
+  cells merges them to twenty groups by the same rule. `shares(cells)` gives `rows`,
+  `missing_share`, `zero_share`, `dominant_share`, `dominant_value`, `bins` (the non-null bins
+  holding rows; the ledger's `levels` come from the snapshot) and the concordance's support,
+  `events` and `non_events` (labelled non-null rows; a zero target bin is the one whose target
+  sums to 0). The `= 0` bin is found by the label `bin_labels` gives the 0 singleton, in both its
+  number formats (`= 0`, and `= 0.0` when six digits read two edges alike). `pool_periods` keeps
+  an unlabelled cell's `sum_y` null.
+- **Intervals:** `wilson_interval(k, n)` (closed form, 95%, vectorised); `t_interval(mean, sd,
+  n)`.
 - **Association** (on the snapshot's eligible rows, a seeded cap of 200,000 rows for the pairwise
-  matrix only, stated in the report): `spearman_matrix` (rank once, pairwise-complete, at least
-  1,000 shared rows else "not compared"), `cramers_v`, `correlation_ratio` (η on ranks, null a
-  level); `association_matrix(frame, kinds)` → long table `a, b, statistic, method (spearman |
-  cramers_v | eta), rows`; `cluster_features` and `explained_by_others` (FC).
+  matrix only, stated in the report): `spearman_matrix(frame)` (the exact pairwise-complete
+  Spearman: columns grouped by null mask, ranked once inside a group and once per group pair
+  across groups, T28; at least 1,000 shared rows else "not compared", NaN), `cramers_v(a, b)`
+  (plain, null a level, "not compared" with one level, T29), `correlation_ratio(numeric,
+  categorical)` (η on ranks over the numeric's filled rows, null a level);
+  `association_table(frame, kinds, seed)` → long table `a, b, statistic, method (spearman |
+  cramers_v | eta), rows` (a mixed pair has its numeric as `a`); `cluster_features(table,
+  max_assoc)` (average linkage on 1 − |statistic|, a "not compared" pair at distance 1, members
+  of clusters of two or more only) and `explained_by_others(table, members)` (FC): per member
+  the R² on the other numeric members from their Spearman pairs alone, by least squares so an
+  exact identity reads 1. NaN, "not available", for a member without a Spearman pair among the
+  members ("mixed kinds": a categorical, or the one numeric of a mixed cluster) and for every
+  member when a Spearman pair among them is not compared (NaN in the table), decided before
+  solving; the caller names the reason from the pairs' methods. An R² beyond 1e-9 of [0, 1]
+  (pairwise-complete correlations, each on its own rows, need not form a positive
+  semi-definite matrix) is refused, not clipped.
 - **Support rules:** `strata.min_events` for strata tables and every per-period statistic (events
   for binary, units with a non-zero target for regression); `MIN_BIN_SUPPORT = 20` for bins and
   levels in the deep dives.
-- **Per-task spec entries:** `target_bins`; `summarise_group` (binary: support = positive events,
-  estimate = rate, Wilson interval, lift = rate / base rate; regression: support = units with a
-  non-zero target, estimate = mean, t-interval, lift = mean / overall mean, median beside it; a
-  target with zeros also shows the non-zero share with a Wilson interval and the mean and median
-  of the non-zero values per bin); `rare_effect` (rate ratio / mean ratio). The regression lift and
+- **Per-task spec entries:** `target_bins(known, exact)` (binary: none, the two values are the
+  bins; regression: the edges of 20 quantile bins, every value with `eda.bins: null`, 0 always
+  its own bin); `summarise_group(target, base)` on a group's known targets (binary: support =
+  positive events, estimate = rate, Wilson interval, lift = rate / base rate; regression: support
+  = units with a non-zero target, estimate = mean, t-interval, lift = mean / overall mean, median
+  beside it, and the non-zero share with a Wilson interval and the mean and median of the
+  non-zero values); `rare_effect(cell, rest)` (rate ratio / mean ratio; a positive cell over a
+  zero rest is infinite; the regression mean ratio refuses a rest whose mean is not positive,
+  so the caller decides "not available" before calling). The regression lift and
   `rare_effect` are mean ratios and are computed only when the overall mean is positive; for a
   signed or zero-mean amount they are "not available: mean not positive" (D-035), decided by the
-  per-task spec before running; `se`; the events
-  warning; the base-rate views.
+  per-task spec before running (`lift_available(base)`; `summarise_group` leaves `lift` out then);
+  `concordance_se(value, events, non_events)`; `events_warning(events)` and `support_name`
+  (one support name per task, used by both);
+  `base_rate_views(target)` (the headline: binary rows, positives, rate and Wilson interval;
+  regression rows, mean, median, p10, p90, zero share, units with a non-zero target);
+  `shrinkage_rows(min_events, base)` (the level encoding's `k_rows`).
 
 ### The views
 Report order (A25 in the record; structure owned by [reporting](reporting.md)): summary → core →
@@ -307,7 +377,7 @@ embedded once.
   `zero_share_window`, `dominant_share`, `dominant_share_window`, `levels`, `kind`, `rank`,
   `key_feature` (`top_n | listed | ''`), `represented_by`. Ordered by the ranking value: the plain
   `concordance`, or `concordance_best_order` when the feature is marked `non_monotone`
-  (best-order ≥ plain + 0.03), so a noise feature never gains from the best-order's small
+  (best-order ≥ plain + max(0.03, 4 · SE)), so a noise feature never gains from the best-order's small
   in-sample optimism; M2.3's floor uses the same rule; ties by name; a bar on the concordance; lineage and
   unsupported columns listed underneath as excluded.
 - **Key features:** walk the ranking (by the ranking value above); skip a candidate whose |association| with an already chosen
@@ -435,11 +505,16 @@ Call flow: Level 2's numbered list. Reading order for review: `statistics/concor
 | `features.kinds` | `{}` | `{column: numeric \| categorical}` overrides |
 
   EDA also reads `strata.variables`, `strata.max_levels` and `strata.min_events`.
-- **Artifacts** under `<use_case>/04_feature/<ddh>/eda/` (D-136), written to a temporary folder
-  renamed on success:
-  - `eda.json` (`schema_version: 1`): framework version, when, the hashes, `replayed_to`, the
-    settings digest (`features.kinds`, `strata.*`, `eda.*`), the snapshot period, the compared
-    periods, the population counts per period, the key features and why, the warnings, timings;
+- **Artifacts** under `<use_case>/04_feature/<ddh>/eda/` (`environment.feature_dir(env, cfg,
+  entity, "eda")`, D-136), written by `artifacts.write_stage` to a temporary folder renamed on
+  success (leftover `.tmp-*` / `.old-*` siblings from a crash make it fail loud). The ledger is
+  saved first (`save_ledger(ledger, folder, {"stage": "eda", "data_definition_hash": ddh,
+  "settings_digest": …})`) and the stage folder last, so `eda.json` is the commit marker:
+  - `eda.json` (`schema_version: 1`, `stage`, `tables`): framework version, when, the hashes,
+    `replayed_to`, the settings digest and the digested values (`artifacts.settings_meta(resolved,
+    ["features.kinds", "strata", "eda"])`), the snapshot period, the compared periods, the
+    population counts per period, the key features and why, the warnings, timings; `log.json`
+    beside it holds the run's log entries;
   - `tables/*.parquet`: `cells`, `client_constant`, `population`, `ranking`, `correlation`,
     `bins`, `levels`, `quartiles`, `strata`, `reference_groups` (the clusters are Feature Checks',
     cut at its `redundancy.correlation_max`);

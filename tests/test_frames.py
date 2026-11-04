@@ -1,17 +1,20 @@
-"""The frames on the unit preset: the window frame, the modelling frames, the model input
-shared by two use cases and prepared on read, the collect printout, and one weekly run on a
-hand-made panel (D-030, D-129, D-131, D-133).
+"""The frames on the unit preset: EDA's snapshot and `rows`, the modelling frames, the model
+input shared by two use cases and prepared on read, the collect printout, and one weekly run on
+a hand-made panel (D-030, D-129, D-131, D-133, D-135).
 
-The skeleton's config runs end to end on the written unit preset: EDA's window keeps every
-client after the analysis filter with the holders tagged, Feature Checks gets its eligible rows,
-the modelling frames hold the eligible rows with a known target split by client, the saved model
-input gives the same frames back, a model input saved from two configs serves each, a changed
-eligibility, window, split or candidate list is prepared on read while a changed target spec, a
-validation period the saved target source can't label, a missing use case, an older sidecar or
-uncovered periods are refused, and the printout turns into the callout above a tiny budget;
-a saved spine's `eligible` column is a candidate as `source_eligible` in both lists.
+The skeleton's config runs end to end on the written unit preset: EDA's snapshot keeps every
+client of the snapshot period after the analysis filter with the holders tagged, `rows` stays in
+Spark with the label inside the window only and never the validation period, the modelling
+frames hold the eligible rows with a known target split by client, the saved model input gives
+the same frames back, a model input saved from two configs serves each, a changed eligibility,
+window, split or candidate list is prepared on read while a changed target spec, a validation
+period the saved target source can't label, a missing use case, an older sidecar or uncovered
+periods are refused, and the printout turns into the callout worded for the frame above a tiny
+budget; a saved spine's `eligible` column is a candidate as `source_eligible` in both lists.
 Regression runs through the same path with client sampling; a weekly panel runs through it
-with `YYYY-Www` labels.
+with `YYYY-Www` labels and an unsupported date column dropped; an EDA-only config (a null
+validation period) compares the window and the latest period; EDA's frames refuse a candidate
+list with no supported column and a snapshot period without rows.
 """
 
 import json
@@ -27,7 +30,7 @@ from pyspark.sql.types import DateType
 
 from core_modelling.config import UseCaseConfig
 from core_modelling.dataset import Frames, build_frames, save_model_input
-from core_modelling.dataset.frames import estimate_collect
+from core_modelling.dataset.frames import _eda_frames, collect_frame, estimate_collect
 from core_modelling.dataset.model_input import METADATA_FILE, saved_candidates
 from core_modelling.environment import EnvironmentConfig, Source
 from core_modelling.periods import PERIODS
@@ -36,6 +39,7 @@ ENTITY = "entity_a"
 INPUT = "retail_acquisition_input"
 WEEK = PERIODS["week"]
 SUNDAYS = [date(2025, 1, 5) + timedelta(days=7 * i) for i in range(10)]  # 2025-W01 … W10
+WINDOW_LABELS = ["2025-03", "2025-04", "2025-05", "2025-06", "2025-07", "2025-08"]
 
 
 @pytest.fixture(scope="module")
@@ -65,16 +69,8 @@ def td_config(variant: Callable[..., UseCaseConfig]) -> UseCaseConfig:
 
 @pytest.fixture(scope="module")
 def eda_frames(spark: SparkSession, env: EnvironmentConfig, in_memory: UseCaseConfig) -> Frames:
-    """The window frame, built once for the module."""
+    """EDA's frames, built once for the module."""
     return build_frames(in_memory, ENTITY, env, spark, "eda")
-
-
-@pytest.fixture(scope="module")
-def feature_checks_frames(
-    spark: SparkSession, env: EnvironmentConfig, in_memory: UseCaseConfig
-) -> Frames:
-    """Feature Checks' frame, built once for the module."""
-    return build_frames(in_memory, ENTITY, env, spark, "feature_checks")
 
 
 @pytest.fixture(scope="module")
@@ -90,74 +86,147 @@ def _sorted(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.sort_values(["unit_id", "period"]).reset_index(drop=True)
 
 
-def test_window_frame_keeps_every_client_after_the_analysis_filter_with_the_tags(
+def test_snapshot_keeps_every_client_of_the_snapshot_period_with_the_tags(
     eda_frames: Frames, in_memory: UseCaseConfig
 ) -> None:
-    """Every window period; the candidates, then the tag, `eligible`, `target` and `split`; the
-    lineage column gone; holders present and tagged 0; the analysis filter's rows gone; the log
-    in order, the analysis step first; the meta with the hashes and the candidates."""
-    window = eda_frames.window
+    """The window's last period only; the candidates, then the tag, `eligible`, `target` and
+    `split`; the lineage column gone; holders present and tagged 0; the analysis filter's rows
+    gone, so the snapshot's rows are the last analysis step's rows out for its period and the
+    population's rows, each counted on its own; the log in order, the analysis step first, the
+    compared periods before the collect; the meta with the hashes, the candidates, the kinds
+    from the Spark schema, no unsupported column, the snapshot period and the population
+    counts."""
+    snapshot = eda_frames.snapshot
     assert eda_frames.train is None and eda_frames.validation is None
-    periods = sorted(window["period"].unique())
-    assert periods[0] == in_memory.time.observation_window.first and len(periods) == 6
-    assert window.columns[-4:].tolist() == ["non_holders", "eligible", "target", "split"]
-    assert "cc_flag" not in window.columns and "target_cc_acquisition" not in window.columns
-    assert window.columns[2:-4].tolist() == eda_frames.meta["candidates"]
-    assert (window["non_holders"] == 0).any() and window["eligible"].equals(window["non_holders"])
-    assert not (window["income"].isna() & (window["salary_transfer_flag"] == 0)).any()
-    assert window["target"].isna().any()  # leavers inside the window keep their rows
+    assert snapshot["period"].unique().tolist() == [in_memory.time.observation_window.last]
+    assert snapshot.columns[-4:].tolist() == ["non_holders", "eligible", "target", "split"]
+    assert "cc_flag" not in snapshot.columns and "target_cc_acquisition" not in snapshot.columns
+    assert snapshot.columns[2:-4].tolist() == eda_frames.meta["candidates"]
+    assert (snapshot["non_holders"] == 0).any()
+    assert snapshot["eligible"].equals(snapshot["non_holders"])
+    assert not (snapshot["income"].isna() & (snapshot["salary_transfer_flag"] == 0)).any()
+    assert snapshot["target"].isna().any()  # leavers inside the window keep their rows
     steps = [entry["step"] for entry in eda_frames.log]
     # the joins: the spine, the extract and the target source
     assert steps == ["join", "join", "join", "eligibility", "eligibility", "contract",
-                     "contract", "contract", "contract", "collect"]  # fmt: skip
+                     "contract", "contract", "contract", "compared_periods", "collect"]  # fmt: skip
     assert [e["name"] for e in eda_frames.log[3:5]] == ["income_known_or_salaried", "non_holders"]
     assert eda_frames.meta["tags"] == ["non_holders"] and eda_frames.meta["lineage"] == ["cc_flag"]
-    assert eda_frames.meta["collect"][0]["rows"] == len(window)
+    assert eda_frames.meta["collect"][0]["rows"] == len(snapshot)
+    assert eda_frames.meta["collect"][0]["frame"] == "snapshot"
+    kinds = eda_frames.meta["kinds"]
+    assert list(kinds) == eda_frames.meta["candidates"] and eda_frames.meta["unsupported"] == {}
+    assert kinds["cc_limit"] == "numeric" and kinds["segment"] == "categorical"
+    assert eda_frames.meta["snapshot_period"] == "2025-08"
+    analysis = [e for e in eda_frames.log if e["step"] == "eligibility" and e["kind"] == "analysis"]
+    assert len(snapshot) == analysis[-1]["rows_out"]["2025-08"]
+    assert eda_frames.meta["population"].set_index("period").loc["2025-08", "rows"] == len(snapshot)
 
 
-def test_feature_checks_frame_is_the_eligible_window(
-    feature_checks_frames: Frames, eda_frames: Frames
+def test_rows_hold_the_eligible_compared_periods_with_the_label_inside_the_window_only(
+    eda_frames: Frames,
 ) -> None:
-    """The window's eligible rows, every client, the same columns as EDA's frame, no split
-    applied; the collect entry names it."""
-    frame = feature_checks_frames.window
-    assert (frame["eligible"] == 1).all() and feature_checks_frames.train is None
-    assert len(frame) == int(eda_frames.window["eligible"].sum())
-    assert frame.columns.tolist() == eda_frames.window.columns.tolist()
-    assert set(frame["split"]) == {"train", "test"}
-    assert set(frame["period"]) == set(eda_frames.window["period"])  # the window, never v
-    assert feature_checks_frames.meta["collect"][0]["frame"] == "eligible_window"
+    """`rows` stays in Spark with the keys, the candidates and `target`; eligible rows only; the
+    window, the gap (2025-09, 2025-10) and the latest period (the spine's last, after v), never
+    the validation period 2025-11; the label null outside the window (§4.4); the log entry and
+    the population counts name the same periods."""
+    rows = eda_frames.rows
+    assert isinstance(rows, DataFrame)
+    assert rows.columns == ["unit_id", "period", *eda_frames.meta["candidates"], "target"]
+    entry = next(entry for entry in eda_frames.log if entry["step"] == "compared_periods")
+    assert entry == {"step": "compared_periods", "window": WINDOW_LABELS,
+                     "gap": ["2025-09", "2025-10"], "latest": ["2026-09"]}  # fmt: skip
+    counted = (
+        rows.groupBy("period")
+        .agg(F.count(F.lit(1)).alias("rows"), F.count("target").alias("labelled"))
+        .orderBy("period")
+        .collect()
+    )
+    by_period = {f"{row.period:%Y-%m}": (row.rows, row.labelled) for row in counted}
+    assert list(by_period) == [*entry["window"], *entry["gap"], *entry["latest"]]
+    assert "2025-11" not in by_period
+    assert all(by_period[period][1] > 0 for period in entry["window"])
+    assert all(by_period[period][1] == 0 for period in [*entry["gap"], *entry["latest"]])
+    assert by_period["2025-08"][0] == int(eda_frames.snapshot["eligible"].sum())
+    population = eda_frames.meta["population"]
+    assert population["period"].tolist() == list(by_period)
+    assert population.set_index("period").loc["2025-08", "eligible_rows"] == by_period["2025-08"][0]
+    assert (
+        population.set_index("period")["known_target"].isna().tolist() == [False] * 6 + [True] * 3
+    )
+
+
+def test_an_eda_only_config_compares_the_window_and_the_latest_period(
+    spark: SparkSession, env: EnvironmentConfig, variant: Callable[..., UseCaseConfig]
+) -> None:
+    """`time.validation_period: null`: the snapshot is built and `rows` holds the window and the
+    latest period after it (the spine's last), no gap, the label inside the window only."""
+    eda_only = variant(data={"model_input": None}, time={"validation_period": None})
+    frames = build_frames(eda_only, ENTITY, env, spark, "eda")
+    assert frames.snapshot["period"].unique().tolist() == [eda_only.time.observation_window.last]
+    entry = next(entry for entry in frames.log if entry["step"] == "compared_periods")
+    assert entry == {"step": "compared_periods", "window": WINDOW_LABELS, "gap": [],
+                     "latest": ["2026-09"]}  # fmt: skip
+    counted = frames.rows.groupBy("period").agg(F.count("target").alias("labelled"))
+    labelled = {f"{row.period:%Y-%m}": row.labelled for row in counted.orderBy("period").collect()}
+    assert list(labelled) == [*WINDOW_LABELS, "2026-09"] and labelled["2026-09"] == 0
+    assert all(labelled[period] > 0 for period in WINDOW_LABELS)
+    assert frames.meta["population"]["period"].tolist() == list(labelled)
+
+
+def test_eda_frames_refuse_no_supported_candidate_and_a_snapshot_period_without_rows(
+    spark: SparkSession, env: EnvironmentConfig, in_memory: UseCaseConfig
+) -> None:
+    """On hand-made prepared panels: a candidate list of date columns only fails naming the
+    unsupported types and `features.candidates`; a panel without a row of the snapshot period
+    fails naming `eda.snapshot`, the period and the analysis filters, before the collect."""
+    helpers = "eligible int, target int, split string"
+    dates = spark.createDataFrame(
+        [("u1", date(2025, 8, 31), date(2024, 1, 1), 1, 0, "train")],
+        f"unit_id string, period date, opened_on date, {helpers}",
+    )
+    message = r"unsupported type \(\{'opened_on': 'date'\}\).*features\.candidates"
+    with pytest.raises(ValueError, match=message):
+        _eda_frames(dates, in_memory, env, [], {"candidates": ["opened_on"]})
+    early = spark.createDataFrame(
+        [("u1", date(2025, 3, 31), 1.0, 1, 0, "train")],
+        f"unit_id string, period date, x double, {helpers}",
+    )
+    message = r"eda.snapshot is 2025-08, but .* \(data.eligibility.analysis\)"
+    with pytest.raises(ValueError, match=message):
+        _eda_frames(early, in_memory, env, [], {"candidates": ["x"]})
 
 
 def test_modelling_frames_hold_eligible_labelled_rows_split_by_client(
     training_frames: Frames, eda_frames: Frames, in_memory: UseCaseConfig
 ) -> None:
     """Train and test share the window and no client; validation is the OOT period; every row
-    eligible with a known target; train plus test is the window's eligible labelled rows; the
-    null-target and sampling entries in the log; the collect measurements in the meta."""
+    eligible with a known target; train plus test at the snapshot period is its eligible
+    labelled rows; the null-target and sampling entries in the log; the collect measurements in
+    the meta."""
     train, test, validation = (
         training_frames.train,
         training_frames.test,
         training_frames.validation,
     )
-    assert training_frames.window is None
+    assert training_frames.snapshot is None and training_frames.rows is None
     assert not set(train["unit_id"]) & set(test["unit_id"])
     assert (train["split"] == "train").all() and (test["split"] == "test").all()
     assert validation["period"].unique().tolist() == [in_memory.time.validation_period]
-    window_periods = set(eda_frames.window["period"])  # the labelled gap periods never reach a fit
-    assert set(train["period"]) | set(test["period"]) <= window_periods
+    window = in_memory.time.observation_window
+    periods = set(train["period"]) | set(test["period"])
+    assert min(periods) == window.first and max(periods) == window.last and len(periods) == 6
     for frame in (train, test, validation):
         assert (frame["eligible"] == 1).all() and frame["target"].notna().all()
-        assert frame.columns.tolist() == eda_frames.window.columns.tolist()
-    window = eda_frames.window
-    labelled = window[(window["eligible"] == 1) & window["target"].notna()]
-    assert len(train) + len(test) == len(labelled)
+        assert frame.columns.tolist() == eda_frames.snapshot.columns.tolist()
+    snapshot = eda_frames.snapshot
+    labelled = snapshot[(snapshot["eligible"] == 1) & snapshot["target"].notna()]
+    at_snapshot = pd.concat([train, test])
+    assert (at_snapshot["period"] == window.last).sum() == len(labelled)
     steps = [entry["step"] for entry in training_frames.log]
     assert steps[-5:] == ["null_target", "sampling", "collect", "collect", "collect"]
     null_target = training_frames.log[-5]
-    assert set(null_target["share"]) == {f"{p:%Y-%m}" for p in window["period"].unique()} | {
-        "2025-11"
-    }
+    assert set(null_target["share"]) == {*WINDOW_LABELS, "2025-11"}
     assert training_frames.meta["sampling"] == {"step": "sampling", "method": None}
     measured = [entry["frame"] for entry in training_frames.meta["collect"]]
     assert measured == ["train", "test", "validation"]
@@ -208,7 +277,7 @@ def test_model_input_saved_from_two_configs_serves_each(
     training_frames: Frames,
 ) -> None:
     """One table with two target columns: the first use case gets the frames built in memory,
-    the second its own window with its own eligibility, neither seeing the other's target; a
+    the second its own snapshot with its own eligibility, neither seeing the other's target; a
     use case the table lacks is refused naming `save_model_input`."""
     path = save_model_input([cc_config, td_config], ENTITY, env, spark)
     saved = spark.read.parquet(path)
@@ -218,11 +287,12 @@ def test_model_input_saved_from_two_configs_serves_each(
     cc = build_frames(cc_config, ENTITY, env, spark, "training")
     pd.testing.assert_frame_equal(_sorted(training_frames.train), _sorted(cc.train))
     td = build_frames(td_config, ENTITY, env, spark, "eda")
-    assert "target_cc_acquisition" not in td.window.columns and "td_flag" not in td.window.columns
+    assert "target_cc_acquisition" not in td.snapshot.columns
+    assert "td_flag" not in td.snapshot.columns
     assert "target_cc_acquisition" not in td.meta["candidates"] and td.meta["lineage"] == [
         "td_flag"
     ]
-    assert td.window["eligible"].equals(td.window["non_holders"])
+    assert td.snapshot["eligible"].equals(td.snapshot["non_holders"])
     assert saved_candidates(td_config, ENTITY, env) == td.meta["candidates"]
     unsaved = cc_config.model_copy(update={"use_case": "fx_activation"})
     with pytest.raises(
@@ -237,23 +307,26 @@ def test_changed_settings_after_the_join_are_prepared_on_read(
     cc_config: UseCaseConfig,
     variant: Callable[..., UseCaseConfig],
 ) -> None:
-    """A changed eligibility, window, split or candidate list is not refused: the saved table
-    is prepared again from the reader's config."""
+    """A changed eligibility, snapshot, split, candidate list or kind is not refused: the saved
+    table is prepared again from the reader's config."""
     save_model_input(cc_config, ENTITY, env, spark)
     everyone = variant(data={"eligibility": {"modelling": []}})
     frames = build_frames(everyone, ENTITY, env, spark, "eda")
-    assert (frames.window["eligible"] == 1).all() and "non_holders" not in frames.window.columns
-    moved = variant(time={"observation_window": {"first": "2025-04-01"}})
-    assert sorted(build_frames(moved, ENTITY, env, spark, "eda").window["period"].unique())[0] == (
-        moved.time.observation_window.first
-    )
-    reseeded = variant(data={"split": {"seed": 7}})
-    assert set(build_frames(reseeded, ENTITY, env, spark, "feature_checks").window["split"]) == {
-        "train", "test"
-    }  # fmt: skip
-    narrowed = variant(features={"candidates": {"include": ["*"], "exclude": ["income"]}})
-    assert "income" not in build_frames(narrowed, ENTITY, env, spark, "eda").window.columns
+    assert (frames.snapshot["eligible"] == 1).all()
+    assert "non_holders" not in frames.snapshot.columns
+    earlier = variant(eda={"snapshot": "2025-04-01"}, data={"split": {"seed": 7}})
+    frames = build_frames(earlier, ENTITY, env, spark, "eda")
+    assert frames.snapshot["period"].unique().tolist() == [date(2025, 4, 30)]
+    assert frames.meta["snapshot_period"] == "2025-04"
+    assert set(frames.snapshot["split"]) == {"train", "test"}
+    narrowed = variant(
+        features={"candidates": {"include": ["*"], "exclude": ["income"]},
+                  "kinds": {"product_cnt": "categorical"}},
+    )  # fmt: skip
+    frames = build_frames(narrowed, ENTITY, env, spark, "eda")
+    assert "income" not in frames.snapshot.columns and "income" not in frames.rows.columns
     assert "income" not in saved_candidates(narrowed, ENTITY, env)
+    assert frames.meta["kinds"]["product_cnt"] == "categorical"
 
 
 def test_stale_or_missing_model_input_is_refused(
@@ -310,20 +383,32 @@ def test_validation_period_beyond_the_saved_labels_is_refused(
         build_frames(later, ENTITY, env, spark, "eda")
 
 
-def test_collect_printout_becomes_a_callout_above_the_budget(
+def test_collect_printout_becomes_a_callout_worded_for_the_frame_above_the_budget(
     spark: SparkSession,
     env: EnvironmentConfig,
     in_memory: UseCaseConfig,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The printout names rows, columns, the estimate and the budget; above the budget the
-    callout appears and the frame is still collected."""
+    callout appears and the frame is still collected: the snapshot's names `eda.snapshot` and
+    the hash, never sampling; a training frame's names `training.sampling`."""
     tiny = env.model_copy(update={"collect_budget_gb": 1e-6})
     frames = build_frames(in_memory, ENTITY, tiny, spark, "eda")
     out = capsys.readouterr().out
-    assert f"collect window: {len(frames.window):,} rows × {frames.window.shape[1]} columns" in out
-    assert "(budget 1e-06 GB)" in out and "above the budget: declare training.sampling" in out
-    assert "spark.driver.maxResultSize" in out and "collected window:" in out
+    snapshot = frames.snapshot
+    assert f"collect snapshot: {len(snapshot):,} rows × {snapshot.shape[1]} columns" in out
+    assert "(budget 1e-06 GB)" in out and "collected snapshot:" in out
+    assert "above the budget: raise collect_budget_gb" in out
+    assert "smaller eda.snapshot population through eligibility" in out
+    assert "data-definition hash" in out and "training.sampling" not in out
+    frame = spark.createDataFrame(
+        [("u1", date(2025, 3, 31), 1)], "unit_id string, period date, x int"
+    )
+    one_byte = env.model_copy(update={"collect_budget_gb": 1e-9})  # a one-row frame is above it
+    _, entry = collect_frame(frame, "train", one_byte)
+    out = capsys.readouterr().out
+    assert "above the budget: declare training.sampling (negative_downsampling" in out
+    assert "spark.driver.maxResultSize" in out and entry["frame"] == "train"
 
 
 def test_regression_runs_through_the_same_path_with_client_sampling(
@@ -395,11 +480,14 @@ def test_weekly_panel_runs_end_to_end_with_week_labels(
     write_sources: Callable[..., EnvironmentConfig],
     variant: Callable[..., UseCaseConfig],
 ) -> None:
-    """`time.period: week` on a hand-made weekly mart (the spine is the target source): the
-    window frame holds the four window weeks, the join log and the null-target entry are keyed
-    by `YYYY-Www`, the modelling frames split by client with the validation week W06 and the
-    card flag as the lineage, never a candidate."""
-    env = write_sources({"retail_mart": _weekly_mart(spark)})
+    """`time.period: week` on a hand-made weekly mart (the spine is the target source) with a
+    date column: the snapshot is W04, `rows` the window weeks, the gap week W05 and the latest
+    week W10 (after the validation week W06), labelled in the window only; the date column is a
+    candidate, unsupported and dropped from both frames; the join log and the null-target entry
+    are keyed by `YYYY-Www`; the modelling frames split by client with the validation week W06
+    and the card flag as the lineage, never a candidate."""
+    mart = _weekly_mart(spark).withColumn("opened_on", F.lit(date(2024, 6, 1)))
+    env = write_sources({"retail_mart": mart})
     cfg = _weekly_config(variant)
     eda = build_frames(cfg, ENTITY, env, spark, "eda")
     join = [entry for entry in eda.log if entry["step"] == "join"]
@@ -409,8 +497,19 @@ def test_weekly_panel_runs_end_to_end_with_week_labels(
         join[1]["null_in_window"]["2025-W08"] == 0.0
         and join[1]["null_in_window"]["2025-W09"] is None
     )
-    assert sorted(eda.window["period"].unique()) == SUNDAYS[:4]
-    assert eda.meta["candidates"] == ["income"] and eda.meta["lineage"] == ["cc_flag"]
+    assert eda.snapshot["period"].unique().tolist() == [SUNDAYS[3]]
+    assert eda.meta["candidates"] == ["income", "opened_on"] and eda.meta["lineage"] == ["cc_flag"]
+    assert eda.meta["kinds"] == {"income": "numeric"}
+    assert eda.meta["unsupported"] == {"opened_on": "date"}
+    assert "opened_on" not in eda.snapshot.columns and "opened_on" not in eda.rows.columns
+    compared = next(entry for entry in eda.log if entry["step"] == "compared_periods")
+    assert compared == {"step": "compared_periods", "window": ["2025-W01", "2025-W02", "2025-W03",
+                        "2025-W04"], "gap": ["2025-W05"], "latest": ["2025-W10"]}  # fmt: skip
+    labelled = eda.rows.where(F.col("target").isNotNull()).select("period").distinct().collect()
+    assert sorted(row.period for row in labelled) == SUNDAYS[:4]
+    assert sorted(r.period for r in eda.rows.select("period").distinct().collect()) == [
+        *SUNDAYS[:5], SUNDAYS[9]
+    ]  # fmt: skip
     training = build_frames(cfg, ENTITY, env, spark, "training")
     assert training.validation["period"].unique().tolist() == [SUNDAYS[5]]
     assert not set(training.train["unit_id"]) & set(training.test["unit_id"])
@@ -482,11 +581,20 @@ def test_saved_candidates_leave_out_a_built_target_column_named_target(
     assert build_frames(cfg, ENTITY, env, spark, "eda").meta["candidates"] == ["income"]
 
 
-def test_unknown_stage_and_empty_frame_are_refused(
-    spark: SparkSession, env: EnvironmentConfig, in_memory: UseCaseConfig
+def test_unknown_stage_null_validation_period_and_empty_frame_are_refused(
+    spark: SparkSession,
+    env: EnvironmentConfig,
+    in_memory: UseCaseConfig,
+    variant: Callable[..., UseCaseConfig],
 ) -> None:
-    """A stage the frames don't serve, and a frame with no row to collect, fail loud."""
+    """A stage the frames don't serve, the modelling frames of an EDA-only config (a null
+    validation period, refused before the panel is built), and a frame with no row to collect
+    fail loud."""
     with pytest.raises(ValueError, match="unknown stage 'scoring'; the frames serve"):
         build_frames(in_memory, ENTITY, env, spark, "scoring")
+    eda_only = variant(data={"model_input": None}, time={"validation_period": None})
+    for stage in ("training", "evaluation"):
+        with pytest.raises(ValueError, match="time.validation_period is null: an EDA-only config"):
+            build_frames(eda_only, ENTITY, env, spark, stage)
     with pytest.raises(ValueError, match="the frame 'x' is empty"):
         estimate_collect(spark.createDataFrame([], "unit_id int"), "x")

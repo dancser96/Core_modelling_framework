@@ -1,10 +1,10 @@
 # Stage 2 (M2.2 Understanding): the build plan
 _Written 2026-11-02 for the SDS's approval, revised 2026-11-03 after their remarks (the routing
-budget, the notebooks' guides, `lagged_signal_drop`, the edges rule, V13–V15) · from the spec in `docs/components/eda.md`,
+budget, the notebooks' guides, `lagged_signal_drop`, the edges rule, V13–V15; V16–V17 added by the build, 2026-11-03) · from the spec in `docs/components/eda.md`,
 `feature_checks.md`, `feature_ledger.md`, `reporting.md`, `config.md`, `dataset.md` and the decision
 rows D-134–D-137 · the design record is `answers.md` beside this file · nothing is coded before the
 SDS approves this plan (`CLAUDE.md` §1 step 1) · the holistic review's outcomes are folded in (§9, with the
-decisions the spec step made without the SDS, V1–V15, to veto by number)_
+decisions the spec step and the build made without the SDS, V1–V17, to veto by number)_
 
 **Where it stands (2026-11-03): the design is settled and specified; this plan, revised after the
 SDS's remarks, is waiting for approval.** Three major steps, each ending in the SDS's review with a
@@ -106,8 +106,9 @@ Opus · xhigh
   (stage `feature_checks`), loses `eda.chart_sample_share` and `feature_checks.steps`;
   `record_decision(..., keep: list[str] | None = None, findings: list[str] | None = None, ...)`;
   CLI `decide --keep … --findings …`; `data_path(env, use_case, layer, *parts) -> str` and
-  `audit_log_dir` → `<root>/<use_case>/04_feature/<ddh>/decisions`; `stage_dir(env, cfg, entity,
-  stage) -> str`.
+  `audit_log_dir(env, cfg, entity)` → `<root>/<use_case>/04_feature/<ddh>/decisions`;
+  `feature_dir(env, cfg, entity, *parts) -> str` (`04_feature/<ddh>`, the ledger's folder; with a
+  stage name the stage folder; built instead of the planned `stage_dir`, 2026-11-03).
 - Tests: `keep` with explicit and default `findings`; a `flag` entry opens, a later empty one
   closes; a different finding reopens, the same finding with new values does not; `features.held`
   appears in the resolved config and moves the resolved-input hash; the refusal of
@@ -126,13 +127,15 @@ Opus · xhigh
   `latest`; the validation period never inside); `bin_edges(snapshot, kinds, bins: int | None) ->
   dict[str, np.ndarray | None]` (through `statistics.quantile_edges`: mass points as singleton
   bins, quantile edges over the rest, T25); `window_levels(rows,
-  categoricals) -> dict[str, list[str]]`; `count_cells(rows, edges, levels, target_edges,
-  window_periods) -> pd.DataFrame`; `count_lagged_cells(rows, edges, levels, target_edges,
-  window_periods) -> pd.DataFrame` (lag by period index); `client_constant_shares(rows, features,
-  window_periods) -> pd.DataFrame`; `population_counts(panel, cfg) -> pd.DataFrame` (per compared
-  period; the labelled counts inside the window only); `estimate_cells(rows, kinds, bins) -> int`
-  (`approx_count_distinct` per column; with `eda.bins: null` more than `MAX_CELLS = 50_000_000` fails
-  loud naming `eda.bins`). The pooled categorical bins are the reserved `__other__` and `__new__`.
+  categoricals, window_periods) -> tuple[dict[str, list[str]], list[str]]` (the levels and the
+  categoricals over the 10,000-level ceiling; as built); `count_cells(rows, edges, levels,
+  over_ceiling, target_edges, window_periods, spec) -> pd.DataFrame`; `count_lagged_cells(same)`
+  (lag by period index); `client_constant_shares(rows, features, window_periods) -> pd.DataFrame`;
+  `population_counts(panel, cfg, periods) -> pd.DataFrame` (per compared period; the labelled counts
+  inside the window only; called inside `build_frames(eda)` into `Frames.meta["population"]`);
+  `estimate_cells(rows, kinds, bins, window_periods) -> int` (`approx_count_distinct` per column,
+  both passes; with `eda.bins: null` more than `MAX_CELLS = 50_000_000` fails loud naming
+  `eda.bins`). The pooled categorical bins are the reserved `__other__` and `__new__`.
 - Tests (unit preset, real local Spark): the cells equal a pandas `groupby` on the collected
   rows for three features and two periods; the cell estimate refuses a planted `MAX_CELLS` of 10; no label outside the window and no validation row in
   `rows`; `eda.bins: null` gives one cell per distinct value; the lagged cells null for the first
@@ -143,8 +146,10 @@ Opus · xhigh
 
 **m1.4 ∥ The statistics engine and the regression entries** · `general-purpose` · Fable · xhigh
 - Owns: new `src/core_modelling/statistics/` (`cells.py`, `concordance.py`, `distributions.py`,
-  `intervals.py`, `association.py`), `tasks.py` (the new entries), new `tests/test_statistics.py`,
-  `tests/test_target_factory.py` only where the spec's keys change.
+  `intervals.py`, `association.py`), `tasks.py` (the new entries), new `tests/test_statistics.py`
+  (built as `tests/test_statistics_distributions.py` for m1.4a and `tests/test_statistics.py` for
+  m1.4b), `tests/test_target_factory.py` only where the spec's keys change. Built in two halves
+  (2026-11-03): m1.4a `distributions.py` first, so the counts passes could import `quantile_edges`.
 - Functions: `pool_periods(cells, periods, lagged=False)`, `two_way_table(cells, order=None) ->
   np.ndarray`, `null_table(cells)`, `shares(cells) -> dict`; `concordance_from_table(table) ->
   float`, `direction_from_table(table) -> int`, `concordance_se(value, events, non_events)`,
@@ -164,8 +169,9 @@ Opus · xhigh
   submatrix with a small ridge). `TASK_SPECS` entries for both tasks: `target_bins`,
   `summarise_group`, `rare_effect`, `concordance_se`, `events_warning`, `support_name`,
   `base_rate_views`, `lift_available` (regression: the overall mean is positive; else lift and the
-  rare effect read "not available: mean not positive", D-035). `ranking_value(plain, best_order) ->
-  float` returns the best-order value only when it beats the plain one by 0.03 (`non_monotone`).
+  rare effect read "not available: mean not positive", D-035). `ranking_value(plain, best_order, se)
+  -> float` returns the best-order value only when it beats the plain one by max(0.03, 4 · SE)
+  (`is_non_monotone`; built 2026-11-03 after the audit measured the fixed margin's false marks).
 - Tests (no Spark): the table concordance equals `roc_auc_score` with values as bins and lies
   within 0.005 of it at 100 bins on a synthetic snapshot column; the regression table τ-b against
   `kendalltau`; a 300-level random code encodes below 0.55; no null control is marked `non_monotone`; `correlation_ratio` equals |Spearman|
@@ -430,6 +436,28 @@ rest. If Fable's share runs ahead of a half after major step 1, m3.2 moves to Op
 - **`rare_value_leak` at 20 rows is noisy** (`feature_checks.md` open question): measured on the
   `dev` preset's null controls in m3.1; moved to events if it flags.
 
+### 7a. What the facts spike settled (2026-11-03; details in `worknotes/log.md`)
+- The explode pass is the design: 15–18 s on the canonical window (625,074 rows × 139 numerics →
+  115,695 cells, 2.8 MB shuffle, 0.9 GB heap); the per-feature loop is 4.5× slower at the heap
+  cap. The lag pass is 19 s; the wide `groupBy(unit_id)` spills 2.2 GB, so the client-constant
+  shares run in column chunks or inside the lag window (T27).
+- `Bucketizer`: singleton splits accepted, no casts; null is a null bucket, NaN the extra one
+  (T26). The edges rule leaves no canonical numeric collapsed (39 of 139 columns under 50 bins,
+  every one equal to its distinct count; the largest non-singleton bin 1.8%): the acceptance
+  assertion is `bins ≥ min(distinct, 50)`, and `bins` is a target (up to +2).
+- The table concordance equals the binned AUC to 1e-16 and the raw AUC within 0.0001; the
+  regression τ-b is exact against binned rows and about 0.01 off raw (T32). Wilson closed form
+  (20,000× faster than scipy); `lstsq` for `explained_by_others`.
+- Spearman: the exact pairwise-complete form, columns grouped by null mask (T28); m1.4b measures
+  the cost at 139 × 200,000.
+- For m2.1: a repeated plotly `div_id` is not deduplicated (generate ids), a zero quartile on a
+  log axis is clamped silently, a 20-bar fragment is 7.5 KB, plotly.js 4.8 MB once per report;
+  `DataFrame.style` needs jinja2, which the venv lacks (the pin is asked of the SDS); a hand-written
+  table with CSS classes is a third of a Styler table's size. JupyterLab's trust behaviour and
+  the IFrame/`srcdoc` question stay unverified locally (m2.4 decides with `srcdoc`).
+- For m1.5: parquet list columns read back as arrays, `datetime64` and NaN need explicit JSON
+  handling (T31).
+
 ## 8. Timeline (estimate, working days)
 - 11-03: the plan revised after the SDS's remarks; approval.
 - 11-04: m1.0 (morning), m1.1–m1.5 spawned (afternoon).
@@ -452,7 +480,9 @@ writers' findings. Silence confirms them.
   Training's log and the docs say in words that, for Training, a held feature acts as an excluded
   feature without a final decision.
 - **V2** The ranking value is the plain concordance unless the feature is marked `non_monotone`
-  (best-order ≥ plain + 0.03); only then the best-order value is used, and M2.3's floor follows
+  (best-order ≥ plain + max(0.03, 4 · SE); the fixed 0.03 alone marked 42% of null numerics at
+  500 events, the SE-scaled margin 0–2% at every size while the inverted U stays marked, measured
+  2026-11-03); only then the best-order value is used, and M2.3's floor follows
   the same rule. The review showed that "the larger of the two" would give every noise feature a
   small in-sample boost; the null controls now must not be marked `non_monotone` (D-135 refined).
 - **V3** `eda.bins: null` gets a guard: the cell count is estimated from `approx_count_distinct`
@@ -500,6 +530,17 @@ writers' findings. Silence confirms them.
   population. Should a row-level chart ever be added, it draws a seeded sample of at most 10,000
   rows and says so in its caption (reporting requirement 5). The SDS's question ("why has chart
   sampling been left out") is answered by this, not by a config field.
+- **V16** (2026-11-03, the build's audit) The level encoding is **cross-fitted by period**: a
+  period's levels are ordered by the encoding fitted on the other window periods (the snapshot's
+  rows read from that table, `sign=1`); in-sample only with a one-period window, marked
+  "optimistic". A30 said "fitted once on the pooled window": measured, a null 20–50-level code
+  then reads 0.53–0.57 at ~190 events per period (above Training's 0.515 floor and outside both
+  guards), cross-fitted 0.49–0.52; a predictive code loses under 0.01 (D-135 changed in place).
+- **V17** (2026-11-03) `explained_by_others` is computed over a cluster's Spearman members only and
+  reads "not available" for a cluster with a not-compared pair, for non-numeric members, and when
+  the pairwise-complete correlations are inconsistent (R² outside [0, 1]); the categorical level
+  list is capped at 10,000 window levels, above which `new_levels` is "not available" for that
+  feature; the edges are cut on the snapshot's eligible rows.
 Applied without a decision: `environment.md`'s paths and functions, `architecture.md` §4, §9, §10
 and the stage table, `evaluation.md`'s support rule (`strata.min_events`) and OD-12 scope,
 `monitoring.md`'s PSI pointer, `training.md`'s signature and the train-only ranking inside a

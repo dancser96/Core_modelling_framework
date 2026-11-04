@@ -14,7 +14,7 @@ import json
 from core_modelling.config.schema import UseCaseConfig
 
 HASH_VERSION = 1
-REPLAY_FIELDS = {"excluded", "kept_despite_flags"}  # `features` lists the audit log's replay writes
+REPLAY_FIELDS = {"excluded", "kept", "held"}  # the `features` lists the replay writes
 
 
 def canonical_json(data: dict) -> str:

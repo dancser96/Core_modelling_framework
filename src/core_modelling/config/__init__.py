@@ -18,13 +18,17 @@ __all__ = ["UseCaseConfig", "load_config"]
 
 def _refuse_replay_fields(raw: dict, path: str | Path) -> None:
     """A config file carries intent only: the replayed lists and housekeeping come from the audit
-    log's replay (D-125), never from the file."""
+    log's replay (D-125, D-134), never from the file."""
     features = raw.get("features") if isinstance(raw.get("features"), dict) else {}
-    for name, entry in (("excluded", "an exclude"), ("kept_despite_flags", "a keep_despite_flag")):
+    for name, entry in (
+        ("excluded", "an exclude entry"),
+        ("kept", "a keep entry"),
+        ("held", "a keep or an exclude entry to settle the open flags"),
+    ):
         if features.get(name):
             raise ValueError(
                 f"config {path}: features.{name} is written by the audit log's replay; record "
-                f"{entry} entry instead (D-125)"
+                f"{entry} instead (D-125, D-134)"
             )
     if raw.get("housekeeping") is not None:
         raise ValueError(

@@ -1,5 +1,5 @@
 # Feature ledger
-**Status:** designing (spec settled 2026-11-02; built in Stage 2, M2.2; the per-run part in M2.3) · **Legacy:** none (the crunch had only `features_include` / `features_exclude`)
+**Status:** building (spec settled 2026-11-02; `ledger.py` built in Stage 2's m1.5, 2026-11-03, its callers come with the EDA and Feature Checks stages; the per-run part in M2.3) · **Legacy:** none (the crunch had only `features_include` / `features_exclude`)
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [training](training.md) ·
 [evaluation](evaluation.md) · [config](config.md) (the decision audit log) · [reporting](reporting.md) ·
 D-030, D-031, D-043, D-125, D-134, D-135, D-136, D-137 · settles OD-11
@@ -16,8 +16,8 @@ from Feature Checks, the decisions from the audit log ([config](config.md#decisi
 D-125).
 
 - **Where:** `<root>/<use_case>/04_feature/<data-definition hash>/ledger.parquet` plus
-  `_ledger.json` (`ledger_schema_version: 1`), beside the `eda/`, `feature_checks/` and
-  `decisions/` folders (D-136).
+  `_ledger.json` (`ledger_schema_version: 1`, the data-definition hash, the writing stage and its
+  settings digest), beside the `eda/`, `feature_checks/` and `decisions/` folders (D-136).
 - **Who writes:** EDA creates it (identity and EDA statistics); Feature Checks appends its columns.
   No stage rewrites another's columns.
 - **Derived at render time, never stored:** `held`, `kept`, `excluded` and `verdict`, read from
@@ -49,12 +49,17 @@ This spec settles OD-11 (the ledger's shape).
 ### The file through a Stage 2 run and a rerun
 1. EDA resolves the candidates, finds the lineage and unsupported columns, decides the kinds and
    calls `create_ledger`; it adds its ranking columns with `add_columns(..., stage="eda")`.
-2. EDA saves it with `save_ledger`. An EDA run starts from a fresh ledger, so **an EDA rerun
-   removes Feature Checks' columns** (and EDA removes the `feature_checks/` folder, A22).
-3. Feature Checks reads the ledger, refuses one without EDA's columns or whose EDA settings digest
-   differs from the current resolved config, runs its steps and adds its columns with
+2. EDA saves it with `save_ledger` **before** it writes its `eda/` folder, so `eda.json` is the
+   commit marker: a crash in between leaves a new ledger beside the old `eda.json`, which
+   Feature Checks' `check_upstream` refuses, never an old ledger beside a new `eda.json`. An EDA
+   run starts from a fresh ledger, so **an EDA rerun removes Feature Checks' columns** (and EDA
+   removes the `feature_checks/` folder, A22).
+3. Feature Checks reads the ledger with `read_ledger(folder, data_definition_hash)` (another data
+   definition is refused), refuses one without EDA's columns or whose EDA settings digest differs
+   from the current resolved config, runs its steps and adds its columns with
    `add_columns(..., stage="feature_checks")`. A Feature Checks rerun replaces its own columns.
-4. Feature Checks writes its `flag` entries to the audit log and saves the ledger.
+4. Feature Checks writes its `flag` entries to the audit log, saves the ledger and writes its
+   `feature_checks/` folder last, the same order as EDA.
 5. A report, the notebook's review view or Training reads the ledger with `read_ledger` and calls
    `render_decisions` (the view; it takes the resolved config and the entries, for the entry
    numbers) or `resolve_features` (the feature set; it takes the resolved config).
@@ -67,12 +72,16 @@ This spec settles OD-11 (the ledger's shape).
 - `resolve_features`: Training's feature set.
 
 ### How it is checked
-Light tests (`CLAUDE.md` §7): `resolve_features` against hand-built entries (an empty `flag`
-entry closes a finding; a `keep` with `findings` settles those findings only; a different finding
-raised later holds the feature again; the same finding with new values does not); `add_columns`
-refuses another stage's column; an EDA rerun leaves no Feature Checks column; `save_ledger`
-refuses a derived column; a newer `ledger_schema_version` is refused; the list columns survive the
-parquet round trip.
+Light tests (`CLAUDE.md` §7). The open-flag cases (an empty `flag` entry closes a finding; a
+`keep` with `findings` settles those findings only; a different finding raised later holds the
+feature again; the same finding with new values does not) are `open_flags`' in the audit-log
+tests ([config](config.md)). `resolve_features` is tested against hand-built resolved configs
+(lineage, unsupported, excluded and held out; a name that is no ledger row refused);
+`add_columns` refuses another stage's column, a repeated feature and a read candidate left out;
+a stage's rerun leaves none of its earlier columns; `save_ledger` refuses a derived column and an
+incomplete meta, and a failed save keeps the previous ledger; another `ledger_schema_version` or
+data definition is refused; the list, nullable-int and bool columns survive the parquet round
+trip unchanged.
 
 ## Level 3: Details
 
@@ -84,8 +93,10 @@ parquet round trip.
 2. **It decides nothing.** No ledger function writes an audit-log entry or changes the
    candidates; it records statistics and flags and derives the rest.
 3. **Versioned per `CLAUDE.md` §2.** `_ledger.json` carries `ledger_schema_version` (1), read
-   before the parquet; a newer version is refused ("raise the pin"). Columns are only added
-   within a major version (D-007); in 0.x the schema changes in place without a bump (D-136).
+   before the parquet; another version is refused (0.x; from 1.0 an older one is migrated).
+   Columns are only added within a major version (D-007); in 0.x the schema changes in place
+   without a bump (D-136). From 1.0, readers keep or drop a column they do not know instead of
+   refusing it, so a ledger written by a later patch still reads.
 4. **Stages append, never rewrite.** `add_columns` refuses a column that belongs to another
    stage; a stage's rerun replaces only its own columns; an EDA rerun starts a new ledger.
 5. **Derived columns are never stored.** `held`, `kept`, `excluded` and `verdict` exist only in
@@ -109,14 +120,14 @@ meanings below are one line each.
 |---|---|---|---|---|
 | Identity | `feature` | str | EDA | the candidate column's name (the key) |
 | Identity | `kind` | str | EDA | `numeric`, `categorical` or `unsupported`, after `features.kinds` overrides |
-| Identity | `levels` | int | EDA | distinct non-null values or levels in the snapshot |
 | Identity | `lineage` | bool | EDA | a target-lineage column, excluded automatically |
 | Identity | `unsupported` | bool | EDA | an unsupported type (date, timestamp, array, map, struct, binary), excluded automatically |
+| EDA | `levels` | int | EDA | distinct non-null values or levels in the snapshot (written with EDA's statistics, from the snapshot's cells) |
 | EDA | `concordance` | float | EDA | the snapshot's concordance with the target |
 | EDA | `concordance_se` | float | EDA | its standard error |
 | EDA | `direction` | str | EDA | `+`, `-`, or null below 0.5 + 2 SE |
 | EDA | `concordance_best_order` | float | EDA | the concordance with the bins ordered by their shrunk target rate; the ranking uses it only for `non_monotone` features |
-| EDA | `non_monotone` | bool | EDA | the best order beats the value order by ≥ 0.03 |
+| EDA | `non_monotone` | bool | EDA | the best order beats the value order by ≥ max(0.03, 4 · SE) |
 | EDA | `concordance_window` | float | EDA | the concordance over the window periods pooled |
 | EDA | `missing_share`, `missing_share_window` | float | EDA | the null share (snapshot; window) |
 | EDA | `null_concordance`, `null_concordance_window` | float | EDA | the null indicator's concordance (snapshot; window) |
@@ -136,11 +147,11 @@ meanings below are one line each.
 | Checks | `psi_latest` | float | Feature Checks | PSI between the window's last period and the latest period |
 | Checks | `new_level_share` | float | Feature Checks | the latest period's share of levels unseen in the window |
 | Checks | `cluster` | int | Feature Checks | the redundancy cluster's number (null when alone) |
-| Checks | `explained_by_others` | float | Feature Checks | the within-cluster R² on ranks |
+| Checks | `explained_by_others` | float | Feature Checks | the within-cluster R² on ranks over the Spearman members; null when a pair was not compared, for a non-numeric member, or when the correlations are inconsistent |
 | Checks | `partners` | list[str] | Feature Checks | the features it is correlated or associated with above the threshold |
 | Derived | `held` | bool | `render_decisions` | an open flag holds it out of training: for Training, an excluded feature without a final decision |
 | Derived | `kept` | list[int] | `render_decisions` | the numbers of the `keep` entries in force for it |
-| Derived | `excluded` | int | `render_decisions` | the number of the person's `exclude` entry in force, null when none |
+| Derived | `excluded` | int | `render_decisions` | the number of the `exclude` entry in force (the latest no `include` reversed), null when none |
 | Derived | `verdict` | str | `render_decisions` | `pass`, `held`, `kept`, `excluded` or `auto_excluded` |
 
 The columns Training needs are written now: `kind` and `levels` (the encoder), `cluster`
@@ -155,7 +166,7 @@ entries' numbers, up to the point being rendered:
   entry names both the feature and that finding;
 - `held`: at least one open flag and not excluded;
 - `kept`: the effective `keep` entries naming the feature;
-- `excluded`: the person's `exclude` in force (not reversed by an `include`);
+- `excluded`: the latest effective `exclude` from any writer that no later `include` reversed;
 - `verdict`: `auto_excluded` (lineage or unsupported), else `excluded`, else `held`, else `kept`,
   else `pass`.
 
@@ -194,18 +205,21 @@ The hold-out rule is [feature checks](feature_checks.md)'s (D-134); in short:
 ### The artifact
 - `ledger.parquet`: the stored columns above (identity, EDA, checks); `flags`, `notes` and
   `partners` are parquet list columns.
-- `_ledger.json`: `ledger_schema_version`, the data-definition hash, and the stages whose columns
-  the file holds.
-- The file is written to a temporary name and renamed, so a crash never leaves half a ledger
-  (A22).
+- `_ledger.json`: `ledger_schema_version`, the framework version, when, the stages whose
+  columns the file holds (`eda`, `feature_checks`), and the writing stage's `stage`,
+  `data_definition_hash` (also the folder's name) and `settings_digest` (when it has one).
+- Both files are written to temporary names (removed when a write fails) and renamed, so a crash
+  never leaves half a ledger (A22). The stage folder is written after the ledger, so the stage's
+  json is the commit marker.
 - Size: one row per candidate and about 40 columns (the canonical synthetic data: about 150
   rows), far below pandas Styler's 262,144-cell render limit.
 - Local paths only in Stage 2; the HDFS transport arrives in M2.4 for every artifact at once
   (D-136).
 
 ### Code map
-- `src/core_modelling/ledger.py` (planned): the column lists per stage as plain data
-  (`COLUMNS_BY_STAGE`) and the six functions below. The callers:
+- `src/core_modelling/ledger.py`: the column lists as plain data (`COLUMNS_BY_STAGE`: `identity`,
+  `eda`, `feature_checks`; `DERIVED_COLUMNS` apart) and the six functions below; the files go
+  through `artifacts.py` (`write_parquet`, `read_parquet`, `write_json`). The callers:
   - EDA's stage function: `create_ledger`, `add_columns(..., "eda")`, `save_ledger`;
   - Feature Checks' stage function: `read_ledger`, `add_columns(..., "feature_checks")`,
     `save_ledger`, and `render_decisions` for its report and review view;
@@ -220,20 +234,40 @@ notebooks and the versioned artifact. The private interface:
 ```python
 LEDGER_SCHEMA_VERSION = 1
 
-def create_ledger(candidates: list[str], kinds: dict[str, str], lineage: list[str],
-                  unsupported: list[str]) -> pd.DataFrame: ...
+
+def create_ledger(
+    candidates: list[str], kinds: dict[str, str], lineage: list[str], unsupported: list[str]
+) -> pd.DataFrame: ...
 def add_columns(ledger: pd.DataFrame, columns: pd.DataFrame, stage: str) -> pd.DataFrame: ...
-def save_ledger(ledger: pd.DataFrame, folder: str) -> None: ...
-def read_ledger(folder: str) -> pd.DataFrame: ...
-def render_decisions(ledger: pd.DataFrame, resolved: UseCaseConfig, entries: list[Entry]) -> pd.DataFrame: ...
+def save_ledger(ledger: pd.DataFrame, folder: str, meta: dict) -> None: ...
+def read_ledger(folder: str, data_definition_hash: str | None = None) -> pd.DataFrame: ...
+def render_decisions(
+    ledger: pd.DataFrame, resolved: UseCaseConfig, entries: list[Entry]
+) -> pd.DataFrame: ...
 def resolve_features(ledger: pd.DataFrame, resolved: UseCaseConfig) -> list[str]: ...
 ```
 
-- `add_columns` joins on `feature`, refuses a feature not in the ledger and a column outside the
-  stage's list, and replaces the stage's own columns when present.
-- `render_decisions` adds `held`, `kept`, `excluded` and `verdict`.
+- `create_ledger` writes the identity columns: an unsupported column's kind is `unsupported`, a
+  lineage column EDA did not read may have none, every other candidate needs `numeric` or
+  `categorical`. It refuses a repeated candidate, a lineage or unsupported column that is no
+  candidate, another kind, and an unsupported column given a kind, naming the features.
+- `add_columns` (`stage` is `eda` or `feature_checks`) joins on `feature`, refuses a feature not in
+  the ledger, a repeated feature, a read candidate (neither lineage nor unsupported) left out (a
+  null value is fine) and a column outside the stage's list (naming its owner), and first drops
+  every column the stage wrote before, so a rerun that skips a step leaves none of its earlier
+  columns. The lineage and unsupported rows hold None in the stage's object and list columns, so
+  the frame in memory equals the one read back.
+- `save_ledger` refuses a derived column, a column no stage owns, and a `meta` without `stage`
+  (`eda` or `feature_checks`) and `data_definition_hash` or with keys other than those and
+  `settings_digest`. A stage calls it before `write_stage`. `read_ledger` refuses another
+  `ledger_schema_version`, a missing ledger ("run EDA first") and, when `data_definition_hash` is
+  given, a ledger written for another one, naming both. List columns read back as Python lists.
+- `render_decisions` adds `held`, `kept`, `excluded` and `verdict`; it refuses a name in
+  `features.excluded`, `held` or `kept` that is no ledger row (a mistyped entry is never ignored)
+  and entries whose `exclude` / `keep` state differs from the resolved config's (pass the entries
+  it was resolved from).
 - `resolve_features` returns candidates − lineage − unsupported − excluded − held, in the
-  ledger's order.
+  ledger's order, and refuses a name that is no ledger row as `render_decisions` does.
 
 ### Lessons from the crunch
 None specific: the crunch had include and exclude lists only, which is why it could not say why a

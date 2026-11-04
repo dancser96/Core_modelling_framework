@@ -50,6 +50,7 @@ time:
 
 features:
   candidates: {include: ["*"], exclude: []}   # glob patterns over the feature sources' columns
+  kinds: {}                              # {column: numeric | categorical} over the Spark-schema kind
 
 strata:
   variables: [segment, onboarding_channel]
@@ -57,17 +58,16 @@ strata:
   min_events: 50
 
 eda:
-  key_features: {top_n: null, include: []}   # top-N by univariate ranking plus the listed ones
-  chart_sample_share: null
+  snapshot: last                         # the window's last period, analysed on every client
+  bins: 100                              # quantile bins per numeric; null: every value a bin
+  key_features: {top_n: 10, include: [], max_correlation: 0.9}   # the ranking's top 10 + listed
 
-feature_checks:
-  steps:                                 # ordered; each flags and logs, never drops
-    - {name: quality, params: {}}
-    - {name: leakage, params: {}}
-    - {name: time_alignment, params: {}}
-    - {name: eligibility_constant, params: {}}
-    - {name: stability, params: {psi_max: 0.25}}
-    - {name: redundancy, params: {}}
+feature_checks:                          # every step listed runs; {} takes its defaults
+  quality: {}
+  leakage: {}
+  time_alignment: {}
+  stability: {psi_max: 0.25}             # the PSI notes at Monitoring's drift threshold
+  redundancy: {}
 
 training:
   path: automl

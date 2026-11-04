@@ -18,8 +18,20 @@ period (labelled by the period spec) plus an `all` row, from one Spark aggregate
 rates for the observation window only. A
 contract check runs on the eligible rows of the observation window before any sampling (§4.8),
 returns its log entry and raises with its numbers when the window can't be modelled.
+
+Stage 2 adds what EDA and Feature Checks read (D-050, A28, A29): the target bins of the counts
+table, the group summary (binary: positive events, the rate with its Wilson interval; regression:
+units with a non-zero target, the mean with its t-interval and the median, the non-zero share),
+the rare effect (a rate or mean ratio), the concordance's standard error, the events warning, the
+support's name, the target's headline (`base_rate_views`), the shrinkage of the level encoding
+and whether a lift exists: a ratio to a mean needs a positive mean, so a regression target whose
+mean is not positive shows "not available: mean not positive", decided before anything runs
+(D-035, V8). Both tasks share one rule where the formula is the same (the lift test).
 """
 
+from functools import partial
+
+import numpy as np
 import pandas as pd
 from pyspark.sql import Column, DataFrame, WindowSpec
 from pyspark.sql import functions as F
@@ -27,9 +39,16 @@ from pyspark.sql.types import BooleanType, DoubleType, FloatType, NumericType
 
 from core_modelling.config import UseCaseConfig
 from core_modelling.periods import label_by_period, period_spec
+from core_modelling.statistics.concordance import concordance_se, kendall_null_se
+from core_modelling.statistics.distributions import quantile_edges
+from core_modelling.statistics.intervals import t_interval, wilson_interval
 
 SHOWN_VALUES = 3  # bad target values named in the error
 WINDOW_TARGET = "window_target"  # the summary's target in the observation window, else null
+TARGET_BINS = 20  # quantile bins of a regression target in the counts table
+EVENTS_WARNING = 500  # fewer events (units with a non-zero target) in the snapshot: a warning
+BINARY_SUPPORT = "positive events"  # what the concordance's support counts, per task
+REGRESSION_SUPPORT = "units with a non-zero target"
 
 
 def _flag_goes_up(value: Column, forward: WindowSpec) -> Column:
@@ -181,17 +200,164 @@ def _check_amount_target(eligible: DataFrame, cfg: UseCaseConfig) -> dict:
     return {"check": "target_range", "known": stats.known, "min": stats.min, "max": stats.max}
 
 
+def _binary_target_bins(known: np.ndarray, exact: bool) -> None:
+    """None: a 0/1 target's two values are its bins (`"0"`, `"1"`)."""
+    return None
+
+
+def _regression_target_bins(known: np.ndarray, exact: bool) -> np.ndarray:
+    """The edges of `TARGET_BINS` quantile bins of the known targets (every value a bin when
+    `exact`), 0 always its own bin, so the units with a non-zero target are a sum of cells."""
+    known = np.asarray(known, dtype=float)
+    edges = quantile_edges(known, np.unique(known).size if exact else TARGET_BINS)
+    return np.unique(np.concatenate([edges, [0.0, np.nextafter(0.0, np.inf)]]))
+
+
+def _known_values(target: pd.Series) -> np.ndarray:
+    """The targets as floats: at least one, none null."""
+    if target.empty or target.isna().any():
+        raise ValueError("expected known targets: no nulls, not empty")
+    return target.to_numpy(dtype=float)
+
+
+def _lift_available(base: float) -> bool:
+    """A lift (a ratio to the base) exists only over a positive base rate or mean (V8)."""
+    return base > 0
+
+
+def _with_lift(summary: dict[str, float], base: float) -> dict[str, float]:
+    """The summary with `lift = estimate / base` when the base allows it, else without."""
+    if _lift_available(base):
+        summary["lift"] = summary["estimate"] / base
+    return summary
+
+
+def _binary_group(target: pd.Series, base: float) -> dict[str, float]:
+    """Rows, support (positive rows: the events on a one-period snapshot), the rate with its
+    Wilson interval, and the lift."""
+    values = _known_values(target)
+    rows, positives = values.size, float(values.sum())
+    low, high = wilson_interval(positives, rows)
+    summary = {"rows": rows, "support": positives, "estimate": positives / rows}
+    return _with_lift({**summary, "low": low, "high": high}, base)
+
+
+def _regression_group(target: pd.Series, base: float) -> dict[str, float]:
+    """Rows, support (units with a non-zero target), the mean with its t-interval (none from one
+    row) and the median, the lift, and the non-zero share (Wilson) with the non-zero mean and
+    median (NaN when every target is 0)."""
+    values = _known_values(target)
+    nonzero = values[values != 0]
+    nan = float("nan")
+    low, high = (nan, nan)
+    if values.size > 1:
+        low, high = t_interval(values.mean(), values.std(ddof=1), values.size)
+    share_low, share_high = wilson_interval(nonzero.size, values.size)
+    summary = {
+        "rows": values.size, "support": nonzero.size, "estimate": float(values.mean()),
+        "low": low, "high": high, "median": float(np.median(values)),
+        "nonzero_share": nonzero.size / values.size, "nonzero_low": share_low,
+        "nonzero_high": share_high,
+        "nonzero_mean": float(nonzero.mean()) if nonzero.size else nan,
+        "nonzero_median": float(np.median(nonzero)) if nonzero.size else nan,
+    }  # fmt: skip
+    return _with_lift(summary, base)
+
+
+def _rate_ratio(cell: float, rest: float) -> float:
+    """The rare effect: a cell's rate over the rest's; a positive cell over a zero rest is
+    infinite and nothing over nothing is 1 (no difference). Call only when `lift_available`."""
+    if rest != 0:
+        return cell / rest
+    return 1.0 if cell == 0 else float(np.inf)
+
+
+def _mean_ratio(cell: float, rest: float) -> float:
+    """The rare effect: a cell's mean over the rest's. Call only when `lift_available(base)` and
+    the rest's mean is positive; the caller decides "not available" up front (D-035)."""
+    if not rest > 0:
+        raise ValueError(
+            f"rare_effect: the rest's mean {rest} is not positive, so no mean ratio exists; "
+            'decide "not available" before calling'
+        )
+    return cell / rest
+
+
+def _regression_se(value: float, events: float, non_events: float) -> float:
+    """Kendall's null standard error over every unit, halved (A29)."""
+    return kendall_null_se(events + non_events)
+
+
+def _events_warning(events: int, support: str) -> str | None:
+    """The snapshot's events warning, or None when it holds `EVENTS_WARNING` events or more."""
+    if events >= EVENTS_WARNING:
+        return None
+    return (
+        f"{events} {support} in the snapshot, fewer than {EVENTS_WARNING}: the concordance's "
+        "third decimal is noise"
+    )
+
+
+def _binary_headline(target: pd.Series) -> dict[str, float]:
+    """The snapshot's rows, positive rows and base rate with its Wilson interval."""
+    values = _known_values(target)
+    positives = float(values.sum())
+    low, high = wilson_interval(positives, values.size)
+    return {"rows": values.size, "positives": positives, "rate": positives / values.size,
+            "low": low, "high": high}  # fmt: skip
+
+
+def _regression_headline(target: pd.Series) -> dict[str, float]:
+    """The snapshot's rows, mean, median, p10, p90, zero share and units with a non-zero target."""
+    values = _known_values(target)
+    p10, median, p90 = np.quantile(values, [0.1, 0.5, 0.9])
+    zeros = int((values == 0).sum())
+    return {"rows": values.size, "mean": float(values.mean()), "median": float(median),
+            "p10": float(p10), "p90": float(p90), "zero_share": zeros / values.size,
+            "nonzero_units": values.size - zeros}  # fmt: skip
+
+
+def _binary_shrinkage_rows(min_events: int, base: float) -> float:
+    """`strata.min_events / base_rate`: the prior weighs `min_events` pseudo-events (A30)."""
+    if base <= 0:
+        raise ValueError(f"shrinkage_rows: the base rate must be positive, got {base}")
+    return min_events / base
+
+
+def _regression_shrinkage_rows(min_events: int, base: float) -> float:
+    """`strata.min_events` rows (A30)."""
+    return float(min_events)
+
+
 TASK_SPECS = {
     "binary": {
         "target_rules": {"flag_goes_up": _flag_goes_up},
         "check_target_column": _check_flag_column,
         "summarise_targets": _binary_summary,
         "contract_checks": [_check_flag_target],
+        "target_bins": _binary_target_bins,
+        "summarise_group": _binary_group,
+        "rare_effect": _rate_ratio,
+        "concordance_se": concordance_se,
+        "events_warning": partial(_events_warning, support=BINARY_SUPPORT),
+        "support_name": BINARY_SUPPORT,
+        "base_rate_views": _binary_headline,
+        "shrinkage_rows": _binary_shrinkage_rows,
+        "lift_available": _lift_available,
     },
     "regression": {
         "target_rules": {"forward_sum": _forward_sum},
         "check_target_column": _check_amount_column,
         "summarise_targets": _regression_summary,
         "contract_checks": [_check_amount_target],
+        "target_bins": _regression_target_bins,
+        "summarise_group": _regression_group,
+        "rare_effect": _mean_ratio,
+        "concordance_se": _regression_se,
+        "events_warning": partial(_events_warning, support=REGRESSION_SUPPORT),
+        "support_name": REGRESSION_SUPPORT,
+        "base_rate_views": _regression_headline,
+        "shrinkage_rows": _regression_shrinkage_rows,
+        "lift_available": _lift_available,
     },
 }
