@@ -108,7 +108,7 @@ which model takes which piece, the brief template, integration); in short:
 - run at most one memory-heavy job at a time (the dev machine's memory is the limit);
 - on a Fable session, start every major task with a routing plan shown with the plan: each piece
   with its agent, model and effort. Fable keeps design, integration, the ML-correctness audit
-  and the architecturally hardest code pieces (a third to half of the tokens); Opus, Sonnet and
+  and the architecturally hardest code pieces (25–30% of the tokens at most); Opus, Sonnet and
   Haiku take the rest, at `xhigh` effort where a wrong answer is costly (D-072 (l)).
 
 0. **Major steps start wide.** A major step is a new component, config section, public function or
@@ -327,7 +327,7 @@ Each fact has **one owner doc**; every other doc links to it instead of repeatin
 
 | Trigger | Update |
 |---|---|
-| Any turn that changed files, settled something or produced a finding | Append to `worknotes/log.md`, every time, not only for big changes. Keep it clear and short: the Lead DS reads it |
+| A turn that settled something or produced a finding | Append to `worknotes/log.md`, clear and short. The log keeps the last 7 working days; `/brief` deletes older entries (git keeps them) |
 | `/brief`, or the SDS asks | Refresh `worknotes/sync.md` (rules: `worknotes/README.md` → "Writing `sync.md` for the LDS"); never otherwise (D-072 (h)) |
 | A component's behaviour, interface or design changes | `docs/components/<component>.md` (Status, requirements, Interface, Open questions) |
 | A config field is added, changed or removed | `docs/components/config.md` + example in `conf/base/`; §2 procedure if breaking |
@@ -343,6 +343,12 @@ Each fact has **one owner doc**; every other doc links to it instead of repeatin
 | A new component | New doc from the template via **new-component** + components index + stage map in `docs/README.md` + UPDATES row + roadmap backlog |
 | A new skill, agent or command | §10 + `docs/guides/skills_and_agents.md` |
 | Scope, goals, priorities or roles change | `docs/context/project.md` (+ `docs/roadmap.md` if phasing changes) |
+
+**Small prompt, small diff.** A remark round, a question round or a rename changes the code and
+the owner doc of each fact, little else; answers go in chat first and the edits follow the SDS's
+go in one batch. Above about eight files for a small prompt, stop and say which and why. The
+secondary docs (UPDATES status, architecture inventory, README map, glossary wording) are synced
+once at a major step's end. Large builds are exempt.
 
 **When to create a new doc.** Only when the content has a reader and a lifecycle no existing doc owns:
 - a new component or versioned artifact → `docs/components/<name>.md` from the template;

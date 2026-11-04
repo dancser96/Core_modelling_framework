@@ -12,6 +12,7 @@ memory, so it works in a fresh chat.
    `docs/roadmap.md` (short-term first).
 2. Catch up. If `git log` shows commits that the log doesn't cover (a turn that forgot to log), add
    entries for them from the commit messages and diffs. Mention uncommitted work (`git status`).
+   Then delete the log entries older than 7 working days (git keeps them, D-072 (h)).
 3. Reply with, for the period "$ARGUMENTS" (default: since the last briefing):
    - **What happened:** 3–7 guiding bullets, newest first, each with why it matters: the essence
      of the updates and the SDS's key decisions, never how many rounds or reviews it took.

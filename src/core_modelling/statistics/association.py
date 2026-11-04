@@ -7,7 +7,7 @@ numerics, Cramér's V (plain, not bias-corrected) for two categoricals, and the 
 is the exact pairwise-complete one: a pair is ranked on the rows where both are filled, and a
 pair with fewer than `MIN_SHARED_ROWS` such rows is "not compared" (NaN). Ranking each column
 once over its own rows is not that statistic when two null masks differ (0.23 apart on the
-synthetic data) and pandas' own pairwise Spearman takes two minutes at 139 × 200,000 (T28), so
+synthetic data) and pandas' own pairwise Spearman takes two minutes at 139 × 200,000 rows (T28), so
 `spearman_matrix` groups the columns by null mask: inside a group every pair shares its rows and
 one ranking serves them all; across two groups, one ranking per group pair.
 
@@ -23,8 +23,8 @@ from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import squareform
 from scipy.stats import contingency
 
-PAIRWISE_ROWS = 200_000  # the seeded cap of snapshot rows for the pairwise table
-MIN_SHARED_ROWS = 1_000  # fewer shared filled rows: the pair is "not compared"
+PAIRWISE_ROWS = 50_000  # the seeded cap of snapshot rows; a ρ's noise there is ~0.004 (SDS)
+MIN_SHARED_ROWS = 500  # fewer shared filled rows: "not compared" (ρ's noise ~0.01 near 0.9)
 TABLE_COLUMNS = ["a", "b", "statistic", "method", "rows"]
 R2_TOLERANCE = 1e-9  # rounding room around [0, 1] for `explained_by_others`' R²
 

@@ -57,6 +57,8 @@ here once agreed (OD-01).
 ## Backlog
 
 **Phase 2** (milestone in brackets; detail lives in the component docs):
+- Feature Checks: run `client_constant` on time-varying features only, from the feature store's
+  static/time-varying metadata once it exists (the SDS, 2026-11-04) — `feature_checks.md`
 - Synthetic data: sticky holdings and usage, 24 months, traps, oracle (M1) — `test_harness.md`.
   The LDS's to-dos (2026-10-21: noise columns of several kinds, very-low-fill columns, each named
   like the traps) are built in M2.1 (2026-10-25, version 0.5.0), except the `unstable` kind, which
@@ -141,6 +143,11 @@ Long-term targets, not planned into Phase 2 (D-072). Each item names where it ca
   (the SDS rates it highest; closest known method: local case-control sampling, Fithian and
   Hastie, 2014); smart downsampling as a framework asset, researched in a literature round; the
   comparison of every option against the synthetic oracle, with no sampling as the reference.
+- The cross-fitted categorical's SE from the data: check `CROSS_FIT_SE_INFLATION = 1.5` against
+  more level counts, sizes and panel shapes, and possibly replace it with a permutation null
+  (the level labels permuted within each client fold about 50 times, the SE the larger of the
+  Hanley–McNeil SE and the permutations' spread), which adapts to each feature at about 50
+  encodings per categorical (`eda.md` → Level encoding; the SDS, 2026-11-04).
 - Sources with missing periods handled automatically. Phase 2 expects full coverage: the spine
   must have every period from the window's first to the validation period and the target
   source every period to the validation period + w, else the run is refused naming the

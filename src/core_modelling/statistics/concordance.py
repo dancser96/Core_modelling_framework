@@ -12,15 +12,25 @@ values and a dense table would be too large: Kendall's τ-b on the rows the cell
 (O(n log n)), turned into Somers' D through the tie counts.
 
 The standard errors follow D-082 (Hanley–McNeil in events; Kendall's null SE in units, halved),
-floored at `SE_FLOOR`; `cochran_q` tests whether per-period values differ. A categorical has no
-order, so `encode_levels` scores its levels by their shrunk target mean (Micci-Barreca) and the
-levels are read in that order. Read on the rows it was fitted on, that order flatters noise: a
-null 50-level code reads 0.53–0.57 at about 190 events a period, above Training's floor. So a
-categorical's concordance is cross-fitted by period (`cross_fitted_table`): each period's levels
-are ordered by the encoding fitted on the other periods, and the null code reads about 0.5.
-`best_order_concordance` merges a numeric's bins into ten groups and orders them the same way,
-what a ten-leaf tree on the feature would reach, and `ranking_value` takes it only when it beats
-the plain value by `max(NON_MONOTONE_MARGIN, NON_MONOTONE_SE_MULTIPLE · SE)` (V2).
+floored at `SE_FLOOR`; `cochran_q` tests whether per-period values differ. A window's events are
+counted in effective clients (`effective_count`, through the per-task `client_support`): the
+same client is labelled in every period and, with overlapping target windows, mostly with the
+same label, so the pooled rows overstate what the window knows (a null numeric was marked
+`non_monotone` 12–18% of the time on the rows' SE, 0% on the clients', 2026-11-04).
+
+A categorical has no order, so `encode_levels` scores its levels by their shrunk target mean
+(Micci-Barreca) and the levels are read in that order. Read on the rows it was fitted on, that
+order flatters noise, and so does an order fitted on the same clients' other periods: on a panel
+a null 50-level code reads 0.60 in sample and 0.57 cross-fitted by period. So a categorical's
+concordance is cross-fitted by client fold (`cross_fitted_concordance`): each fold's levels are
+ordered by the encoding fitted on the other folds' clients, and only pairs inside a fold count,
+so no client informs its own order and the null code reads 0.5 on average. Its spread is wider
+than its SE says (about 1.4×: each fold's order is fitted partly on the others' noise), so its
+SE is multiplied by `CROSS_FIT_SE_INFLATION`.
+`best_order_concordance`
+merges a numeric's bins into ten groups and orders them by their in-sample rate, what a ten-leaf
+tree on the feature would reach, and `ranking_value` takes it only when it beats the plain value
+by `max(NON_MONOTONE_MARGIN, NON_MONOTONE_SE_MULTIPLE · SE)` (V2).
 """
 
 import math
@@ -37,6 +47,12 @@ NON_MONOTONE_MARGIN = 0.03  # best-order must beat the plain concordance by this
 # … and by 4 SE: a null numeric's best-order gain averages about 2 SE, so the fixed 0.03 marked
 # 42% of null numerics at 500 events and 2 SE about as many; 4 SE marks 0–2% at every size
 NON_MONOTONE_SE_MULTIPLE = 4
+# A cross-fitted categorical's spread under no signal is 1.35–1.5× its Hanley–McNeil SE, even on
+# effective clients: each fold's order is fitted partly on the other folds' level noise, so the
+# five folds' values move together, which the SE (noise for a fixed order) leaves out. Measured
+# 2026-11-04 (SD 0.020 against 0.013 on a 500-event-client panel; 1.3–1.4× on independent rows);
+# the upper end, so a null code clears 0.5 + 2 SE about as rarely as a numeric does (the SDS).
+CROSS_FIT_SE_INFLATION = 1.5
 BEST_ORDER_GROUPS = 10  # the leaves of the tree the best-order concordance stands for
 
 
@@ -54,7 +70,8 @@ def direction_from_table(table: np.ndarray, se: float) -> int:
     """+1 or −1, the sign of D; 0 when the concordance is below 0.5 + 2 · `se`, and the caller
     then reads the per-period and lagged values with `sign=None` (direction taken out).
 
-    With `se = 0` it is the plain sign of D, what `concordance_from_table`'s `sign` needs.
+    With `se = 0` it is the plain sign of D, what `concordance_from_table`'s `sign` needs. A
+    window's `se` takes its support in effective clients (`client_support`), as every window SE.
     """
     d = _somers_d(table)
     if (1 + abs(d)) / 2 < 0.5 + 2 * se:
@@ -64,7 +81,7 @@ def direction_from_table(table: np.ndarray, se: float) -> int:
 
 def concordance_se(value: float, events: float, non_events: float) -> float:
     """The Hanley–McNeil standard error of a concordance from its events and non-events (D-082),
-    floored at `SE_FLOOR`."""
+    floored at `SE_FLOOR`; a window's support in effective clients (`client_support`)."""
     if events < 1 or non_events < 1:
         raise ValueError(
             f"concordance_se: needs events and non-events, got {events} and {non_events}"
@@ -77,6 +94,20 @@ def concordance_se(value: float, events: float, non_events: float) -> float:
         events * non_events
     )
     return max(math.sqrt(max(variance, 0.0)), SE_FLOOR)  # max(…, 0): rounding at a = 1 only
+
+
+def effective_count(count: float, rows: float, effective: float) -> float:
+    """`count` of a window's labelled rows in effective clients: scaled by the class's
+    `effective / rows` from `counts.window_clients`, so a client's near-copy rows count about
+    once; never below one row's worth, since `count` rows hold at least one client.
+
+    One ratio per run: a feature filled only on clients present in few periods gets too small a
+    count (a conservative SE), one filled only on clients present in every period while others
+    come and go too large (about 1.3× too small an SE with half the clients in one period of six).
+    """
+    if rows < 1:
+        raise ValueError(f"effective_count: the window has no labelled rows of this class: {rows}")
+    return max(count * effective / rows, min(count, 1.0))
 
 
 def kendall_null_se(units: float) -> float:
@@ -124,33 +155,55 @@ def encode_levels(cells: pd.DataFrame, k_rows: float) -> dict[str, float]:
     return _shrunk(sums["n"], sums["sum_y"], k_rows, base).to_dict()
 
 
-def cross_fitted_table(
-    cells: pd.DataFrame, periods: list[str], k_rows: float, read: list[str] | None = None
-) -> np.ndarray:
-    """A categorical's two-way table with each period's levels ordered by `encode_levels` fitted
-    on the other `periods` (leave one period out), pooled over the `read` periods (all of
-    `periods` by default).
+def cross_fitted_concordance(
+    cells: pd.DataFrame,
+    periods: list[str],
+    k_rows: float,
+    read: list[str] | None = None,
+    lagged: bool = False,
+) -> float:
+    """A categorical's concordance with its levels ordered by an encoding its own clients never
+    informed: per client fold, `encode_levels` fitted on the other folds' current cells over
+    `periods`, and the fold's cells over `read` (`periods` by default; lagged ones with `lagged`)
+    ordered by it. Somers' D sums the pairs inside each fold only, since two folds' orders come
+    from different fits, and is read in the encoding's direction: below 0.5 means the order does
+    not carry over, which `(1 + |D|) / 2` would fold upwards.
 
-    A level unseen in the other periods scores their base. The table's rows are the fitted
-    values in order, levels with equal values sharing a row. Read it with
-    `concordance_from_table(table, sign=1)`: the encoding fixes the direction, so a value below
-    0.5 means the order does not carry over, and `(1 + |D|) / 2` would fold that noise upwards.
-    With one period the encoding is fitted on that period itself, and the caller marks the value
-    "optimistic (in-sample encoding)". The snapshot's value is `read=[snapshot period]` over the
-    window's `periods`.
+    The cells carry `fold` (the counts table's, for a categorical's window cells). A level unseen
+    in the other folds scores their base. The snapshot's value is `read=[snapshot period]`, a
+    period's `read=[period]`, the lagged value `lagged=True`, always with the window as
+    `periods`. Its SE is the task's SE on the same support times `CROSS_FIT_SE_INFLATION`: its
+    spread under no signal is about 1.4× the Hanley–McNeil SE (the folds' orders share fitted
+    noise).
     """
     read = list(periods) if read is None else read
-    if not read or set(read) - set(periods):
-        raise ValueError(f"cross_fitted_table: `read` {read} must name some of `periods` {periods}")
-    scored = []
-    for period in read:
-        fit = pool_periods(cells, [p for p in periods if p != period] or [period])
+    if not read:
+        raise ValueError("cross_fitted_concordance: `read` names no period")
+    cells = cells.loc[cells["period"].isin([*periods, *read])]
+    if "fold" not in cells or cells["fold"].isna().any():
+        raise ValueError(
+            "cross_fitted_concordance: every cell of the periods needs a client fold; a numeric's "
+            "cells and the cells outside the window have none"
+        )
+    folds = sorted(cells["fold"].unique())
+    if len(folds) < 2:
+        raise ValueError(f"cross_fitted_concordance: needs two client folds, got {folds}")
+    difference = untied = 0.0
+    for fold in folds:
+        held_out = cells["fold"] == fold
+        fit = pool_periods(cells.loc[~held_out], periods)
         encoding = encode_levels(fit, k_rows)
         fitted = _labelled_values(fit)
         base = fitted["sum_y"].sum() / fitted["n"].sum()
-        rows = _labelled_values(pool_periods(cells, [period]))
-        scored.append(rows.assign(score=rows["bin"].map(encoding).fillna(base)))
-    return _table_by_score(pd.concat(scored))
+        rows = _labelled_values(pool_periods(cells.loc[held_out], read, lagged))
+        if rows.empty:
+            continue
+        table = _table_by_score(rows.assign(score=rows["bin"].map(encoding).fillna(base)))
+        fold_difference, fold_untied = _somers_parts(table)
+        difference, untied = difference + fold_difference, untied + fold_untied
+    if untied == 0:
+        raise ValueError("cross_fitted_concordance: needs labelled rows in two target bins")
+    return _rescale(difference / untied, sign=1)
 
 
 def best_order_concordance(cells: pd.DataFrame, k_rows: float) -> float:
@@ -175,7 +228,8 @@ def best_order_concordance(cells: pd.DataFrame, k_rows: float) -> float:
 
 def is_non_monotone(plain: float, best_order: float, se: float) -> bool:
     """Whether the best-order concordance beats the plain one by `max(NON_MONOTONE_MARGIN,
-    NON_MONOTONE_SE_MULTIPLE · se)`, `se` the feature's `concordance_se` on the same cells (V2)."""
+    NON_MONOTONE_SE_MULTIPLE · se)`, `se` the feature's `concordance_se` on the same cells, a
+    window's support in effective clients (`client_support`, V2)."""
     if not se >= 0:
         raise ValueError(f"is_non_monotone: se must be a non-negative number, got {se}")
     return best_order >= plain + max(NON_MONOTONE_MARGIN, NON_MONOTONE_SE_MULTIPLE * se)
@@ -228,6 +282,15 @@ def _table_by_score(rows: pd.DataFrame) -> np.ndarray:
 def _somers_d(table: np.ndarray) -> float:
     """Somers' D of the rows with respect to the columns: (concordant − discordant) pairs over
     the pairs in different columns."""
+    difference, untied_target = _somers_parts(table)
+    if untied_target == 0:
+        raise ValueError("concordance: needs labelled rows in at least two target bins")
+    return difference / untied_target
+
+
+def _somers_parts(table: np.ndarray) -> tuple[float, float]:
+    """Somers' D's numerator and denominator: concordant − discordant pairs, and the pairs in
+    different columns, which sum over separate tables."""
     table = np.asarray(table, dtype=float)
     if table.ndim != 2 or not np.isfinite(table).all() or (table < 0).any():
         raise ValueError("concordance: the table must be 2-D with finite non-negative counts")
@@ -236,9 +299,7 @@ def _somers_d(table: np.ndarray) -> float:
     higher = later.sum(axis=1, keepdims=True) - np.cumsum(later, axis=1)  # … in a higher one
     total = table.sum()
     untied_target = (total**2 - (table.sum(axis=0) ** 2).sum()) / 2
-    if untied_target == 0:
-        raise ValueError("concordance: needs labelled rows in at least two target bins")
-    return float(((table * higher).sum() - (table * lower).sum()) / untied_target)
+    return float((table * higher).sum() - (table * lower).sum()), float(untied_target)
 
 
 def _rescale(d: float, sign: int | None) -> float:

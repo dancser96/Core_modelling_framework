@@ -1,6 +1,7 @@
 """The counts passes on real local Spark (D-135): the cells against a pandas groupby on the
-collected rows, the lagged cells against a shift by client, the client-constant shares, the
-population counts against Target Factory's summary, the compared periods with and without a
+collected rows (a categorical's window cells by client fold), the lagged cells against a shift
+by client, the client-constant shares, the population counts against Target Factory's summary,
+the window's effective clients, the compared periods with and without a
 validation period, the `eda.bins: null` guard over both passes and exactness, the edges rule
 through the `Bucketizer` (T25) on the eligible rows, `-0.0`, null and NaN in the null bin, the
 level pooling and its ceiling, reserved level names, the refusals and the kinds from the Spark
@@ -36,6 +37,7 @@ from core_modelling.dataset.counts import (
     count_lagged_cells,
     estimate_cells,
     population_counts,
+    window_clients,
     window_levels,
 )
 from core_modelling.dataset.frames import detect_kinds
@@ -89,15 +91,17 @@ def levels(frames: Frames, window: list[date]) -> dict[str, list[str]]:
 
 @pytest.fixture(scope="module")
 def collected(frames: Frames) -> pd.DataFrame:
-    """The three features' rows of every compared period, collected for the pandas oracle (the
-    unit preset's eligible rows are small)."""
-    return frames.rows.select("unit_id", "period", *FEATURES, "target").toPandas()
+    """The three features' rows of every compared period with each client's fold, collected for
+    the pandas oracle (the unit preset's eligible rows are small)."""
+    fold = F.pmod(F.xxhash64("unit_id"), F.lit(counts.ENCODING_FOLDS)).alias("fold")
+    return frames.rows.select("unit_id", "period", *FEATURES, "target", fold).toPandas()
 
 
 def _expected_cells(frame: pd.DataFrame, edges: dict, levels: dict, lagged: bool) -> pd.DataFrame:
     """The counts table by pandas: per feature the bin of every row (a numeric by `np.digitize`
-    on the edges, the Bucketizer's buckets; a categorical by kept level, `OTHER`, `NEW`; null its
-    own bin last), then a groupby with the target's value as the target bin."""
+    on the edges, the Bucketizer's buckets; a categorical by kept level, `OTHER`, `NEW`, and by
+    the client's fold; null its own bin last), then a groupby with the target's value as the
+    target bin."""
     target_bin = frame["target"].map(lambda t: None if pd.isna(t) else str(int(t)))
     parts = []
     for feature, feature_edges in edges.items():
@@ -106,7 +110,7 @@ def _expected_cells(frame: pd.DataFrame, edges: dict, levels: dict, lagged: bool
         is_null = frame[feature].isna().to_numpy()
         order = np.where(is_null, len(feature_edges) + 1, np.digitize(values, feature_edges))
         bins = [NULL_BIN if n else labels[o] for n, o in zip(is_null, order, strict=True)]
-        parts.append(_cells_of(frame, feature, bins, order, is_null, target_bin))
+        parts.append(_cells_of(frame, feature, bins, order, is_null, target_bin, None))
     for feature, feature_levels in levels.items():
         kept, pooled = feature_levels[:LEVEL_CAP], feature_levels[LEVEL_CAP:]
         value = frame[feature]
@@ -114,9 +118,10 @@ def _expected_cells(frame: pd.DataFrame, edges: dict, levels: dict, lagged: bool
         cases = [is_null, rank.notna(), value.isin(pooled)]
         bins = np.select(cases, [NULL_BIN, value, OTHER], NEW)
         order = np.select(cases, [len(kept) + 2, rank, len(kept)], len(kept) + 1)
-        parts.append(_cells_of(frame, feature, bins, order, is_null.to_numpy(), target_bin))
+        folds = frame["fold"].to_numpy()
+        parts.append(_cells_of(frame, feature, bins, order, is_null.to_numpy(), target_bin, folds))
     cells = pd.concat(parts)
-    key = ["feature", "period", "bin", "bin_order", "is_null", "target_bin"]
+    key = ["feature", "period", "fold", "bin", "bin_order", "is_null", "target_bin"]
     grouped = cells.groupby(key, dropna=False).agg(
         n=("target", "size"), sum_y=("target", lambda s: s.sum(min_count=1))
     )
@@ -134,12 +139,14 @@ def _cells_of(
     order: np.ndarray,
     is_null: np.ndarray,
     target_bin: pd.Series,
+    folds: np.ndarray | None,
 ) -> pd.DataFrame:
-    """One feature's row-level cells."""
+    """One feature's row-level cells; `folds` None for a numeric."""
     return pd.DataFrame(
         {
             "feature": feature,
             "period": frame["period"].to_numpy(),
+            "fold": np.nan if folds is None else folds,
             "bin": bins,
             "bin_order": order,
             "is_null": is_null,
@@ -151,11 +158,13 @@ def _cells_of(
 
 def _same_cells(actual: pd.DataFrame, expected: pd.DataFrame) -> None:
     """Both tables equal, cell by cell, in one order (a null target bin as one text on both
-    sides, since Spark gives None and the pandas groupby NaN)."""
-    key = ["feature", "period", "bin", "target_bin"]
+    sides, since Spark gives None and the pandas groupby NaN; a numeric's null fold as NaN)."""
+    key = ["feature", "period", "fold", "bin", "target_bin"]
     tables = []
     for table in (actual, expected):
-        table = table.assign(target_bin=table["target_bin"].fillna("<null>"))
+        table = table.assign(
+            target_bin=table["target_bin"].fillna("<null>"), fold=table["fold"].astype(float)
+        )
         tables.append(table.sort_values(key).reset_index(drop=True)[CELL_COLUMNS])
     pd.testing.assert_frame_equal(tables[0], tables[1], check_dtype=False)
 
@@ -173,6 +182,7 @@ def test_cells_equal_a_pandas_groupby_on_the_collected_rows(
         rows.where(F.col("period").isin(periods)), edges, levels, [], None, window, MONTH
     )
     oracle = collected[collected["period"].isin(periods)]
+    oracle = oracle.assign(fold=oracle["fold"].where(oracle["period"].isin(window)))
     _same_cells(cells, _expected_cells(oracle, edges, levels, lagged=False))
     assert cells.columns.tolist() == CELL_COLUMNS and not cells["lagged"].any()
     assert cells["is_null"].dtype == bool and cells["lagged"].dtype == bool
@@ -197,7 +207,7 @@ def test_lagged_cells_equal_a_shift_by_client(
     index = ordered["period"].map(MONTH.index)
     adjacent = ordered["unit_id"].eq(ordered["unit_id"].shift()) & index.eq(index.shift() + 1)
     shifted = ordered[FEATURES].shift().where(adjacent)
-    oracle = pd.concat([ordered[["unit_id", "period", "target"]], shifted], axis=1)
+    oracle = pd.concat([ordered[["unit_id", "period", "target", "fold"]], shifted], axis=1)
     _same_cells(cells, _expected_cells(oracle[oracle["period"].isin(window)], edges, levels, True))
     assert cells["lagged"].all()
     assert cells.loc[cells["period"] == MONTH.label(window[0]), "is_null"].all()
@@ -229,6 +239,23 @@ def test_lag_by_period_index_and_client_constant_shares(spark: SparkSession) -> 
     assert constant.loc["y", "constant_share"] == 1.0 and constant.loc["y", "clients"] == 3
     assert constant.loc["x", "constant_share"] == pytest.approx(1 / 3)
     assert constant.loc["x", "clients"] == 3
+
+
+def test_window_clients_count_each_client_once(
+    frames: Frames, window: list[date], collected: pd.DataFrame
+) -> None:
+    """The window's labelled rows and Kish's effective clients by class and in all equal pandas'
+    on the same rows: below the rows, since the same clients are labelled in several periods."""
+    labelled = collected[collected["period"].isin(window) & collected["target"].notna()]
+    labelled = labelled.assign(event=labelled["target"] != 0)
+    expected = {}
+    for prefix, chosen in (("event_", labelled["event"]), ("non_event_", ~labelled["event"]),
+                           ("", labelled["event"] | True)):  # fmt: skip
+        per_client = labelled.loc[chosen].groupby("unit_id").size()
+        expected[f"{prefix}rows"] = float(per_client.sum())
+        expected[f"{prefix}effective"] = per_client.sum() ** 2 / (per_client**2).sum()
+    assert window_clients(frames.rows, window) == pytest.approx(expected)
+    assert expected["effective"] < expected["rows"]
 
 
 def test_client_constant_shares_on_the_unit_preset(frames: Frames, window: list[date]) -> None:
@@ -410,7 +437,7 @@ def test_window_levels_rank_pool_and_mark_unseen_levels(
     by_feature = {name: cells[cells["feature"] == name] for name in ("c", "d")}
     first = by_feature["c"][by_feature["c"]["period"] == MONTH.label(m0)].set_index("bin")
     assert first["bin_order"].to_dict() == {"a": 0, "b": 1, OTHER: 2}
-    assert first["n"].to_dict() == {"a": 2, "b": 1, OTHER: 1}
+    assert first.groupby("bin")["n"].sum().to_dict() == {"a": 2, "b": 1, OTHER: 1}  # over folds
     after = by_feature["c"][by_feature["c"]["period"] == MONTH.label(later)].set_index("bin")
     assert after["bin_order"].to_dict() == {OTHER: 2, NEW: 3, NULL_BIN: 4}
     assert after["is_null"].to_dict() == {OTHER: False, NEW: False, NULL_BIN: True}

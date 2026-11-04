@@ -115,7 +115,7 @@ and recorded in the log (Q455).
 | Core: funnel per period | table | `population` |
 | Core: target per period (the whole window) | rows, positive rows, positive events, rate with Wilson interval; `per_period_lines` | `population` |
 | Core: target by stratum | table; `bar_with_intervals` | `strata` |
-| Core: univariate ranking | table ("optimistic (in-sample encoding)" above 20 levels) | `ranking` |
+| Core: univariate ranking | table | `ranking` |
 | Core: key-feature deep dives | `lift_chart` (or a level table); `box_from_quartiles` by target class; null bar; `per_period_lines` of the concordance | `bins`, `levels`, `cells`; quartiles from the snapshot |
 | Extended: reference groups | standardised mean differences table | `reference_groups` |
 | Extended: strata pivots (top five key features) | pivot tables | `strata` |

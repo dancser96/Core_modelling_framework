@@ -242,7 +242,11 @@ there is nothing to lose or to stamp.
   `constant_share ≥ 0.99` and `concordance_window ≥ 0.6`. "Constant within the client across the
   window and predictive: a static attribute, or one date's value stamped onto every period."
   Catches `lookahead` (`holding_cnt_trap_lookahead`, 0.81, which the lag check cannot see). Static
-  legitimate attributes with signal are flagged once and kept.
+  legitimate attributes with signal are flagged too: no statistic on the counts tells a static
+  attribute from one date's value stamped onto every period, only lineage does. Notebook 03 shows
+  the flagged features in one table (constant share, concordance), so one `keep` settles them
+  once per use case (the SDS, 2026-11-04); the feature store's static/time-varying metadata, once
+  available, would let the check skip static attributes (backlog).
 
 #### `stability`
 - **`concordance_unstable`** · flag · `heterogeneity_p_max: 0.01` and `concordance_range_min:
@@ -284,7 +288,7 @@ there is nothing to lose or to stamp.
   with the cluster's other Spearman members, from the correlation submatrix by least squares, so an
   exact identity reads 1, T32; a VIF without imputation and without rows; "not available" for a
   cluster holding a pair that was not compared, for the non-numeric members of a mixed-kind
-  cluster, and when the pairwise-complete correlations are inconsistent, R² outside [0, 1]). A pair with fewer than 1,000 shared non-null rows is "not compared": it sits at
+  cluster, and when the pairwise-complete correlations are inconsistent, R² outside [0, 1]). A pair with fewer than 500 shared non-null rows is "not compared": it sits at
   distance 1, which average linkage links only inside a cluster of near-identical members (single
   linkage would chain it through one strong neighbour, Q472). The report never suggests dropping
   either of two strong features: boosted trees lose little accuracy to collinearity but split

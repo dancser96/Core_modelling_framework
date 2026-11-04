@@ -8,10 +8,12 @@ the Spearman matrix against pandas' pairwise Spearman, the intervals against sci
 level-encoding and best-order tests use the canonical sizes (100,000 rows a period, 2% base
 rate) where they can: a 300-level random code over a six-period window reads below 0.55 in
 sample and below 0.52 cross-fitted, an inverted U gains at least 0.05 from the best order, a
-null control gains nothing that marks it. Two run the auditor's simulations small and over
+null control gains nothing that marks it. Four run the audits' simulations small and over
 several seeds, since one seed would test luck: a null numeric at 500 events is rarely marked
 `non_monotone`, and a null 50-level code at 190 events a period reads high in sample and not
-cross-fitted. No Spark.
+cross-fitted; on a panel (the same clients in every period, a target that persists over a
+three-month window) a null code reads high cross-fitted by period and not by client fold, and a
+null numeric is not marked on the window's effective clients. No Spark.
 """
 
 import numpy as np
@@ -46,8 +48,9 @@ from core_modelling.statistics.concordance import (
     concordance_exact,
     concordance_from_table,
     concordance_se,
-    cross_fitted_table,
+    cross_fitted_concordance,
     direction_from_table,
+    effective_count,
     encode_levels,
     is_non_monotone,
     kendall_null_se,
@@ -65,7 +68,7 @@ def _count(rows: pd.DataFrame) -> pd.DataFrame:
     """Rows (`period, bin, bin_order, is_null, target_bin, y`) summed into counts-table cells; a
     null target's `sum_y` is NaN, as Spark's sum of nulls is null."""
     rows = rows.assign(feature="f", lagged=False)
-    grouped = rows.groupby(KEYS, dropna=False)["y"]
+    grouped = rows.groupby(KEYS + ["fold"] if "fold" in rows else KEYS, dropna=False)["y"]
     return pd.concat([grouped.size().rename("n"), grouped.sum(min_count=1).rename("sum_y")], axis=1)
 
 
@@ -103,20 +106,23 @@ def _null_numeric_marks(seed: int, events: int) -> tuple[bool, bool]:
     return is_non_monotone(plain, best, se), best >= plain + 0.03
 
 
-def _categorical_cells(codes: np.ndarray, y: np.ndarray, periods: np.ndarray) -> pd.DataFrame:
-    """One categorical's cells, `bin_order` its frequency rank, a binary target."""
+def _categorical_cells(
+    codes: np.ndarray, y: np.ndarray, periods: np.ndarray, folds: np.ndarray
+) -> pd.DataFrame:
+    """One categorical's cells with each row's client fold, `bin_order` its frequency rank, a
+    binary target."""
     labels = codes.astype(str)
     rank = {level: i for i, level in enumerate(pd.Series(labels).value_counts().index)}
-    rows = pd.DataFrame({"period": periods, "bin": labels, "is_null": False, "y": y,
-                         "target_bin": y.astype(int).astype(str)})  # fmt: skip
+    rows = pd.DataFrame({"period": periods, "fold": folds, "bin": labels, "is_null": False,
+                         "y": y, "target_bin": y.astype(int).astype(str)})  # fmt: skip
     return _count(rows.assign(bin_order=rows["bin"].map(rank))).reset_index()
 
 
 def _code_window(
     seed: int, levels: int, rows: int, effect: np.ndarray | None = None
 ) -> tuple[pd.DataFrame, list[str], float]:
-    """Six periods of `rows` rows of a `levels`-level code at 2% (times `effect[code]`): the
-    cells, the periods and the binary `k_rows`."""
+    """Six periods of `rows` rows of a `levels`-level code at 2% (times `effect[code]`), every
+    row a new client: the cells, the periods and the binary `k_rows`."""
     rng = np.random.default_rng(seed)
     names = [f"2025-0{m}" for m in range(3, 9)]
     periods = np.repeat(names, rows)
@@ -124,7 +130,27 @@ def _code_window(
     rate = 0.02 if effect is None else 0.02 * effect[codes]
     y = (rng.random(periods.size) < rate).astype(float)
     k_rows = TASK_SPECS["binary"]["shrinkage_rows"](50, y.mean())
-    return _categorical_cells(codes, y, periods), names, k_rows
+    folds = rng.integers(0, 5, periods.size)
+    return _categorical_cells(codes, y, periods, folds), names, k_rows
+
+
+def _kish_sizes(y: np.ndarray) -> dict[str, float]:
+    """`counts.window_clients` on a clients × periods 0/1 target: per class and in all, the rows
+    and Kish's effective clients `(Σ m)² / Σ m²` over each client's rows `m`."""
+    sizes = {}
+    for prefix, per_client in (("event_", (y == 1).sum(1)), ("non_event_", (y == 0).sum(1)),
+                               ("", np.full(len(y), y.shape[1])),):  # fmt: skip
+        sizes[f"{prefix}rows"] = float(per_client.sum())
+        sizes[f"{prefix}effective"] = per_client.sum() ** 2 / (per_client**2).sum()
+    return sizes
+
+
+def _panel_targets(rng: np.random.Generator, clients: int) -> np.ndarray:
+    """Six periods' targets of the same `clients`, at about 2%: an event in the three periods
+    after each, at a client-specific rate, so a client's label persists (clients × periods)."""
+    rate = 0.02 / 3 * rng.gamma(0.5, 2.0, clients)
+    events = rng.random((clients, 10)) < rate[:, None]
+    return np.stack([events[:, t + 1 : t + 4].any(axis=1) for t in range(6)], 1).astype(float)
 
 
 def _in_sample(cells: pd.DataFrame, periods: list[str], k_rows: float) -> float:
@@ -256,40 +282,75 @@ def test_encoding_shrinks_levels_towards_the_base() -> None:
 
 def test_a_300_level_random_code_over_a_canonical_window() -> None:
     """Six periods of 100,000 rows at 2% (12,000 events): ordered by its shrunk encoding fitted
-    on the window the code reads below 0.55, cross-fitted by period below 0.52."""
+    on the window the code reads below 0.55, cross-fitted by client fold below 0.52."""
     cells, periods, k_rows = _code_window(seed=0, levels=300, rows=100_000)
     assert _in_sample(cells, periods, k_rows) < 0.55
-    assert concordance_from_table(cross_fitted_table(cells, periods, k_rows), sign=1) < 0.52
+    assert cross_fitted_concordance(cells, periods, k_rows) < 0.52
 
 
 def test_cross_fitting_removes_a_null_codes_in_sample_gain() -> None:
     """The auditor's case over 20 seeds: a null 50-level code at about 190 events a period reads
-    above 0.53 in sample every time and, cross-fitted by period and read in the encoding's
-    direction, never (0.52 at most, 0.495 on average)."""
+    above 0.53 in sample every time and, cross-fitted by client fold and read in the encoding's
+    direction, never (about 0.50 on average)."""
     in_sample, cross_fitted = [], []
     for seed in range(20):
         cells, periods, k_rows = _code_window(seed, levels=50, rows=9_500)
         in_sample.append(_in_sample(cells, periods, k_rows))
-        table = cross_fitted_table(cells, periods, k_rows)
-        cross_fitted.append(concordance_from_table(table, sign=1))
+        cross_fitted.append(cross_fitted_concordance(cells, periods, k_rows))
     assert min(in_sample) > 0.53 > max(cross_fitted)
-    assert np.mean(cross_fitted) < 0.505
+    assert abs(np.mean(cross_fitted) - 0.5) < 0.005
+
+
+def test_cross_fitting_by_client_holds_on_a_panel() -> None:
+    """The SDS's case over 10 seeds: 10,000 clients in every period, each keeping one of 50
+    levels, unrelated to a target that persists (about 200 events a period). In sample it reads
+    about 0.60 and cross-fitted by period (folds that are periods) still about 0.57, since the
+    other periods hold the same clients and labels; by client fold 0.50 on average (40 seeds:
+    0.502, SD 0.019, about 1.4× its SE on the ~500 event clients: single values of 0.53–0.55
+    are noise)."""
+    names = [f"2025-0{m}" for m in range(3, 9)]
+    in_sample, by_period, by_client = [], [], []
+    for seed in range(10):
+        rng = np.random.default_rng(seed)
+        y = _panel_targets(rng, 10_000)
+        codes = np.tile(rng.integers(0, 50, 10_000), 6)
+        periods = np.repeat(names, 10_000)
+        outcome = y.T.reshape(-1)
+        k_rows = TASK_SPECS["binary"]["shrinkage_rows"](50, outcome.mean())
+        folds = np.tile(rng.integers(0, 5, 10_000), 6)
+        cells = _categorical_cells(codes, outcome, periods, folds)
+        in_sample.append(_in_sample(cells, names, k_rows))
+        by_client.append(cross_fitted_concordance(cells, names, k_rows))
+        one_label = np.full(periods.size, "window")  # the period moved into the fold
+        as_periods = _categorical_cells(codes, outcome, one_label, np.repeat(np.arange(6), 10_000))
+        by_period.append(cross_fitted_concordance(as_periods, ["window"], k_rows))
+    assert min(in_sample) > 0.57 and np.mean(by_period) > 0.55
+    assert abs(np.mean(by_client) - 0.5) < 0.01
+    assert np.mean(by_period) - np.mean(by_client) > 0.05
 
 
 def test_cross_fitting_keeps_a_predictive_codes_signal() -> None:
     """A 20-level code whose rate varies by level loses under 0.01 to cross-fitting at about 400
-    events a period; the snapshot's value reads one period's rows; one period falls back to the
-    in-sample order."""
+    events a period; one period's rows read alone; the lagged cells read against the encoding
+    fitted on the current ones; cells outside the periods need no fold; a period's cells without
+    one, a single fold and an empty `read` are refused."""
     effect = np.exp(np.random.default_rng(99).normal(0, 0.6, 20))
     cells, periods, k_rows = _code_window(seed=0, levels=20, rows=20_000, effect=effect)
-    cross_fitted = concordance_from_table(cross_fitted_table(cells, periods, k_rows), sign=1)
+    cross_fitted = cross_fitted_concordance(cells, periods, k_rows)
     assert 0 <= _in_sample(cells, periods, k_rows) - cross_fitted < 0.01 and cross_fitted > 0.6
-    snapshot = cross_fitted_table(cells, periods, k_rows, read=[periods[-1]])
-    assert snapshot.sum() == pool_periods(cells, [periods[-1]])["n"].sum()
-    one = cross_fitted_table(cells, periods[:1], k_rows)
-    assert concordance_from_table(one) == pytest.approx(_in_sample(cells, periods[:1], k_rows))
-    with pytest.raises(ValueError, match="must name some of `periods`"):
-        cross_fitted_table(cells, periods[:2], k_rows, read=[periods[3]])
+    assert cross_fitted_concordance(cells, periods, k_rows, read=[periods[-1]]) > 0.6
+    both = pd.concat([cells, cells.assign(lagged=True)])
+    lagged = cross_fitted_concordance(both, periods, k_rows, lagged=True)
+    assert lagged == pytest.approx(cross_fitted)
+    later = cells.loc[cells["period"] == periods[-1]].assign(period="2025-09", fold=np.nan)
+    with_later = pd.concat([cells, later])
+    assert cross_fitted_concordance(with_later, periods, k_rows) == pytest.approx(cross_fitted)
+    with pytest.raises(ValueError, match="needs a client fold"):
+        cross_fitted_concordance(with_later, periods, k_rows, read=["2025-09"])
+    with pytest.raises(ValueError, match="needs two client folds"):
+        cross_fitted_concordance(cells.assign(fold=0), periods, k_rows)
+    with pytest.raises(ValueError, match="names no period"):
+        cross_fitted_concordance(cells, periods, k_rows, read=[])
 
 
 def test_best_order_lifts_an_inverted_u_and_not_a_null_control() -> None:
@@ -318,6 +379,45 @@ def test_a_null_numeric_at_500_events_is_rarely_marked() -> None:
     marks = [_null_numeric_marks(seed, events=500) for seed in range(50)]
     assert sum(scaled for scaled, _ in marks) <= 1
     assert sum(fixed for _, fixed in marks) >= 10
+
+
+def test_a_panel_null_numeric_is_rarely_marked_on_distinct_clients() -> None:
+    """Over 20 seeds, 5,000 clients in every period with a persistent value unrelated to a
+    persistent target (about 100 events a period): the window's SE on its rows marks some of
+    them `non_monotone`, the SE on its effective clients (`client_support`) at most one."""
+    names = [f"2025-0{m}" for m in range(3, 9)]
+    on_rows = on_clients = 0
+    for seed in range(20):
+        rng = np.random.default_rng(seed)
+        y = _panel_targets(rng, 5_000)
+        x = rng.normal(size=5_000)[:, None] + 0.1 * rng.normal(size=(5_000, 6))
+        cells = _numeric_cells(x.T.reshape(-1), y.T.reshape(-1), quantile_edges(x[:, -1], 100),
+                               periods=np.repeat(names, 5_000))  # fmt: skip
+        pooled = pool_periods(cells, names)
+        plain = concordance_from_table(two_way_table(pooled))
+        best = best_order_concordance(pooled, TASK_SPECS["binary"]["shrinkage_rows"](50, y.mean()))
+        support = shares(pooled)
+        rows_se = concordance_se(plain, support["events"], support["non_events"])
+        events = TASK_SPECS["binary"]["client_support"](
+            support["events"], support["non_events"], _kish_sizes(y)
+        )
+        on_rows += is_non_monotone(plain, best, rows_se)
+        on_clients += is_non_monotone(plain, best, concordance_se(plain, *events))
+    assert on_clients <= 1 < on_rows
+
+
+def test_client_support_per_task() -> None:
+    """Binary scales each class by its own ratio; regression scales the units by the window's
+    one ratio and takes a target without zeros; a feature's few rows keep one row's worth; a
+    class without rows is refused."""
+    clients = {"event_rows": 300.0, "event_effective": 100.0, "non_event_rows": 6_000.0,
+               "non_event_effective": 3_000.0, "rows": 6_300.0, "effective": 2_100.0}  # fmt: skip
+    assert TASK_SPECS["binary"]["client_support"](30, 600, clients) == (10.0, 300.0)
+    assert TASK_SPECS["binary"]["client_support"](2, 600, clients)[0] == 1.0
+    assert TASK_SPECS["regression"]["client_support"](30, 0, clients) == (10.0, 0.0)
+    assert TASK_SPECS["regression"]["concordance_se"](0.6, 10.0, 0.0) > 0
+    with pytest.raises(ValueError, match="no labelled rows of this class"):
+        effective_count(5, 0, 0)
 
 
 def test_best_order_on_a_regression_target() -> None:
@@ -454,12 +554,12 @@ def test_spearman_matrix_is_pandas_pairwise_spearman_across_null_patterns() -> N
     frame = pd.DataFrame(base + rng.normal(size=(3_000, 6)), columns=list("abcdef"))
     frame.loc[rng.random(3_000) < 0.1, ["c", "d"]] = np.nan
     frame.loc[rng.random(3_000) < 0.3, "e"] = np.nan
-    frame.loc[rng.random(3_000) < 0.8, "f"] = np.nan
+    frame.loc[rng.random(3_000) < 0.9, "f"] = np.nan
     matrix = spearman_matrix(frame)
     expected = frame.corr(method="spearman")
     compared = list("abcde")
     np.testing.assert_allclose(matrix.loc[compared, compared], expected.loc[compared, compared])
-    assert matrix.loc["a", "f"] != matrix.loc["a", "f"]  # NaN: about 600 shared rows
+    assert matrix.loc["a", "f"] != matrix.loc["a", "f"]  # NaN: about 300 shared rows
 
 
 def test_correlation_ratio_is_spearman_for_two_levels_and_cramers_v_guards() -> None:

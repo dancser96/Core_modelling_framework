@@ -216,8 +216,11 @@ from them are [EDA](eda.md)'s (its statistics section). The functions:
   of pass 2); with `bins` None above `MAX_CELLS = 50_000_000` it fails loud naming `eda.bins`
   (V3), so the template's "refused above 50 million cells" is about the cells written.
 
-The counts table's columns are `feature, period, lagged, bin, bin_order, is_null, target_bin, n,
-sum_y` (`CELL_COLUMNS`), one row per cell; `period` is the period's label, `bin` the
+The counts table's columns are `feature, period, lagged, fold, bin, bin_order, is_null,
+target_bin, n, sum_y` (`CELL_COLUMNS`), one row per cell; `fold` is a categorical's client fold
+(`pmod(xxhash64(unit_id), ENCODING_FOLDS)`, 5 folds, the same in every run; null for a numeric),
+which EDA's cross-fitted level encoding needs, set on the window's cells only (null in the gap
+and latest periods); `period` is the period's label, `bin` the
 `bin_labels` text, a level (a reserved name quoted) or `null`, `bin_order` the bucket index or
 the level's rank (the null bin last), `target_bin` a string or null, `sum_y` null where no
 label. The passes use Spark SQL
@@ -730,7 +733,9 @@ is one entity's area and the data-definition hash carries the entity (D-136; [ED
 - `counts.py`, the Spark side of EDA's counts table ([counts passes](#counts-passes-d-135)):
   `LEVEL_CAP = 50`, `MAX_CELLS = 50_000_000`, `OTHER = "__other__"`, `NEW = "__new__"`,
   `NULL_BIN = "null"`, `RESERVED_BINS`, `POOLED_LEVEL_CAP = 10_000`, `CONSTANT_CHUNK = 50`,
-  `CELL_COLUMNS`; `compared_periods(cfg, available) -> dict[str, list[date]]`;
+  `ENCODING_FOLDS = 5`, `CELL_COLUMNS`; `compared_periods(cfg, available) -> dict[str,
+  list[date]]`; `window_clients(rows, window_periods) -> dict[str, float]` (the window's labelled
+  rows and Kish's effective clients, by class and in all, for the window's SE);
   `bin_edges(snapshot, kinds, bins) -> dict[str, np.ndarray | None]` (the eligible rows);
   `window_levels(rows, categoricals, window_periods) -> tuple[dict[str, list[str]],
   list[str]]` (the levels, and the categoricals over `POOLED_LEVEL_CAP`);

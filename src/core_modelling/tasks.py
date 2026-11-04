@@ -39,7 +39,7 @@ from pyspark.sql.types import BooleanType, DoubleType, FloatType, NumericType
 
 from core_modelling.config import UseCaseConfig
 from core_modelling.periods import label_by_period, period_spec
-from core_modelling.statistics.concordance import concordance_se, kendall_null_se
+from core_modelling.statistics.concordance import concordance_se, effective_count, kendall_null_se
 from core_modelling.statistics.distributions import quantile_edges
 from core_modelling.statistics.intervals import t_interval, wilson_interval
 
@@ -288,6 +288,29 @@ def _regression_se(value: float, events: float, non_events: float) -> float:
     return kendall_null_se(events + non_events)
 
 
+def _binary_client_support(
+    events: float, non_events: float, clients: dict[str, float]
+) -> tuple[float, float]:
+    """A window's events and non-events in effective clients, each class by its own ratio (a
+    client's events and non-events are different rows of it)."""
+    return (
+        effective_count(events, clients["event_rows"], clients["event_effective"]),
+        effective_count(non_events, clients["non_event_rows"], clients["non_event_effective"]),
+    )
+
+
+def _regression_client_support(
+    events: float, non_events: float, clients: dict[str, float]
+) -> tuple[float, float]:
+    """A window's units with a non-zero and a zero target in effective clients, both by the
+    window's one ratio: Kendall's SE counts units whatever their target, and a target need not
+    take the value 0."""
+    return (
+        effective_count(events, clients["rows"], clients["effective"]),
+        effective_count(non_events, clients["rows"], clients["effective"]),
+    )
+
+
 def _events_warning(events: int, support: str) -> str | None:
     """The snapshot's events warning, or None when it holds `EVENTS_WARNING` events or more."""
     if events >= EVENTS_WARNING:
@@ -339,6 +362,7 @@ TASK_SPECS = {
         "summarise_group": _binary_group,
         "rare_effect": _rate_ratio,
         "concordance_se": concordance_se,
+        "client_support": _binary_client_support,
         "events_warning": partial(_events_warning, support=BINARY_SUPPORT),
         "support_name": BINARY_SUPPORT,
         "base_rate_views": _binary_headline,
@@ -354,6 +378,7 @@ TASK_SPECS = {
         "summarise_group": _regression_group,
         "rare_effect": _mean_ratio,
         "concordance_se": _regression_se,
+        "client_support": _regression_client_support,
         "events_warning": partial(_events_warning, support=REGRESSION_SUPPORT),
         "support_name": REGRESSION_SUPPORT,
         "base_rate_views": _regression_headline,

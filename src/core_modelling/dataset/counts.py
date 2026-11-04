@@ -8,14 +8,19 @@ bucketed by one `Bucketizer` on the edges `bin_edges` takes from the collected s
 eligible rows (`statistics.distributions.quantile_edges`, T25), a categorical mapped to the
 window's levels (`window_levels`: the `LEVEL_CAP` most frequent kept, the rest `OTHER`, a level
 unseen in the window `NEW`; past `POOLED_LEVEL_CAP` window levels every level not kept is
-`OTHER`), null and a float NaN always the null bin (N2, N5). Then one `explode(array(struct(...)))`
-and one `groupBy`, whose partial aggregation collapses the exploded rows inside each partition, so
-the shuffle carries cells, not rows (the plan's spike: 15–18 s and a 3 MB shuffle over the
-six-month canonical window; a per-feature loop was 4.5× slower, so there is no fallback).
-`client_constant_shares` and `population_counts` are the two other tables, `compared_periods`
-picks the periods the passes compare and `estimate_cells` guards `eda.bins: null`. Spark SQL and
-JVM transformers only, no pandas UDF: nothing Python-side runs on the bank's executors. What the
-statistics read from the cells is `docs/components/eda.md`'s.
+`OTHER`), null and a float NaN always the null bin (N2, N5). A categorical's window cells also
+carry the client's `fold` (`ENCODING_FOLDS` folds by a hash of `unit_id`), so its level
+encoding can be fitted on other clients than the ones it orders
+(`concordance.cross_fitted_concordance`): the same client sits in every period, so leaving a
+period out leaves the client in (V16). Then one
+`explode(array(struct(...)))` and one `groupBy`, whose partial aggregation collapses the exploded
+rows inside each partition, so the shuffle carries cells, not rows (the plan's spike: 15–18 s
+and a 3 MB shuffle over the six-month canonical window; a per-feature loop was 4.5× slower, so
+there is no fallback).
+`client_constant_shares`, `population_counts` and `window_clients` are the other tables,
+`compared_periods` picks the periods the passes compare and `estimate_cells` guards `eda.bins:
+null`. Spark SQL and JVM transformers only, no pandas UDF: nothing Python-side runs on the
+bank's executors. What the statistics read from the cells is `docs/components/eda.md`'s.
 """
 
 from datetime import date
@@ -39,8 +44,9 @@ NEW = "__new__"  # a level unseen in the window
 NULL_BIN = "null"  # a Spark null or a NaN (N2)
 RESERVED_BINS = (NULL_BIN, OTHER, NEW)  # a real level of these names is quoted: `'null'`
 CONSTANT_CHUNK = 50  # columns per client-constant job: one job over 139 filled the 2 GB heap
-CELL_COLUMNS = ["feature", "period", "lagged", "bin", "bin_order", "is_null", "target_bin", "n",
-                "sum_y"]  # fmt: skip
+ENCODING_FOLDS = 5  # client folds on a categorical's cells, for the cross-fitted encoding (V16)
+CELL_COLUMNS = ["feature", "period", "lagged", "fold", "bin", "bin_order", "is_null",
+                "target_bin", "n", "sum_y"]  # fmt: skip
 
 
 def compared_periods(cfg: UseCaseConfig, available: list[date]) -> dict[str, list[date]]:
@@ -137,11 +143,11 @@ def count_cells(
     window_periods: list[date],
     spec: Period,
 ) -> pd.DataFrame:
-    """Pass 1: the counts table of `rows` (`CELL_COLUMNS`, `lagged` false), every numeric of
-    `edges` bucketed by one `Bucketizer`, every categorical of `levels` mapped to its level
-    (`over_ceiling`: `window_levels`' second list), the target to its value (`target_edges`
-    None, a binary target) or its bucket's label, read for the window periods only; `period` as
-    its label."""
+    """Pass 1: the counts table of `rows` (`CELL_COLUMNS`, `lagged` false, `fold` null for a
+    numeric), every numeric of `edges` bucketed by one `Bucketizer`, every categorical of
+    `levels` mapped to its level (`over_ceiling`: `window_levels`' second list), the target to
+    its value (`target_edges` None, a binary target) or its bucket's label, read for the window
+    periods only; `period` as its label."""
     _require_window(window_periods)
     return _aggregate_cells(
         rows, edges, levels, over_ceiling, target_edges, window_periods, spec, lagged=False
@@ -209,7 +215,13 @@ def _aggregate_cells(
         splits["target"] = target_edges
     bucketed = _bucketize(frame, splits)
     cells = [_numeric_cell(name, e) for name, e in edges.items()]
-    cells += [_categorical_cell(frame, name, levels[name], name in over_ceiling) for name in levels]
+    fold = F.when(  # only the window's cells: the encoding is fitted and read there
+        F.col("period").isin(window_periods),
+        F.pmod(F.xxhash64(F.col("unit_id")), F.lit(ENCODING_FOLDS)),
+    )
+    cells += [
+        _categorical_cell(frame, name, levels[name], name in over_ceiling, fold) for name in levels
+    ]
     aggregated = (
         bucketed.select(
             "period",
@@ -218,7 +230,13 @@ def _aggregate_cells(
             F.explode(F.array(*cells)).alias("cell"),
         )
         .groupBy(
-            "cell.feature", "period", "cell.bin", "cell.bin_order", "cell.is_null", "target_bin"
+            "cell.feature",
+            "period",
+            "cell.fold",
+            "cell.bin",
+            "cell.bin_order",
+            "cell.is_null",
+            "target_bin",
         )
         .agg(F.count(F.lit(1)).alias("n"), F.sum(F.col("target").cast("double")).alias("sum_y"))
         .toPandas()
@@ -256,17 +274,22 @@ def _numeric_cell(name: str, edges: np.ndarray | None) -> Column:
     if edges is None or edges.size == 0:
         value = F.col(name) + 0.0
         is_null = value.isNull() | F.isnan(value)
-        return _cell(name, F.lit(None), F.when(is_null, 1).otherwise(0), is_null)
+        return _cell(name, F.lit(None), F.when(is_null, 1).otherwise(0), is_null, F.lit(None))
     bucket = F.col(f"{name}__bucket")
     null_order = edges.size + 1  # the extra bucket; a null bucket joins it
     is_null = bucket.isNull() | (bucket == null_order)
-    return _cell(name, F.lit(None), F.when(is_null, null_order).otherwise(bucket), is_null)
+    order = F.when(is_null, null_order).otherwise(bucket)
+    return _cell(name, F.lit(None), order, is_null, F.lit(None))
 
 
-def _categorical_cell(frame: DataFrame, name: str, levels: list[str], over_ceiling: bool) -> Column:
+def _categorical_cell(
+    frame: DataFrame, name: str, levels: list[str], over_ceiling: bool, fold: Column
+) -> Column:
     """A categorical's cell: a kept level is its own bin at its window frequency rank, a pooled
     level `OTHER` after the kept ones, a level unseen in the window `NEW` after that (over the
-    level ceiling, every level not kept is `OTHER`), null (a NaN too) the null bin last."""
+    level ceiling, every level not kept is `OTHER`), null (a NaN too) the null bin last; `fold`
+    the client's, `pmod(xxhash64(unit_id), ENCODING_FOLDS)` in the window (the same in every
+    run), null elsewhere."""
     level = _level(frame, name)
     kept, pooled = levels[:LEVEL_CAP], levels[LEVEL_CAP:]
     lookup = [F.lit(x) for rank, kept_level in enumerate(kept) for x in (kept_level, rank)]
@@ -284,7 +307,7 @@ def _categorical_cell(frame: DataFrame, name: str, levels: list[str], over_ceili
         F.when(level.isNull(), n + 2).when(kept_rank.isNotNull(), kept_rank)
         .when(is_pooled, n).otherwise(n + 1)
     )  # fmt: skip
-    return _cell(name, bin_label, order, level.isNull())
+    return _cell(name, bin_label, order, level.isNull(), fold)
 
 
 def _level(frame: DataFrame, name: str) -> Column:
@@ -305,11 +328,13 @@ def _nan_as_null(frame: DataFrame, name: str) -> Column:
     return column
 
 
-def _cell(name: str, bin_label: Column, bin_order: Column, is_null: Column) -> Column:
-    """The struct the pass explodes: `feature`, `bin` (a string, null for a numeric until the
-    labels join), `bin_order` (int), `is_null`."""
+def _cell(name: str, bin_label: Column, bin_order: Column, is_null: Column, fold: Column) -> Column:
+    """The struct the pass explodes: `feature`, `fold` (int; null for a numeric and outside
+    the window), `bin` (a
+    string, null for a numeric until the labels join), `bin_order` (int), `is_null`."""
     return F.struct(
         F.lit(name).alias("feature"),
+        fold.cast("int").alias("fold"),
         bin_label.cast("string").alias("bin"),
         bin_order.cast("int").alias("bin_order"),
         is_null.alias("is_null"),
@@ -346,6 +371,7 @@ def _label_cells(
     `CELL_COLUMNS` order, sorted."""
     cells["period"] = cells["period"].map(spec.label)
     cells["lagged"] = lagged
+    cells["fold"] = cells["fold"].astype("Int64")  # null for a numeric and outside the window
     labels = {name: bin_labels(e if e is not None else np.array([])) for name, e in edges.items()}
     numeric = cells["feature"].isin(edges)
     if numeric.any():
@@ -356,7 +382,7 @@ def _label_cells(
             ].itertuples(index=False)
         ]
     ordered = cells.sort_values(
-        ["feature", "period", "bin_order", "target_bin"], na_position="last"
+        ["feature", "period", "fold", "bin_order", "target_bin"], na_position="last"
     )
     return ordered[CELL_COLUMNS].reset_index(drop=True)
 
@@ -433,6 +459,38 @@ def population_counts(
     return table
 
 
+def window_clients(rows: DataFrame, window_periods: list[date]) -> dict[str, float]:
+    """The window's labelled rows and their effective number of clients, per class and in all:
+    `event_rows` and `event_effective` (a non-zero target), `non_event_rows` and
+    `non_event_effective` (a zero one), `rows` and `effective`. The same client is labelled in
+    every period, mostly with the same label under overlapping target windows, so its rows are
+    near copies: the effective number is Kish's `(Σ m)² / Σ m²` over the clients' row counts
+    `m`, the clients themselves when each has as many rows. The window's standard errors rest on
+    it (`TASK_SPECS[task]["client_support"]`)."""
+    _require_window(window_periods)
+    labelled = rows.where(F.col("period").isin(window_periods) & F.col("target").isNotNull())
+    event = F.col("target") != 0
+    per_client = labelled.groupBy("unit_id").agg(
+        F.count(F.when(event, True)).alias("event"),
+        F.count(F.when(~event, True)).alias("non_event"),
+        F.count(F.lit(1)).alias("all"),
+    )
+    sums = per_client.agg(
+        *[F.sum(name).alias(f"{name}_rows") for name in ("event", "non_event", "all")],
+        *[
+            F.sum(F.col(name) ** 2).alias(f"{name}_squares")
+            for name in ("event", "non_event", "all")
+        ],
+    ).collect()[0]
+    sizes = {}
+    for name, prefix in (("event", "event_"), ("non_event", "non_event_"), ("all", "")):
+        total = sums[f"{name}_rows"] or 0  # Spark sums no rows to null
+        squares = sums[f"{name}_squares"] or 0
+        sizes[f"{prefix}rows"] = float(total)
+        sizes[f"{prefix}effective"] = total**2 / squares if squares else 0.0
+    return sizes
+
+
 def estimate_cells(
     rows: DataFrame, kinds: dict[str, str], bins: int | None, window_periods: list[date]
 ) -> int:
@@ -440,19 +498,20 @@ def estimate_cells(
     candidate and for the target over `rows`: a numeric's distinct values capped at `bins`, a
     categorical's at `LEVEL_CAP` (plus `OTHER` and `NEW`), each plus the null bin, times the
     target's bins (its distinct values capped at `bins`, plus null), times the periods of pass 1
-    plus the window periods of pass 2. With `bins` None, above `MAX_CELLS` fails loud naming
-    `eda.bins` (V3)."""
+    plus the window periods of pass 2, a categorical's window periods `ENCODING_FOLDS` times. With
+    `bins` None, above `MAX_CELLS` fails loud naming `eda.bins` (V3)."""
     distinct = rows.agg(
         F.countDistinct("period").alias("__periods"),
         *[F.approx_count_distinct(name).alias(name) for name in (*kinds, "target")],
     ).collect()[0]
     cap = float("inf") if bins is None else bins
-    feature_bins = sum(
-        min(distinct[name], cap) + 1 if kind == "numeric" else min(distinct[name], LEVEL_CAP) + 3
-        for name, kind in kinds.items()
+    numeric = sum(min(distinct[n], cap) + 1 for n, kind in kinds.items() if kind == "numeric")
+    categorical = sum(
+        min(distinct[n], LEVEL_CAP) + 3 for n, kind in kinds.items() if kind != "numeric"
     )
     periods = distinct["__periods"] + len(window_periods)
-    estimate = int(feature_bins * periods * (min(distinct["target"], cap) + 1))
+    folded = periods + 2 * len(window_periods) * (ENCODING_FOLDS - 1)  # both passes' window
+    estimate = int((numeric * periods + categorical * folded) * (min(distinct["target"], cap) + 1))
     if bins is None and estimate > MAX_CELLS:
         raise ValueError(
             f"eda.bins: null would give about {estimate:,} cells over both passes, above "

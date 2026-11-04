@@ -334,49 +334,40 @@ main thread for `decisions.md`, `UPDATES.md`, `roadmap.md`, `log.md`, the review
 `compat-guardian` on every artifact and the Public API, the review guide, the SDS's review.
 Estimated size: about 800 lines of code and 600 of tests.
 
-## 3. The routing table (D-072 (l), extended 2026-11-03)
-Fable keeps what needs the whole picture and the pieces whose architecture is hardest to get right
-the first time: this plan, each brief, reading every diff and test output, the integration fixes,
-the `ml-correctness-auditor`, the review guides, the log entries, the reports to the SDS, and four
-code pieces (the counts passes, the statistics engine, the two stage functions that integrate
-everything). The SDS's budget (2026-11-03): Fable between a third and half of the stage's tokens,
-spent on architecting properly rather than on rewrites; `xhigh` effort on every model wherever a
-wrong answer is costly. A Sonnet piece that fails once is escalated to Opus, never retried on the
-same model. Fable agents are spawned as `general-purpose` with `model: fable`, never as forks: a
-fresh context reads the brief and the docs, not this chat.
+## 3. The routing table (D-072 (l), reset 2026-11-04)
+Major step 1 ran Fable on the main thread, two builders and three audits: about 40% of the output
+tokens, and most of the weekly Fable allowance. The SDS's reset (2026-11-04): Fable at 25–30% of a
+stage in general, and almost none for the rest of Stage 2. So the main thread runs on Opus, every
+builder on Opus or Sonnet, and Fable does one thing: the whole-stage ML audit at the end of major
+step 3, where step 1's audits earned their cost (the margin and the encoding). `xhigh` only on the
+two pieces where a wrong answer is costliest (m2.3, m3.2); `high` elsewhere, `medium` for
+mechanical text. Reviews are folded: one combined review per minor step, one fix round per major
+step (step 1 ran 15 reviews and seven fix rounds).
 
-| Piece | Agent type | Model · effort | Why |
-|---|---|---|---|
-| m1.0 the facts spike | `general-purpose` | Sonnet · high | one fact per item against the pinned version; a number or a test checks each |
-| m1.1 + m1.2 the schema and the audit log | `general-purpose` | Opus · xhigh | a §2 surface and the held set that feeds §4.6, fully specified; compat-guardian reviews it |
-| m1.3 the frames and counts passes | `general-purpose` | Fable · xhigh | the Spark architecture the whole stage stands on (two passes, the edges rule, the lag by period index): the piece a rewrite would cost most |
-| m1.4 the statistics engine and the regression entries | `general-purpose` | Fable · xhigh | the numbers every later stage trusts; the cell algebra and the shrunk encoding are design as much as code |
-| m1.5 the artifacts and the ledger | `general-purpose` | Opus · xhigh | IO and the hold-out read (§4.6), fully specified; silent-failure-hunter reviews it |
-| m2.1 the reporting primitives | `general-purpose` | Sonnet · high | a complete brief with signatures; not a §4 path; code-reviewer on Opus checks it |
-| m2.2 the EDA modules | `general-purpose` | Opus · xhigh | the ranking and the key features feed choices (D-030); specified column by column |
-| m2.3 the EDA stage, report and `run` | `general-purpose` | Fable · xhigh | integrates frames, counts, statistics, ledger, artifacts and reporting: the whole picture |
-| m2.4, m3.4 the notebooks | `general-purpose` | Opus · xhigh | the guide cells are the notebooks' main deliverable (the SDS, 2026-11-03); Fable reads every guide line in the integration |
-| m3.1 the five steps | `general-purpose` | Opus · xhigh | §4.6: what gets flagged; the rules are a table |
-| m3.2 the decisions and the stage | `general-purpose` | Fable · xhigh | the hold-out mechanics (flag entries, the held set, the hash) and the stage integration |
-| m3.3 the trap acceptance test | `general-purpose` | Opus · xhigh | a §4 invariant test from a given mapping |
-| m3.5 the doc propagation | `general-purpose` | Sonnet · high | text whose substance is settled |
-| `code-reviewer` (every minor step) | that agent | Opus · xhigh on the §4 paths (m1.1–m1.5, m2.2, m2.3, m3.1–m3.3), high elsewhere | fresh-context review |
-| `silent-failure-hunter` (m1.2, m1.3, m1.5, m2.3, m3.2) | that agent | Opus · xhigh | IO, validation, fallbacks |
-| `compat-guardian` (m1.1, m1.2, m1.5, m2.3, m3.2, m3.5) | that agent | Opus · high | schema, artifacts, Public API |
-| `ml-correctness-auditor` (m1.3, m1.4, m2.2, m2.3, m3.1, m3.2, m3.3; the whole stage at the end) | that agent | Fable · xhigh | the review Fable keeps (D-072 (l)) |
-| `simplicity-review` on every diff | skill, main thread | Fable | reading the diff is the integration anyway |
-| the briefs, the integration, the review guides, the SDS reports | main thread | Fable | needs the whole picture |
+| Piece | Model · effort | Why |
+|---|---|---|
+| main thread (briefs, integration, review guides, reports) | Opus | the whole picture; the SDS switched it 2026-11-04 |
+| m2.1 the reporting primitives | Sonnet · high | a complete brief with signatures; not a §4 path |
+| m2.2 the EDA modules | Opus · high | specified column by column on the built engine |
+| m2.3 the EDA stage, report and `run` | Opus · xhigh | integrates everything step 1 built; the call sequence is written |
+| m2.4, m3.4 the notebooks | Opus · high | the guide cells are the main deliverable (the SDS, 2026-11-03) |
+| m3.1 the five steps | Opus · high | the rules are a table |
+| m3.2 the decisions and the stage | Opus · xhigh | the hold-out mechanics (§4.6) |
+| m3.3 the trap acceptance test | Opus · high | a §4 invariant test from a given mapping |
+| m3.5 the doc propagation | Sonnet · medium | text whose substance is settled |
+| one review per minor step: `code-reviewer` briefed with the silent-failure and §2 lenses where they apply | Opus · high | one fresh read instead of two to four |
+| `ml-correctness-auditor` on m2.2 + m2.3 together, on m3.1 + m3.2 together | Opus · high | the §4 paths, once per major step |
+| `ml-correctness-auditor`, the whole stage at the end | Fable · xhigh | the only Fable piece |
 
-Every `Agent` call passes `model` and `effort` explicitly. Expected balance: Fable about 40% of
-the stage's tokens (the main thread, the four code pieces, the audits), Opus about 45%, Sonnet the
-rest. If Fable's share runs ahead of a half after major step 1, m3.2 moves to Opus · xhigh.
+Every `Agent` call passes `model` and `effort` explicitly. Expected balance: Fable under 10% of the
+remaining stage, Opus about 75%, Sonnet the rest.
 
 ## 4. How each minor step is checked
 1. The agent runs its own files' tests and `ruff check` on them and reports the output (never the
    full suite, D-072 (m)).
 2. The main thread reads the whole diff (`simplicity-review`), fixes or sends back once.
-3. `code-reviewer`, plus `silent-failure-hunter`, `compat-guardian` and `ml-correctness-auditor`
-   where §3's table says so, in one message; every finding fixed or justified in `log.md`.
+3. The combined review of §3's table; the ML audit once per major step; the findings fixed in
+   one round per major step, every one fixed or justified.
 4. The docs of the touched components updated in the same change (`CLAUDE.md` §8); `log.md`
    appended.
 5. At a major step's end: the full suite in the background on the main thread; the review guide;
@@ -530,12 +521,14 @@ writers' findings. Silence confirms them.
   population. Should a row-level chart ever be added, it draws a seeded sample of at most 10,000
   rows and says so in its caption (reporting requirement 5). The SDS's question ("why has chart
   sampling been left out") is answered by this, not by a config field.
-- **V16** (2026-11-03, the build's audit) The level encoding is **cross-fitted by period**: a
-  period's levels are ordered by the encoding fitted on the other window periods (the snapshot's
-  rows read from that table, `sign=1`); in-sample only with a one-period window, marked
-  "optimistic". A30 said "fitted once on the pooled window": measured, a null 20–50-level code
-  then reads 0.53–0.57 at ~190 events per period (above Training's 0.515 floor and outside both
-  guards), cross-fitted 0.49–0.52; a predictive code loses under 0.01 (D-135 changed in place).
+- **V16** (2026-11-03; changed by the SDS's review 1, 2026-11-04) The level encoding is
+  **cross-fitted by client fold**: a categorical's cells carry the client's fold (5, a hash of
+  `unit_id`), each fold's levels are ordered by the encoding fitted on the other folds, and
+  Somers' D sums the pairs inside each fold (`cross_fitted_concordance`). A30's "fitted once on
+  the pooled window" reads a null 50-level code at 0.53–0.60; by period (the build's first fix)
+  still 0.57 on a panel, since the other periods hold the same clients; by client fold 0.50. The
+  window's SE counts effective clients (Kish, `TASK_SPECS[task]["client_support"]`), so the
+  `non_monotone` margin holds on a panel too (D-135 changed in place).
 - **V17** (2026-11-03) `explained_by_others` is computed over a cluster's Spearman members only and
   reads "not available" for a cluster with a not-compared pair, for non-numeric members, and when
   the pairwise-complete correlations are inconsistent (R² outside [0, 1]); the categorical level

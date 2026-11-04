@@ -60,7 +60,7 @@ window is never collected (D-135).
    client-constant table.
 6. Collect the cells (a few MB) and fit the level encoding on the pooled window cells.
 7. Compute every statistic per feature from the cells: snapshot and window twins.
-8. Compute the association matrix on the snapshot (capped at 200,000 rows).
+8. Compute the association matrix on the snapshot (capped at 50,000 rows).
 9. Rank; choose the key features with the correlation skip.
 10. Deep dives for the key features; the population views (funnel, target per period, by
     stratum, reference groups, strata pivots).
@@ -77,8 +77,9 @@ Spark passes from `dataset/counts.py`, the frames from `dataset/frames.py`, the 
 - **Statistics against exact oracles:** `roc_auc_score`, `kendalltau`; the binned value within
   0.005 of the exact one on the synthetic snapshot, equal for discrete and categorical features;
   `eda.bins: null` equal to the exact value; a 300-level random code below 0.52 on the canonical
-  window and a 50-level one near 0.50 at 190 events per period with the cross-fitted encoding
-  (in-sample they read 0.54–0.57, above Training's floor: the build's audit, 2026-11-03); a null
+  window and a 50-level one near 0.50 at 190 events per period with the encoding cross-fitted by
+  client fold, also on a panel where the same clients and persistent labels sit in every period
+  (in sample they read 0.54–0.60, by period still 0.57 on the panel: 2026-11-03/04); a null
   numeric at 500 events is marked `non_monotone` in at most 1 of 50 seeds with the SE-scaled
   margin (24 of 50 with a fixed 0.03); η = |Spearman|
   for two levels; a unit test on an inverted-U column built in the test (the loan target, which
@@ -256,24 +257,47 @@ definitions; Feature Checks uses the ones marked FC.
   categoricals and with `eda.bins: null`. The singleton bins hold real ties only.
 - **Standard error:** `concordance_se(value, events, non_events)`, Hanley–McNeil in events
   (D-082): SE² = [A(1 − A) + (n₁ − 1)(A/(2 − A) − A²) + (n₀ − 1)(2A²/(1 + A) − A²)] / (n₁n₀).
-  Regression: `kendall_null_se(units)` = √(2(2n + 5) / (9n(n − 1))), halved for the concordance
-  scale (A29). The SE is floored at `SE_FLOOR = 0.005` (a concordance of 1 would otherwise get an
-  infinite weight in Cochran's Q).
+  It is the sampling noise of the concordance; near 0.5 with far more non-events than events it
+  is about 1/√(12 n₁): 0.013 at 500 events, 0.009 at 1,000. Regression: `kendall_null_se(units)`
+  = √(2(2n + 5) / (9n(n − 1))), halved for the concordance scale (A29). The SE is floored at
+  `SE_FLOOR = 0.005` (a concordance of 1 would otherwise get an infinite weight in Cochran's Q).
+  A single period has one row per client, so its events are its rows; a window's are not: the
+  same client is labelled in every period, mostly with the same label under overlapping target
+  windows, so every window SE (the direction, the margin below, the null concordance) takes its
+  support in effective clients: `concordance_se(value, *client_support(events, non_events,
+  clients))` with `TASK_SPECS[task]["client_support"]`, the pooled counts scaled by the
+  effective clients per labelled row (`clients` from `counts.window_clients`: Kish's `(Σ m)² /
+  Σ m²` over the clients' row counts `m`, the clients themselves when each has as many rows;
+  binary by class, regression by the window's one ratio, since a regression target need not
+  take 0), never below one row's worth. One ratio per run errs both ways for a feature filled on
+  a subset of clients: conservative when they are present in few periods, about 1.3× too small
+  an SE when they are the ones present throughout while half the others come and go. On the
+  rows' count a null numeric on a panel was marked `non_monotone` 12–18% of the time, on the
+  clients' none (2026-11-04).
 - **Level encoding** (`encode_levels(cells, k_rows)`, Micci-Barreca): a level's value is
   (sum_y + k × base) / (n + k), shrinkage in pseudo-events: `k_rows = strata.min_events /
   base_rate` (regression: `strata.min_events` rows), null excluded. Read on the rows it was fitted
   on, the order flatters noise: a null 20–50-level code reads 0.53–0.57 at about 190 events a
-  period, above Training's floor. So a categorical's concordance is **cross-fitted by period**
-  (`cross_fitted_table(cells, periods, k_rows, read=None)`): each period's levels are ordered by
-  the encoding fitted on the other periods (a level unseen there scores their base), the
-  (period, level) rows pooled into one table, equal values sharing a row, and read in the
-  encoding's direction, `concordance_from_table(table, sign=1)`. The window's value pools every
-  window period; the snapshot's and each period's value is `read=[that period]`. A null 50-level
-  code then reads about 0.5 (0.52 at most over 20 seeds; folded by `|D|` it would reach 0.55), a
-  predictive one loses under 0.01. With a one-period window the encoding is fitted in sample and
-  the value is marked "optimistic (in-sample encoding)". The window-fitted `encode_levels` order
-  stays the lagged cells' order. The best-order value is not computed for a categorical: in its
-  encoding order it equals the plain value by definition.
+  period, above Training's floor, and 0.60 on a panel where the same clients keep their labels.
+  Fitting it on the other periods does not help on a panel (0.57): they hold the same clients.
+  So a categorical's concordance is **cross-fitted by client fold**
+  (`cross_fitted_concordance(cells, periods, k_rows, read=None, lagged=False)`): the counts
+  table gives a categorical's cells the client's fold (`ENCODING_FOLDS = 5`, a hash of
+  `unit_id`), each fold's levels are ordered by the encoding fitted on the other folds' current
+  cells over the window (a level unseen there scores their base), and Somers' D sums the pairs
+  inside each fold only, read in the encoding's direction (sign +1), so no client informs its
+  own order. The window's value reads every window period; the snapshot's and each period's
+  value is `read=[that period]`; the lagged value `lagged=True`, against the same encoding. A
+  null 50-level code then reads 0.50 on average, a predictive one loses under 0.01. Its spread
+  under no signal is about 1.35–1.5× its SE even on effective clients (SD 0.020 against 0.013 on
+  a panel with about 500 event clients), because each fold's order is fitted partly on the other
+  folds' noise, which the SE (noise for a fixed order) leaves out: a null code cleared 0.5 + 2
+  SE, the line below which `direction` reads none, in about 12% of runs instead of 2% (measured
+  2026-11-04; 1.3–1.4× on independent rows). So a cross-fitted value's SE is the task's SE on
+  the same support times `CROSS_FIT_SE_INFLATION = 1.5`, the measured upper end (the SDS,
+  2026-11-04). A fixed factor is an approximation; a permutation null per feature is on the
+  Phase 3 wishlist. The best-order value is not computed for a categorical: in its encoding order it
+  equals the plain value by definition.
 - **Best-order concordance** (`best_order_concordance(cells, k_rows)`): the non-null bins merged
   into ten groups by `merge_bins` (a mass point its own group), ordered by their shrunk target
   mean, then the concordance: what a ten-leaf tree on the feature would reach, so an inverted U
@@ -283,8 +307,11 @@ definitions; Feature Checks uses the ones marked FC.
   numerics at 500 events). The margin scales with the SE: `is_non_monotone(plain, best_order,
   se)` and `ranking_value(plain, best_order, se)` mark a feature when best-order ≥ plain +
   max(`NON_MONOTONE_MARGIN` = 0.03, `NON_MONOTONE_SE_MULTIPLE` = 4 × SE), `se` the feature's
-  `concordance_se` on the same cells; that marks 0–2% of null numerics at every size and every
-  inverted U of the tests. Not computed for a categorical.
+  window SE on effective clients (above); that marks 0–2% of null numerics at every size, on a
+  panel too, and every inverted U of the tests. The margin is 4·SE at under about 1,500 event
+  clients (0.052 at 500) and 0.03 above. More groups would not help: the noise gain grows with
+  the groups the data may reorder (at 100 bins it is the in-sample encoding's problem). Not
+  computed for a categorical.
 - **Twins:** `concordance_window`, `missing_share_window`, `null_concordance_window`,
   `zero_share_window`, `dominant_share_window` are the same functions on the window periods' cells.
 - **Per-period and heterogeneity (FC):** per-period concordances only for periods whose support
@@ -312,10 +339,10 @@ definitions; Feature Checks uses the ones marked FC.
   an unlabelled cell's `sum_y` null.
 - **Intervals:** `wilson_interval(k, n)` (closed form, 95%, vectorised); `t_interval(mean, sd,
   n)`.
-- **Association** (on the snapshot's eligible rows, a seeded cap of 200,000 rows for the pairwise
+- **Association** (on the snapshot's eligible rows, a seeded cap of 50,000 rows for the pairwise
   matrix only, stated in the report): `spearman_matrix(frame)` (the exact pairwise-complete
   Spearman: columns grouped by null mask, ranked once inside a group and once per group pair
-  across groups, T28; at least 1,000 shared rows else "not compared", NaN), `cramers_v(a, b)`
+  across groups, T28; at least 500 shared rows else "not compared", NaN), `cramers_v(a, b)`
   (plain, null a level, "not compared" with one level, T29), `correlation_ratio(numeric,
   categorical)` (η on ranks over the numeric's filled rows, null a level);
   `association_table(frame, kinds, seed)` → long table `a, b, statistic, method (spearman |
@@ -435,7 +462,7 @@ The rules EDA owns (the null-value register in the record, N-numbers):
    information is `null_concordance` (N6).
 7. The level encoding is fitted without the null level; the null bin takes no place in the best
    order (N7).
-8. Null is a level for Cramér's V and η; Spearman is pairwise-complete with at least 1,000 shared
+8. Null is a level for Cramér's V and η; Spearman is pairwise-complete with at least 500 shared
    rows, else "not compared" (N8).
 9. Standardised mean differences use non-null values, the null share beside them (N9).
 10. Kinds detection counts distinct values without null and never reads the pandas dtype (N13).
@@ -535,5 +562,5 @@ Call flow: Level 2's numbered list. Reading order for review: `statistics/concor
 - **Unverified:** the bank-side timing of the two Spark passes (CPU in proportion to rows ×
   features); measure at the December pre-release.
 - Whether the per-feature pandas work (quartiles, strata pivots, reference groups) at 300 features
-  × a 5M-row snapshot needs a cap beyond the 200,000-row pairwise cap: measure in the bank.
+  × a 5M-row snapshot needs a cap beyond the 50,000-row pairwise cap: measure in the bank.
 - The theme file from `conf/local/` (M4).
