@@ -2,6 +2,59 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-11-06 — Reviews 3 and 4 of major step 2, the EDA gaps spec built; EDA to the LDS
+- Review 4 (R38–R41, Q531, verbatim in `answers.md`): a line chart's top is min(every point,
+  twice the highest supported point), so many grey points no longer flatten or escape the chart;
+  the slices' decision paragraph is its own view (`decision_note`), shown by the report and said in
+  notebook 02's markdown; the notebook's per-feature and per-stratum headings are Markdown, not
+  raw HTML; no copy of a notebook's old outputs is kept; `eda/report.py` stays one module
+  (Q531, maybe revisited after the LDS's feedback). The touched modules' tests 79 passed.
+- `review_guide.md` rewritten for the LDS (the notebooks first, six key points, about 1.5 h);
+  handover `worknotes/handovers/m2-2-major-step-3.md` written for Feature Checks in a new chat,
+  with every formatting rule of EDA's reviews.
+- The SDS's review-3 remarks (R29–R37, Q523–Q524, verbatim in `m2_2_understanding/answers.md`)
+  merged with `eda_gaps_spec.md`; built on Opus in waves on disjoint files (slices + profile ∥
+  sources ∥ chart changes → Target Factory → the EDA wiring → notebook 02), each step reviewed.
+- Findings that changed the design: the ML audit showed the decision view's categorical order
+  ("other window periods") not out of sample on a panel (a null code read lift 1.3–1.6 on small
+  populations): now cross-fitted by client fold, prior included; the occurrences per period
+  showed the validation period's outcomes: now cut at the window's last + w; the view reads in
+  sample and never as a baseline (the spec's "the number a model has to beat" dropped, §4.3).
+- R31 answered: the summary hid the labels outside the window by design (M2.1); now filled up to
+  the window's last, earlier periods included; after it they stay blank (a gap period's target
+  window reaches the validation period's outcomes).
+- Results: the touched modules green after each step; full suite 533 passed (9 slow deselected, 8:49);
+  notebooks 01 and 02 on the 100k data with no cell error (`run_eda` 200 s, report 5.8 MB).
+- Open for the SDS: V55–V73 (`plan.md` §9). Nothing committed.
+
+### 2026-11-06 — An independent look at EDA: what key element might be missing (brainstorm, nothing built)
+- Asked by the SDS as a brainstorm. Inputs: the spec, the code, notebook 02, a legacy comparison
+  and an outside survey (EBA GL/2017/16, the ECB internal-models guide, scorecard practice, the
+  profilers), both by subagents and checked on the main thread.
+- Ranked first: EDA never uses the declared decision (`decision.type`, `n`) beyond listing it in
+  the choices block; nothing says what one feature achieves at the operating point (capture,
+  lift, precision at the top n or at fixed shares) or what a model must beat. Computable from the
+  cells, snapshot period, in the ranking's order; a per-task spec entry for amounts.
+- Also absent and cheap: a value profile per candidate (min, p1, median, p99, max, the top mass
+  points, ±inf), the legacy `univariate_summary` dropped without a record; the population's time
+  dimension (stratum composition per compared period, the gap and latest periods' counts, which
+  `eda.json` stores and the report never shows, panel entries and exits, the unlabelled eligible
+  rows per period); each candidate's source in the ledger and the sources' matched share per
+  period (in the join log, never in the report).
+- A stale sentence: `reporting.md` chart rule 4 and `eda.md` "The statistics" describe a
+  twenty-group histogram from the cells; nothing draws one.
+- Adjacent, not EDA's: where in the forward window the events fall (Target Factory's summary);
+  null-indicator clusters (Feature Checks); an exposure stratum (guidance, needs campaign data).
+  Not raised: WoE/IV and a quick multivariate model, settled or against `CLAUDE.md` §4.4.
+- The SDS answered Q525–Q530 the same day: the decision view, on the evaluation slices (the top
+  decile the reading that matters); the value profile in Extended, lean; the time dimension
+  skipped; the source column and the sources table; the histogram sentences deleted; the target
+  view in Target Factory. On the way the proposed offset distribution turned out flat by
+  construction under a forward-window label (every conversion puts one positive row at every
+  offset), so the spec replaces it with the conversions per period of occurrence. Build spec
+  with the Q&A verbatim, V55–V65 and the steps A–F: `m2_2_understanding/eda_gaps_spec.md`, to
+  be merged with review 3 in the other chat; this chat closes.
+
 ### 2026-11-05 — Review 2 of major step 2: remarks, Q501–Q522, the build and the stage-3 review
 - Built from `review2_spec.md` the same day, on Opus throughout (main thread and every agent):
   A+B (data layer, range labels) ∥ C (primitives) → D (views, `eda/explore.py`) → E (notebooks

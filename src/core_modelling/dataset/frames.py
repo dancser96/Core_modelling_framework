@@ -12,9 +12,10 @@ The kinds come from the Spark schema (`detect_kinds`, with the `features.kinds` 
 the unsupported columns are dropped before anything is collected; the D-088 population counts
 join the meta, since only the frames hold the panel. For Training and Evaluation: train, test
 and validation (the eligible rows with a known target, train sampled when declared), which need
-a validation period. Before a frame leaves Spark, `collect_frame` prints its rows, columns, the
-estimated size and the collect budget, and above the budget the callout worded for the frame;
-it never stops.
+a validation period. Every stage's meta names each candidate's and lineage column's source
+(`sources`, from the join entries' `columns`). Before a frame leaves Spark, `collect_frame`
+prints its rows, columns and estimated size, and above the collect budget the callout worded
+for the frame; it never stops.
 """
 
 from dataclasses import dataclass
@@ -60,9 +61,9 @@ CALLOUTS = {
 class Frames:
     """What a stage works on: the pandas frames and the Spark `rows` (None when the stage didn't
     ask for them), the log (join, eligibility, contract, compared-periods, null-target, sampling
-    and collect entries, in order) and the meta (hashes, candidates, tags, lineage, kinds, the
-    unsupported columns, the snapshot period, the population counts, the sampling record, the
-    collect measurements)."""
+    and collect entries, in order) and the meta (hashes, candidates, tags, lineage, the columns'
+    sources, kinds, the unsupported columns, the snapshot period, the population counts, the
+    sampling record, the collect measurements)."""
 
     snapshot: pd.DataFrame | None
     rows: DataFrame | None
@@ -90,6 +91,7 @@ def build_frames(
         panel, log, meta = build_panel(cfg, entity, env, spark)
     else:
         panel, log, meta = read_model_input(cfg, entity, env, spark)
+    meta["column_sources"] = _column_sources(log, meta["candidates"], meta["lineage"])
     frames: dict = {}
     if kind == "snapshot":
         frames["snapshot"], frames["rows"] = _eda_frames(panel, cfg, env, log, meta)
@@ -105,6 +107,23 @@ def build_frames(
         log=log,
         meta=meta,
     )
+
+
+def _column_sources(log: list[dict], candidates: list[str], lineage: list[str]) -> dict[str, str]:
+    """Each candidate and lineage column → its source, from the join entries' `columns` under
+    their read names (the read side's `rename` entry). The feature sources' entries come first,
+    so a column is a target source's only when no feature source has it; the column-clash check
+    makes it unique among the feature sources. A candidate in no entry fails loud; a lineage
+    column in none (an upstream target's) has no source."""
+    renamed = {old: new for e in log if e["step"] == "rename" for old, new in e["renamed"].items()}
+    sources: dict[str, str] = {}
+    for entry in (e for e in log if e["step"] == "join"):
+        for column in entry["columns"]:
+            sources.setdefault(renamed.get(column, column), entry["source"])
+    missing = [name for name in candidates if name not in sources]
+    if missing:
+        raise ValueError(f"the candidates {missing} are in no source's join entry (`columns`)")
+    return {name: sources[name] for name in [*candidates, *lineage] if name in sources}
 
 
 def _eda_frames(
@@ -283,16 +302,16 @@ def estimate_collect(frame: DataFrame, name: str) -> dict:
 
 
 def collect_frame(frame: DataFrame, name: str, env: EnvironmentConfig) -> tuple[pd.DataFrame, dict]:
-    """The frame collected to pandas after the printout: rows, columns, the estimate and the
-    budget; above the budget the callout worded for the frame (`CALLOUTS`), and the collect
+    """The frame collected to pandas after the printout: rows, columns and the estimate; above
+    the budget the callout worded for the frame (`CALLOUTS`) with the budget, and the collect
     proceeds. Sorted by the keys with a fresh index; the measured size joins the entry."""
     estimate = estimate_collect(frame, name)
     budget = int(env.collect_budget_gb * GB)
     print(f"collect {name}: {estimate['rows']:,} rows × {estimate['columns']} columns, "
-          f"≈ {estimate['estimate_bytes'] / GB:.2f} GB at the conversion peak "
-          f"(budget {env.collect_budget_gb} GB)")  # fmt: skip
-    if estimate["estimate_bytes"] > budget:
-        print(f"  above the budget: {CALLOUTS[name]}; collecting anyway")
+          f"≈ {estimate['estimate_bytes'] / GB:.2f} GB at the conversion peak")  # fmt: skip
+    if estimate["estimate_bytes"] > budget:  # the budget is the environment's: named only here
+        print(f"  above the budget ({env.collect_budget_gb} GB): {CALLOUTS[name]}; "
+              "collecting anyway")  # fmt: skip
     # toPandas() after joins and shuffles has no set row order, and a positional seeded sample
     # (the association's cap) must pick the same rows on a rerun of the same data (T34, §4.10);
     # sorted in Spark, so pandas holds no second copy at the peak

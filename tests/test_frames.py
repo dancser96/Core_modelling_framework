@@ -123,6 +123,15 @@ def test_snapshot_keeps_every_client_of_the_snapshot_period_with_the_tags(
     assert eda_frames.meta["population"].set_index("period").loc["2025-08", "rows"] == len(snapshot)
 
 
+def test_every_candidate_and_the_lineage_column_name_their_source(eda_frames: Frames) -> None:
+    """Each candidate maps to the feature source it comes from; the lineage `cc_flag`, in the
+    mart and the target source alike, to the mart: the feature sources come first."""
+    sources, meta = eda_frames.meta["column_sources"], eda_frames.meta
+    assert list(sources) == [*meta["candidates"], "cc_flag"]
+    assert set(sources[name] for name in meta["candidates"]) == {"retail_mart", "retail_fs_extract"}
+    assert sources["cc_flag"] == "retail_mart"
+
+
 def test_collected_snapshot_is_sorted_by_the_keys_with_a_fresh_index(eda_frames: Frames) -> None:
     """`toPandas()` has no set order, so a positional seeded sample needs the keys' order (T34)."""
     snapshot = eda_frames.snapshot
@@ -263,7 +272,7 @@ def test_model_input_round_trip_gives_the_same_frames(
     assert {r.period for r in labelled.collect()} == set(periods[: -cc_config.time.target_window])
     assert cc_config.time.validation_period in {r.period for r in labelled.collect()}
     metadata = json.loads(Path(path, METADATA_FILE).read_text())
-    assert metadata["use_cases"] == ["cc_acquisition"] and metadata["schema_version"] == 3
+    assert metadata["use_cases"] == ["cc_acquisition"] and metadata["schema_version"] == 4
     target = metadata["targets"]["cc_acquisition"]
     assert target["target_spec_hash"] == training_frames.meta["target_spec_hash"]
     assert target["lineage"] == ["cc_flag"] and target["null_in_window_share"] == 0.0
@@ -274,6 +283,7 @@ def test_model_input_round_trip_gives_the_same_frames(
         built, read = getattr(training_frames, name), getattr(from_input, name)
         pd.testing.assert_frame_equal(_sorted(built), _sorted(read[built.columns]))
     assert from_input.meta["candidates"] == training_frames.meta["candidates"]
+    assert from_input.meta["column_sources"] == training_frames.meta["column_sources"]
     assert saved_candidates(cc_config, ENTITY, env) == training_frames.meta["candidates"]
 
 
@@ -357,8 +367,9 @@ def test_stale_or_missing_model_input_is_refused(
     with pytest.raises(ValueError, match="built with sources .*; rebuild it with save_model_input"):
         build_frames(variant(entities={ENTITY: {"sources": sources}}), ENTITY, env, spark, "eda")
     sidecar = Path(path, METADATA_FILE)
-    sidecar.write_text(json.dumps({**json.loads(sidecar.read_text()), "schema_version": 2}))
-    with pytest.raises(ValueError, match="has schema_version 2; this version reads 3; rebuild"):
+    sidecar.write_text(json.dumps({**json.loads(sidecar.read_text()), "schema_version": 3}))
+    stale = r"schema_version 3 \(written by framework .*\); this version reads 4: rebuild it with"
+    with pytest.raises(ValueError, match=stale):
         build_frames(cc_config, ENTITY, env, spark, "eda")
     none = {**env.sources[ENTITY], INPUT: Source(format="parquet", path=str(tmp_path / "none"))}
     empty = env.model_copy(update={"sources": {ENTITY: none}})
@@ -397,16 +408,16 @@ def test_collect_printout_becomes_a_callout_worded_for_the_frame_above_the_budge
     in_memory: UseCaseConfig,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The printout names rows, columns, the estimate and the budget; above the budget the
-    callout appears and the frame is still collected: the snapshot's names `eda.snapshot` and
-    the hash, never sampling; a training frame's names `training.sampling`."""
+    """The printout names rows, columns and the estimate, never the budget; above the budget
+    the callout appears with it and the frame is still collected: the snapshot's names
+    `eda.snapshot` and the hash, never sampling; a training frame's names `training.sampling`."""
     tiny = env.model_copy(update={"collect_budget_gb": 1e-6})
     frames = build_frames(in_memory, ENTITY, tiny, spark, "eda")
     out = capsys.readouterr().out
     snapshot = frames.snapshot
     assert f"collect snapshot: {len(snapshot):,} rows × {snapshot.shape[1]} columns" in out
-    assert "(budget 1e-06 GB)" in out and "collected snapshot:" in out
-    assert "above the budget: raise collect_budget_gb" in out
+    assert "conversion peak\n" in out and "collected snapshot:" in out
+    assert "above the budget (1e-06 GB): raise collect_budget_gb" in out
     assert "smaller eda.snapshot population through eligibility" in out
     assert "data-definition hash" in out and "training.sampling" not in out
     frame = spark.createDataFrame(
@@ -415,7 +426,7 @@ def test_collect_printout_becomes_a_callout_worded_for_the_frame_above_the_budge
     one_byte = env.model_copy(update={"collect_budget_gb": 1e-9})  # a one-row frame is above it
     _, entry = collect_frame(frame, "train", one_byte)
     out = capsys.readouterr().out
-    assert "above the budget: declare training.sampling (negative_downsampling" in out
+    assert "above the budget (1e-09 GB): declare training.sampling (negative_downsampling" in out
     assert "spark.driver.maxResultSize" in out and entry["frame"] == "train"
 
 

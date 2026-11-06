@@ -12,6 +12,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import replace
+from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -49,13 +50,15 @@ from core_modelling.tasks import TASK_SPECS
 
 ENTITY = "entity_a"
 SETTINGS = ["features.kinds", "strata", "eda", "time.validation_period"]
-TABLES = {"cells", "client_constant", "population", "funnel", "target_per_period", "ranking",
-          "correlation", "bins", "levels", "quartiles", "per_period", "strata",
-          "reference_groups"}  # fmt: skip
+TABLES = {"cells", "client_constant", "population", "funnel", "sources", "target_per_period",
+          "ranking", "correlation", "slices", "capture_curve", "profile", "bins", "levels",
+          "quartiles", "per_period", "strata", "reference_groups"}  # fmt: skip
+# The report's sections and subsections in order (a deep dive's and a tag's names between).
 HEADINGS = ["Summary", "Choices", "How to read", "Headline", "Warnings", "Core",
-            "Funnel per window period", "Target per period", "Target by stratum",
-            "Univariate ranking", "Excluded automatically", "Key features", "Extended",
-            "Reference groups", "Correlation overview", "Appendix", "Kinds", "Feature ledger",
+            "Funnel per window period", "Sources per period", "Target per period",
+            "Target by stratum", "Univariate ranking", "Excluded automatically",
+            "At the decision's slices", "Key features", "Extended", "Reference groups",
+            "Correlation overview", "Value profile", "Appendix", "Kinds", "Feature ledger",
             "Resolved config", "Decisions", "Collect log", "Timings"]  # fmt: skip
 REGRESSION_CANDIDATES = ["age", "income", "segment", "onboarding_channel", "employment_status",
                          "cc_active_flag", "cc_bal*", "cc_limit", "spend_cc_*"]  # fmt: skip
@@ -135,6 +138,8 @@ def test_eda_json_carries_the_population_counts_and_the_digest(result: StageResu
     check_upstream(meta, result.config, SETTINGS)
     assert set(meta["key_features"].values()) <= {"top_n", "listed"}
     assert len(meta["key_features"]) == result.config.eda.key_features.top_n
+    assert list(meta["slices"]) == list(dict.fromkeys(result.tables["slices"]["slice"].dropna()))
+    assert all(0 < share <= 1 for share in meta["slices"].values())
 
 
 def test_the_ledger_holds_every_eda_column(result: StageResult) -> None:
@@ -149,15 +154,13 @@ def test_the_ledger_holds_every_eda_column(result: StageResult) -> None:
 
 
 def test_the_report_has_plotly_once_and_every_section(result: StageResult) -> None:
-    """The report parses, embeds plotly.js once and carries every heading, how to read in the
-    summary and no strata pivots section; the views it shows are the result's (one subsection
-    per key feature)."""
+    """The report parses, embeds plotly.js once and carries every heading in order and no strata
+    pivots section; the views it shows are the result's (one subsection per key feature)."""
     text = Path(result.paths["report.html"]).read_text(encoding="utf-8")
     HTMLParser().feed(text)
     assert text.count(get_plotlyjs()[:300]) == 1
-    headings = re.findall(r'<h[2-6] id="[^"]+">([^<]+)</h', text)
-    assert set(HEADINGS) <= set(headings) and "Strata pivots" not in headings
-    assert headings.index("Summary") < headings.index("How to read") < headings.index("Core")
+    headings = [unescape(h) for h in re.findall(r'<h[2-6] id="[^"]+">([^<]+)</h', text)]
+    assert [h for h in headings if h in HEADINGS] == HEADINGS and "Strata pivots" not in headings
     assert set(result.views["deep_dives"]) == set(result.meta["key_features"]) <= set(headings)
     assert isinstance(result.views["timings"], Styler)
     print(f"{result.config.task} report: {Path(result.paths['report.html']).stat().st_size:,} B")
@@ -298,6 +301,35 @@ def test_the_views_follow_the_report_layout(result: StageResult) -> None:
     assert view["concordance_plain"].notna().tolist() == ranking["non_monotone"].tolist()
 
 
+def test_estimate_axes_take_the_task_format_and_lift_axes_stay_plain(result: StageResult) -> None:
+    """Every estimate axis reads as the task prints it (a rate in percent, an amount plotly's
+    way): the target per period and by stratum, `rate_by_period`; a lift axis stays plain."""
+    axis_format = TASK_SPECS[result.config.task]["axis_format"]
+    by_stratum = next(iter(result.views["target_by_stratum"].values()))[1]
+    feature = result.tables["bins"]["feature"].iloc[0]
+    estimate_axes = [result.views["target_per_period"][1].layout.yaxis, by_stratum.layout.yaxis,
+                     rate_by_period(result, feature).layout.yaxis]  # fmt: skip
+    assert [axis.tickformat for axis in estimate_axes] == [axis_format] * 3
+    assert lift_by_group(result, feature).layout.yaxis.tickformat is None
+
+
+def test_the_correlation_overview_shows_the_key_features_and_whom_they_represent(
+    card: StageResult,
+) -> None:
+    """The heatmap's names are the key features with a compared pair among them, in rank order;
+    the table beneath lists the candidates the key-feature rule skipped, each above
+    max_correlation with the key feature that represents it."""
+    heatmap, represented = card.views["correlation"]
+    keys, correlation = list(card.meta["key_features"]), card.tables["correlation"]
+    pairs = correlation.loc[correlation["a"].isin(keys) & correlation["b"].isin(keys)]
+    named = set(pairs.dropna(subset=["statistic"])[["a", "b"]].stack())
+    assert list(heatmap.data[0].x) == [name for name in keys if name in named]
+    table = represented.data
+    assert table["candidate"].tolist() == list(card.meta["represented_by"])
+    rule = card.config.eda.key_features.max_correlation
+    assert (table["association"].abs() > rule).all()
+
+
 def test_the_exploration_functions_cut_the_deep_dives_groups(card: StageResult) -> None:
     """On a binned key feature, `lift_by_group` draws the deep dive's groups and, by a stratum,
     one line per level; `rate_by_period` one line per deep-dive group over the window periods,
@@ -331,7 +363,7 @@ def test_a_numeric_is_cut_by_level_up_to_strata_max_levels(card: StageResult) ->
     """One rule (`dive_group_count`) decides a numeric's deep-dive groups: with `strata.max_levels`
     raised to a binned key feature's distinct values, `lift_by_group`, `rate_by_period` and the
     strata pivots cut it by level, one group per bucket as `level_table` gives it; a few-valued
-    numeric `by` is labelled as a stratum's levels are (`1`, not `= 1`)."""
+    numeric reads its values (`1`, not `= 1`), as a feature and as a `by`."""
     feature = card.tables["bins"]["feature"].iloc[0]
     levels = int(card.tables["ranking"].set_index("feature").loc[feature, "levels"])
     assert dive_group_count("numeric", levels, levels - 1) == DEEP_DIVE_GROUPS
@@ -349,6 +381,13 @@ def test_a_numeric_is_cut_by_level_up_to_strata_max_levels(card: StageResult) ->
     assert set(pivots["feature_group"]) <= set(table["group"])
     few = replace(card, frame=card.frame.assign(few=[i % 3 for i in range(len(card.frame))]))
     assert {trace.name for trace in lift_by_group(few, "segment", by="few").data} == {"0", "1", "2"}
+    assert list(lift_by_group(few, "few").data[0].x) == ["0", "1", "2"]  # by value, not "= 0"
+    levels = card.tables["levels"]
+    by_level = levels.loc[levels["feature"].map(card.meta["kinds"]) == "numeric"]
+    name = by_level["feature"].iloc[0]  # a by-level numeric key feature of the card
+    lines = [trace.name for trace in rate_by_period(card, name).data]
+    assert not any(line.startswith("= ") for line in lines)  # its value, or the range received
+    assert set(lines) & set(by_level.loc[by_level["feature"] == name, "group"])
 
 
 def test_the_exploration_functions_refuse_what_they_cannot_draw(card: StageResult) -> None:

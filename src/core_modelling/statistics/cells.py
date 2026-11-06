@@ -118,6 +118,16 @@ def shares(cells: pd.DataFrame) -> dict:
     }
 
 
+def support_by_bin(pooled: pd.DataFrame) -> pd.Series:
+    """Per `bin` of one feature's pooled cells, the labelled rows outside the zero target bins:
+    `shares`' events rule bin by bin, the null bin included; 0 for a bin without such rows."""
+    _check_one_distribution(pooled, "support_by_bin")
+    labelled = _labelled(pooled, "support_by_bin")
+    events = labelled.loc[~labelled["target_bin"].isin(zero_target_bins(pooled))]
+    support = events.groupby("bin")["n"].sum()
+    return support.reindex(pooled["bin"].unique(), fill_value=0).rename("support")
+
+
 def group_shares(cells: pd.DataFrame, groups: pd.DataFrame) -> np.ndarray:
     """The share of the cells' rows in each group `merge_bins` returned (by `bin_order_first`;
     a bin below the first or above the last group joins the outer group), the null bin last."""

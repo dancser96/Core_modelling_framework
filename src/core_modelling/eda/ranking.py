@@ -33,7 +33,7 @@ DIRECTIONS = {1: "+", -1: "-", 0: None}
 STATISTIC_COLUMNS = [
     "feature", "kind", "levels", "concordance", "concordance_se", "direction",
     "concordance_best_order", "non_monotone", "concordance_window", "direction_window",
-    "raw_sign_window",
+    "raw_sign", "raw_sign_window",
     "missing_share", "missing_share_window", "null_concordance", "null_concordance_window",
     "zero_share", "zero_share_window", "dominant_share", "dominant_share_window", "unavailable",
 ]  # fmt: skip
@@ -75,10 +75,11 @@ def feature_statistics(
     exact: bool,
 ) -> pd.DataFrame:
     """One row per feature of `kinds` (`STATISTIC_COLUMNS`): the ledger's EDA columns except
-    `rank`, `key_feature` and `represented_by`, plus `kind`, `direction_window`,
-    `raw_sign_window` (the sign a per-period concordance is read in: the window's D's, + on an
-    exact 0, so it equals `direction_window` where that exists; 0 without a window concordance)
-    and `unavailable` ('' or the "not available: …" reason).
+    `rank`, `key_feature` and `represented_by`, plus `kind`, `direction_window`, `raw_sign`
+    (the snapshot's D's sign, + on an exact 0, 0 without a snapshot concordance: the direction a
+    one-feature list takes, `slices.py`), `raw_sign_window` (the sign a per-period concordance
+    is read in: the window's D's, so it equals `direction_window` where that exists) and
+    `unavailable` ('' or the "not available: …" reason).
 
     `clients` is `counts.window_clients`' dict, `prior_rows` from `encoding_prior_rows`,
     `levels` from `count_levels`, `exact` true when `eda.bins` is null.
@@ -158,11 +159,17 @@ def _record(
         "concordance_se": snapshot["se"], "direction": DIRECTIONS[snapshot["sign"]],
         "concordance_best_order": best, "non_monotone": non_monotone,
         "concordance_window": window["concordance"], "direction_window": DIRECTIONS[window["sign"]],
-        "raw_sign_window": 0 if window["reason"] else (1 if window["signed"] >= 0.5 else -1),
+        "raw_sign": _raw_sign(snapshot), "raw_sign_window": _raw_sign(window),
         **{column: snapshot[column] for column in shares},
         **{f"{column}_window": window[column] for column in shares},
         "unavailable": f"not available: {'; '.join(reasons)}" if reasons else "",
     }  # fmt: skip
+
+
+def _raw_sign(scope: dict) -> int:
+    """A scope's raw sign of D: +1 at or above 0.5 (an exact 0 reads +), −1 below, 0 without a
+    concordance."""
+    return 0 if scope["reason"] else (1 if scope["signed"] >= 0.5 else -1)
 
 
 def _labelled_target_bins(pooled: pd.DataFrame, non_null: bool) -> int:

@@ -11,7 +11,7 @@ formats, lift colouring, greyed insufficient rows or cells, an in-cell bar, a ca
 
 import itertools
 import math
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from html import escape
 
 import pandas as pd
@@ -104,7 +104,7 @@ def _escaped_name(name: object) -> str | None:
 
 def style_table(
     df: pd.DataFrame,
-    formats: dict[str, str] | None = None,
+    formats: dict[str, str | Callable[[object], str]] | None = None,
     lift: pd.DataFrame | None = None,
     greyed: pd.Series | pd.DataFrame | None = None,
     bar: str | None = None,

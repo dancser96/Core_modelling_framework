@@ -30,6 +30,7 @@ from core_modelling.eda.deep_dives import (
     dive_group_count,
     merged_groups,
     numeric_groups,
+    value_labels,
 )
 from core_modelling.eda.population import (
     cap_levels,
@@ -267,10 +268,11 @@ def rate_by_period(result: StageResult, feature: str) -> go.Figure:
     table = table.assign(
         estimate=table["sum_y"] / table["n"], insufficient=table["events"] < MIN_BIN_SUPPORT
     )
-    noun = TASK_SPECS[result.config.task]["estimate_noun"]
+    spec = TASK_SPECS[result.config.task]
     return charts.grouped_lines(
         table, "period", "estimate", group="group", title=f"{feature}: target per window period",
-        x_title="Period", y_title=f"Target {noun}", legend_title=feature,
+        x_title="Period", y_title=f"Target {spec['estimate_noun']}", legend_title=feature,
+        y_format=spec["axis_format"],
     )  # fmt: skip
 
 
@@ -294,10 +296,12 @@ def _cell_groups(
             raise ValueError(
                 f"rate_by_period: {feature} has no value in the snapshot period to cut groups from"
             )
-        firsts = merged["bin_order_first"].to_numpy()
-        place = np.searchsorted(firsts, labelled["bin_order"].to_numpy(), side="right") - 1
-        names = np.array([*_received_labels(firsts, edges), NULL_BIN], dtype=object)  # -1: null
-        return names[np.where(null, -1, np.maximum(place, 0))], list(names)
+        orders = labelled["bin_order"].to_numpy()
+        place = np.searchsorted(merged["bin_order_first"].to_numpy(), orders, side="right") - 1
+        place = np.where(null, -1, np.maximum(place, 0))  # -1: null
+        received = _received_labels(merged, place, orders, edges)
+        names = np.array([*received, NULL_BIN], dtype=object)
+        return names[place], list(names)
     counts = snapshot.loc[~snapshot["is_null"]].groupby("bin")["n"].sum()
     counts = counts.drop([OTHER, NEW], errors="ignore").sort_index()
     max_levels = result.config.strata.max_levels
@@ -306,13 +310,19 @@ def _cell_groups(
     return np.where(null, NULL_BIN, labels), [*kept, OTHER, NULL_BIN]
 
 
-def _received_labels(firsts: np.ndarray, edges: np.ndarray | None) -> list[str]:
-    """The groups' labels by the buckets each receives from any period: the first from bucket 0,
-    the last up to the top bucket, every other up to the bucket before the next group's first
-    (`range_label`); a value no snapshot row took is then never counted under a narrower label."""
-    if firsts.size == 0:
-        return []
+def _received_labels(
+    merged: pd.DataFrame, place: np.ndarray, orders: np.ndarray, edges: np.ndarray | None
+) -> list[str]:
+    """Each group's label by the occupied buckets it receives across the window (`place`: each
+    cell's group, `orders`: its bucket), their range from the lowest to the highest
+    (`range_label`), so a value no snapshot row took is never counted under a narrower label; a
+    group receiving exactly its deep-dive buckets, or none (drawn by no line), reads as in its
+    deep dive (`value_labels`: `1` for a by-level numeric's value)."""
     edges = np.array([]) if edges is None else edges
-    lasts = np.append(firsts[1:] - 1, edges.size)
-    starts = np.append(0, firsts[1:])
-    return [range_label(edges, first, last) for first, last in zip(starts, lasts, strict=True)]
+    raw = merged["label"].tolist()
+    shown = dict(zip(raw, value_labels(raw), strict=True))
+    labels = []
+    for group, own in enumerate(raw):
+        buckets = orders[place == group]
+        labels.append(range_label(edges, buckets.min(), buckets.max()) if buckets.size else own)
+    return [shown.get(label, label) for label in labels]

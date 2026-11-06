@@ -53,7 +53,9 @@ Built in Stage 1 (2026-10-27), in `core_modelling/run.py`, `core_modelling/__mai
   all it lists); per entity and stage what the stage returned. An unknown stage or entity fails
   before anything runs. `STAGES` is the dict stage name → function `(cfg, entity, env, spark)`;
   From Stage 2 it holds `target_factory` (`run_target_factory`, then `save_model_input` when the
-  config names a model input, D-131), `eda` (`run_eda`) and `feature_checks`
+  config names a model input, D-131; it returns `{"summary": {use_case: TargetSummary},
+  "model_input": path}`, the path only when one is saved), `eda` (`run_eda`, the paths per use
+  case) and `feature_checks`
   (`run_feature_checks`), in that order; each stage function resolves the config itself
   (`resolve_config`) and saves the resolved config with its artifacts (Q422). The later stages
   join as they are built.

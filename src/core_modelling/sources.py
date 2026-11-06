@@ -14,7 +14,8 @@ column named like a key (`unit_id`, `period`) is read as `source_<name>` (`renam
 refused when a column of that name exists already; a column named like one the dataset adds
 keeps its name here and is renamed or, as a label, dropped on the read side
 (`dataset/panel.py`), so `data.target.column` names an upstream column as the source does.
-The log says how the source tagged its periods and what was renamed, for the join log
+The log says how the source tagged its periods, what was renamed and which non-key columns it
+brings (`columns`, under their read names), for the join log
 (docs/components/dataset.md, "Sources and joins"), and `check_periods_covered` is the one
 check that a source has every period a caller needs: the spine up to the validation period, the
 target source up to the validation period + w (the window's last period stands in for a null
@@ -79,7 +80,7 @@ def read_keyed_source(
     """The source `entry` (a name, or `{source, keys}`) of `entity` with its keys as `unit_id`
     (a string) and `period` (the period's last day), another column named like a key as
     `source_<name>`, and its log: the source, its distinct periods, how it tagged them, the raw
-    id's type and the renames."""
+    id's type, the renames and its non-key columns after them (`columns`)."""
     name = source_name(entry)
     raw = read_source(spark, env, entity, name)
     spec = period_spec(cfg)
@@ -109,6 +110,7 @@ def read_keyed_source(
         .withColumn("period", spec.spark_end(F.to_date("period")))
     )
     _check_unique_keys(keyed, name, log["period_tag"])
+    log["columns"] = [column for column in keyed.columns if column not in KEYS]
     return keyed, log
 
 

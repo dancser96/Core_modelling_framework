@@ -382,6 +382,12 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Compatibility table:** maps view × model family → method or "not available: reason", decided
   before anything runs.
 - **Stratified metrics:** every metric overall and per level of the configured variables.
+- **Slice:** a top share or a list size of a ranking at which metrics are read
+  (`evaluation.slices`: `top 1%`, `n = 10,000`; a `top_n` decision's `decision n = …` too). EDA
+  reads each key feature alone at the slices, as a view, never a baseline
+  (`docs/components/eda.md`).
+- **Capture:** the share of the positives, or of the total amount, that falls inside a slice; a
+  random list captures the slice's own share.
 - **Baselines:** population base rate (business reporting); previous model and historic predicted
   rate (internal metrics).
 - **Lift:** a group's rate (or mean) divided by the base, the snapshot's base rate or mean; 1 is

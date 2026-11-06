@@ -25,12 +25,14 @@ from core_modelling.ledger import (
 CANDIDATES = ["tenure", "bal", "prod", "flag_x", "fwd_txn", "open_date"]
 READ = ["tenure", "bal", "prod", "flag_x"]  # neither lineage nor unsupported
 KINDS = {"tenure": "numeric", "bal": "numeric", "prod": "categorical", "flag_x": "categorical"}
+# Every candidate's source but the lineage column's: an upstream target's, in no source.
+SOURCES = {name: "mart" for name in CANDIDATES if name != "fwd_txn"} | {"prod": "extract"}
 META = {"stage": "feature_checks", "data_definition_hash": "d" * 64, "settings_digest": "abc"}
 
 
 def _ledger() -> pd.DataFrame:
     """A ledger with one lineage and one unsupported column."""
-    return create_ledger(CANDIDATES, KINDS, lineage=["fwd_txn"], unsupported=["open_date"])
+    return create_ledger(CANDIDATES, KINDS, ["fwd_txn"], ["open_date"], SOURCES)
 
 
 def _with_stages() -> pd.DataFrame:
@@ -58,29 +60,33 @@ def _with_stages() -> pd.DataFrame:
 
 def test_create_ledger_gives_one_row_per_candidate() -> None:
     """Lineage and unsupported columns keep a row, flagged; an unsupported column's kind says so
-    and a lineage column without a kind has none."""
+    and a lineage column without a kind has none; each row names its source, the lineage column
+    in no source none."""
     ledger = _ledger()
     assert ledger["feature"].tolist() == CANDIDATES
     assert ledger["kind"].tolist() == [*KINDS.values(), None, "unsupported"]
     assert ledger["lineage"].tolist() == [False] * 4 + [True, False]
     assert ledger["unsupported"].tolist() == [False] * 5 + [True]
+    assert ledger["source"].tolist() == ["mart", "mart", "extract", "mart", None, "mart"]
 
 
 def test_create_ledger_refuses_what_it_cannot_record() -> None:
     """A repeated candidate, a lineage or unsupported column that is no candidate, a kind other
     than numeric or categorical, a read candidate without a kind and an unsupported one with a
-    kind are refused, naming only the features at fault."""
+    kind, and a candidate without a source are refused, naming only the features at fault."""
     with pytest.raises(ValueError, match="more than once"):
-        create_ledger(["bal", "bal"], {"bal": "numeric"}, [], [])
+        create_ledger(["bal", "bal"], {"bal": "numeric"}, [], [], SOURCES)
     with pytest.raises(ValueError, match=r"\['fwd_txn', 'open_date'\] are not among"):
-        create_ledger(["bal"], {"bal": "numeric"}, ["fwd_txn"], ["open_date"])
+        create_ledger(["bal"], {"bal": "numeric"}, ["fwd_txn"], ["open_date"], SOURCES)
     with pytest.raises(ValueError, match=r"refused \{'bal': 'numeric_typo'\}"):
-        create_ledger(["bal"], {"bal": "numeric_typo"}, [], [])
+        create_ledger(["bal"], {"bal": "numeric_typo"}, [], [], SOURCES)
     with pytest.raises(ValueError, match=r"no kind for the candidates \['prod'\]"):
-        create_ledger(["bal", "prod"], {"bal": "numeric"}, [], [])
+        create_ledger(["bal", "prod"], {"bal": "numeric"}, [], [], SOURCES)
     kinds = {"open_date": "numeric", "bal": "numeric"}
     with pytest.raises(ValueError, match=r"have a kind: \{'open_date': 'numeric'\}$"):
-        create_ledger(["open_date", "bal"], kinds, [], ["open_date"])
+        create_ledger(["open_date", "bal"], kinds, [], ["open_date"], SOURCES)
+    with pytest.raises(ValueError, match=r"no source for the candidates \['tenure'\]"):
+        create_ledger(["bal", "tenure"], KINDS, [], [], {"bal": "mart"})
 
 
 def test_add_columns_appends_only_the_stages_own_columns() -> None:
@@ -123,7 +129,7 @@ def test_the_ledger_reads_back_as_saved(tmp_path: Path) -> None:
     save_ledger(ledger, str(tmp_path), META)
     pd.testing.assert_frame_equal(read_ledger(str(tmp_path), "d" * 64), ledger)
     sidecar = json.loads((tmp_path / "_ledger.json").read_text())
-    assert sidecar["ledger_schema_version"] == 1
+    assert sidecar["ledger_schema_version"] == 2
     assert sidecar["stages"] == ["eda", "feature_checks"]
     assert {k: sidecar[k] for k in META} == META
     assert sorted(path.name for path in tmp_path.iterdir()) == ["_ledger.json", "ledger.parquet"]
@@ -168,17 +174,17 @@ def test_a_failed_save_keeps_the_previous_ledger(
 def test_read_ledger_refuses_a_missing_ledger_another_version_and_definition(
     tmp_path: Path,
 ) -> None:
-    """No ledger asks for EDA; a newer `ledger_schema_version` is refused, and so is a ledger
-    written for another data definition, naming both."""
+    """No ledger asks for EDA; another `ledger_schema_version` (an older one without `source`)
+    is refused, and so is a ledger written for another data definition, naming both."""
     with pytest.raises(FileNotFoundError, match="run EDA first"):
         read_ledger(str(tmp_path))
     save_ledger(_ledger(), str(tmp_path), META)
     with pytest.raises(ValueError, match="data definition dddddddddddd, the config's is eeee"):
         read_ledger(str(tmp_path), "e" * 64)
     sidecar = tmp_path / "_ledger.json"
-    newer = sidecar.read_text().replace('"ledger_schema_version": 1', '"ledger_schema_version": 2')
-    sidecar.write_text(newer)
-    with pytest.raises(ValueError, match="ledger_schema_version 2"):
+    older = sidecar.read_text().replace('"ledger_schema_version": 2', '"ledger_schema_version": 1')
+    sidecar.write_text(older)
+    with pytest.raises(ValueError, match="ledger_schema_version 1 .* reads 2: rerun EDA"):
         read_ledger(str(tmp_path))
 
 

@@ -23,14 +23,14 @@ from core_modelling.config.identities import short
 from core_modelling.config.replay import Entry, effective_entries
 from core_modelling.config.schema import UseCaseConfig
 
-LEDGER_SCHEMA_VERSION = 1
+LEDGER_SCHEMA_VERSION = 2  # 2: the identity column `source` (11-06)
 LEDGER_FILE = "ledger.parquet"
 SIDECAR_FILE = "_ledger.json"  # starts with `_`, never `_metadata` (T21)
 
 # The stored columns by who writes them (`feature_ledger.md`): `identity` at creation, then each
 # stage its own. `levels` comes with EDA's statistics, from the snapshot's cells.
 COLUMNS_BY_STAGE: dict[str, list[str]] = {
-    "identity": ["feature", "kind", "lineage", "unsupported"],
+    "identity": ["feature", "kind", "source", "lineage", "unsupported"],
     "eda": [
         "levels", "concordance", "concordance_se", "direction", "concordance_best_order",
         "non_monotone", "concordance_window", "missing_share", "missing_share_window",
@@ -50,7 +50,11 @@ KINDS = ("numeric", "categorical")
 
 
 def _check_identity(
-    candidates: list[str], kinds: dict[str, str], lineage: list[str], unsupported: list[str]
+    candidates: list[str],
+    kinds: dict[str, str],
+    lineage: list[str],
+    unsupported: list[str],
+    sources: dict[str, str],
 ) -> None:
     """Refuse identity inputs the ledger cannot record faithfully, naming the features."""
     repeated = sorted({f for f in candidates if candidates.count(f) > 1})
@@ -71,19 +75,29 @@ def _check_identity(
     clash = {f: kinds[f] for f in unsupported if f in kinds}
     if clash:
         raise ValueError(f"{sorted(clash)} are unsupported but have a kind: {clash}")
+    no_source = [f for f in candidates if f not in sources and f not in lineage]
+    if no_source:
+        raise ValueError(f"no source for the candidates {no_source}")
 
 
 def create_ledger(
-    candidates: list[str], kinds: dict[str, str], lineage: list[str], unsupported: list[str]
+    candidates: list[str],
+    kinds: dict[str, str],
+    lineage: list[str],
+    unsupported: list[str],
+    sources: dict[str, str],
 ) -> pd.DataFrame:
     """A new ledger, one row per candidate with its identity columns. An unsupported column's kind
     is `unsupported`; a lineage column EDA did not read may have none; every other candidate
-    needs `numeric` or `categorical`, since Training's encoder reads it."""
-    _check_identity(candidates, kinds, lineage, unsupported)
+    needs `numeric` or `categorical`, since Training's encoder reads it. `sources` maps a column
+    to the source it comes from (the frames' `meta["column_sources"]`): every candidate has one, a
+    lineage column in no source (an upstream target's) none."""
+    _check_identity(candidates, kinds, lineage, unsupported, sources)
     return pd.DataFrame(
         {
             "feature": candidates,
             "kind": ["unsupported" if f in unsupported else kinds.get(f) for f in candidates],
+            "source": [sources.get(f) for f in candidates],
             "lineage": [f in lineage for f in candidates],
             "unsupported": [f in unsupported for f in candidates],
         }

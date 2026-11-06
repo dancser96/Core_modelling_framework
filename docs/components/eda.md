@@ -1,7 +1,8 @@
 # EDA
-**Status:** built 2026-11-04, review 2 applied 2026-11-05 (Stage 2 major step 2:
-`src/core_modelling/eda/`, `src/core_modelling/reporting/`, `notebooks/02_eda.ipynb`), the SDS's
-review 3 pending; Feature Checks is next (major step 3) · **Legacy:** `src/feature_stats.py`, `src/plots.py`,
+**Status:** built 2026-11-04, reviews 2 and 3 applied 2026-11-05/06 (Stage 2 major step 2:
+`src/core_modelling/eda/`, `src/core_modelling/reporting/`, `notebooks/02_eda.ipynb`), with the
+decision slices, the value profile and the sources added 2026-11-06; Feature Checks is next
+(major step 3) · **Legacy:** `src/feature_stats.py`, `src/plots.py`,
 `notebooks/EDA.ipynb`
 **Related:** [dataset](dataset.md) (the frames) · [feature checks](feature_checks.md) (reads
 EDA's artifacts; owns the flag and hold-out rule) · [feature ledger](feature_ledger.md) (the
@@ -22,7 +23,7 @@ needs rows; every statistic comes from one **counts table** (the cells: rows and
 feature, period, bin and target bin) that Spark aggregates over the **compared periods**, so the
 window is never collected (D-135).
 - **In:** the data definition (sources, eligibility, target, period, window); `eda.*`,
-  `strata.*`, `features.kinds`.
+  `strata.*`, `features.kinds`; `evaluation.slices` and `decision` for the decision slices.
 - **Out:** `eda/` (`eda.json`, the counts table and the other tables, `resolved_config.yml`,
   `report.html`), the ledger's EDA columns, a `StageResult` for the notebook.
 - **Who uses it:** the DS (report, notebook 02, the four exploration functions); Feature Checks
@@ -65,16 +66,17 @@ window is never collected (D-135).
 7. Compute every statistic per feature from the cells: snapshot and window twins.
 8. Compute the association matrix on the snapshot (one seeded sample of 50,000 rows).
 9. Rank; choose the key features with the correlation skip.
-10. Deep dives for the key features, each with its strata pivots; the population views
-    (funnel, target per period, by stratum, reference groups).
+10. The population views (funnel, sources per period, target per period, by stratum, reference
+    groups); the key features at the decision's slices and the value profile; deep dives for the
+    key features, each with its strata pivots.
 11. Render the report, then write: Feature Checks' folder removed, the ledger saved with EDA's
     columns, `eda/` written through a temporary folder with `report.html` in it. A render error
     thus leaves the previous `eda/` and ledger untouched.
 
 ### Function structure in brief
-`core_modelling/eda/` only orchestrates: `population.py` (headline, funnel, target views,
-reference groups), `ranking.py` (ranking, key features), `deep_dives.py` (deep dives, strata
-pivots), `report.py` (the views, the four parts, the warnings), `run.py` (`run_eda`), `explore.py`
+`core_modelling/eda/` only orchestrates: `population.py` (headline, funnel, sources, target
+views, reference groups), `ranking.py` (ranking, key features), `slices.py` (the decision
+slices), `profile.py` (the value profile), `deep_dives.py` (deep dives, strata pivots), `report.py` (the views, the four parts, the warnings), `run.py` (`run_eda`), `explore.py`
 (the four exploration functions a reader calls on the result). It imports the statistics from
 `statistics/`, the Spark passes from `dataset/counts.py`, the frames from `dataset/frames.py`, the
 report pieces from `reporting/`, the folder handling from `artifacts.py` and the ledger from
@@ -364,14 +366,14 @@ definitions; Feature Checks uses the ones marked FC.
   √((sd_a² + sd_b²) / 2); for a categorical the largest level-share difference
   (`level_share_difference(a_cells, b_cells)`, null a level). `group_shares(cells, groups)` reads
   one period's shares over the groups `merge_bins` cut on another (by `bin_order` range, the null
-  bin last), so the two PSI vectors align bin for bin. A chart that shows a distribution from the
-  cells merges them to twenty groups by the same rule. `shares(cells)` gives `rows`,
+  bin last), so the two PSI vectors align bin for bin. `shares(cells)` gives `rows`,
   `missing_share`, `zero_share`, `dominant_share`, `dominant_value`, `bins` (the non-null bins
   holding rows; the ledger's `levels` come from the snapshot) and the concordance's support,
   `events` and `non_events` (labelled non-null rows; a zero target bin is the one whose target
-  sums to 0). The `= 0` bin is found by the label `bin_labels` gives the 0 singleton, in both its
-  number formats (`= 0`, and `= 0.0` when the labels take the exact text). `pool_periods` keeps
-  an unlabelled cell's `sum_y` null.
+  sums to 0); `support_by_bin(pooled)` gives the same events rule bin by bin (the decision
+  slices' support). The `= 0` bin is found by the label `bin_labels` gives the 0 singleton, in
+  both its number formats (`= 0`, and `= 0.0` when the labels take the exact text).
+  `pool_periods` keeps an unlabelled cell's `sum_y` null.
 - **Intervals:** `wilson_interval(k, n)` (closed form, 95%, vectorised); `t_interval(mean, sd,
   n)`.
 - **Association** (on the snapshot's eligible rows, a seeded cap of 50,000 rows,
@@ -418,16 +420,21 @@ definitions; Feature Checks uses the ones marked FC.
   (one support name per task, used by both);
   `base_rate_views(target)` (the headline: binary rows, positives, rate and Wilson interval;
   regression rows, mean, median, p10, p90, zero share, units with a non-zero target);
-  `shrinkage_rows(min_events, base)` (the level encoding's `k_rows`). EDA's tables add six
+  `shrinkage_rows(min_events, base)` (the level encoding's `k_rows`). EDA's tables add nine
   entries: `cells_concordance(cells, exact, sign)` (a feature's concordance from its pooled
   cells: the two-way table for binary; for regression `concordance_exact` when `eda.bins` is
   null); `period_estimate(known, positive_rows, sum_y, sum_y2)` (the estimate per window period
   from the counts: binary the rate with its Wilson interval, regression the mean with its
   t-interval from the sum of squares and the non-zero share with its Wilson interval);
   `target_class(target)` (`'0'` / `'1'`, or `'zero'` / `'non-zero'`, which the box plots group
-  by); `estimate_format` (how an estimate is printed); `estimate_noun` (`rate` / `mean`, which
-  names the y axes and the how-to-read notes); `target_distribution` (whether the target is shown
-  per group: regression yes).
+  by); `estimate_format` (how an estimate is printed); `axis_format` (the d3 format of an
+  estimate's axis and hover: binary percent, regression plotly's default; lift and concordance
+  axes stay plain); `estimate_noun` (`rate` / `mean`, which names the y axes and the how-to-read
+  notes); `target_distribution` (whether the target is shown per group: regression yes);
+  `capture_noun` (`positives` / `amount`: what a slice captures, the share of `sum_y`, a 0/1
+  target summing to its positives); `perfect_list(n, support)` (the decision paragraph's
+  sentence on a perfect list of `n` rows; regression none: an amount's perfect list depends on
+  the amounts' spread, which the counts lack).
 
 ### The views
 Report order (A25 in the record; structure owned by [reporting](reporting.md)): summary → core →
@@ -446,6 +453,12 @@ embedded once.
 **Core**
 - **Funnel per window period** (from `Frames.log`): spine rows → after each analysis filter →
   tagged per modelling filter → eligible; one column per step, plus `all`.
+- **Sources per period** (`population.sources_per_period(log, periods)`, from the join entries,
+  `tables/sources`): one row per compared period (window, gap, latest) plus `all` over them; the
+  spine's `rows`, then per joined feature source the share of those rows it matched. A share
+  well below 1 means that source's columns are null for the rest; a drop in the latest periods,
+  a source that arrives late. "Not available: the spine is the only source" when nothing is
+  joined.
 - **Target per period** (whole window): rows, positive rows, positive events, the estimate with
   its 95% interval (binary: the rate, Wilson; regression: the mean with a t-interval from the
   cells' `sum_y` and `sum_y2`, and the non-zero share with its Wilson interval), plus the pooled
@@ -465,9 +478,10 @@ embedded once.
   `levels`, `key_feature` (`top_n | listed | ''`), `represented_by`, `unavailable` (why a
   statistic is missing); a bar on `concordance` starting at 0.5. `tables/ranking` keeps every
   column (the ledger its EDA columns), among them `concordance_se`, `concordance_best_order`,
-  `non_monotone`, `ranking_value`, `direction_window`, `raw_sign_window` (the sign of the
-  window's D without the 2-SE threshold, 0 without a window concordance: the sign the
-  per-period values are read in) and the other `*_window` twins.
+  `non_monotone`, `ranking_value`, `direction_window`, `raw_sign` and `raw_sign_window` (the
+  sign of the snapshot's and the window's D without the 2-SE threshold, + on an exact 0, 0
+  without a concordance: the direction a one-feature list takes, and the sign the per-period
+  values are read in) and the other `*_window` twins.
   Ordered by the ranking value, so a noise feature never gains from the best order's small
   in-sample optimism; M2.3's floor uses the same rule; ties by name. Below it, **Excluded
   automatically**: the lineage and unsupported columns.
@@ -475,6 +489,36 @@ embedded once.
   key feature exceeds `eda.key_features.max_correlation` (0.9) and list it with `represented_by`;
   stop at `top_n`. The `include` features are chosen first, never skipped, and come on top of N. A
   pair "not compared" never skips.
+- **At the decision's slices** (`eda/slices.py`; `tables/slices`, `tables/capture_curve`): what
+  one key feature alone reaches as a list on the snapshot's labelled rows (one per client) at
+  each slice. In sample (the key features and a numeric's direction are read on these rows; the
+  interval treats the order as fixed) and descriptive: never a baseline or a metric (§4.3), a
+  model is judged against `decision.baselines`, and Evaluation never reads these tables.
+  - **The slices** (`slice_shares`, also `eda.json` `slices`, label → share): `decision n = …`
+    first for a `top_n` decision (a count equal to it is not repeated), then
+    `evaluation.slices.top_pct` (`top 1%`) and `top_n` (`n = 10,000`), as shares of the
+    snapshot's labelled rows; a count above those rows is skipped and named in the caption.
+  - **The list order**, the rule a person could apply, the null bin last in every list: a
+    numeric by value in its snapshot raw sign (`tables/ranking` `raw_sign`; a non-monotone
+    feature's list takes one end only); a categorical per client fold by the shrunk level
+    encoding fitted on the other folds' window cells (its prior mean too; a level unseen there
+    at their base), each fold cut at the share on its own and the counts summed: cross-fitted
+    as the ranking's categorical concordance, so a one-period window works. A key feature
+    without a snapshot concordance (`raw_sign` 0) has one row with the ranking's reason.
+  - **Per slice** (`capture_table`): `rows`, `support`, the task's estimate with its interval
+    (`period_estimate`), `lift` over the snapshot's base, and `capture`, the slice's share of
+    `sum_y` (the positives, or the amount), all cut linearly inside the boundary bin;
+    `insufficient` below `MIN_BIN_SUPPORT`. No capture or lift without a positive base; no
+    capture (lift stays) when a target bin sums below 0, an amount that can be negative.
+  - **The views:** the decision paragraph (a `top_n` decision's share of the labelled rows, the
+    task's perfect list and a random one; other decision types "no fixed list size; the
+    evaluation slices stand in"; what the view is and is not; the leak cue: a key feature whose
+    slices capture far more than the others' is a leak candidate for Feature Checks, while a
+    null that stands for the outcome shows in the null concordance, since the null bin is
+    last); the table (key features in rank order × slices: `capture`, `estimate` coloured by lift, `lift`,
+    `support`, greyed below support); the capture curve (`SLICE_GRID`, 1% … 100%, one line per
+    key feature and the `random` diagonal dashed and muted). "Not available" without a key
+    feature; the curve not available when capture is not.
 - **Deep dive** per key feature in rank order (snapshot cells and rows):
   1. **The group table**, only for a by-level feature (a categorical, or a numeric with at most
      `strata.max_levels` distinct values) or an amount target: `group`, `rows`, `support`,
@@ -484,7 +528,9 @@ embedded once.
   2. **The group chart** beside **the first strata chart**, one figure of two panels
      (`side_by_side`). The group chart: lift by group with intervals in lift units, support as
      bar text, `null` last (a numeric's bins merged into about ten groups by `merge_bins`, a mass
-     point such as 0 its own bar); the estimate's bars only when no lift exists (a non-positive
+     point such as 0 its own bar; a numeric shown by level reads its values, `0`, `1`, `2`,
+     everywhere, `deep_dives.value_labels`, while ranges and a mass point among them keep
+     `[a, b)` and `= v`); the estimate's bars only when no lift exists (a non-positive
      base, decided up front). A strata chart: the same groups, one line per level of a stratum
      variable in its level order (`null` in the null colour), insufficient points greyed.
      Every further strata chart stands alone (one figure holds one legend). A stratum that is the feature itself gets no strata chart and no pivot
@@ -511,13 +557,21 @@ embedded once.
   absolute value, |SMD| ≥ 0.25 marked "differs" (a description, not a test). A categorical's
   "SMD" is its largest level-share difference, null counted as a level. The stored table is long
   (sections `size`, `composition`, `feature`; the shape is in `eda/population.py`'s docstring).
-- **Correlation overview:** the association heatmap of the key features and the candidates they
-  represent, whatever the candidate count, the method per pair on hover; a name without any
-  compared pair among them is left out and counted in the subtitle. Every candidate pair is in
-  `tables/correlation`; the redundancy reading (clusters with concordance and
-  `explained_by_others`) is Feature Checks'.
+- **Correlation overview:** the association heatmap of the key features only (no pair among them
+  above `max_correlation`, by the selection rule), the method per pair on hover; a key feature
+  without any compared pair among them is left out and counted in the subtitle. Beneath it, a
+  short table of the candidates each key feature represents (`represented_by`, with their
+  association and method). Every candidate pair is in `tables/correlation`; the redundancy
+  reading (clusters with concordance and `explained_by_others`) is Feature Checks'.
+- **Value profile** (`eda/profile.py::value_profile`, one stored table `tables/profile`; last):
+  every supported candidate in rank order on the snapshot's eligible rows, shown as two tables.
+  Numerics: `min`, `p1`, `median`, `p99`, `max` over the finite non-null values (one vectorised
+  `quantile` call), the ±infinity share and `missing_share`; a sentinel (−1, 999, 9 999 999)
+  shows as a mass point at `min` or `max`. Categoricals: the three largest levels with their
+  shares (from the snapshot's cells, blank levels quoted). A kind without a candidate reads "Not
+  available". It describes values, not a feature's path, so it is not in the ledger.
 
-**Appendix:** the kinds table with the overrides; the ledger; the resolved config with the origin
+**Appendix:** the kinds table with the overrides and each column's source; the ledger; the resolved config with the origin
 of every entry-written field; the decisions (`show_decisions`); the collect log; timings (a
 table: phase, seconds).
 
@@ -558,9 +612,11 @@ on the snapshot's eligible rows with a known target and draw with the report's c
   `strata.max_levels` largest levels (one line each), the rest `__other__`.
 
 **Notebook 02** displays `result.views` and never assembles a report: the summary, the
-population and the target, the ranking, the deep dives, one call of each exploration function,
-the report's path and what to decide. The reference groups, the correlation overview and the
-appendix are in the report only, which opens in a browser, not inline ([reporting](reporting.md)
+population, the sources and the target, the ranking and the decision slices, the deep dives, one
+call of each exploration function, the report's path and what to decide. The how-to-read notes
+are in step 3's text and the slices' decision paragraph in step 5's (the report keeps both as
+views); it shows no machine-specific numbers. The reference
+groups, the correlation overview, the value profile and the appendix are in the report only, which opens in a browser, not inline ([reporting](reporting.md)
 open questions).
 
 ### Nulls
@@ -590,10 +646,10 @@ The rules EDA owns (the null-value register in the record, N-numbers):
     (N19).
 
 ### The choices block and the warnings
-**Choices** (one `CHOICES` table of 22 rows, three columns: Choice, Value, Alternatives; when
+**Choices** (one `CHOICES` table of 23 rows, three columns: Choice, Value, Alternatives; when
 to move to an alternative is the config template's and these docs' to explain; D-032): automation
 level; task, decision and metric (`decision.metric`, or "derived from decision.type" until
-Training derives it, M2.3); the period, the observation window, `w`, the validation
+Training derives it, M2.3); the decision slices (their labels); the period, the observation window, `w`, the validation
 period (shown, never used); the eligibility steps with kind and reason; the candidate count and
 patterns; the kinds summary and overrides; the snapshot period; `eda.bins`; the key-feature rule
 (`top_n`, `max_correlation`, `include`); the strata variables; the pairwise cap; `replayed_to`
@@ -613,8 +669,8 @@ and the hashes.
 - `eda/run.py`: `run_eda(cfg, entity, env, spark) -> StageResult`: resolve, frames, the one
   strata and `include` check on the snapshot (`_check_frame_names`), counts, statistics, views,
   report, ledger, artifacts.
-- `eda/population.py`: the headline, funnel, target per period, target by stratum and reference
-  groups, from `Frames.log`, the population counts and the snapshot.
+- `eda/population.py`: the headline, funnel, `sources_per_period`, target per period, target by
+  stratum and reference groups, from `Frames.log`, the population counts and the snapshot.
 - `eda/ranking.py`: `count_levels`, `encoding_prior_rows` (the level encoding's prior weight in
   rows), `feature_statistics`, `scope_statistics`,
   `rank_features` (the ranking table from the cells) and `select_key_features(ranking,
@@ -622,10 +678,13 @@ and the hashes.
 - `eda/deep_dives.py`: `MIN_BIN_SUPPORT = 20`; one deep dive per key feature (bin and level
   tables, quartiles, `target_quartiles_by_group`, the per-period concordance); `strata_pivots`
   (every key feature × each stratum variable but itself); `dive_group_count` (by level or about
-  ten groups), `numeric_groups`, `merged_groups`, `box_table`.
+  ten groups), `numeric_groups`, `merged_groups`, `value_labels`, `box_table`.
+- `eda/slices.py`: `slice_shares`, `skipped_slices`, `ordered_numeric_bins`,
+  `ordered_categorical_bins`, `capture_table`, `capture_curve`, `slice_tables` (the decision
+  slices over the key features).
+- `eda/profile.py`: `value_profile` (the value profile).
 - `eda/report.py`: `build_views`, `report_sections` (the four parts), `eda_warnings`; the chart
-  and table builders the exploration functions share (`group_chart`, `strata_chart`, `boxes`,
-  `pivot_table`).
+  builders the exploration functions share (`group_chart`, `strata_chart`, `boxes`).
 - `eda/explore.py`: `pivot_target`, `lift_by_group`, `compare_sides`, `rate_by_period`.
 - Imported: `dataset/frames.py` (`build_frames`), `dataset/counts.py` (edges and levels, the two
   passes, the population counts), `statistics/` (`cells.py`, `concordance.py`,
@@ -633,8 +692,8 @@ and the hashes.
   `charts.py`, `blocks.py`, `theme.py`), `artifacts.py`, `ledger.py`.
 
 Call flow: Level 2's numbered list. Reading order for review: `statistics/concordance.py` →
-`statistics/cells.py` → `dataset/counts.py` → `eda/ranking.py` → `eda/run.py` → `eda/report.py` →
-`eda/deep_dives.py` → `eda/population.py` → `eda/explore.py`.
+`statistics/cells.py` → `dataset/counts.py` → `eda/ranking.py` → `eda/slices.py` → `eda/run.py` →
+`eda/report.py` → `eda/deep_dives.py` → `eda/population.py` → `eda/explore.py`.
 
 ### Interface
 - **Public** (`core_modelling.eda`; the exploration functions are described under "The views",
@@ -647,10 +706,8 @@ Call flow: Level 2's numbered list. Reading order for review: `statistics/concor
 - **CLI:** `python -m core_modelling run <config> [<config> …] --stages eda` (`feature_checks`
   joins with major step 3).
 - **`StageResult(tables, ledger, log, meta, paths, views, frame, config)`:** `views` the Stylers
-  and figures the report embeds (the keys are listed in `eda/report.py`'s module docstring:
-  `choices`, `how_to_read`, `headline`, `warnings`, `funnel`, `target_per_period`,
-  `target_by_stratum`, `ranking`, `excluded`, `deep_dives`, `reference_groups`, `correlation`,
-  `kinds`, `ledger`, `decisions`, `collect`, `timings`, `resolved_config`);
+  and figures the report embeds (the keys and what each holds: `eda/report.py`'s module
+  docstring);
   `frame` the collected snapshot; `config` the resolved config.
 - **Config** (fields owned by [config](config.md); every field loggable at stage `eda`, outside
   the data-definition hash):
@@ -664,7 +721,9 @@ Call flow: Level 2's numbered list. Reading order for review: `statistics/concor
 | `eda.key_features.max_correlation` | `0.9` | the skip threshold on \|association\| |
 | `features.kinds` | `{}` | `{column: numeric \| categorical}` overrides |
 
-  EDA also reads `strata.variables`, `strata.max_levels` and `strata.min_events`.
+  EDA also reads `strata.variables`, `strata.max_levels` and `strata.min_events`, and for the
+  decision slices `evaluation.slices` and `decision` (`type`, `n`); these are not in EDA's
+  settings digest, since Feature Checks reads neither slices table.
 - **Artifacts** under `<use_case>/04_feature/<ddh>/eda/` (`environment.feature_dir(env, cfg,
   entity, "eda")`, D-136), written by `artifacts.write_stage` to a temporary folder renamed on
   success (leftover `.tmp-*` / `.old-*` siblings from a crash make it fail loud). The report is
@@ -682,12 +741,13 @@ Call flow: Level 2's numbered list. Reading order for review: `statistics/concor
     Feature Checks), `snapshot_period`, `compared_periods` (`window`, `gap`, `latest`),
     `population` (the counts per period), `window_levels`, `over_ceiling`, `clients`,
     `key_features` (`{feature: top_n | listed}`), `represented_by`, `candidates`, `kinds`,
-    `kind_overrides`, `unsupported`, `lineage`, `collect`, `snapshot_base`, `warnings`,
-    `headline`, `timings`; `log.json` beside it holds the run's log entries;
-  - `tables/*.parquet`: `cells` (`CELL_COLUMNS`, `sum_y2` among them), `client_constant`, `population`, `funnel`, `target_per_period`,
-    `ranking`, `correlation`, `bins`, `levels`, `quartiles`, `per_period`, `strata`,
+    `kind_overrides`, `unsupported`, `lineage`, `collect`, `snapshot_base`, `slices` (label →
+    share of the snapshot's labelled rows), `warnings`, `headline`, `timings`; `log.json` beside it holds the run's log entries;
+  - `tables/*.parquet`: `cells` (`CELL_COLUMNS`, `sum_y2` among them), `client_constant`,
+    `population`, `funnel`, `sources`, `target_per_period`, `ranking`, `correlation`, `slices`,
+    `capture_curve`, `profile`, `bins`, `levels`, `quartiles`, `per_period`, `strata`,
     `reference_groups`, and `target_quartiles` when the task has a target distribution
-    (regression); the deep-dive tables keep their columns when empty (the clusters are Feature
+    (regression); the deep-dive and slices tables keep their columns when empty (the clusters are Feature
     Checks', cut at its `redundancy.correlation_max`);
   - `resolved_config.yml`, `report.html`;
   - beside it, `ledger.parquet` + `_ledger.json`, created by EDA ([feature

@@ -4,9 +4,10 @@
 `build_views` turns the stored tables and the meta into the Stylers, figures and HTML blocks the
 report embeds and notebook 02 displays; `report_sections` arranges them as summary → core →
 extended → appendix; `eda_warnings` applies eda.md's six warning rules. `group_chart`,
-`strata_chart`, `boxes` and `pivot_table` are public because `explore.py` draws the same views.
-What cannot be drawn is decided before drawing (no lift over a base that is not positive, no log
-axis over a non-positive whisker, T30); an empty section reads "Not available: <reason>" (D-035).
+`strata_chart` and `boxes` are public because `explore.py` draws the same views.
+Every estimate axis takes the task's `axis_format`; lift and concordance axes stay plain. What
+cannot be drawn is decided before drawing (no lift over a base that is not positive, no log axis
+over a non-positive whisker, T30); an empty section reads "Not available: <reason>" (D-035).
 
 `StageResult.views`, by key; a dict maps each subsection's name to its list of blocks:
 - `choices` (Styler): what was chosen, its value and the alternatives (D-032).
@@ -14,19 +15,30 @@ axis over a non-positive whisker, T30); an empty section reads "Not available: <
 - `headline` (HTML): the snapshot's and the window's headline numbers.
 - `warnings` (HTML): the numbered warnings.
 - `funnel` (Styler): the rows per window period through each eligibility step.
+- `sources` (Styler, or "Not available" when the spine is the only source): the share of the
+  spine's rows each joined feature source matched, per compared period and over them all.
 - `target_per_period` (list): the table (with the pooled `all` row) and the chart per period,
   each with its 95% interval.
 - `target_by_stratum` (dict variable → [Styler, Figure]): the target by each stratum's levels.
 - `ranking` (Styler): every supported candidate by rank, a bar on the concordance it is ordered
   by (`RANKING_VIEW`).
 - `excluded` (Styler): the lineage and unsupported columns, excluded automatically.
+- `decision_note` (HTML): the decision against the snapshot, what the slices are and are not,
+  the leak cue; the report opens the slices with it, notebook 02 says it in its text.
+- `slices` (list): the key features at the decision's slices (Styler) and their capture curve
+  (Figure), "Not available" when nothing can be shown.
 - `deep_dives` (dict feature → list): per key feature in rank order, `_deep_dive`'s views.
 - `reference_groups` (dict tag → list of Stylers): the rows kept and excluded per window period
   (from the funnel), the snapshot's size, composition per stratum, key features.
-- `correlation` (list): the association heatmap of the key features and those they represent.
+- `correlation` (list): the association heatmap of the key features, then the candidates they
+  represent (Styler, or a line saying none).
+- `profile` (list of two Stylers, each "Not available" without a candidate of its kind): the
+  numerics' value ranges, then the categoricals' largest levels, in rank order.
 - `kinds`, `ledger`, `decisions`, `collect`, `timings` (Stylers), `resolved_config` (HTML): the
   appendix.
 """
+
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -38,27 +50,40 @@ from core_modelling.config.identities import short
 from core_modelling.config.schema import UseCaseConfig
 from core_modelling.dataset.frames import GB, SNAPSHOT_CALLOUT
 from core_modelling.eda.deep_dives import MIN_BIN_SUPPORT
+from core_modelling.eda.profile import QUANTILES, TOP_LEVELS
+from core_modelling.eda.slices import RANDOM, skipped_slices
 from core_modelling.reporting import blocks, charts
 from core_modelling.reporting.html import paragraph, preformatted, style_table
+from core_modelling.reporting.theme import THEME
 from core_modelling.statistics.association import PAIRWISE_ROWS
 from core_modelling.tasks import TASK_SPECS
 
-COUNT, SHARE, VALUE = "{:,.0f}", "{:.1%}", "{:,.4g}"
+
+def _value(x: float) -> str:
+    """A value as an amount reads, never in scientific notation: `69,310` from |x| ≥ 999.5, four
+    significant digits below (`0.3315`, `0.00001234`)."""
+    if abs(x) >= 999.5:  # .4g would round 999.95 to "1000" without the separator
+        return f"{x:,.0f}"
+    plain = np.format_float_positional
+    return plain(x + 0.0, precision=4, unique=False, fractional=False, trim="-")
+
+
+COUNT, SHARE = "{:,.0f}", "{:.1%}"
 CONCORDANCES = ["concordance", "concordance_plain", "concordance_se", "concordance_best_order",
                 "concordance_window", "null_concordance", "null_concordance_window",
                 "se"]  # fmt: skip
 SHARES = ["missing_share", "missing_share_window", "zero_share", "zero_share_window",
           "dominant_share", "dominant_share_window", "nonzero_share", "nonzero_low",
-          "nonzero_high", "eligible_share"]  # fmt: skip
+          "nonzero_high", "eligible_share", "capture", "inf_share"]  # fmt: skip
 ESTIMATES = ["estimate", "low", "high", "median", "nonzero_mean", "nonzero_median", "q1", "q3",
              "lower_whisker", "upper_whisker"]  # fmt: skip
-PREFIXES = {"rows_": COUNT, "share_": SHARE, "median_": VALUE, "p10_": VALUE, "p90_": VALUE}
+PREFIXES = {"rows_": COUNT, "share_": SHARE, "median_": _value, "p10_": _value, "p90_": _value}
 RANKING_VIEW = ["rank", "feature", "kind", "concordance", "concordance_plain", "direction",
                 "concordance_window", "missing_share", "null_concordance", "zero_share",
                 "dominant_share", "levels", "key_feature", "represented_by",
                 "unavailable"]  # fmt: skip
-CHOICE_NAMES = ["automation_level", "task", "decision", "metric", "period", "observation_window",
-                "target_window", "validation_period", "eligibility_analysis",
+CHOICE_NAMES = ["automation_level", "task", "decision", "metric", "slices", "period",
+                "observation_window", "target_window", "validation_period", "eligibility_analysis",
                 "eligibility_modelling", "candidate_count", "candidate_patterns", "kinds_summary",
                 "kind_overrides", "snapshot", "bins", "key_features", "strata", "pairwise_cap",
                 "replayed_to", "config_hash", "data_definition_hash"]  # fmt: skip
@@ -68,7 +93,7 @@ ALL_CLIENTS = (
 )
 
 
-def _formats(df: pd.DataFrame, task: str) -> dict[str, str]:
+def _formats(df: pd.DataFrame, task: str) -> dict[str, str | Callable[[float], str]]:
     """Each known column's format: counts with separators, the estimate as the task prints it,
     shares as percentages, concordances to three decimals, lift and differences to two."""
     estimate = TASK_SPECS[task]["estimate_format"]
@@ -108,7 +133,9 @@ def build_views(
     return {
         **_summary_views(meta, resolved),
         **_target_views(tables, resolved),
+        "sources": _sources_view(tables["sources"]),
         **_ranking_views(ranking, meta, resolved.task),
+        **_slices_views(tables, meta, resolved),
         "deep_dives": {
             name: _deep_dive(row, tables, meta["snapshot_base"], resolved)
             for name, row in keys.iterrows()
@@ -116,7 +143,10 @@ def build_views(
         "reference_groups": _reference_views(
             tables["reference_groups"], tables["funnel"], resolved.task
         ),
-        "correlation": _correlation_view(tables["correlation"], ranking),
+        "correlation": _correlation_view(
+            tables["correlation"], ranking, resolved.eda.key_features.max_correlation
+        ),
+        "profile": _profile_views(tables["profile"]),
         **_appendix_views(meta, resolved, ledger, decisions),
     }
 
@@ -131,6 +161,7 @@ def _summary_views(meta: dict, resolved: UseCaseConfig) -> dict:
         "lineage columns excluded",
         "kinds_summary": f"{kinds.count('numeric')} numeric, {kinds.count('categorical')} "
         f"categorical, {unsupported} unsupported",
+        "slices": list(meta["slices"]),
         "snapshot": f"{resolved.eda.snapshot}: {meta['snapshot_period']}",
         "pairwise_cap": f"{PAIRWISE_ROWS:,}",
         "replayed_to": meta["replayed_to"],
@@ -160,6 +191,7 @@ def _target_views(tables: dict[str, pd.DataFrame], resolved: UseCaseConfig) -> d
         per_period.loc[per_period["period"] != "all"], "period", "estimate", low="low",
         high="high", support="support", title="Target per period", x_title="Period",
         y_title=f"Target {spec['estimate_noun']}", support_title=spec["support_name"],
+        y_format=spec["axis_format"],
     )  # fmt: skip
     caption = (
         f"The target per window period and pooled, with its 95% interval (the pooled row's on "
@@ -191,7 +223,7 @@ def _stratum_views(part: pd.DataFrame, variable: str, task: str, min_events: int
     )
     chart = charts.bar_with_intervals(
         part, "level", title=f"Target by {variable}", x_title=variable,
-        y_title=f"Target {spec['estimate_noun']}", by_level=True,
+        y_title=f"Target {spec['estimate_noun']}", by_level=True, y_format=spec["axis_format"],
     )  # fmt: skip
     return [_group_table(part, task, caption, interval=True), chart]
 
@@ -257,7 +289,7 @@ def _deep_dive(
         views.append(boxes(target, "group", f"Target by {name}", name, "Target"))
     min_events = resolved.strata.min_events
     return views + [
-        pivot_table(part, name, v, task, min_events, orders[v]) for v, part in parts.items()
+        _stratum_pivot(part, name, v, task, min_events, orders[v]) for v, part in parts.items()
     ]
 
 
@@ -289,13 +321,15 @@ def _concordance_row(name: str, tables: dict[str, pd.DataFrame], task: str) -> l
 def group_chart(groups: pd.DataFrame, name: str, base: float, task: str) -> go.Figure:
     """Lift by group of a group table with its interval in lift units, or the estimate when no
     lift exists over `base` (decided before drawing, D-035)."""
-    noun = TASK_SPECS[task]["estimate_noun"]
-    if TASK_SPECS[task]["lift_available"](base):
+    spec = TASK_SPECS[task]
+    if spec["lift_available"](base):
         data = groups.assign(lift_low=groups["low"] / base, lift_high=groups["high"] / base)
         return charts.lift_chart(data, "group", title=f"Lift by {name}", x_title=name)
+    noun = spec["estimate_noun"]
     title = f"Target {noun} by {name}<br><sup>no lift: the base is not positive</sup>"
     return charts.bar_with_intervals(groups, "group", title=title, x_title=name,
-                                     y_title=f"Target {noun}")  # fmt: skip
+                                     y_title=f"Target {noun}",
+                                     y_format=spec["axis_format"])  # fmt: skip
 
 
 def strata_chart(
@@ -309,12 +343,14 @@ def strata_chart(
     """One line per level of `variable` over a feature's groups (`part`: strata rows), in
     `level_order` (its colours; default the table's order): the lift, or the estimate when no
     lift exists over `base` (D-035); insufficient points greyed."""
-    lift, noun = TASK_SPECS[task]["lift_available"](base), TASK_SPECS[task]["estimate_noun"]
+    spec = TASK_SPECS[task]
+    lift = spec["lift_available"](base)
     return charts.grouped_lines(
         part, "feature_group", "lift" if lift else "estimate", group="level",
         reference=1.0 if lift else None, title=f"{name} by {variable}", x_title=name,
-        y_title=charts.LIFT_TITLE if lift else f"Target {noun}", legend_title=variable,
-        group_order=level_order,
+        y_title=charts.LIFT_TITLE if lift else f"Target {spec['estimate_noun']}",
+        legend_title=variable, group_order=level_order,
+        y_format=None if lift else spec["axis_format"],
     )  # fmt: skip
 
 
@@ -340,7 +376,7 @@ def boxes(
     )  # fmt: skip
 
 
-def pivot_table(
+def _stratum_pivot(
     part: pd.DataFrame,
     name: str,
     variable: str,
@@ -355,7 +391,7 @@ def pivot_table(
     present = set(part["level"])
     if not present <= set(level_order):
         raise ValueError(
-            f"pivot_table: {name} × {variable} has levels {sorted(present - set(level_order))} "
+            f"_stratum_pivot: {name} × {variable} has levels {sorted(present - set(level_order))} "
             "that level_order lacks"
         )
     columns = [level for level in level_order if level in present]
@@ -419,17 +455,20 @@ def _section_rows(part: pd.DataFrame, section: str) -> pd.DataFrame:
     return rows.loc[:, filled.to_numpy()].reset_index(drop=True)
 
 
-def _correlation_view(correlation: pd.DataFrame, ranking: pd.DataFrame) -> list:
-    """The association heatmap of the key features and the candidates they represent, the method
-    on hover; a name without a compared pair among them is left out and counted."""
+def _correlation_view(
+    correlation: pd.DataFrame, ranking: pd.DataFrame, max_correlation: float
+) -> list:
+    """The association heatmap of the key features, the method on hover (one without a compared
+    pair among them left out and counted; "Not available" when fewer than two have one, D-035),
+    then the candidates they represent (`_represented_view`)."""
     keys = ranking.loc[ranking["key_feature"] != "", "feature"].tolist()
-    names = keys + ranking.loc[ranking["represented_by"] != "", "feature"].tolist()
-    inside = correlation["a"].isin(names) & correlation["b"].isin(names)
+    inside = correlation["a"].isin(keys) & correlation["b"].isin(keys)
     pairs = correlation.loc[inside & correlation["statistic"].notna()]
-    compared = [name for name in names if name in set(pairs["a"]) | set(pairs["b"])]
+    compared = [name for name in keys if name in set(pairs["a"]) | set(pairs["b"])]
+    represented = _represented_view(correlation, ranking, max_correlation)
     if len(compared) < 2:
-        return [paragraph("Not available: fewer than two of the key features and the candidates "
-                          "they represent have a compared pair.")]  # fmt: skip
+        why = "Not available: fewer than two key features have a compared pair."
+        return [paragraph(why), represented]
     both = pd.concat([pairs, pairs.rename(columns={"a": "b", "b": "a"})], ignore_index=True)
     matrix, hover = (
         both.pivot(index="a", columns="b", values=column)
@@ -440,11 +479,160 @@ def _correlation_view(correlation: pd.DataFrame, ranking: pd.DataFrame) -> list:
     matrix = matrix.mask(diagonal, 1.0)
     hover = hover.mask(matrix.isna(), "not compared").mask(diagonal, "itself")
     note = (
-        f"on a seeded cap of {PAIRWISE_ROWS:,} snapshot rows; the key features and the candidates "
-        f"they represent: {len(compared)} shown, {len(names) - len(compared)} without a compared "
-        "pair left out; blank: not compared"
+        f"on a seeded cap of {PAIRWISE_ROWS:,} snapshot rows: {len(compared)} shown, "
+        f"{len(keys) - len(compared)} without a compared pair left out; blank: not compared"
     )
-    return [charts.heatmap(matrix, hover, title=f"Association<br><sup>{note}</sup>")]
+    title = f"Association of the key features<br><sup>{note}</sup>"
+    return [charts.heatmap(matrix, hover, title=title), represented]
+
+
+def _represented_view(
+    correlation: pd.DataFrame, ranking: pd.DataFrame, max_correlation: float
+) -> Styler | str:
+    """The candidates the key-feature rule skipped, in rank order, each with the key feature that
+    represents it and their association; a line saying none when it skipped nothing."""
+    skipped = ranking.loc[ranking["represented_by"] != "", ["feature", "represented_by"]]
+    rule = f"eda.key_features.max_correlation = {max_correlation:g}"
+    if skipped.empty:
+        return paragraph(f"The key features represent no candidate: none is associated with one "
+                         f"above {rule}.")  # fmt: skip
+    both = pd.concat([correlation, correlation.rename(columns={"a": "b", "b": "a"})])
+    table = skipped.merge(both, how="left", left_on=["feature", "represented_by"],
+                          right_on=["a", "b"], validate="one_to_one")  # fmt: skip
+    table = table.rename(columns={"feature": "candidate", "statistic": "association"})
+    caption = (
+        f"The candidates the key features represent: each skipped for an association above "
+        f"{rule} with the key feature named, on the same capped rows"
+    )
+    shown = table[["candidate", "represented_by", "association", "method"]]
+    return style_table(shown, {"association": "{:.3f}"}, caption=caption)
+
+
+def _slices_views(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseConfig) -> dict:
+    """The decision paragraph (`decision_note`), and the key features at the slices with their
+    capture curve (`slices`), "Not available" without a key feature (D-035)."""
+    snapshot = tables["population"].set_index("period").loc[meta["snapshot_period"]]
+    rows, support = int(snapshot["known_target"]), int(snapshot["positive_events"])
+    note = _decision_paragraph(resolved, rows, support, meta["snapshot_base"])
+    slices = tables["slices"]
+    if slices.empty:
+        return {"decision_note": note, "slices": [paragraph("Not available: no key feature.")]}
+    curve = _capture_chart(tables["capture_curve"], slices, resolved.task)
+    return {"decision_note": note, "slices": [_slices_table(slices, resolved, rows), curve]}
+
+
+def _decision_paragraph(resolved: UseCaseConfig, rows: int, support: int, base: float) -> str:
+    """The decision against the snapshot's `rows` labelled rows (a `top_n` list's share, the
+    task's perfect list and a random one), what the slices are and are not, and the leak cue."""
+    spec, decision = TASK_SPECS[resolved.task], resolved.decision
+    noun, base_text = spec["estimate_noun"], spec["estimate_format"].format(base)
+    if decision.type != "top_n":
+        opening = f"Decision {decision.type}: no fixed list size; the evaluation slices stand in."
+    elif decision.n > rows:
+        opening = (f"Decision top_n: n = {decision.n:,} is above the snapshot's {rows:,} "
+                   "labelled rows, so no slice stands for it.")  # fmt: skip
+    else:
+        share, perfect = decision.n / rows, spec["perfect_list"](decision.n, support)
+        opening = (
+            f"Decision top_n: n = {decision.n:,}, {share:.1%} of the snapshot's {rows:,} labelled "
+            f"rows: {f'{perfect}; ' if perfect else ''}a random list captures {share:.1%} of "
+            f"the {spec['capture_noun']} at the base {noun} {base_text}."
+        )
+    context = (
+        "Below, what one key feature alone reaches on the snapshot, in sample (the key features "
+        "and a numeric's direction are read on these rows; the interval treats the order as "
+        "fixed): context for the decision, not a baseline; a model is judged against "
+        "decision.baselines."
+    )
+    leak = (
+        "A key feature whose slices capture far more than the others' is a leak candidate for "
+        "Feature Checks' screens; a null that stands for the outcome shows in the ranking's null "
+        "concordance instead, since the null bin is last in every list."
+    )
+    return paragraph(f"{opening} {context} {leak}")
+
+
+def _slices_table(slices: pd.DataFrame, resolved: UseCaseConfig, rows: int) -> Styler:
+    """The key features in rank order × the slices: capture, estimate (coloured by lift), lift
+    and support, greyed below `MIN_BIN_SUPPORT`, `unavailable` shown when a row has a reason."""
+    spec, task = TASK_SPECS[resolved.task], resolved.task
+    shown = ["feature", "slice", "capture", "estimate", "lift", "support"]
+    shown += ["unavailable"] if (slices["unavailable"] != "").any() else []
+    table = slices[shown]
+    lift = slices[["lift"]].rename(columns={"lift": "estimate"})
+    source = "evaluation.slices" + (" and decision.n" if resolved.decision.type == "top_n" else "")
+    skipped = skipped_slices(resolved, rows)
+    caption = (
+        f"Each key feature alone as a list at the slices of {source}, shares of the snapshot's "
+        f"{rows:,} labelled rows: a numeric by value in its snapshot direction (one end only), a "
+        f"categorical by its levels' {spec['estimate_noun']} cross-fitted by client fold, the "
+        f"null bin last; capture is the slice's share of the {spec['capture_noun']}; coloured by "
+        f"lift, greyed below MIN_BIN_SUPPORT = {MIN_BIN_SUPPORT} {spec['support_name']}"
+        + (f"; skipped, above the labelled rows: {', '.join(skipped)}" if skipped else "")
+    )
+    return style_table(table, _formats(table, task), lift, slices["insufficient"],
+                       caption=caption)  # fmt: skip
+
+
+def _capture_chart(curve: pd.DataFrame, slices: pd.DataFrame, task: str) -> go.Figure | str:
+    """The capture by share of rows, one line per key feature in rank order and the `RANDOM`
+    diagonal dashed and muted (a reference, not a feature); "Not available" with the slices'
+    reasons when no key feature has a curve (D-035)."""
+    if curve.empty:
+        reasons = slices.loc[slices["unavailable"] != "", "unavailable"]
+        why = "; ".join(dict.fromkeys(reasons.str.removeprefix("not available: ")))
+        return paragraph(f"Not available: the capture curve ({why}).")
+    fig = charts.grouped_lines(
+        curve, "share", "capture", group="feature", insufficient=None, x_numeric=True,
+        title="Capture by share of rows<br><sup>each key feature alone, best first; random: a "
+        "random list</sup>", x_title="Share of rows (best first)",
+        y_title=f"Share of {TASK_SPECS[task]['capture_noun']} captured",
+        legend_title="Key feature", y_format=".0%",
+    )  # fmt: skip
+    fig.update_layout(yaxis_range=[0, 1.02])  # capture stops at 100%: no from-zero headroom
+    return fig.update_traces(line={"dash": "dash", "color": THEME["muted"]},
+                             selector={"name": RANDOM})  # fmt: skip
+
+
+def _profile_views(profile: pd.DataFrame) -> list:
+    """The value profile as two tables, numerics then categoricals, in rank order on the
+    snapshot's eligible rows; "Not available" for a kind without a candidate (D-035)."""
+    rows = f"{int(profile['rows'].iloc[0]):,} eligible snapshot rows" if len(profile) else ""
+    numeric = {
+        "columns": ["feature", "rank", "missing_share", *QUANTILES, "inf_share"],
+        "caption": f"Numerics on the {rows}: the range over the finite non-null values and the "
+        "share of ±infinity; a sentinel (−1, 999, 9 999 999) shows as a mass point at min or max",
+    }
+    categorical = {
+        "columns": ["feature", "rank", "missing_share", "top_levels"],
+        "caption": f"Categoricals on the {rows}: the {TOP_LEVELS} largest levels with their "
+        "shares of the rows",
+    }
+    formats = {"rank": COUNT, "missing_share": SHARE, "inf_share": SHARE,
+               **dict.fromkeys(QUANTILES, _value)}  # fmt: skip
+    views = []
+    for kind, view in {"numeric": numeric, "categorical": categorical}.items():
+        part = profile.loc[profile["kind"] == kind, view["columns"]].reset_index(drop=True)
+        if part.empty:
+            views.append(paragraph(f"Not available: no {kind} candidate."))
+        else:
+            views.append(style_table(part, formats, caption=view["caption"]))
+    return views
+
+
+def _sources_view(sources: pd.DataFrame) -> Styler | str:
+    """The sources' matched shares per compared period; "Not available" when the table holds no
+    joined source (decided from its columns, D-035)."""
+    if sources.columns.tolist() == ["period", "rows"]:
+        return paragraph("Not available: the spine is the only source.")
+    caption = (
+        "The spine's rows per compared period (window, gap, latest) and over them all, and the "
+        "share of them each joined feature source matched: a share well below 1 means that "
+        "source's columns are null for the rest; a drop in the latest periods, a source that "
+        "arrives late"
+    )
+    formats = {"rows": COUNT, **dict.fromkeys(sources.columns[2:], SHARE)}
+    return style_table(sources, formats, caption=caption)
 
 
 def _appendix_views(
@@ -453,7 +641,7 @@ def _appendix_views(
     """The kinds with the overrides, the ledger, the resolved config, the decisions, the collect
     log and the timings (the association's seconds within the statistics')."""
     overrides = resolved.features.kinds
-    kinds = ledger[["feature", "kind", "lineage", "unsupported"]].assign(
+    kinds = ledger[["feature", "kind", "source", "lineage", "unsupported"]].assign(
         override=ledger["feature"].map(lambda name: overrides.get(name, ""))
     )
     collect = pd.DataFrame(meta["collect"]).drop(columns="step")
@@ -462,10 +650,11 @@ def _appendix_views(
     times = meta["timings"]
     seconds = {**times["seconds"], "association (within statistics)": times["association_seconds"]}
     timings = pd.DataFrame({"phase": list(seconds), "seconds": list(seconds.values())})
+    kinds_caption = "Kinds from the schema (override: features.kinds) and each column's source"
     timed = (f"Seconds per phase; {times['cells_estimate']:,} cells estimated, "
              f"{times['numeric_null_masks']:,} distinct numeric null masks")  # fmt: skip
     return {
-        "kinds": style_table(kinds, caption="Kinds from the schema; override: features.kinds"),
+        "kinds": style_table(kinds, caption=kinds_caption),
         "ledger": style_table(ledger, _formats(ledger, resolved.task), caption="The ledger"),
         "resolved_config": preformatted(config),
         "decisions": style_table(decisions, caption="The audit log's entries, replayed in order"),
@@ -520,15 +709,18 @@ def report_sections(views: dict) -> list[tuple[str, list]]:
                      ("Headline", [views["headline"]]), ("Warnings", [views["warnings"]])]),
         ("Core", [
             ("Funnel per window period", [views["funnel"]]),
+            ("Sources per period", [views["sources"]]),
             ("Target per period", views["target_per_period"]),
             ("Target by stratum", _nested(views["target_by_stratum"], "no strata.variables")),
             ("Univariate ranking",
              [views["ranking"], ("Excluded automatically", [views["excluded"]])]),
+            ("At the decision's slices", [views["decision_note"], *views["slices"]]),
             ("Key features", _nested(views["deep_dives"], "no key feature")),
         ]),
         ("Extended", [
             ("Reference groups", _nested(views["reference_groups"], "no modelling filter")),
             ("Correlation overview", views["correlation"]),
+            ("Value profile", views["profile"]),
         ]),
         ("Appendix", [
             ("Kinds", [views["kinds"]]), ("Feature ledger", [views["ledger"]]),

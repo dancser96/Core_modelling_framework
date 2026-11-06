@@ -11,8 +11,10 @@ direction. Every group table carries the per-task summary columns (`population.s
 and greys a group below `MIN_BIN_SUPPORT` events (strata cells below `strata.min_events`), never
 hides it. `dive_group_count` is the one rule for how a feature's deep dive groups it (by level,
 or about ten merged groups). `strata_pivots` crosses every key feature's groups with each other
-stratum variable's levels. `dive_group_count`, `numeric_groups`, `merged_groups` and `box_table`
-are public because the exploration functions (`explore.py`) cut and draw the same groups.
+stratum variable's levels. A numeric whose every group is one value (by level) reads its values,
+`0`, `1`, not `= 0` (`value_labels`); merged ranges and a mass point among them keep `[a, b)` and
+`= v`. `dive_group_count`, `numeric_groups`, `merged_groups`, `value_labels` and `box_table` are
+public because the exploration functions (`explore.py`) cut and draw the same groups.
 """
 
 import numpy as np
@@ -61,19 +63,29 @@ def _merged(per_bin: pd.DataFrame, groups: int | None, edges: np.ndarray | None)
     return merge_bins(per_bin[["bin_order", "n"]], groups, edges)
 
 
+def value_labels(labels: list[str]) -> list[str]:
+    """A numeric's group labels by value (`0`, `1`) when every group is one value (`= v`), else
+    as given: a mass point among ranges keeps `= v`."""
+    if labels and all(label.startswith("= ") for label in labels):
+        return [label.removeprefix("= ") for label in labels]
+    return labels
+
+
 def _assign_groups(
     values: pd.Series, edges: np.ndarray | None, merged: pd.DataFrame, with_null: bool
 ) -> pd.Series:
-    """Each value's group label (an ordered categorical in bin order, `null` last when
-    `with_null`) by its bucket's place among the groups' first buckets."""
+    """Each value's group label (`value_labels` of the groups'; an ordered categorical in bin
+    order, `null` last when `with_null`) by its bucket's place among the groups' first
+    buckets."""
     orders = bin_orders(values, edges)
     place = np.searchsorted(merged["bin_order_first"].to_numpy(), orders, side="right") - 1
     filled = orders >= 0
     if (filled & (place < 0)).any() or (not with_null and not filled.all()):
         raise ValueError(f"{values.name}: a row falls outside the groups cut from its own bins")
-    names = np.append(merged["label"].to_numpy(dtype=object), NULL_BIN)  # -1 picks null
+    groups = value_labels(merged["label"].tolist())
+    names = np.array([*groups, NULL_BIN], dtype=object)  # -1 picks null
     labels = names[np.where(filled, place, -1)]
-    order = [*merged["label"], *([NULL_BIN] if with_null else [])]
+    order = [*groups, *([NULL_BIN] if with_null else [])]
     return pd.Series(pd.Categorical(labels, categories=order, ordered=True), index=values.index)
 
 

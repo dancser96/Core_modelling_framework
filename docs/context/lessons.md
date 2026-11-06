@@ -66,6 +66,11 @@ harness, an environment adapter and explicit invariants. Legacy file references 
 - **Contract checks before downsampling.** A base-rate floor produced false alarms on legitimately
   rare products. The real "degenerate target" guard is `nunique > 1`; the band only catches
   implausible *high* rates.
+- **The event offset under a forward-window label is flat by construction.** Under
+  `flag_goes_up` a unit converting in period m is positive at m−1 … m−w, one row at every offset
+  1 … w (an amount under `forward_sum` alike), so the offset's distribution is flat except at
+  the source's edges and gaps. When the events happen is the view that carries information:
+  Target Factory reports the occurrences per period (`docs/components/target_factory.md`).
 - **PR-AUC is not comparable across products.** Its floor is the base rate. Compare products on
   ROC-AUC and top-k lift.
 - **Pooled AUC is inflated.** 0.85–0.95 on a heterogeneous base is not within-segment skill. Report

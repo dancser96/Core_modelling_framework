@@ -39,12 +39,13 @@ from core_modelling.sources import feature_source_names, feature_sources_dump
 from core_modelling.target_factory import last_labelled_period
 
 # Bumped when the sidecar's keys, the log entries' keys or a column's meaning change: an older
-# table is refused by name, not by chance. 3: the table is the sources joined plus one
-# `target_<use_case>` column per use case; eligibility, candidates, contract and split are
-# derived on read, `period` is the unit, the sidecar holds the join definition and `targets`
-# (10-28). 2: eligibility entries carry `kind`, labels in every month with a complete window,
-# the draw in [0, 1) (10-28).
-MODEL_INPUT_SCHEMA_VERSION = 3
+# table is refused by name, not by chance. 4: each join entry lists its source's non-key
+# columns, `columns` (11-06). 3: the table is the sources joined plus one `target_<use_case>`
+# column per use case; eligibility, candidates, contract and split are derived on read,
+# `period` is the unit, the sidecar holds the join definition and `targets` (10-28).
+# 2: eligibility entries carry `kind`, labels in every month with a complete window, the draw
+# in [0, 1) (10-28).
+MODEL_INPUT_SCHEMA_VERSION = 4
 METADATA_FILE = "_model_input.json"  # never `_metadata…`: Spark reads that as a parquet summary
 JOIN_FIELDS = ("sources", "keys", "period")  # the sidecar's definition a reader must share
 
@@ -125,9 +126,13 @@ def read_model_input_metadata(cfg: UseCaseConfig, entity: str, env: EnvironmentC
         )
     metadata = json.loads(file.read_text())
     if metadata.get("schema_version") != MODEL_INPUT_SCHEMA_VERSION:
+        # A model input is shared by several use cases: name the writer, so an older pin does
+        # not rebuild over a newer table (D-125).
         raise ValueError(
-            f"model input at {path} has schema_version {metadata.get('schema_version')}; this "
-            f"version reads {MODEL_INPUT_SCHEMA_VERSION}; rebuild it with save_model_input"
+            f"model input at {path} has schema_version {metadata.get('schema_version')} "
+            f"(written by framework {metadata.get('framework_version')}); this version reads "
+            f"{MODEL_INPUT_SCHEMA_VERSION}: rebuild it with save_model_input, or raise the use "
+            "case's framework pin when it is newer"
         )
     if metadata["hash_version"] != HASH_VERSION:
         raise ValueError(

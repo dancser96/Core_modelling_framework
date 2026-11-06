@@ -41,6 +41,7 @@ from core_modelling.statistics.cells import (
     null_table,
     pool_periods,
     shares,
+    support_by_bin,
     target_shares,
     two_way_table,
 )
@@ -570,6 +571,20 @@ def test_pool_periods_and_shares() -> None:
         two_way_table(pd.concat([pooled, pooled]))
     with pytest.raises(ValueError, match="not in `order`"):
         two_way_table(pooled, order=["= 0"])
+
+
+def test_support_by_bin_counts_each_bins_labelled_rows_outside_the_zero_target_bin() -> None:
+    """Per bin, the labelled rows with a non-zero target: the null bin's too, a bin without one
+    (zero or unlabelled) 0; over the non-null bins they sum to `shares`' events."""
+    x = np.array([0.0, 0.0, 1.0, 1.0, np.nan, np.nan, 2.0, 3.0])
+    y = np.array([0.0, 4.0, 0.0, 7.5, 2.0, np.nan, 0.0, np.nan])
+    target_edges = TASK_SPECS["regression"]["target_bins"](y[~np.isnan(y)], False)
+    cells = _numeric_cells(x, y, quantile_edges(x[~np.isnan(x)], 100), target_edges)
+    pooled = pool_periods(cells, [PERIOD])
+    support = support_by_bin(pooled)
+    assert sorted(support.index) == sorted(pooled["bin"].unique()) and support["null"] == 1
+    assert sorted(support.tolist()) == [0, 0, 1, 1, 1]
+    assert support.drop("null").sum() == shares(pooled)["events"]
 
 
 def test_regression_shares_and_one_target_bin() -> None:

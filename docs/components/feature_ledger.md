@@ -1,5 +1,5 @@
 # Feature ledger
-**Status:** building (spec settled 2026-11-02; `ledger.py` built in Stage 2's m1.5, 2026-11-03; EDA writes the identity and EDA columns since 2026-11-04, Stage 2 major step 2, review 2 pending; Feature Checks appends in major step 3; the per-run part in M2.3) · **Legacy:** none (the crunch had only `features_include` / `features_exclude`)
+**Status:** building (spec settled 2026-11-02; `ledger.py` built in Stage 2's m1.5, 2026-11-03; EDA writes the identity and EDA columns since 2026-11-04, Stage 2 major step 2; the identity column `source` and `ledger_schema_version` 2 since 2026-11-06; Feature Checks appends in major step 3; the per-run part in M2.3) · **Legacy:** none (the crunch had only `features_include` / `features_exclude`)
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [training](training.md) ·
 [evaluation](evaluation.md) · [config](config.md) (the decision audit log) · [reporting](reporting.md) ·
 D-030, D-031, D-043, D-125, D-134, D-135, D-136, D-137 · settles OD-11
@@ -16,7 +16,7 @@ from Feature Checks, the decisions from the audit log ([config](config.md#decisi
 D-125).
 
 - **Where:** `<root>/<use_case>/04_feature/<data-definition hash>/ledger.parquet` plus
-  `_ledger.json` (`ledger_schema_version: 1`, the data-definition hash, the writing stage and its
+  `_ledger.json` (`ledger_schema_version: 2`, the data-definition hash, the writing stage and its
   settings digest), beside the `eda/`, `feature_checks/` and `decisions/` folders (D-136).
 - **Who writes:** EDA creates it (identity and EDA statistics); Feature Checks appends its columns.
   No stage rewrites another's columns.
@@ -92,10 +92,11 @@ trip unchanged.
    only, statistics null).
 2. **It decides nothing.** No ledger function writes an audit-log entry or changes the
    candidates; it records statistics and flags and derives the rest.
-3. **Versioned per `CLAUDE.md` §2.** `_ledger.json` carries `ledger_schema_version` (1), read
-   before the parquet; another version is refused (0.x; from 1.0 an older one is migrated).
-   Columns are only added within a major version (D-007); in 0.x the schema changes in place
-   without a bump (D-136). From 1.0, readers keep or drop a column they do not know instead of
+3. **Versioned per `CLAUDE.md` §2.** `_ledger.json` carries `ledger_schema_version` (2: the
+   identity column `source`, 2026-11-06), read before the parquet; another version is refused
+   and EDA reruns (0.x; from 1.0 an older one is migrated). Columns are only added within a
+   major version (D-007); in 0.x a column a reader needs bumps the version, everything else
+   changes in place (D-136). From 1.0, readers keep or drop a column they do not know instead of
    refusing it, so a ledger written by a later patch still reads.
 4. **Stages append, never rewrite.** `add_columns` refuses a column that belongs to another
    stage; a stage's rerun replaces only its own columns; an EDA rerun starts a new ledger.
@@ -120,6 +121,7 @@ meanings below are one line each.
 |---|---|---|---|---|
 | Identity | `feature` | str | EDA | the candidate column's name (the key) |
 | Identity | `kind` | str | EDA | `numeric`, `categorical` or `unsupported`, after `features.kinds` overrides |
+| Identity | `source` | str | EDA | the source the column comes from (the frames' `meta["column_sources"]`, from the join entries' `columns`); every candidate has one, a lineage column of an upstream target may have none |
 | Identity | `lineage` | bool | EDA | a target-lineage column, excluded automatically |
 | Identity | `unsupported` | bool | EDA | an unsupported type (date, timestamp, array, map, struct, binary), excluded automatically |
 | EDA | `levels` | int | EDA | distinct non-null values on the snapshot's eligible rows, before the level cap (counted from the rows, not the cells) |
@@ -232,11 +234,15 @@ No public function: the ledger is read through the reports, `StageResult.ledger`
 notebooks and the versioned artifact. The private interface:
 
 ```python
-LEDGER_SCHEMA_VERSION = 1
+LEDGER_SCHEMA_VERSION = 2
 
 
 def create_ledger(
-    candidates: list[str], kinds: dict[str, str], lineage: list[str], unsupported: list[str]
+    candidates: list[str],
+    kinds: dict[str, str],
+    lineage: list[str],
+    unsupported: list[str],
+    sources: dict[str, str],
 ) -> pd.DataFrame: ...
 def add_columns(ledger: pd.DataFrame, columns: pd.DataFrame, stage: str) -> pd.DataFrame: ...
 def save_ledger(ledger: pd.DataFrame, folder: str, meta: dict) -> None: ...
@@ -249,8 +255,9 @@ def resolve_features(ledger: pd.DataFrame, resolved: UseCaseConfig) -> list[str]
 
 - `create_ledger` writes the identity columns: an unsupported column's kind is `unsupported`, a
   lineage column EDA did not read may have none, every other candidate needs `numeric` or
-  `categorical`. It refuses a repeated candidate, a lineage or unsupported column that is no
-  candidate, another kind, and an unsupported column given a kind, naming the features.
+  `categorical`; `source` comes from `sources` (column → source). It refuses a repeated
+  candidate, a lineage or unsupported column that is no candidate, another kind, an unsupported
+  column given a kind, and a candidate (not lineage) without a source, naming the features.
 - `add_columns` (`stage` is `eda` or `feature_checks`) joins on `feature`, refuses a feature not in
   the ledger, a repeated feature, a read candidate (neither lineage nor unsupported) left out (a
   null value is fine) and a column outside the stage's list (naming its owner), and first drops
@@ -274,7 +281,6 @@ None specific: the crunch had include and exclude lists only, which is why it co
 feature was in or out.
 
 ## Open questions
-- Readable labels and the source per feature: not in Stage 2 (Q452; D-046). A `source` column
-  joins when the join log records columns per source (with Inference's needs, M2.4).
+- Readable labels per feature: not in Stage 2 (Q452; D-046).
 - The per-run part's columns (automated selection with its rule and train-split statistic, use in
   the model, importance and rank, effect direction): decided in M2.3.

@@ -599,8 +599,9 @@ def test_join_entry_records_a_source_column_read_under_another_name(
     sources: dict[str, DataFrame],
     tmp_path: Path,
 ) -> None:
-    """A feature source's non-key `period` joins as `source_period`, named in its join entry;
-    the spine's entry, with nothing renamed, has no `renamed`."""
+    """A feature source's non-key `period` joins as `source_period`, named in its join entry
+    and listed so in its `columns`; the spine's entry, with nothing renamed, has no `renamed`;
+    every entry, the target source's too, lists its source's non-key columns."""
     del sources["extra"]
     env = write_sources(sources)
     path = str(tmp_path / "extra")
@@ -612,6 +613,9 @@ def test_join_entry_records_a_source_column_read_under_another_name(
     panel, log, _ = load_panel([_config(variant)], "entity_a", env, spark)
     assert "source_period" in panel.columns
     assert log[1]["renamed"] == {"period": "source_period"} and "renamed" not in log[0]
+    assert log[1]["columns"] == ["score", "source_period"]
+    assert [entry["role"] for entry in log] == ["spine", "joined", "targets"]
+    assert all(entry["columns"] and "unit_id" not in entry["columns"] for entry in log)
 
 
 def test_build_panel_prepares_the_one_config(

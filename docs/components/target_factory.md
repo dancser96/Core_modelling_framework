@@ -1,5 +1,5 @@
 # Target Factory
-**Status:** built thin (M2.1, 2026-10-26; for the SDS's review with the dataset) · **Legacy:** `src/rollups.py`, `notebooks/Data_Creation.ipynb` (crunch name: Data Creation)
+**Status:** built thin (M2.1, 2026-10-26); the occurrences per period and `TargetSummary` added 2026-11-06 · **Legacy:** `src/rollups.py`, `notebooks/Data_Creation.ipynb` (crunch name: Data Creation)
 **Related:** [config](config.md) (the target spec) · [dataset](dataset.md) (frames, the model input) ·
 [environment](environment.md) (source resolution) · [feature checks](feature_checks.md) (lineage exclusion, the
 leakage screen) · [monitoring](monitoring.md) (labels) · D-020, D-021, D-029, D-050, D-054, D-091, D-129, D-131,
@@ -29,7 +29,8 @@ behind the environment adapter; nothing is written back (D-021, OD-26).
    looks some periods ahead. One function builds the targets lazily in Spark; saving is a
    separate call.
 2. **Two modes from the same spec** (D-029, D-131):
-   - **Notebook mode:** build, inspect (the target rate per period, the lineage, the logs), then
+   - **Notebook mode:** build, inspect (the target rate and the occurrences per period, the
+     lineage, the logs), then
      `save_model_input`, which writes the model input that later stages read, for one or
      several use cases that share the sources, keys and period, and freezes each config's data
      part (D-125). The model input carries one target column per use case: there is no
@@ -134,8 +135,10 @@ Built in Stage 1's major step 2 (2026-10-26; under the SDS's review), in
   [dataset](dataset.md#model-input-d-131)).
   The log names the source, its periods (as labels), the raw type of its id column (`id_type`,
   so a join that matches nothing can name both sides' types), the columns it renamed
-  (`renamed`) and how it tagged its periods: `period start`, `period end`, `first and last
-  days` (both, which only a repeated key can mean) or `other days` (D-129).
+  (`renamed`), its non-key columns under their read names (`columns`, which the dataset's join
+  entries carry, [dataset](dataset.md#sources-and-joins-d-129)) and how it tagged its periods:
+  `period start`, `period end`, `first and last days` (both, which only a repeated key can mean)
+  or `other days` (D-129).
 - `check_periods_covered(log, first, last, role, until, spec)` (`sources.py`): the one check
   that a read source has every period from `first` to `last`, failing with the source's `role`
   and the missing periods (`missing_periods(periods, first, last, spec) -> list[str]`, labels),
@@ -161,17 +164,35 @@ Built in Stage 1's major step 2 (2026-10-26; under the SDS's review), in
   (immature labels filled, or a shorter window than `w`) or none in the period before them (a
   longer window than `w`, whose target windows would overlap the validation period's, §4.2).
   Returns the targets and the source's log; the dataset joins them, per use case, as
-  `target_<use_case>` (D-131).
+  `target_<use_case>` (D-131). The read and checks are `_read_target_source`, which
+  `run_target_factory` shares, so the source is read once for both of its tables.
 - `target_lineage(cfg) -> list[str]`: `column`, then the config's `lineage`, without repeats.
-- `run_target_factory(cfg, entity, env, spark) -> pd.DataFrame` (public, D-024), per config:
-  the task's summary per period (labelled by the spec) plus an `all` row, printed and returned:
-  rows and the null share for every period, with `null_value_share` (the share of the target
-  source's rows in the window with a complete target window, before eligibility, that held a
-  null in the target column; unknown for an upstream target); the mean
-  target and, for binary, the positive rows and the positive events (distinct units, D-082) for
-  the observation window's periods only, so no later period's label rate, the validation
-  period's among them, is shown (`CLAUDE.md` §4.4). It covers every row of the target source
-  before eligibility, and says so. Writes nothing. The notebook `01_target_factory` and
+- `run_target_factory(cfg, entity, env, spark) -> TargetSummary` (public, D-024), per config,
+  printed and returned; writes nothing. `TargetSummary(per_period, occurrences)` is a frozen
+  dataclass in `target_factory.py`:
+  - `per_period`: the task's summary per period (labelled by the spec) plus an `all` row, over
+    every row of the target source before eligibility, and it says so: rows and the null share
+    for every period, with `null_value_share` (the share of the target source's rows in the
+    window with a complete target window, before eligibility, that held a null in the target
+    column; unknown for an upstream target); the label columns (the mean target and, for
+    binary, the positive rows and the positive events, distinct units, D-082) for every period
+    up to the observation window's last, the periods before the window included, the `all` row
+    over the window's periods; null after the window's last, since a gap period's target window
+    reaches into the validation period's outcomes (`CLAUDE.md` §4.2, §4.4);
+  - `occurrences` (`summarise_occurrences` in the per-task spec): when the events happen, per
+    period of the target source, label-free and before eligibility. Binary: `conversions`, rows
+    whose flag is 1 while it was 0 at the unit's previous consecutive period (a unit's first row
+    and a row after a gap never count; the source's first period's conversions are unknowable,
+    so null), and `flag_rows`; regression: `total_amount` (the column's sum, nulls skipped) and
+    `nonzero_rows`. The outcome columns are null after the window's last period + `w`: later
+    outcomes are later labels', the validation period's among them (when v = tk + w the
+    validation period's own row shows the flag that is the last training label's outcome; its
+    own outcomes, v+1 …, are null). `None` for an upstream target: that column is the label, not
+    the event column. Why not the distribution of the event's offset inside the forward window:
+    under a forward-window label every conversion puts one positive row at every offset 1 … w,
+    so it is flat by construction ([lessons](../context/lessons.md), statistical lessons); the
+    conversions per period show a campaign or a data change that the per-period rate blurs over
+    w periods. The notebook `01_target_factory` and
   `run a.yml b.yml --stages target_factory` call it per config, then `save_model_input` once
   for every config that names the model input ([dataset](dataset.md), [run modes](run_modes.md)).
 - Tested against the oracle on the `unit` preset: `flag_goes_up` on the holdings equals the
@@ -183,6 +204,9 @@ Built in Stage 1's major step 2 (2026-10-26; under the SDS's review), in
   move for a week and a day, the index round trip for all three periods, `missing_periods`
   across a year end for weeks, and the id cast (an integer id reads back as a string). The
   synthetic flags are never null, so the null semantics are tested on hand-made panels only.
+  The occurrences: the conversions equal the 0 → 1 transitions on a hand-made source (a first
+  row and a row after a gap never count), the regression totals the column's sums, and on the
+  `unit` preset the conversions per period equal the oracle's acquisitions.
 
 ## Open questions
 - How a use case reads from the feature store, and how that work splits with the feature store

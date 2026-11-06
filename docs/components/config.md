@@ -46,7 +46,7 @@ defaults, so a first run needs only the shared sections.
 | `eda` | EDA | The snapshot, the bins, the key features |
 | `feature_checks` | Feature Checks | The five steps' thresholds, one typed mapping |
 | `training` | Training | Modelling path, model families, budgets, seeds, search ranges, automated selection, categoricals, calibration, sampling |
-| `evaluation` | Evaluation | Metric slices, extra views |
+| `evaluation` | Evaluation (slices: EDA too) | Metric slices, extra views |
 | `lifecycle` | register, promote | The promotion gate's threshold |
 | `inference` | Inference | Which model version scores |
 | `monitoring` | Monitoring | Drift thresholds, the outcome join, the retrain policy |
@@ -308,7 +308,9 @@ What it holds, what its reader refuses and when it is written: [dataset](dataset
 12. **Strata:** one `strata` section (variables, a cap on levels, a minimum number of positive
     events per stratum) shared by EDA, Evaluation and Monitoring (mandatory reporting, D-038;
     D-129).
-13. **Metric slices:** `top_pct` and `top_n` lists; either may be empty.
+13. **Metric slices:** `top_pct` and `top_n` lists; either may be empty. EDA reads them too:
+    each key feature alone at the slices, a view and never a baseline, with `decision.n` as the
+    first slice for a `top_n` decision ([EDA](eda.md) "At the decision's slices").
 14. **Templates guide:** the base template lists every option with a one-line when-to-use, and
     validation errors say how to fix the problem. Its header key says how to read a line
     (`# required`; a plain value is the default; `null · level:` names both levels' values) and

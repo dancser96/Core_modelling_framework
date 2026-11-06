@@ -93,6 +93,7 @@ def test_first_and_last_day_tags_read_alike_and_join(
         "period_tag": "period start",
         "id_type": "int",
         "renamed": {},
+        "columns": [],
     }
     assert last_log["period_tag"] == "period end"
 
@@ -149,6 +150,7 @@ def test_daily_source_keeps_its_days(
         "period_tag": "period end",
         "id_type": "int",
         "renamed": {},
+        "columns": [],
     }
 
 
@@ -301,13 +303,13 @@ def test_non_key_column_named_like_a_key_reads_as_source_column(
     key: str,
 ) -> None:
     """A non-key `unit_id` or `period`, in any case, reads as `source_<name>` beside the keys,
-    printed and in the log's `renamed`."""
+    printed and in the log's `renamed`; the log's `columns` name it so."""
     schema = f"client_id int, snapshot_month date, {key} int"
     env = _env_with_columns(spark, tmp_path, schema, (1, date(2024, 4, 1), 7))
     keyed, log = read_keyed_source(cc_config, "entity_a", "extra", env, spark)
     assert keyed.columns == ["unit_id", "period", f"source_{key}"]
     assert keyed.collect()[0][f"source_{key}"] == 7
-    assert log["renamed"] == {key: f"source_{key}"}
+    assert log["renamed"] == {key: f"source_{key}"} and log["columns"] == [f"source_{key}"]
     message = f"source 'extra': column '{key}' read as 'source_{key}' (the framework names its key"
     assert message in capsys.readouterr().out
 

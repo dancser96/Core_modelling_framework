@@ -1,5 +1,5 @@
 # Reporting and model card
-**Status:** built in part 2026-11-04, review 2 applied 2026-11-05 (Stage 2 major step 2: the renderer, the five primitives and `side_by_side`, the blocks and the theme, built with the EDA report; the SDS's review 3 pending); the Feature Checks report comes with major step 3 and the model card in M2.3/M2.4 · **Legacy:** `src/card.py`, `src/analysis.py` plotting helpers
+**Status:** built in part 2026-11-04 (Stage 2 major step 2: the renderer, the five primitives and `side_by_side`, the blocks and the theme, built with the EDA report; reviews 2 and 3 applied 2026-11-05/06); the Feature Checks report comes with major step 3 and the model card in M2.3/M2.4 · **Legacy:** `src/card.py`, `src/analysis.py` plotting helpers
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [feature ledger](feature_ledger.md) ·
 [evaluation](evaluation.md) · [monitoring](monitoring.md) · [lifecycle](lifecycle.md) ·
 [config](config.md) (template explanations, audit log) · [environment](environment.md) (theme) ·
@@ -38,9 +38,9 @@ versioned model card (requirement 4) is M2.3/M2.4's.
 Each stage is standalone and writes its own file (Q457); the Feature Checks summary repeats EDA's
 headline numbers from `eda.json` so its reader knows the population.
 - **EDA:** summary (choices, how to read, headline numbers, numbered warnings, one events
-  warning) → core (funnel and target per period, target by stratum, univariate ranking,
-  key-feature deep dives with their strata pivots) → extended (reference groups, correlation
-  overview) → appendix.
+  warning) → core (funnel, sources per period, target per period, target by stratum, univariate
+  ranking, the key features at the decision's slices, key-feature deep dives with their strata
+  pivots) → extended (reference groups, correlation overview, value profile) → appendix.
 - **Feature Checks:** summary (EDA's headline, choices, flags and notes per step, held features)
   → core (findings per step, proposed decisions, ledger with decisions) → extended (per-period
   concordance and PSI for every candidate, redundancy clusters) → appendix.
@@ -57,7 +57,7 @@ explain, not the report's (D-032).
 - `charts.py`: `bar_with_intervals`, `lift_chart`, `box_from_quartiles`, `grouped_lines`,
   `heatmap`, each returning a plotly figure with the chart rules applied, and `side_by_side`,
   which sets two of them as one figure of two panels (details under "The chart primitives");
-- `blocks.py`: `CHOICES` (22 rows), `choices_block(resolved, choices) -> Styler`,
+- `blocks.py`: `CHOICES` (23 rows), `choices_block(resolved, choices) -> Styler`,
   `headline(numbers)`, `warnings_block(items)` (numbered), `how_to_read(bins, estimate_noun,
   support_name, group_support)`; there is no `appendix` function: a stage composes its appendix
   from these blocks;
@@ -131,13 +131,16 @@ and recorded in the log (Q455).
 |---|---|---|
 | Summary | choices block (Choice, Value, Alternatives); how to read (five notes); headline numbers; numbered warnings, one events warning | resolved config; `eda.json` |
 | Core: funnel per period | table | `funnel` |
+| Core: sources per period | the spine's rows and each joined feature source's matched share per compared period and `all` ("Not available" when the spine is the only source) | `sources` |
 | Core: target per period (the whole window) | rows, positive rows, positive events, the estimate with its 95% interval (binary: the rate, Wilson; regression: the mean, t-interval from the cells' sum of squares, and the non-zero share, Wilson); `grouped_lines` with support bars | `target_per_period` |
 | Core: target by stratum | table; `bar_with_intervals` (the modelling tags get none) | `strata` |
 | Core: univariate ranking | the lean view, a bar on `concordance` (the ranking value) from 0.5; every column in the table; lineage and unsupported columns listed as excluded | `ranking` |
+| Core: at the decision's slices | the decision paragraph; table of the key features × slices (capture, estimate coloured by lift, lift, support); the capture curve (`grouped_lines(..., x_numeric=True)`, the `random` diagonal dashed and muted) | `slices`, `capture_curve` |
 | Core: key-feature deep dives ([EDA](eda.md) "The views") | group table for a by-level feature or an amount target; `lift_chart` (the estimate's bars when no lift exists) beside the first strata chart (`grouped_lines`, a line per level) in one `side_by_side` figure, further strata charts alone; `box_from_quartiles` by target class beside the per-period concordance (`grouped_lines`); regression: the target's boxes per group; one pivot table per stratum variable | `bins`, `levels`, `quartiles`, `per_period`, `target_quartiles`, `strata` |
 | Extended: reference groups | per tag: rows kept and excluded per window period, then sizes, composition and key-feature SMDs | `funnel`, `reference_groups` |
-| Extended: correlation overview | `heatmap` of the key features and the candidates they represent (a name without a compared pair left out, counted in the subtitle) | `correlation` |
-| Appendix | kinds with overrides; the ledger (identity, EDA); resolved config; decisions; collect log; timings (a table) | ledger; `resolved_config.yml`; `eda.json` |
+| Extended: correlation overview | `heatmap` of the key features only (one without a compared pair left out, counted in the subtitle); beneath it, the candidates each represents | `correlation`, `ranking` |
+| Extended: value profile | two tables in rank order: the numerics' range and ±infinity share, the categoricals' three largest levels | `profile` |
+| Appendix | kinds with overrides and sources; the ledger (identity, EDA); resolved config; decisions; collect log; timings (a table) | ledger; `resolved_config.yml`; `eda.json` |
 
 ### The Feature Checks report
 
@@ -162,7 +165,9 @@ The report never suggests dropping a feature (Q472) or a verb for a flag (Q449).
   is rendered with `include_plotlyjs=False, full_html=False` and its own `div_id`
   (`figure_html`). `include_plotlyjs=False` with `full_html=True` gives a broken page.
 - Tables go through `Styler.to_html()`; Styler raises above `styler.render.max_elements` =
-  262,144 cells (the ledger is far below).
+  262,144 cells (the ledger is far below). A value column (quantiles, medians) prints with
+  thousands separators from 1,000 and four significant digits below, never in scientific
+  notation.
 - No templating beyond what Styler needs: string building plus plotly, and a CSS block from
   `THEME`.
 - No WebGL traces (browsers allow 8–16 WebGL contexts per page): bars, box plots and markers are
@@ -173,7 +178,11 @@ The report never suggests dropping a feature (Q472) or a verb for a flag (Q449).
    1.25 × the highest)]` over the plotted values, every estimate and the supported bars'
    interval ends (and a reference line), so a negative estimate (an amount target can be
    negative) and a supported interval's bottom stay in view, while an insufficient bar's
-   interval may run past the axis. A statistic around a reference (a
+   interval may run past the axis. A line chart counts its values only up to twice its highest
+   supported point (the 1.25 headroom comes on top), so a few grey points cannot flatten the
+   lines and one far above runs off the top, its number in the table or pivot; when none is
+   supported, every point and interval counts. An estimate's axis and hover take the task's `axis_format` (binary:
+   percent); lift and concordance axes stay plain. A statistic around a reference (a
    concordance around 0.5) uses the data's span (`from_zero=False`). Zoom reliability curves to
    the score range, with the diagonal clipped to it. Never use a fixed (0, 1) range at low prevalence
    (T16).
@@ -183,11 +192,12 @@ The report never suggests dropping a feature (Q472) or a verb for a flag (Q449).
    below `MIN_BIN_SUPPORT = 20` in the deep dives, periods below `strata.min_events` in
    per-period lines. The interval is still drawn.
 4. **Quantile groups** for numeric features, merged from the cells by cumulative row share
-   (`merge_bins`: about ten groups for lift, twenty for histograms); a bin holding at least
+   (`merge_bins`: about ten groups); a bin holding at least
    `1 / groups` of the rows (0 and the dominant value whenever they reach it) stays its own bar,
    never widened into a neighbour, so the count can exceed the target by such interior bars;
    never equal-width bins (T25). A group is labelled by its outer range (`[374, 419)`, `= 0`,
-   `≥ 900`; the rules: [EDA](eda.md) "The counts table"). **Log axes** for heavy
+   `≥ 900`; the rules: [EDA](eda.md) "The counts table"); a numeric shown by level reads its
+   values (`0`, `1`, `2`), not `= 0`. **Log axes** for heavy
    tails, never with a zero quartile or a zero bar on them (T30): offset, linear axis or a
    separate zero share.
 5. **No chart whose bars are all near zero.** Switch to lift, a log axis or a table.
@@ -200,7 +210,9 @@ The report never suggests dropping a feature (Q472) or a verb for a flag (Q449).
 8. **Distributions are box plots from quartiles**, never raw points or raw histograms.
 9. **Lines over an ordered category axis** (`grouped_lines`: periods, or a feature's groups)
    mark every category in the data's order, padded half a slot at both ends; the label-free
-   periods show no label-based value.
+   periods show no label-based value. A curve over a share of rows (`x_numeric`) uses a linear
+   [0, 1] axis shown as percentages, lines without markers; a reference line among the groups
+   (the capture curve's `random`) is dashed and muted; a capture axis stops at 100%.
 10. **Titles and axes:** a short centred title, every axis titled, the details in the caption,
     nothing clipped (automargin, bar text placed by plotly); two related charts share one figure
     of two panels (`side_by_side`).
@@ -210,7 +222,8 @@ Every primitive takes `title`, `x_title` and `y_title` (rule 10), places bar tex
 (`textposition="auto"`, inside at the base when it fits) and records `layout.meta` (`reference`,
 `insufficient`), since shapes and annotations do not move into a subplot.
 - `bar_with_intervals(df, x, estimate, low, high, support, insufficient, title, x_title, y_title,
-  by_level)`; `by_level` colours bars by position, which suffices while each stratum variable has
+  by_level, y_format=None)`; `y_format` (a d3 format, the task's `axis_format`) formats the y
+  axis and the hover; `by_level` colours bars by position, which suffices while each stratum variable has
   one chart.
 - `lift_chart(df, x, lift, low, high, support, insufficient, title, x_title, y_title)`: `low` and
   `high` are in lift units (the caller divides the estimate's interval by the base); reference
@@ -221,14 +234,16 @@ Every primitive takes `title`, `x_title` and `y_title` (rule 10), places bar tex
   colours by position; `log=True` refuses a non-positive value (T30); the caller decides up
   front.
 - `grouped_lines(df, x, y, group, low, high, support, insufficient, reference, from_zero, title,
-  x_title, y_title, support_title, legend_title, group_order=None)`: long format (one row per
+  x_title, y_title, support_title, legend_title, group_order=None, y_format=None,
+  x_numeric=False)`: long format (one row per
   category and group); `group_order` sets the lines' order and so their colours (default the
   data's order; a group missing from it fails), a `null` line takes the null colour;
   support bars for a single line only, so `support` and `group` exclude each other; a label-free
   period carries NaN and shows no point, and the caller drops it before the call when it should
-  show no support bar.
+  show no support bar; `x_numeric` draws x as numbers on a linear [0, 1] axis and refuses
+  support bars.
 - `heatmap(matrix, hover, title, x_title, z_title)`: the matrix must be square with the same
-  labels on both axes.
+  labels on both axes; sized from the label count and length, every label shown.
 - `side_by_side(left, right, height=380)`: two primitives' figures as one figure of two panels,
   each keeping its title, axes and reference line (redrawn from `layout.meta`), the right one its
   legend, one insufficient note for both; refuses a subplot figure, a heatmap, a figure without

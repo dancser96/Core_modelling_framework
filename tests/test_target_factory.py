@@ -8,7 +8,8 @@ with explicit dates check that the window counts the config's period, a missing 
 Hand-made sources written to parquet check what `load_targets` refuses: a target column of the
 wrong type or values, and periods missing from the target source.
 On the unit preset, the built flag targets equal the oracle's `realised_target` on the rows the
-oracle deems eligible, nulls included.
+oracle deems eligible, nulls included, and the conversions per period its acquisitions. The
+summary shows the labels up to the window's last period, the `all` row's over the window.
 """
 
 import calendar
@@ -24,6 +25,7 @@ from core_modelling.config import UseCaseConfig
 from core_modelling.environment import EnvironmentConfig
 from core_modelling.periods import period_spec
 from core_modelling.target_factory import (
+    TargetSummary,
     build_targets,
     load_targets,
     run_target_factory,
@@ -452,11 +454,13 @@ def test_run_target_factory_summary(
 ) -> None:
     """One row per period plus `all`; rows add up; the last w periods are null, their null-value
     share unknown; no complete window held a null (the synthetic flags have none); the label
-    columns only for the observation window's periods, the `all` row's over them; events ≤
+    columns for every period up to the window's last, the ones before the window included, none
+    after it (the validation period among them), the `all` row's over the window; events ≤
     rows."""
     mart, w = unit[0], cc_config.time.target_window
     summary = run_target_factory(cc_config, "entity_a", unit_env, spark)
-    periods, total = summary.iloc[:-1], summary.iloc[-1]
+    assert isinstance(summary, TargetSummary)
+    periods, total = summary.per_period.iloc[:-1], summary.per_period.iloc[-1]
     assert total["period"] == "all" and len(periods) == mart["snapshot_month"].nunique()
     assert periods["rows"].sum() == total["rows"] == len(mart)
     assert (periods["null_share"].iloc[-w:] == 1).all()
@@ -464,18 +468,83 @@ def test_run_target_factory_summary(
     assert (periods["null_value_share"].iloc[:-w] == 0).all()
     assert periods["null_value_share"].iloc[-w:].isna().all() and total["null_value_share"] == 0
     window, label = cc_config.time.observation_window, period_spec(cc_config).label
-    shown = periods["period"].between(label(window.first), label(window.last))
+    before, after = periods["period"] < label(window.first), periods["period"] > label(window.last)
+    in_window = periods[~before & ~after]
     labels = ["mean_target", "positive_rows", "positive_events"]
-    assert shown.sum() == 6
-    assert periods.loc[shown, labels].notna().all().all()
-    assert periods.loc[~shown, labels].isna().all().all()  # the validation period among them
-    assert total["positive_rows"] == periods["positive_rows"].sum()
-    in_window = periods[shown]
+    assert len(in_window) == 6 and before.sum() == 5
+    assert periods.loc[~after, labels].notna().all().all()
+    assert periods.loc[after, labels].isna().all().all()
+    assert total["positive_rows"] == in_window["positive_rows"].sum()
     assert (in_window["positive_events"] == in_window["positive_rows"]).all()
     assert 0 < total["positive_events"] < total["positive_rows"]
     out = capsys.readouterr().out
-    assert "label columns for the observation window only" in out
+    assert "label columns up to the observation window's last period" in out
     assert "null_value_share: rows whose window held a null" in out
+    assert "the occurrences per period of cc_flag" in out
+
+
+def test_binary_occurrences_count_the_0_to_1_transitions(
+    spark: SparkSession, cc_config: UseCaseConfig
+) -> None:
+    """A conversion is a 1 after a 0 at the previous consecutive period: a's two rises count, a
+    unit's first row never does (`first`), nor a 1 after a gap (`gap`); `flag_rows` counts the
+    1s. Both are filled up to the window's last + w (2025-03), null after it (2025-04); the
+    source's first period has no conversion count (no previous period)."""
+    cfg = _variant(cc_config, time=SHORT_TIME, rule="flag_goes_up", column="value")
+    panel = {"a": [0, 1, 1, 0, 1, 0], "first": [1, 1, 0], "gap": [0, MISSING, 1, 1]}
+    table = TASK_SPECS["binary"]["summarise_occurrences"](_panel(spark, panel), cfg)
+    assert table["period"].tolist() == ["2024-11", "2024-12", "2025-01", "2025-02", "2025-03",
+                                        "2025-04"]  # fmt: skip
+    measured, later = table.iloc[:-1], table.iloc[-1]
+    assert pd.isna(measured["conversions"].iloc[0])
+    assert measured["conversions"].iloc[1:].tolist() == [1, 0, 0, 1]
+    assert measured["flag_rows"].tolist() == [1, 2, 2, 1, 1]
+    assert later[["conversions", "flag_rows"]].isna().all()
+
+
+def test_regression_occurrences_sum_the_amounts(
+    spark: SparkSession, cc_config: UseCaseConfig
+) -> None:
+    """Per period the total is the column's sum, nulls skipped, and `nonzero_rows` its non-zero
+    values."""
+    cfg = _variant(cc_config, task="regression", rule="forward_sum", column="value")
+    panel = {"a": [1.5, 0.0, None, 2.0], "b": [5.0, 3.0, 4.0, MISSING]}
+    table = TASK_SPECS["regression"]["summarise_occurrences"](_panel(spark, panel, "double"), cfg)
+    assert table.to_dict("list") == {
+        "period": ["2024-11", "2024-12", "2025-01", "2025-02"],
+        "total_amount": [6.5, 3.0, 4.0, 2.0],
+        "nonzero_rows": [2, 1, 1, 1],
+    }
+
+
+def test_conversions_equal_the_oracle_acquisitions(
+    spark: SparkSession,
+    unit: tuple[pd.DataFrame, pd.DataFrame, dict],
+    unit_env: EnvironmentConfig,
+    cc_config: UseCaseConfig,
+) -> None:
+    """On the unit preset the conversions in each period up to the window's last + w equal the
+    oracle's card acquisitions then: its one-month realised target at t, a non-holder at t
+    holding at t+1, counted at t+1."""
+    mart = unit[0]
+    occurrences = run_target_factory(cc_config, "entity_a", unit_env, spark).occurrences
+    acquired = realised_target(mart, "cc_acquire", 1) == 1
+    month = pd.PeriodIndex(pd.to_datetime(mart["snapshot_month"]), freq="M") + 1
+    expected = pd.Series(month[acquired]).astype(str).value_counts()
+    conversions = occurrences.set_index("period")["conversions"].dropna().astype(int)
+    assert conversions.sum() > 0 and conversions.index[-1] == "2025-11"  # window's last + w
+    pd.testing.assert_series_equal(
+        conversions, expected.reindex(conversions.index, fill_value=0), check_names=False
+    )
+
+
+def test_upstream_target_has_no_occurrences(
+    spark: SparkSession, unit_env: EnvironmentConfig, cc_config: UseCaseConfig
+) -> None:
+    """An upstream column is the label, not the event column: its occurrences are not
+    available."""
+    cfg = _variant(cc_config, targets=None, rule=None, column=UPSTREAM_TRAP)
+    assert run_target_factory(cfg, "entity_a", unit_env, spark).occurrences is None
 
 
 def test_target_source_with_its_own_key_names_builds_the_same_targets(

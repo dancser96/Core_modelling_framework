@@ -108,6 +108,11 @@ CHOICES: dict[str, dict] = {
         "alternatives": "top_n 0 deep-dives only the listed ones; include lists candidates "
         "always deep-dived; max_correlation 1 skips none",
     },
+    "slices": {
+        "label": "Decision slices",
+        "path": "evaluation.slices",
+        "alternatives": "any shares in (0, 1] and list sizes",
+    },
     "strata": {
         "label": "Strata variables",
         "path": "strata.variables",

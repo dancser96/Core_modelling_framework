@@ -4,13 +4,13 @@ flows".
 It resolves the config (the audit log replayed, D-125), builds the frames (the snapshot
 collected, `rows` left in Spark and persisted for the counts passes of `dataset/counts.py`),
 checks the strata and the listed key features against the snapshot (requirement 12), computes
-the tables with `ranking.py`, `population.py` and `deep_dives.py` and the association on the
-snapshot, creates a fresh ledger with EDA's columns, turns everything into views and renders the
-report (`report.py`) before anything is written, then writes in the order that makes `eda.json`
-the commit marker: Feature Checks' stale folder removed, the ledger saved, `eda/` written with
-`report.html` in it (D-136). It orchestrates only; every statistic lives in the modules it
-calls. EDA informs and never changes data: it drops no row and no feature and writes no
-audit-log entry.
+the tables with `ranking.py`, `population.py`, `slices.py`, `profile.py` and `deep_dives.py`
+and the association on the snapshot, creates a fresh ledger with EDA's columns, turns
+everything into views and renders the report (`report.py`) before anything is written, then
+writes in the order that makes `eda.json` the commit marker: Feature Checks' stale folder
+removed, the ledger saved, `eda/` written with `report.html` in it (D-136). It orchestrates
+only; every statistic lives in the modules it calls. EDA informs and never changes data: it
+drops no row and no feature and writes no audit-log entry.
 """
 
 import time
@@ -49,10 +49,12 @@ from core_modelling.eda.population import (
     is_numeric,
     known_rows,
     reference_groups,
+    sources_per_period,
     strata_frame,
     strata_tables,
     target_per_period,
 )
+from core_modelling.eda.profile import value_profile
 from core_modelling.eda.ranking import (
     count_levels,
     encoding_prior_rows,
@@ -61,6 +63,7 @@ from core_modelling.eda.ranking import (
     select_key_features,
 )
 from core_modelling.eda.report import build_views, eda_warnings, report_sections
+from core_modelling.eda.slices import slice_shares, slice_tables
 from core_modelling.environment import EnvironmentConfig, feature_dir
 from core_modelling.ledger import COLUMNS_BY_STAGE, add_columns, create_ledger, save_ledger
 from core_modelling.periods import period_spec
@@ -108,15 +111,20 @@ def run_eda(
     seconds["passes"], start = _lap(start)
     ranking, correlation, prior_rows, extra = _rank(counts, frames, resolved, labels)
     seconds["statistics"], start = _lap(start)
+    meta = _stage_meta(resolved, frames, counts, ranking, labels)
     tables = _population_tables(frames, resolved, counts, labels, ranking)
     tables.update(cells=counts["cells"], client_constant=counts["client_constant"])
     tables.update(ranking=ranking, correlation=correlation)
+    window = meta["compared_periods"]["window"]
+    tables["slices"], tables["capture_curve"] = slice_tables(counts["cells"], ranking, meta,
+                                                             resolved, window)  # fmt: skip
+    tables["profile"] = value_profile(frames.snapshot, frames.meta["kinds"], ranking,
+                                      counts["cells"], meta["snapshot_period"])  # fmt: skip
     keys = ranking.loc[ranking["key_feature"] != ""].iterrows()
     dives = [_deep_dive(key, counts, frames, resolved, labels, prior_rows) for _, key in keys]
     tables.update(_dive_tables(dives, resolved.task))
     seconds["tables"], start = _lap(start)
     ledger = _ledger(frames.meta, ranking)
-    meta = _stage_meta(resolved, frames, counts, ranking, labels)
     meta["warnings"] = eda_warnings(tables, frames.log, resolved, meta["snapshot_period"])
     headline = headline_numbers(frames.snapshot, tables["target_per_period"], resolved.task)
     meta["headline"] = {name: None if pd.isna(value) else value for name, value in headline.items()}
@@ -240,8 +248,9 @@ def _rank(
 def _population_tables(
     frames: Frames, resolved: UseCaseConfig, counts: dict, labels: dict, ranking: pd.DataFrame
 ) -> dict[str, pd.DataFrame]:
-    """The population views' tables: the D-088 counts, the funnel, the target per period, the
-    strata (by stratum, then every key feature's pivots) and the reference groups."""
+    """The population views' tables: the D-088 counts, the funnel, the sources' matched shares
+    over the compared periods, the target per period, the strata (by stratum, then every key
+    feature's pivots) and the reference groups."""
     snapshot, task, strata = frames.snapshot, resolved.task, resolved.strata
     keys = ranking.loc[ranking["key_feature"] != "", "feature"].tolist()
     population = frames.meta["population"]
@@ -250,6 +259,9 @@ def _population_tables(
     return {
         "population": population,
         "funnel": funnel_per_period(frames.log, labels["window"]),
+        "sources": sources_per_period(
+            frames.log, [*labels["window"], *labels["gap"], *labels["latest"]]
+        ),
         "target_per_period": target_per_period(
             population, counts["cells"], task, strata.min_events, counts["clients"]
         ),
@@ -324,7 +336,9 @@ def _ledger(meta: dict, ranking: pd.DataFrame) -> pd.DataFrame:
     holds no Feature Checks column (an EDA rerun removes them)."""
     lineage = meta["lineage"]
     names = [*meta["candidates"], *[name for name in lineage if name not in meta["candidates"]]]
-    ledger = create_ledger(names, meta["kinds"], lineage, list(meta["unsupported"]))
+    ledger = create_ledger(
+        names, meta["kinds"], lineage, list(meta["unsupported"]), meta["column_sources"]
+    )
     return add_columns(ledger, ranking[["feature", *COLUMNS_BY_STAGE["eda"]]], "eda")
 
 
@@ -338,9 +352,11 @@ def _stage_meta(
 ) -> dict:
     """`eda.json` without the warnings, the headline and the timings: the hashes, the settings
     digest and values, the periods, the D-088 population counts, the window levels, the clients,
-    the key features and why, the kinds and the snapshot's base."""
+    the key features and why, the kinds, the snapshot's base and the slices (label → share of the
+    snapshot's labelled rows)."""
     meta, keys = frames.meta, ranking.loc[ranking["key_feature"] != ""]
     skipped = ranking.loc[ranking["represented_by"] != ""]
+    known = known_rows(frames.snapshot)
     return {
         **{key: resolved.housekeeping[key] for key in HOUSEKEEPING_KEYS},
         **settings_meta(resolved, SETTINGS_PATHS),
@@ -358,7 +374,8 @@ def _stage_meta(
         "unsupported": meta["unsupported"],
         "lineage": meta["lineage"],
         "collect": meta["collect"],
-        "snapshot_base": float(known_rows(frames.snapshot)["target"].mean()),
+        "snapshot_base": float(known["target"].mean()),
+        "slices": slice_shares(resolved, len(known)),
     }
 
 

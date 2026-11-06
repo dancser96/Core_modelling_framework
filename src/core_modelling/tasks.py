@@ -15,7 +15,8 @@ only; the count and amount rules (`count_goes_up`, thresholds) are separate rule
 A column check refuses a target column whose type or values the task can't read, before any
 target is built. A summary turns the targets frame into a small pandas table: one row per
 period (labelled by the period spec) plus an `all` row, from one Spark aggregate, with label
-rates for the observation window only. A
+rates up to the observation window's last period; the occurrences give the events in the target
+column itself per period (binary: the conversions; regression: the amount), label-free. A
 contract check runs on the eligible rows of the observation window before any sampling (§4.8),
 returns its log entry and raises with its numbers when the window can't be modelled.
 
@@ -34,11 +35,12 @@ of squares), the target class a box plot groups by, how an estimate is printed a
 or mean) and whether the target has a distribution to show per group.
 """
 
+from collections.abc import Callable
 from functools import partial
 
 import numpy as np
 import pandas as pd
-from pyspark.sql import Column, DataFrame, WindowSpec
+from pyspark.sql import Column, DataFrame, Window, WindowSpec
 from pyspark.sql import functions as F
 from pyspark.sql.types import BooleanType, DoubleType, FloatType, NumericType
 
@@ -56,7 +58,6 @@ from core_modelling.statistics.distributions import quantile_edges
 from core_modelling.statistics.intervals import t_interval, wilson_interval
 
 SHOWN_VALUES = 3  # bad target values named in the error
-WINDOW_TARGET = "window_target"  # the summary's target in the observation window, else null
 TARGET_BINS = 20  # quantile bins of a regression target in the counts table
 EVENTS_WARNING = 500  # fewer events (units with a non-zero target) in the snapshot: a warning
 BINARY_SUPPORT = "positive events"  # what the concordance's support counts, per task
@@ -115,26 +116,40 @@ def _check_amount_column(source: DataFrame, column: str, name: str) -> None:
             )
 
 
-def _summarise(targets: DataFrame, cfg: UseCaseConfig, extra: dict[str, Column]) -> pd.DataFrame:
+def _label_aggregates(
+    target: Column, extra: Callable[[Column], dict[str, Column]]
+) -> dict[str, Column]:
+    """The mean target and the task's `extra` label aggregates over `target`."""
+    return {"mean_target": F.avg(target.cast("double")), **extra(target)}
+
+
+def _summarise(
+    targets: DataFrame, cfg: UseCaseConfig, extra: Callable[[Column], dict[str, Column]]
+) -> pd.DataFrame:
     """Per period (labelled by the period spec) plus an `all` row, from one rollup: rows, the
     null share and, among the complete windows, the share of rows whose window held a null in
     the target column (`null_in_window`, label-free) of every period; the mean target and the
-    `extra` label aggregates (over `WINDOW_TARGET`) for the observation window's periods only,
-    the `all` row's over those periods too, so a later period's label rate, the validation
-    period's among them, is never shown (§4.4, D-030)."""
+    `extra` label aggregates of every period up to the observation window's last (the periods
+    before the window are training-time history), the `all` row's over the window's periods,
+    the population the later stages read. A later period's labels are never shown: a gap
+    period's target window reaches into the validation period's outcomes (§4.2, §4.4, D-030)."""
     window = cfg.time.observation_window
-    in_window = F.col("period").between(window.first, window.last)
-    shown = F.max(in_window)  # the group holds a window period: false for a later period
-    labels = {"mean_target": F.avg(F.col(WINDOW_TARGET).cast("double")), **extra}
+    labelled = F.col("period") <= window.last
+    in_window = labelled & (F.col("period") >= window.first)
+    by_period = _label_aggregates(F.when(labelled, F.col("target")), extra)
+    over_window = _label_aggregates(F.when(in_window, F.col("target")), extra)
+    is_all, shown = F.grouping("period") == 1, F.max(labelled)  # shown: false after the window
     table = (
-        targets.withColumn(WINDOW_TARGET, F.when(in_window, F.col("target")))
-        .rollup("period")
+        targets.rollup("period")
         .agg(
             F.grouping("period").alias("_all"),
             F.count(F.lit(1)).alias("rows"),
             (1 - F.count("target") / F.count(F.lit(1))).alias("null_share"),
             F.avg(F.col("null_in_window").cast("double")).alias("null_value_share"),
-            *[F.when(shown, aggregate).alias(name) for name, aggregate in labels.items()],
+            *[
+                F.when(is_all, over_window[name]).when(shown, by_period[name]).alias(name)
+                for name in by_period
+            ],
         )
         .orderBy("_all", "period")
         .toPandas()
@@ -145,22 +160,71 @@ def _summarise(targets: DataFrame, cfg: UseCaseConfig, extra: dict[str, Column])
     return table
 
 
-def _binary_summary(targets: DataFrame, cfg: UseCaseConfig) -> pd.DataFrame:
-    """The summary (rows, null shares, the mean target) with the positive rows and the positive
-    events: the distinct units with a positive target, equal to the positive rows in one period
-    and fewer over several, since one conversion is positive in up to w consecutive periods
-    (D-082)."""
-    positive = F.col(WINDOW_TARGET) == 1
-    extra = {
+def _binary_labels(target: Column) -> dict[str, Column]:
+    """The positive rows and the positive events: the distinct units with a positive target,
+    equal to the positive rows in one period and fewer over several, since one conversion is
+    positive in up to w consecutive periods (D-082)."""
+    positive = target == 1
+    return {
         "positive_rows": F.count(F.when(positive, True)),
         "positive_events": F.countDistinct(F.when(positive, F.col("unit_id"))),
     }
-    return _summarise(targets, cfg, extra)
+
+
+def _binary_summary(targets: DataFrame, cfg: UseCaseConfig) -> pd.DataFrame:
+    """The summary (rows, null shares, the mean target) with the positive rows and events."""
+    return _summarise(targets, cfg, _binary_labels)
 
 
 def _regression_summary(targets: DataFrame, cfg: UseCaseConfig) -> pd.DataFrame:
     """The summary: rows, the null share, the null-value share and the mean target."""
-    return _summarise(targets, cfg, {})
+    return _summarise(targets, cfg, lambda target: {})
+
+
+def _occurrences(
+    source: DataFrame, cfg: UseCaseConfig, aggregates: dict[str, Column]
+) -> pd.DataFrame:
+    """The outcome `aggregates` per period of the source, in period order, labelled by the
+    period spec; every period has a row, the aggregates filled up to the window's last + w: the
+    outcomes the window's labels measure; later ones are later labels', the validation period's
+    among them (§4.4)."""
+    spec = period_spec(cfg)
+    last = spec.index(cfg.time.observation_window.last) + cfg.time.target_window
+    measured = F.max(spec.spark_index(F.col("period"))) <= last  # one period per group
+    table = (
+        source.groupBy("period")
+        .agg(*[F.when(measured, aggregate).alias(name) for name, aggregate in aggregates.items()])
+        .orderBy("period")
+        .toPandas()
+    )
+    table["period"] = table["period"].map(spec.label)
+    return table
+
+
+def _binary_occurrences(source: DataFrame, cfg: UseCaseConfig) -> pd.DataFrame:
+    """Per period of the target source, before eligibility and label-free: the `conversions`,
+    rows whose flag is 1 while it was 0 at the unit's previous consecutive period (a unit's
+    first row and a row after a gap have none, so never count; null in the source's first
+    period, where no unit has one), and the `flag_rows`."""
+    flag = F.col(cfg.data.target.column).cast("int")  # a boolean flag as 0/1
+    index = period_spec(cfg).spark_index(F.col("period"))
+    # a frame of one period: that period's flag, null without a row there (one window pass)
+    previous = Window.partitionBy("unit_id").orderBy(index).rangeBetween(-1, -1)
+    flags = source.select("period", flag.alias("flag"), F.max(flag).over(previous).alias("prev"))
+    converted, held = (F.col("flag") == 1) & (F.col("prev") == 0), F.col("flag") == 1
+    aggregates = {"conversions": F.count(F.when(converted, True)),
+                  "flag_rows": F.count(F.when(held, True))}  # fmt: skip
+    table = _occurrences(flags, cfg, aggregates)
+    table["conversions"] = table["conversions"].where(table.index > 0)  # rows in period order
+    return table
+
+
+def _regression_occurrences(source: DataFrame, cfg: UseCaseConfig) -> pd.DataFrame:
+    """Per period of the target source, before eligibility and label-free: the `total_amount`
+    (the target column's sum, nulls skipped) and the `nonzero_rows`."""
+    amount = F.col(cfg.data.target.column)
+    aggregates = {"total_amount": F.sum(amount), "nonzero_rows": F.count(F.when(amount != 0, True))}
+    return _occurrences(source, cfg, aggregates)
 
 
 def _check_flag_target(eligible: DataFrame, cfg: UseCaseConfig) -> dict:
@@ -433,11 +497,25 @@ def _regression_class(target: pd.Series) -> pd.Series:
     return pd.Series(np.where(target != 0, "non-zero", "zero"), index=target.index)
 
 
+def _binary_perfect_list(n: int, support: int) -> str:
+    """What a perfect list of `n` rows achieves over `support` positives: all of them at their
+    precision, or as many as fit at 100%."""
+    if support <= n:
+        return f"a perfect list captures all {support:,} positives at {support / n:.1%} precision"
+    return f"a perfect list captures {n:,} of the {support:,} positives at 100% precision"
+
+
+def _no_perfect_list(n: int, support: int) -> None:
+    """None: an amount's perfect list depends on the amounts' spread, which the counts lack."""
+    return None
+
+
 TASK_SPECS = {
     "binary": {
         "target_rules": {"flag_goes_up": _flag_goes_up},
         "check_target_column": _check_flag_column,
         "summarise_targets": _binary_summary,
+        "summarise_occurrences": _binary_occurrences,
         "contract_checks": [_check_flag_target],
         "target_bins": _binary_target_bins,
         "summarise_group": _binary_group,
@@ -454,13 +532,17 @@ TASK_SPECS = {
         "period_estimate": _binary_period_estimate,
         "target_class": _binary_class,
         "estimate_format": "{:.2%}",
+        "axis_format": ".1%",  # a rate axis' and hover's d3 format, read like the tables
         "estimate_noun": "rate",  # the y titles ("Target rate") and the how-to-read wording
         "target_distribution": False,  # a 0/1 target has no distribution to show per group
+        "capture_noun": "positives",  # what a slice captures: the share of `sum_y`
+        "perfect_list": _binary_perfect_list,
     },
     "regression": {
         "target_rules": {"forward_sum": _forward_sum},
         "check_target_column": _check_amount_column,
         "summarise_targets": _regression_summary,
+        "summarise_occurrences": _regression_occurrences,
         "contract_checks": [_check_amount_target],
         "target_bins": _regression_target_bins,
         "summarise_group": _regression_group,
@@ -476,8 +558,11 @@ TASK_SPECS = {
         "cells_concordance": _regression_concordance,
         "period_estimate": _regression_period_estimate,
         "target_class": _regression_class,
-        "estimate_format": "{:,.4g}",
+        "estimate_format": "{:,.2f}",  # an amount: separators, never scientific notation
+        "axis_format": None,  # plotly's default
         "estimate_noun": "mean",
         "target_distribution": True,  # an amount's quartiles per group and its group table
+        "capture_noun": "amount",
+        "perfect_list": _no_perfect_list,
     },
 }

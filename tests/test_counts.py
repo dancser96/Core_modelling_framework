@@ -284,7 +284,7 @@ def test_population_counts_equal_target_factorys_summary_where_both_exist(
     available = sorted(row.period for row in panel.select("period").distinct().collect())
     periods = compared_periods(plain, available)
     table = population_counts(panel, plain, periods).set_index("period")
-    summary = run_target_factory(plain, ENTITY, unit_env, spark).set_index("period")
+    summary = run_target_factory(plain, ENTITY, unit_env, spark).per_period.set_index("period")
     window = [MONTH.label(period) for period in periods["window"]]
     for column in ("rows", "positive_rows", "positive_events"):
         assert table.loc[window, column].tolist() == summary.loc[window, column].tolist()

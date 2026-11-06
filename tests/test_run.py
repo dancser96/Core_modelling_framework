@@ -32,7 +32,7 @@ PUBLIC_API = {
         "resolve_config",
         "read_resolved_config",
     },  # fmt: skip
-    "core_modelling.target_factory": {"run_target_factory"},
+    "core_modelling.target_factory": {"run_target_factory", "TargetSummary"},
     "core_modelling.dataset": {"build_frames", "save_model_input", "Frames"},
     "core_modelling.run": {"run"},
     "core_modelling.artifacts": {"StageResult"},

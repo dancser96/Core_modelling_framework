@@ -11,6 +11,7 @@ visible in the test; the rest reads the skeleton config's real frames, built onc
 
 from collections.abc import Callable
 from datetime import date
+from html import unescape
 
 import numpy as np
 import pandas as pd
@@ -33,6 +34,7 @@ from core_modelling.eda.deep_dives import (
     MIN_BIN_SUPPORT,
     bin_table,
     level_table,
+    numeric_groups,
     per_period_concordance,
     quartiles_by_target,
     strata_pivots,
@@ -43,9 +45,11 @@ from core_modelling.eda.population import (
     funnel_per_period,
     known_rows,
     reference_groups,
+    sources_per_period,
     strata_tables,
     target_per_period,
 )
+from core_modelling.eda.profile import PROFILE_COLUMNS, QUANTILES, value_profile
 from core_modelling.eda.ranking import (
     count_levels,
     encoding_prior_rows,
@@ -54,10 +58,31 @@ from core_modelling.eda.ranking import (
     scope_statistics,
     select_key_features,
 )
-from core_modelling.eda.report import _concordance_row, _correlation_view
+from core_modelling.eda.report import (
+    _concordance_row,
+    _correlation_view,
+    _profile_views,
+    _slices_views,
+    _value,
+)
+from core_modelling.eda.slices import (
+    CURVE_COLUMNS,
+    NO_BASE,
+    SIGNED,
+    SLICE_COLUMNS,
+    SLICE_GRID,
+    capture_curve,
+    capture_table,
+    ordered_categorical_bins,
+    ordered_numeric_bins,
+    skipped_slices,
+    slice_shares,
+    slice_tables,
+)
 from core_modelling.environment import EnvironmentConfig
 from core_modelling.ledger import COLUMNS_BY_STAGE
 from core_modelling.periods import PERIODS
+from core_modelling.reporting.theme import THEME
 from core_modelling.statistics.cells import pool_periods
 from core_modelling.statistics.distributions import bin_labels, merge_bins, quantile_edges
 from core_modelling.statistics.intervals import wilson_interval
@@ -248,9 +273,11 @@ def test_unavailable_statistics_are_decided_up_front_and_a_flip_reads_below_half
     assert down["concordance"].iloc[0] == pytest.approx(1 - signed) and signed < 0.5
     assert (down["concordance"] > 0.5).all() and (up["concordance"] < 0.5).all()
     assert down["se"].tolist() == up["se"].tolist()
-    # The sign a period is read in is the raw sign of the window's D (here −), 0 without one.
-    assert stats.loc["flips", "raw_sign_window"] == -1
-    assert (stats.loc[list(reasons), "raw_sign_window"] == 0).all()
+    # The sign a period is read in is the raw sign of the window's D (here −), 0 without one;
+    # the snapshot's raw sign (a one-feature list's direction) likewise.
+    signs = ["raw_sign", "raw_sign_window"]
+    assert (stats.loc["flips", signs] == -1).all()
+    assert (stats.loc[list(reasons), signs] == 0).all().all()
     gone = per_period_concordance(cells, "no_events", *args, 0, False)
     assert gone["concordance"].isna().all() and gone["unavailable"].str.startswith("not").all()
 
@@ -415,9 +442,10 @@ def test_pivot_target_with_a_backticked_filter_and_columns(
         pivot_target(result, [])
 
 
-def test_the_correlation_overview_leaves_out_a_key_feature_without_a_compared_pair() -> None:
-    """Key features a, b, c and d represented by a (e is neither): every pair of c is not
-    compared, so the heatmap shows a, b and d only and the subtitle counts c as left out."""
+def test_the_correlation_overview_shows_the_key_features_and_whom_they_represent() -> None:
+    """Key features a, b and c, d represented by a (e is neither): every pair of c is not
+    compared, so the heatmap shows a and b only and the subtitle counts c as left out; beneath
+    it d with a and their association; a rule that skipped nothing says so."""
     ranking = pd.DataFrame(
         {"feature": list("abcde"), "key_feature": ["top_n", "top_n", "listed", "", ""],
          "represented_by": ["", "", "", "a", ""]}
@@ -425,9 +453,26 @@ def test_the_correlation_overview_leaves_out_a_key_feature_without_a_compared_pa
     pairs = [("a", "b", 0.3), ("a", "c", np.nan), ("b", "c", np.nan), ("a", "d", 0.95),
              ("b", "d", 0.2), ("c", "d", np.nan), ("a", "e", 0.1)]  # fmt: skip
     correlation = pd.DataFrame(pairs, columns=["a", "b", "statistic"]).assign(method="spearman")
-    heatmap = _correlation_view(correlation, ranking)[0]
-    assert list(heatmap.data[0].x) == ["a", "b", "d"] == list(heatmap.data[0].y)
-    assert "3 shown, 1 without a compared pair left out" in heatmap.layout.title.text
+    heatmap, represented = _correlation_view(correlation, ranking, 0.9)
+    assert list(heatmap.data[0].x) == ["a", "b"] == list(heatmap.data[0].y)
+    assert "2 shown, 1 without a compared pair left out" in heatmap.layout.title.text
+    assert represented.data.to_dict("records") == [
+        {"candidate": "d", "represented_by": "a", "association": 0.95, "method": "spearman"}
+    ]
+    alone = ranking.assign(represented_by="")
+    assert "represent no candidate" in _correlation_view(correlation, alone, 0.9)[1]
+    assert _correlation_view(correlation, alone.iloc[2:], 0.9)[0].startswith("<p>Not available")
+
+
+def test_a_by_level_numeric_reads_values_and_a_mass_point_among_ranges_keeps_its_sign() -> None:
+    """Every group one value: labelled `0`, `1`, `2` (null last), not `= 0`; merged into ranges,
+    a mass point among them keeps `= 0`."""
+    few = pd.Series([0, 1, 2, 1, np.nan, 0], dtype=float, name="few")
+    edges = quantile_edges(few.dropna().to_numpy(), 10)
+    assert list(numeric_groups(few, edges, None).cat.categories) == ["0", "1", "2", "null"]
+    wide = pd.Series(np.r_[np.zeros(50), np.arange(1.0, 51.0)], name="wide")
+    merged = numeric_groups(wide, quantile_edges(wide.to_numpy(), 10), 3).cat.categories
+    assert merged[0] == "= 0" and merged[1].startswith("(0, ") and len(merged) == 3
 
 
 def test_a_regression_target_runs_through_the_same_tables(
@@ -489,3 +534,275 @@ def test_a_concordance_row_without_any_period_reads_not_available() -> None:
     ]
     boxes, text = _concordance_row("x", {"per_period": periods, "quartiles": quartiles}, "binary")
     assert len(boxes.data) == 2 and text == alone[0]
+
+
+def test_sources_per_period_shares_are_the_join_entries(frames: Frames) -> None:
+    """Over the compared periods, each joined feature source's share is its entry's matched rows
+    over the spine's, `all` pooled, the target source left out; the spine alone leaves `rows`."""
+    compared = next(entry for entry in frames.log if entry["step"] == "compared_periods")
+    periods = [*compared["window"], *compared["gap"], *compared["latest"]]
+    spine, extract, targets = [entry for entry in frames.log if entry["step"] == "join"]
+    table = sources_per_period(frames.log, periods).set_index("period")
+    assert table.columns.tolist() == ["rows", extract["source"]] and targets["role"] == "targets"
+    assert table.index.tolist() == [*periods, "all"]
+    rows = pd.Series(spine["rows"])[periods]
+    shares = pd.Series(extract["matched"])[periods] / rows
+    np.testing.assert_allclose(table.loc[periods, extract["source"]], shares)
+    assert table.loc["all", "rows"] == rows.sum()
+    pooled = sum(extract["matched"][p] for p in periods) / rows.sum()
+    assert table.loc["all", extract["source"]] == pytest.approx(pooled)
+    alone = sources_per_period([spine, targets], periods)
+    assert alone.columns.tolist() == ["period", "rows"]
+
+
+def _slice_cells(feature: str, rows: list[tuple]) -> pd.DataFrame:
+    """One feature's current cells from `(period, bin_order, target, n)` rows, a categorical's
+    with its client `fold` fifth; bin order −1 the null bin and `v<order>` the others; each
+    target value its own target bin."""
+    columns = ["period", "bin_order", "target", "n", "fold"][: len(rows[0])]
+    frame = pd.DataFrame(rows, columns=columns)
+    is_null = frame["bin_order"] < 0
+    return frame.assign(
+        feature=feature, lagged=False, is_null=is_null,
+        bin=np.where(is_null, "null", "v" + frame["bin_order"].astype(str)),
+        target_bin=frame["target"].astype(str), sum_y=frame["target"] * frame["n"],
+        sum_y2=frame["target"] ** 2 * frame["n"],
+    ).drop(columns="target")  # fmt: skip
+
+
+def _slice_ranking(features: list[str], kinds: list[str], raw_signs: list[int]) -> pd.DataFrame:
+    """A ranking of key features in the given order with the columns `slice_tables` reads."""
+    unavailable = ["" if sign else "not available: no events in the snapshot" for sign in raw_signs]
+    return pd.DataFrame({"feature": features, "kind": kinds, "rank": range(1, len(features) + 1),
+                         "key_feature": "top_n", "raw_sign": raw_signs,
+                         "unavailable": unavailable})  # fmt: skip
+
+
+def test_a_feature_with_every_positive_in_its_top_bins_captures_share_over_base() -> None:
+    """Ten bins of 100 rows, the top two all positive, and a negative null bin (base 200 /
+    1,100): the capture is min(1, share / base) at each share, linear inside the boundary bin,
+    and 1 at 100%; read with sign −1 the order reverses, the null bin last both ways."""
+    period = "2025-08"
+    rows = [(period, b, int(b >= 8), 100) for b in range(10)] + [(period, -1, 0, 100)]
+    cells, base = _slice_cells("x", rows), 200 / 1_100
+    ordered = ordered_numeric_bins(cells, 1, period)
+    assert ordered["bin"].tolist() == [f"v{b}" for b in range(9, -1, -1)] + ["null"]
+    shares = {"top 5%": 0.05, "top 10%": 0.1, "half": 0.5, "all": 1.0}
+    table = capture_table(ordered, shares, base, "binary", "")
+    expected = np.minimum(1, np.array(list(shares.values())) / base)
+    np.testing.assert_allclose(table["capture"], expected)
+    np.testing.assert_allclose(table["lift"], table["estimate"] / base)
+    assert table["estimate"].iloc[0] == 1.0 and (table["unavailable"] == "").all()
+    reverse = ordered_numeric_bins(cells, -1, period)
+    assert reverse["bin"].tolist() == [f"v{b}" for b in range(10)] + ["null"]
+    halves = capture_table(reverse, {"half": 0.5, "all": 1.0}, base, "binary", "")
+    assert halves["capture"].tolist() == [0.0, 1.0]
+
+
+def test_an_independent_feature_captures_its_share_along_the_curve() -> None:
+    """Twenty bins with the same 5% rate: the capture curve stays within noise (±0.03, about
+    four standard errors at 5,000 positives) of the diagonal and ends at 1."""
+    rng = np.random.default_rng(3)
+    positives = rng.binomial(5_000, 0.05, 20)
+    rows = [("p", b, 1, int(k)) for b, k in enumerate(positives)]
+    rows += [("p", b, 0, 5_000 - int(k)) for b, k in enumerate(positives)]
+    curve = capture_curve(ordered_numeric_bins(_slice_cells("x", rows), 1, "p"), SLICE_GRID)
+    assert np.abs(curve["capture"] - curve["share"]).max() < 0.03
+    assert curve["capture"].iloc[-1] == pytest.approx(1.0)
+
+
+def _null_code_rows(rng: np.random.Generator, clients: int, periods: list[str]) -> list[tuple]:
+    """`_slice_cells` rows, with folds, of a 50-level code without signal, constant per client,
+    on a panel: a label is any event in the next three periods at the client's own hazard
+    (lognormal frailty, a rate near 3%), so a client keeps its label across periods."""
+    level, fold = rng.integers(0, 50, clients), rng.integers(0, 5, clients)
+    frailty = rng.lognormal(0, 1, clients)
+    events = rng.random((clients, len(periods) + 3)) < 0.01 * frailty[:, None] / frailty.mean()
+    labels = [events[:, t + 1 : t + 4].any(axis=1) for t in range(len(periods))]
+    frame = pd.DataFrame({"period": np.repeat(periods, clients),
+                          "bin_order": np.tile(level, len(periods)),
+                          "target": np.concatenate(labels).astype(int),
+                          "fold": np.tile(fold, len(periods))})  # fmt: skip
+    keys = ["period", "bin_order", "target"]
+    counts = frame.groupby([*keys, "fold"]).size().rename("n").reset_index()
+    return list(counts[[*keys, "n", "fold"]].itertuples(index=False, name=None))
+
+
+def test_a_null_categorical_on_a_panel_captures_its_share() -> None:
+    """A null client-constant code on a panel whose clients keep their labels across the
+    overlapping target windows: ordered per client fold by the other folds' encoding, its list
+    captures its share (the mean of 20 seeded panels of 2,000 clients, within 0.025, about 3
+    standard errors; ordered by the other periods' raw rates it read about 0.08 and 0.15)."""
+    rng = np.random.default_rng(7)
+    periods = [f"2025-{month:02d}" for month in range(1, 7)]
+    shares = {"top 5%": 0.05, "top 10%": 0.1}
+    captured = []
+    for _ in range(20):
+        cells = _slice_cells("c", _null_code_rows(rng, 2_000, periods))
+        ordered = ordered_categorical_bins(cells, periods[-1], periods, 50, "binary")
+        captured.append(capture_table(ordered, shares, 0.03, "binary", "")["capture"])
+    np.testing.assert_allclose(np.mean(captured, axis=0), [0.05, 0.1], atol=0.025)
+
+
+def test_slice_tables_order_categoricals_by_client_fold_and_take_the_decision_once(
+    variant: Callable[..., UseCaseConfig],
+) -> None:
+    """A categorical's levels are ordered per client fold by the other folds' encoding, not
+    its own (a level unseen there at their base, the null bin last), so a one-period window
+    has a list; each fold is cut at the share and the counts summed. `decision.n` comes first
+    once (its listed twin left out), a count above the labelled rows is skipped and named, a
+    feature without a snapshot concordance reads the ranking's reason; the curve ends with the
+    diagonal."""
+    p = "2025-08"
+    level = [(p, 0, 1, 10, 0), (p, 0, 0, 90, 0), (p, 1, 1, 50, 0), (p, 1, 0, 50, 0),
+             (p, 0, 1, 50, 1), (p, 0, 0, 50, 1), (p, 1, 1, 10, 1), (p, 1, 0, 90, 1),
+             (p, 2, 1, 5, 1), (p, 2, 0, 5, 1), (p, -1, 0, 40, 1)]  # fmt: skip
+    numeric = _slice_cells("x", [(p, 0, 0, 325), (p, 1, 1, 125)])
+    cells = pd.concat([_slice_cells("c", level), numeric])
+    order = ordered_categorical_bins(cells.loc[cells["feature"] == "c"], p, [p], 50, "binary")
+    by_fold = order.groupby("fold")["bin"].agg(list).to_dict()
+    assert by_fold == {0: ["v0", "v1"], 1: ["v1", "v2", "v0", "null"]}
+    ranking = _slice_ranking(["x", "c", "z"], ["numeric", "categorical", "numeric"], [1, 1, 0])
+    resolved = variant(decision={"type": "top_n", "n": 45},
+                       evaluation={"slices": {"top_pct": [0.1], "top_n": [45, 5_000]}})  # fmt: skip
+    meta = {"snapshot_period": p, "snapshot_base": 125 / 450,
+            "slices": slice_shares(resolved, 450)}  # fmt: skip
+    slices, curve = slice_tables(cells, ranking, meta, resolved, [p])
+    assert slices.columns.tolist() == SLICE_COLUMNS and curve.columns.tolist() == CURVE_COLUMNS
+    assert slices["slice"].iloc[:2].tolist() == ["decision n = 45", "top 10%"]
+    assert slices["feature"].tolist() == ["x", "x", "c", "c", "z"]
+    assert slices["unavailable"].tolist() == ["", "", "", "", ranking["unavailable"].iloc[2]]
+    # c: fold 0 cut at 20 of 200 rows inside v0 (2 positives), fold 1 at 25 of 250 inside v1 (2.5)
+    np.testing.assert_allclose(slices["capture"], [0.36, 0.36, 4.5 / 125, 4.5 / 125, np.nan])
+    assert curve["feature"].unique().tolist() == ["x", "c", "random"]
+    random = curve.loc[curve["feature"] == "random"]
+    np.testing.assert_allclose(random["capture"], random["share"])
+    probability = variant(evaluation={"slices": {"top_pct": [0.1], "top_n": [45, 5_000]}})
+    assert slice_shares(probability, 450) == {"top 10%": 0.1, "n = 45": 0.1}
+    assert slice_shares(resolved, 20) == {"top 10%": 0.1}
+    assert skipped_slices(resolved, 20) == ["decision n = 45", "n = 5,000"]
+
+
+def test_a_regression_capture_needs_a_target_never_negative(
+    variant: Callable[..., UseCaseConfig],
+) -> None:
+    """Decided up front: an amount that is never negative captures all of it at 100%; one that
+    can be negative has no capture or curve (+3,000 and −2,000 would read 3.0 at 50%), its lift
+    kept; one whose mean is not positive has neither capture nor lift. The estimate stays."""
+    p = "2025-08"
+    resolved = variant(task="regression",
+                       evaluation={"slices": {"top_pct": [0.5, 1.0], "top_n": []}})  # fmt: skip
+    nan = [np.nan, np.nan]
+    cases = {"": ((0.0, 10.0), 5.0, [1.0, 1.0], [2.0, 1.0], [10.0, 5.0]),
+             SIGNED: ((-20.0, 30.0), 5.0, nan, [6.0, 1.0], [30.0, 5.0]),
+             NO_BASE: ((-30.0, 10.0), -10.0, nan, nan, [10.0, -10.0])}  # fmt: skip
+    for reason, (targets, base, capture, lift, estimate) in cases.items():
+        cells = _slice_cells("x", [(p, b, target, 100) for b, target in enumerate(targets)])
+        meta = {"snapshot_period": p, "snapshot_base": base, "slices": slice_shares(resolved, 200)}
+        slices, curve = slice_tables(cells, _slice_ranking(["x"], ["numeric"], [1]), meta,
+                                     resolved, [p])  # fmt: skip
+        assert (slices["unavailable"] == reason).all() and curve.empty == bool(reason)
+        read = slices[["capture", "lift", "estimate"]].to_numpy().T
+        np.testing.assert_allclose(read, [capture, lift, estimate])
+    with pytest.raises(ValueError, match="not positive"):
+        capture_curve(ordered_numeric_bins(cells, 1, p), SLICE_GRID)
+
+
+def _profile_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """A snapshot (eleven eligible rows and one not), its ranking and the categorical's cells,
+    labelled by `cap_levels` as the counts pass names levels."""
+    snapshot = pd.DataFrame({
+        "eligible": [1] * 11 + [0],
+        "x": [1, 2, 3, np.nan, np.inf, -np.inf, 999, 999, 5, 4, 0, -1e9],
+        "y": np.arange(12, dtype=float),
+        "c": ["A", "A", "A", "A", "B", "B", "B", "", "", "C", None, "A"],
+    })  # fmt: skip
+    ranking = pd.DataFrame({"feature": ["y", "c", "x"],
+                            "kind": ["numeric", "categorical", "numeric"], "rank": [3, 1, 2],
+                            "missing_share": [0.0, 1 / 11, 1 / 11]})  # fmt: skip
+    levels = cap_levels(snapshot.loc[snapshot["eligible"] == 1, "c"], 50).value_counts()
+    cells = pd.DataFrame({"feature": "c", "period": "2025-08", "lagged": False,
+                          "bin": levels.index.astype(str), "bin_order": range(len(levels)),
+                          "is_null": levels.index == "null", "target_bin": None,
+                          "n": levels.to_numpy(), "sum_y": np.nan, "sum_y2": np.nan})  # fmt: skip
+    return snapshot, ranking, cells
+
+
+def test_value_profile_ranges_are_pandas_on_the_finite_values() -> None:
+    """On the eligible rows, the range equals pandas' quantiles of the finite non-null values (a
+    sentinel 999 at `max`), `inf_share` counts both infinities, and the categorical's top three
+    levels come from its cells with their shares of every row, blank quoted; rank order."""
+    snapshot, ranking, cells = _profile_inputs()
+    kinds = {"x": "numeric", "y": "numeric", "c": "categorical"}
+    profile = value_profile(snapshot, kinds, ranking, cells, "2025-08").set_index("feature")
+    assert profile.index.tolist() == ["c", "x", "y"] and (profile["rows"] == 11).all()
+    finite = pd.Series([1, 2, 3, 999, 999, 5, 4, 0], dtype=float)
+    expected = finite.quantile([0, 0.01, 0.5, 0.99, 1]).to_numpy()
+    np.testing.assert_allclose(profile.loc["x", list(QUANTILES)].astype(float), expected)
+    assert profile.loc["x", "max"] == 999 and profile.loc["x", "inf_share"] == 2 / 11
+    assert profile.loc["c", "top_levels"] == "A: 36.4% · B: 27.3% · '': 18.2%"
+    assert profile.loc["x", "top_levels"] == "" and np.isnan(profile.loc["c", "min"])
+
+
+def test_value_profile_keeps_its_columns_without_a_kind() -> None:
+    """Only numerics, or only a categorical: the same columns either way."""
+    snapshot, ranking, cells = _profile_inputs()
+    numerics = value_profile(snapshot, {"x": "numeric"}, ranking, cells, "2025-08")
+    categorical = value_profile(snapshot, {"c": "categorical"}, ranking, cells, "2025-08")
+    assert numerics.columns.tolist() == categorical.columns.tolist() == PROFILE_COLUMNS
+    assert numerics["top_levels"].tolist() == [""] and categorical["min"].isna().all()
+
+
+def test_the_value_profile_view_splits_the_kinds_and_prints_amounts_plainly() -> None:
+    """Numerics then categoricals, each with its own columns and no `rows`; a kind without a
+    candidate reads not available; an amount prints with separators, never as 6.931e+04."""
+    snapshot, ranking, cells = _profile_inputs()
+    kinds = {"x": "numeric", "y": "numeric", "c": "categorical"}
+    numeric, categorical = _profile_views(value_profile(snapshot, kinds, ranking, cells, "2025-08"))
+    assert numeric.data.columns.tolist() == ["feature", "rank", "missing_share", *QUANTILES,
+                                             "inf_share"]  # fmt: skip
+    assert categorical.data.columns.tolist() == ["feature", "rank", "missing_share", "top_levels"]
+    only = _profile_views(value_profile(snapshot, {"x": "numeric"}, ranking, cells, "2025-08"))
+    assert only[1] == "<p>Not available: no categorical candidate.</p>"
+    assert [_value(x) for x in (69_310.4, -1_000.0, 0.331_49, 12.0)] == [
+        "69,310", "-1,000", "0.3315", "12"]  # fmt: skip
+
+
+def test_the_slices_view_states_the_decision_and_draws_the_diagonal_as_a_reference(
+    variant: Callable[..., UseCaseConfig],
+) -> None:
+    """A top_n decision's paragraph gives its share of the labelled rows, the perfect and a
+    random list and says the view is no baseline; the caption names the skipped count; the
+    `random` line is dashed and muted; without a key feature the view says not available."""
+    resolved = variant(decision={"type": "top_n", "n": 100},
+                       evaluation={"slices": {"top_pct": [0.1], "top_n": [5_000]}})  # fmt: skip
+    population = pd.DataFrame(
+        {"period": ["2025-08"], "known_target": [1_000], "positive_events": [50]}
+    )
+    slices = pd.DataFrame(
+        {"feature": "x", "slice": ["decision n = 100", "top 10%"], "share": 0.1, "rows": 100.0,
+         "support": 30.0, "estimate": 0.3, "low": 0.2, "high": 0.4, "lift": 6.0, "capture": 0.6,
+         "insufficient": [False, True], "unavailable": ""}
+    )  # fmt: skip
+    curve = pd.DataFrame({"feature": ["x", "x", "random", "random"], "share": [0.5, 1.0] * 2,
+                          "capture": [0.9, 1.0, 0.5, 1.0]})  # fmt: skip
+    tables = {"population": population, "slices": slices, "capture_curve": curve}
+    meta = {"snapshot_period": "2025-08", "snapshot_base": 0.05}
+    views = _slices_views(tables, meta, resolved)
+    text, (table, chart) = views["decision_note"], views["slices"]
+    assert (
+        "n = 100, 10.0% of the snapshot's 1,000 labelled rows: a perfect list captures all 50 "
+        "positives at 50.0% precision; a random list captures 10.0% of the positives at the "
+        "base rate 5.00%." in unescape(text)
+    )
+    assert "not a baseline" in text
+    assert table.data.columns.tolist() == ["feature", "slice", "capture", "estimate", "lift",
+                                           "support"]  # fmt: skip
+    assert "skipped, above the labelled rows: n = 5,000" in table.caption
+    random = next(trace for trace in chart.data if trace.name == "random")
+    assert random.line.dash == "dash" and random.line.color == THEME["muted"]
+    assert chart.layout.yaxis.range == (0, 1.02)  # capture stops at 100%
+    empty = {**tables, "slices": slices.iloc[:0], "capture_curve": curve.iloc[:0]}
+    assert _slices_views(empty, meta, resolved)["slices"] == [
+        "<p>Not available: no key feature.</p>"
+    ]

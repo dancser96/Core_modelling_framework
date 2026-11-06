@@ -17,9 +17,12 @@ when it has values in the source's last w periods, where no such target can be k
 Targets are built over every row of the source, lazily in Spark, so every period with a
 complete window carries its label; the dataset selects the eligible rows and joins them
 (docs/components/target_factory.md). The lineage, the columns the target was built from, is
-excluded from the candidates (T12).
+excluded from the candidates (T12). `run_target_factory` reads the source once and returns a
+`TargetSummary`: the per-period target summary and, for a built target, the occurrences per
+period (the events in the target column itself, up to the window's last period + w).
 """
 
+from dataclasses import dataclass
 from datetime import date
 
 import pandas as pd
@@ -104,20 +107,20 @@ def last_labelled_period(cfg: UseCaseConfig) -> tuple[date, str]:
     return cfg.time.validation_period, "time.validation_period"
 
 
-def load_targets(
+def _read_target_source(
     cfg: UseCaseConfig, entity: str, env: EnvironmentConfig, spark: SparkSession
 ) -> tuple[DataFrame, dict]:
-    """The targets of `entity`'s target source (the spine when `targets` is omitted), built by the
-    rule or taken from the upstream column, with the source's log."""
+    """`entity`'s target source (the spine when `targets` is omitted), keyed and checked: the
+    target column readable by the task, every period up to the last labelled period + w, and an
+    upstream target's tail; with the source's log."""
     if entity not in cfg.entities:
         raise ValueError(f"unknown entity {entity!r}: the config has {sorted(cfg.entities)}")
     _check_target_names(cfg)
     sources = cfg.entities[entity].sources
     # without a target source, the first feature source (the spine, D-129)
     entry = sources.features[0] if sources.targets is None else sources.targets
-    name = source_name(entry)
     source, log = read_keyed_source(cfg, entity, entry, env, spark)
-    _check_target_column(source, cfg, name)
+    _check_target_column(source, cfg, source_name(entry))
     # Every period up to the last labelled period + w: a gap nulls the w targets before it, a
     # source ending earlier leaves its labels immature (one unbroken range; real panels have it).
     spec = period_spec(cfg)
@@ -127,13 +130,27 @@ def load_targets(
                           f"{field} + target_window", spec)  # fmt: skip
     if cfg.data.target.rule is None:
         _check_upstream_tail(source, cfg, log)
-        column = F.col(cfg.data.target.column)
-        if isinstance(source.schema[cfg.data.target.column].dataType, BooleanType):
-            column = column.cast("int")  # a boolean flag as 0/1, like a built target
-        upstream = column.alias("target")
-        unknown = F.lit(None).cast("boolean").alias("null_in_window")  # upstream built it
-        return source.select("unit_id", "period", upstream, unknown), log
-    return build_targets(source, cfg), log
+    return source, log
+
+
+def _targets_from(source: DataFrame, cfg: UseCaseConfig) -> DataFrame:
+    """The targets of a read target source: built by the rule, or the upstream column as is."""
+    if cfg.data.target.rule is not None:
+        return build_targets(source, cfg)
+    column = F.col(cfg.data.target.column)
+    if isinstance(source.schema[cfg.data.target.column].dataType, BooleanType):
+        column = column.cast("int")  # a boolean flag as 0/1, like a built target
+    unknown = F.lit(None).cast("boolean").alias("null_in_window")  # upstream built it
+    return source.select("unit_id", "period", column.alias("target"), unknown)
+
+
+def load_targets(
+    cfg: UseCaseConfig, entity: str, env: EnvironmentConfig, spark: SparkSession
+) -> tuple[DataFrame, dict]:
+    """The targets of `entity`'s target source (the spine when `targets` is omitted), built by the
+    rule or taken from the upstream column, with the source's log."""
+    source, log = _read_target_source(cfg, entity, env, spark)
+    return _targets_from(source, cfg), log
 
 
 def target_lineage(cfg: UseCaseConfig) -> list[str]:
@@ -154,18 +171,42 @@ def _check_target_names(cfg: UseCaseConfig) -> None:
             )
 
 
+@dataclass(frozen=True)
+class TargetSummary:
+    """What `run_target_factory` returns: the per-period target summary and the occurrences per
+    period (None for an upstream target, decided before anything runs)."""
+
+    per_period: pd.DataFrame
+    occurrences: pd.DataFrame | None
+
+
 def run_target_factory(
     cfg: UseCaseConfig, entity: str, env: EnvironmentConfig, spark: SparkSession
-) -> pd.DataFrame:
-    """The task's target summary over every period of the target source, printed and returned;
-    writes nothing (the model input is saved by `save_model_input`)."""
-    targets, log = load_targets(cfg, entity, env, spark)
-    summary = TASK_SPECS[cfg.task]["summarise_targets"](targets, cfg)
+) -> TargetSummary:
+    """The task's target summary over every period of the target source and, for a built target,
+    the occurrences per period, printed and returned; writes nothing (the model input is saved
+    by `save_model_input`)."""
+    source, log = _read_target_source(cfg, entity, env, spark)
+    spec = TASK_SPECS[cfg.task]
+    per_period = spec["summarise_targets"](_targets_from(source, cfg), cfg)
     print(
         f"the targets of every row of {log['source']}, null where the forward window is "
-        "incomplete; label columns for the observation window only; before eligibility, which "
-        "the dataset applies; null_value_share: rows whose window held a null in the target "
-        "column, among the complete windows (unknown for an upstream target)"
+        "incomplete; label columns up to the observation window's last period, the all row's "
+        "over the window's periods; before eligibility, which the dataset applies; "
+        "null_value_share: rows whose window held a null in the target column, among the "
+        "complete windows (unknown for an upstream target)"
     )
-    print(summary.to_string(index=False))
-    return summary
+    print(per_period.to_string(index=False))
+    if cfg.data.target.rule is None:
+        # The upstream column is the label, not the event column it was built from: its
+        # positives are the summary's, and over the whole span they would show later labels.
+        print("occurrences per period: not available for an upstream target")
+        return TargetSummary(per_period, None)
+    occurrences = spec["summarise_occurrences"](source, cfg)
+    print(
+        f"the occurrences per period of {cfg.data.target.column} in {log['source']}, before "
+        "eligibility: the events themselves, null after the window's last period + w, where "
+        "they are later labels' outcomes"
+    )
+    print(occurrences.to_string(index=False))
+    return TargetSummary(per_period, occurrences)

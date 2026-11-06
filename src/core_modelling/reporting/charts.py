@@ -3,9 +3,11 @@ applied (docs/components/reporting.md), and `side_by_side`, which sets two of th
 
 Every figure is drawn from pre-aggregated tables (group tables, quartiles), never from rows. The
 rules enforced: a rate axis follows the data (from 0 to 1.25 times the plotted values on each
-side of it, never a fixed 0 to 1), a group with too little support is greyed but drawn with its
-interval, `null` is its own category and comes last, one colour stands for one thing, and traces
-are SVG only (no WebGL: browsers allow a handful of WebGL contexts per page). Every figure
+side of it, never a fixed 0 to 1; a line chart's values counted up to twice its highest
+supported point), a group with
+too little support is greyed but drawn with its interval, `null` is its own category and comes
+last, one colour stands for one thing, and traces are SVG only (no WebGL: browsers allow a
+handful of WebGL contexts per page). Every figure
 carries `layout.meta` (its reference line, whether anything is greyed): shapes and annotations do
 not move into a subplot, so `side_by_side` redraws them from it.
 """
@@ -137,6 +139,7 @@ def _interval_bars(
     y_title: str,
     by_level: bool,
     reference: float | None,
+    y_format: str | None,
 ) -> go.Figure:
     """Bars with interval error bars: the body of `bar_with_intervals` and `lift_chart`."""
     data = _null_last(df, x)
@@ -146,12 +149,13 @@ def _interval_bars(
         for i, (label, flag) in enumerate(zip(data[x], flags, strict=True))
     ]
     estimate = data[value].to_numpy(dtype=float)
+    fmt = y_format or ".4g"
     bar = go.Bar(
         x=data[x], y=estimate, marker_color=colours,
         error_y=_error_bars(data, estimate, low, high, THEME["text"]),
         customdata=data[[low, high]].to_numpy(dtype=float),
-        hovertemplate="%{x}<br>%{y:.4g} [%{customdata[0]:.4g}, %{customdata[1]:.4g}]"
-                      "<extra></extra>",
+        hovertemplate=f"%{{x}}<br>%{{y:{fmt}}} [%{{customdata[0]:{fmt}}}, "
+                      f"%{{customdata[1]:{fmt}}}]<extra></extra>",
     )  # fmt: skip
     if support is not None:
         bar.text = data[support].map(lambda n: "" if pd.isna(n) else f"{n:,.0f}")
@@ -164,7 +168,7 @@ def _interval_bars(
     if data[x].str.len().max() > 12:  # long labels tilt
         fig.update_xaxes(tickangle=-30)
     plotted = _plotted(data, value, low, high, flags)
-    fig.update_yaxes(range=_axis_range(plotted, reference, True))
+    fig.update_yaxes(range=_axis_range(plotted, reference, True), tickformat=y_format)
     _add_reference_and_note(fig, reference, bool(flags.any()))
     return fig
 
@@ -181,12 +185,15 @@ def bar_with_intervals(
     x_title: str = "",
     y_title: str = "",
     by_level: bool = False,
+    y_format: str | None = None,
 ) -> go.Figure:
     """The estimate by category as bars with interval error bars, the support as bar text;
-    `by_level` gives every category its own colour (a stratum's levels)."""
+    `by_level` gives every category its own colour (a stratum's levels); `y_format` (a d3
+    format, the task's `axis_format`) formats the y axis and the hover, None plotly's default."""
     return _interval_bars(
         df, x, value=estimate, low=low, high=high, support=support, insufficient=insufficient,
         title=title, x_title=x_title, y_title=y_title, by_level=by_level, reference=None,
+        y_format=y_format,
     )  # fmt: skip
 
 
@@ -207,6 +214,7 @@ def lift_chart(
     return _interval_bars(
         df, x, value=lift, low=low, high=high, support=support, insufficient=insufficient,
         title=title, x_title=x_title, y_title=y_title, by_level=False, reference=1.0,
+        y_format=None,
     )  # fmt: skip
 
 
@@ -277,13 +285,16 @@ def _add_line(
     name: str,
     colour: str,
     show_legend: bool,
+    x_numeric: bool,
 ) -> None:
-    """One line with its interval bars; insufficient points get grey markers."""
+    """One line with its interval bars; insufficient points get grey markers. A numeric x (a
+    curve on a fine grid) draws no markers: they would merge into a thick line."""
     estimate = part[y].to_numpy(dtype=float)
     intervals = low is not None and high is not None
     markers = [THEME["insufficient"] if flag else colour for flag in _flags(part, insufficient)]
     fig.add_trace(go.Scatter(
-        x=_axis_labels(part[x]), y=estimate, mode="lines+markers", name=name,
+        x=part[x].to_numpy(dtype=float) if x_numeric else _axis_labels(part[x]), y=estimate,
+        mode="lines" if x_numeric else "lines+markers", name=name,
         showlegend=show_legend, line={"color": colour}, marker={"color": markers, "size": 8},
         error_y=_error_bars(part, estimate, low, high, colour) if intervals else None,
     ), secondary_y=False)  # fmt: skip
@@ -318,6 +329,22 @@ def _lines(df: pd.DataFrame, group: str, order: list | None) -> list[tuple[str, 
     ]
 
 
+def _line_range_values(
+    df: pd.DataFrame, y: str, low: str | None, high: str | None, flags: np.ndarray
+) -> np.ndarray:
+    """The values a line chart's y range follows (the axis adds its headroom): a bar chart's
+    (every point, the supported points' interval ends) capped at twice the highest supported
+    point, so a few grey points cannot flatten the lines and one far above runs off the top;
+    every point and interval when none is supported."""
+    supported = df[y].to_numpy(dtype=float)[~flags]
+    supported = supported[np.isfinite(supported)]
+    if supported.size == 0:
+        return _plotted(df, y, low, high, np.zeros_like(flags))
+    # no cap when no supported point is above zero: an amount's negative values keep the bottom
+    cap = 2 * supported.max() if supported.max() > 0 else np.inf
+    return np.minimum(_plotted(df, y, low, high, flags), cap)
+
+
 def grouped_lines(
     df: pd.DataFrame,
     x: str,
@@ -335,30 +362,42 @@ def grouped_lines(
     support_title: str = "Support",
     legend_title: str | None = None,
     group_order: list | None = None,
+    y_format: str | None = None,
+    x_numeric: bool = False,
 ) -> go.Figure:
     """One line per group (or one line) over an ordered category axis (periods, or a feature's
     groups) in the data's order, with optional interval bars, a reference line and support bars
-    on a second axis (one line only); the y axis from zero when `from_zero`, else the data's
-    span (a concordance around 0.5). A NaN in `y` (a label-free period) shows no point.
+    on a second axis (one line only). The y axis follows every point, counted up to twice the
+    highest supported one (a grey point far above runs off it): from zero when `from_zero`, else
+    their span (a concordance around 0.5). A NaN in `y` (a label-free period) shows no point.
     `group_order` orders the lines, hence their colours (default the data's order); a `null`
-    group takes the null colour."""
+    group takes the null colour. `y_format` (a d3 format, the task's `axis_format`) formats the
+    y axis and the hover. `x_numeric` draws x as numbers on a linear [0, 1] axis shown as
+    percentages (a share of rows), without support bars."""
     if support is not None and group is not None:
         raise ValueError("support bars are drawn for a single line: do not combine with group")
+    if support is not None and x_numeric:
+        raise ValueError("support bars are drawn over categories: do not combine with x_numeric")
     fig = make_subplots(specs=[[{"secondary_y": support is not None}]])
     _apply_theme(fig, title, x_title, y_title, 380)  # first: it titles every y axis
     lines = _lines(df, group, group_order) if group else [("", df, THEME["accent"])]
     for name, part, colour in lines:
-        _add_line(fig, part, x, y, low, high, insufficient, name, colour, group is not None)
+        _add_line(fig, part, x, y, low, high, insufficient, name, colour, group is not None,
+                  x_numeric)  # fmt: skip
     if support is not None:
         _add_support(fig, df, x, support, support_title)
-    # The data's order, not plotly's order of first appearance across the lines; half a slot
-    # of padding at both ends, as bars have.
-    categories = list(_axis_labels(df[x]).unique())
-    fig.update_xaxes(type="category", categoryorder="array", categoryarray=categories,
-                     range=[-0.5, len(categories) - 0.5])  # fmt: skip
+    if x_numeric:
+        fig.update_xaxes(type="linear", range=[0, 1], tickformat=".0%", hoverformat=".0%")
+    else:
+        # The data's order, not plotly's order of first appearance across the lines; half a
+        # slot of padding at both ends, as bars have.
+        categories = list(_axis_labels(df[x]).unique())
+        fig.update_xaxes(type="category", categoryorder="array", categoryarray=categories,
+                         range=[-0.5, len(categories) - 0.5])  # fmt: skip
     flags = _flags(df, insufficient)
-    plotted = _plotted(df, y, low, high, flags)
-    fig.update_yaxes(range=_axis_range(plotted, reference, from_zero), secondary_y=False)
+    plotted = _line_range_values(df, y, low, high, flags)
+    fig.update_yaxes(range=_axis_range(plotted, reference, from_zero), tickformat=y_format,
+                     hoverformat=y_format, secondary_y=False)  # fmt: skip
     if legend_title is not None:
         fig.update_layout(legend_title_text=legend_title)
     _add_reference_and_note(fig, reference, bool(flags.any()))
@@ -388,10 +427,17 @@ def heatmap(
         text=None if hover is None else hover.to_numpy(),
         hovertemplate=template + "<extra></extra>", colorbar={"title": {"text": z_title}},
     ))  # fmt: skip
-    size = min(900, max(420, 28 * len(matrix) + 160))
-    _apply_theme(fig, title, x_title, "", size)
-    fig.update_xaxes(showgrid=False, constrain="domain", tickangle=-45)
-    fig.update_yaxes(showgrid=False, autorange="reversed", scaleanchor="x", constrain="domain")
+    labels = [str(c) for c in matrix.columns]
+    label = 7 * max(len(name) for name in labels) + 20
+    # The square fits the report's 1,060 px column; the paper stays wide enough for the title.
+    side = min(max(280, 32 * len(labels)), 1060 - label - 110)
+    _apply_theme(fig, title, x_title, "", side + label + 90)
+    # A paper just wider than the square and its labels keeps the colour bar beside it.
+    width = max(560, side + label + 110)
+    fig.update_layout(width=width, margin={"l": label, "r": 110, "t": 90, "b": label})
+    ticks = {"showgrid": False, "constrain": "domain", "tickmode": "array", "tickvals": labels}
+    fig.update_xaxes(tickangle=-45, **ticks)  # array ticks: plotly would drop every other label
+    fig.update_yaxes(autorange="reversed", scaleanchor="x", **ticks)
     _add_reference_and_note(fig, None, False)
     return fig
 

@@ -1,79 +1,98 @@
-# Stage 2 (M2.2 Understanding): the review guide for the SDS
-_Written for the SDS's review at the end of each major step (D-003, D-072 (i)); it holds the
-current review only (worknotes are current-only). What to read, in which order, and what "right"
-looks like. Tests appear only where reading one matters, marked **read this test** (at most two
-per major step). Decisions the build made without the SDS are numbered in `plan.md` §9: silence
-confirms them._
+# Stage 2 EDA: the review guide for the LDS
+_Written 2026-11-06 at the SDS's request (D-072 (i)) for the LDS's review of EDA as built, with
+the Target Factory changes it needed. About 1.5 hours: the two notebooks first (an hour), then
+six key points (about 30 minutes); the code is optional. Your feedback may still change EDA;
+Feature Checks, which reads EDA's output, is being built meanwhile._
 
-## Major step 2: EDA — review 2 applied, ready for review 3 (2026-11-05)
-**Built** from `review2_spec.md` (the SDS's remarks R10–R28 and answers Q494–Q522), then the
-stage-3 comprehensive review of the whole major step 2 code:
-- the report reorganised: how to read up front, a three-column choices table, a lean ranking
-  ordered and barred on one value, deep dives as rows of two-panel figures with the key features
-  against the strata and their pivots, the correlation overview on the key features;
-- the look: short centred titles, axis titles, nothing clipped, translucent table colours,
-  range labels on merged bins (`[374, 419)`, `= 13`, `≥ 900`);
-- `lift_by_group`, `compare_sides`, `rate_by_period` beside `pivot_target` (`eda/explore.py`);
-- the cells' `sum_y2` (a regression mean's interval per period), the collect sorted in Spark,
-  the strata check folded, `encoding_prior_rows`;
-- notebooks 01 and 02 rewritten (02: 4,009 → 2,046 words; 01: 796 → 581) and run on the
-  100k dataset; two simplicity passes (`report.py` + `charts.py` −15%);
-- the stage-3 review: seven reviewers (code ×4, ML audit, silent failures, compatibility), every
-  finding checked by a second reader, one fix round, then a review of the fixes. The biggest
-  find: a regression concordance's standard error ignored the target's ties (V47).
+## What EDA is
+- **One run per use case** (`run_eda`): it reads the model input, computes every number over the
+  observation window and on the **snapshot** (the window's last period, every client), writes
+  `eda/` with a self-contained HTML report, and changes nothing: it drops no row or feature and
+  records no decision. Feature Checks, next, is the gate that holds features out.
+- **Nothing is sampled** (D-135): the window is counted in Spark as one table of counts per
+  feature, bin and target value; the snapshot is analysed whole in pandas.
+- **One ranking scale, concordance**: AUC for a binary target, its generalisation (Somers' D)
+  for an amount; 0.5 is chance, 1 a perfect ordering, either way round. The **key features**
+  are the top 10 without near-duplicates, plus any the config lists.
+- **Labels in sample** (D-030): EDA reads every client's labels in the window, before the
+  train/test split, so decisions taken here have seen test labels; the model report will say so.
+  The validation period's labels are never read.
 
-**Measured:** full suite 510 passed, 9 slow deselected, about 9 minutes; `ruff check .` clean
-(2026-11-05). On the 100k data (this laptop): notebook 01 about 2 minutes of cells; `run_eda`
-132 s (1.2 GB peak); the report 5.6 MB, 34 figures; notebook 02 end to end with no cell error.
+## 1. Notebook 01 · Target Factory (15 minutes)
+Setup: `docs/guides/setup_macos.md` or `setup_windows_wsl2.md`, the synthetic data generated.
+The data is the canonical synthetic preset: about 100,000 clients per month and 160 candidate
+features, among them planted problems whose names end in `_trap_<kind>` (a leak, a look-ahead,
+a shifted target, …), so you can see where each lands. Run top to bottom and look at:
+- **Step 1, the summary per period.** The label columns (`mean_target`, `positive_rows`,
+  `positive_events`) are filled up to 2025-08, the window's last period, and blank after: those
+  periods' 3-month targets would reach the validation period's outcomes.
+- **Step 1, the occurrences.** The conversions per period (the flag going 0 → 1), up to 2025-11
+  (the window's last + 3 months); the first period has none, since it has no previous month.
+- **Step 3, the snapshot per use case**: rows, candidates, the eligible share, the target mean.
 
-**Reading order (about 90 minutes; what you will see first, then the code behind it):**
-1. `notebooks/02_eda.ipynb` on the canonical preset (step E pointed `conf/local/` at it): run it
-   top to bottom. Right looks like: nine steps, each saying what to look at and what to decide,
-   no decision references; step 7 answers four questions with one call each (holders vs
-   non-holders is `compare_sides(result, "income", "non_holders")`).
-2. `report.html` in a browser (the path prints in step 8): the summary, the ranking (one order,
-   one bar), the `income` deep dive (lift | segment, then onboarding_channel alone, then boxes
-   | concordance per period, then two pivots), `onboarding_channel`'s deep dive (a stratum
-   itself: no chart against itself), the correlation overview.
-3. `src/core_modelling/eda/report.py`: `build_views`, `_deep_dive`, `_concordance_row`,
-   `_ranking_views` (`RANKING_VIEW`, `concordance_plain`), `_correlation_view`. Right looks like:
-   tables in, Stylers and figures out, every group read from a stored table.
-4. `src/core_modelling/eda/explore.py`: the four functions; right looks like: the report's
-   groups, base and greying, a ValueError naming the valid choices for anything else.
-5. `src/core_modelling/reporting/charts.py`: `_apply_theme`, `grouped_lines`, `side_by_side`.
-6. `src/core_modelling/statistics/concordance.py` `kendall_null_se` (the tie factor, V47) and
-   `statistics/distributions.py` `range_label`.
-7. `src/core_modelling/eda/run.py` `_write`: the report is rendered before anything is removed
-   and committed with `eda.json` in one rename (V49).
+**Feedback wanted:** is a conversion counted as you would count an acquisition, and is the cut
+of the labels where you would put it?
 
-**Read this test (two):**
-- `tests/test_statistics.py::test_kendall_se_matches_a_null_numerics_spread_on_a_zero_inflated_target`:
-  the corrected SE against a simulated null spread (70% zeros, 2,000 units: 0.01195 against an
-  empirical 0.01193; the old SE was 0.0075).
-- `tests/test_eda.py::test_the_exploration_functions_cut_the_deep_dives_groups`: the notebook's
-  functions show the report's groups, so a reader never compares two different cuts.
+## 2. Notebook 02 · EDA (45 minutes)
+Read each step's guide cell before its output: the guide cells are a deliverable in their own
+right, written for a data scientist new to the framework. Then the report (step 8) in a browser.
+What right looks like on this data:
+- **Step 4, the population.** Steady rows per period through the funnel; every feature source
+  matching close to all of the spine's rows; the card rate about 3% per period.
+- **Step 5, the ranking.** The traps lead it: the upstream target at concordance 1.00, the two
+  leak scores at 0.97 and 0.89, the look-ahead count at 0.80, the shifted limit at 0.70. The real
+  signals follow at 0.65–0.67: income, the account inflows and outflows, the onboarding channel.
+  Seven of the ten key features are traps; Feature Checks is where they are held out.
+- **Step 5, the decision's slices.** Each key feature alone as a list, cut at the evaluation
+  slices: at the top 10% the upstream target captures every positive, the leak score 88%, income
+  24% (lift 2.4). Context for the decision, never a baseline for a model.
+- **Step 6, the key features.** Lift by group, the same by stratum (segment, channel), the
+  concordance per period (flat is stable), boxes by target class, one pivot per stratum.
+- **Step 7, the four exploration functions**: a pivot, lift within another variable, the two
+  sides of a modelling filter, the target per period by group.
+- **Step 8, the report only:** the reference group (the current card holders the filter keeps
+  out), the correlation overview of the key features, the value profile, the appendix.
 
-**Decisions made without you, to veto by number (`plan.md` §9):** V29–V46 from the build (the
-one label rule and no thousands separators V29–V32, the two-panel rules V33–V34, the how-to-read
-wording V35, the explore rules V37–V38 and V44, short titles V39, the stratum-as-itself skip V41,
-the simplicity passes V46), V47–V54 from the stage-3 fix round (the tie-corrected SE, labels
-falling back on reversed order, the report committed with the stage, axes below zero, one colour
-per thing, the per-period concordance with no window direction, per-task summary columns, a tag
-refused as a stratum). V20, V22, V26 and V27 were rewritten to the new state.
+**Feedback wanted:**
+1. Are these the views you would want first, in this order? Is anything missing that you would
+   check on a real card or deposit use case?
+2. Is concordance readable as the one ranking scale, and are the key features the ones you would
+   look into?
+3. Do the guide cells tell a new user what to look at and what to decide, without being long?
+4. Does any chart mislead you (axes, grey points, colours)? The rules: `docs/components/
+   reporting.md` → "Chart rules".
 
-**Questions for you (defaults in brackets; `questions.md`):** Q523 percentage rate axes [yes,
-in major step 3's first minor step]; Q524 thin stratum levels setting a strata chart's axis
-[the axis follows the supported points].
+## 3. Key points to judge (about 30 minutes)
+Each: the choice, where to read it, the feedback wanted.
+1. **No sampling.** D-135; `docs/components/eda.md` → Level 1 and "The counts table". On this
+   data the snapshot takes about 1 GB in Python: is that safe for the bank's retail size?
+2. **Panel-aware statistics.** A client appears in every window period, so a window's standard
+   error counts effective clients, and a categorical's level order is learnt on other clients
+   (five client folds), so a noise code cannot look predictive. `eda.md` → "The statistics" (its
+   table first). Is the `direction` rule (only when clear of chance) the reading you want?
+3. **The key features.** `eda.md` → "The views" (the ranking and key features): the top 10
+   without pairs above `eda.key_features.max_correlation`; each one lists the candidates it
+   represents. Is 10 the right default?
+4. **Labels and time.** `docs/components/target_factory.md` → Level 1; `eda.md` → "The snapshot
+   and the compared periods": labels up to the window's last, later periods compared without
+   labels, the validation period never read.
+5. **The decision's slices.** D-138; `eda.md` → "The views", "At the decision's slices": in
+   sample, the categorical order cross-fitted, never a baseline (models are judged against
+   `decision.baselines`). Useful, or noise in the report?
+6. **What EDA records.** The feature ledger (`docs/components/feature_ledger.md` → Level 1): one
+   row per candidate with its kind, source and EDA's statistics; Feature Checks adds its
+   findings, Training the use in the model.
 
-**Open risks:**
-- A preset switch writes to the same folder: the data-definition hash ignores physical paths,
-  so the 100k run replaced the dev run's `eda/` (by design, but surprising on a laptop).
-- The report is checked by headless-browser screenshots here, not yet in the bank's JupyterLab.
-- A double column declared categorical names a level `1` in the snapshot's tables and `1.0` in
-  the cells (`rate_by_period`), known since review 1.
-- `rate_by_period` and the per-period concordance draw no interval (greying only; Q505's
-  lean-tables rule).
-- `lift_by_group` with a high-cardinality `by` and a raised `strata.max_levels` is slow (many
-  group × level cells).
-- `report.py` (~480 lines) and `charts.py` (~430) are the largest modules: tied views and
-  primitives, kept whole.
+## 4. Code, if you have time (optional, 20 minutes)
+- `src/core_modelling/eda/ranking.py` → `select_key_features`: the key-feature rule.
+- `src/core_modelling/statistics/concordance.py` → `cross_fitted_concordance`,
+  `kendall_null_se`: the categorical's out-of-fold order and the regression's standard error.
+- `src/core_modelling/eda/slices.py` → `ordered_categorical_bins`, `capture_table`.
+- `src/core_modelling/tasks.py` → `_summarise`, `_occurrences`: the two cut-offs of notebook 01.
+
+## Known limits
+- The report is checked in a desktop browser, not yet in the bank's JupyterLab (it may need
+  **Trust HTML** there).
+- The run time on bank data is unverified; on the synthetic data `run_eda` takes a few minutes.
+- A target flag that is null between a 0 and a 1 counts as a positive for the target rule but
+  not as a conversion; notebook 01 says so.

@@ -1,8 +1,11 @@
-"""EDA's population and target tables: the headline, the funnel, the target per period and by
-stratum, and the reference groups (docs/components/eda.md requirement 2, "The views").
+"""EDA's population and target tables: the headline, the funnel, the sources per period, the
+target per period and by stratum, and the reference groups (docs/components/eda.md requirement
+2, "The views").
 
-The window views read the frames' log (the funnel), the D-088 population counts and the cells
-(the target per period); the snapshot views read the collected snapshot. Every label statistic
+The window views read the frames' log (the funnel; `sources_per_period`, each joined source's
+matched share of the spine's rows per compared period, from the join entries), the D-088
+population counts and the cells (the target per period); the snapshot views read the collected
+snapshot. Every label statistic
 uses the snapshot's eligible rows with a known target (`known_rows`, §4.4); the reference groups
 are label-free and use every snapshot row. `cap_levels` and `summarise_groups` are the two
 pieces every group table shares (here and in `deep_dives.py`): a column's values as capped,
@@ -151,6 +154,26 @@ def funnel_per_period(log: list[dict], window_periods: list[str]) -> pd.DataFram
         index=pd.Index(window_periods, name="period"),
     )
     table.loc["all"] = table.sum()
+    return table.reset_index()
+
+
+def sources_per_period(log: list[dict], periods: list[str]) -> pd.DataFrame:
+    """Per compared period plus an `all` row over them, from the join entries: `rows` (the
+    spine's rows), then per joined feature source the share of those rows it matched (`all`
+    pooled). Only `period` and `rows` when the spine is the only source: the view is then not
+    available, decided from the table, never caught."""
+    joins = [entry for entry in log if entry["step"] == "join"]
+    spine = [entry for entry in joins if entry["role"] == "spine"]
+    if len(spine) != 1:
+        raise ValueError("sources_per_period: the log needs one spine `join` entry")
+    matched = pd.DataFrame(
+        {e["source"]: [e["matched"][p] for p in periods] for e in joins if e["role"] == "joined"},
+        index=pd.Index(periods, name="period"),
+    )
+    matched.insert(0, "rows", [spine[0]["rows"][p] for p in periods])  # a clash fails here
+    matched.loc["all"] = matched.sum()
+    table = matched.drop(columns="rows").div(matched["rows"], axis=0)
+    table.insert(0, "rows", matched["rows"])
     return table.reset_index()
 
 

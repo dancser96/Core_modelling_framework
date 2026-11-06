@@ -21,6 +21,9 @@ package functions and a way to learn how things work under the hood (D-039,
      cells cite no decision (D-nnn), trap (T-nn) or worknotes: the reader is a data scientist new
      to the framework, not its maintainer. After writing, one re-read for conciseness (cut what a
      first-time user does not need, one or two sentences per bullet) before the notebook is done.
+     Text lives in the markdown cells: a code cell displays tables, charts and at most a Markdown
+     heading per item, never a paragraph rendered as an HTML output, and no machine-specific
+     numbers (budgets, run times).
   2. **Setup cell:** environment adapter (compat shim + Spark) and config load.
   3. **One call per step:** `run_<stage>(cfg)` or another Public API function, each preceded by a
      short markdown cell saying what to check in its output.
@@ -39,11 +42,13 @@ Notebooks: `00_synthetic_data` (exists; dev only and temporary: a visual tour of
 with its checks in an appendix, see `docs/components/test_harness.md`; not a guided stage notebook).
 `01_target_factory` (built with Stage 1: the targets, the model input saved, the frames).
 `02_eda` (built with Stage 2, nine steps: `run_eda` on one config; the report's views with how to
-read each number: the choices, the how-to-read notes, the headline and the warnings, the funnel
-and the target per period and by stratum, the ranking, each key feature's deep dive; one call each
-of the four exploration functions `pivot_target`, `lift_by_group`, `compare_sides` and
-`rate_by_period`; the report file and what only it holds (the reference groups, the correlation
-overview, the appendix); the decisions EDA can lead to as `record_decision` text at both levels). `03_feature_checks` is built with Stage 2. In `03_feature_checks`:
+read each number: the choices, the headline and the warnings (the how-to-read notes in step 3's
+text), the funnel, the sources per period, the target per period and by stratum, the ranking, the
+key features at the decision's slices, each key feature's deep dive; one call each of the four
+exploration functions `pivot_target`, `lift_by_group`, `compare_sides` and `rate_by_period`; the
+report file and what only it holds (the reference groups, the correlation overview of the key
+features, the value profile, the appendix); the decisions EDA can lead to as `record_decision`
+text at both levels). `03_feature_checks` is built with Stage 2. In `03_feature_checks`:
 `run_feature_checks`, the findings, and the proposed decisions with the `record_decision` call
 text, using a `CONFIG` placeholder the setup cell defines (no commented-out cell). Planned,
 created as their stages are built: `04_training`, `05_evaluation`, `06_register_promote`,

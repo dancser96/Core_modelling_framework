@@ -1,10 +1,10 @@
 # Stage 2 (M2.2 Understanding): the build plan
 _Written 2026-11-02 for the SDS's approval, revised 2026-11-03 after their remarks (the routing
-budget, the notebooks' guides, `lagged_signal_drop`, the edges rule, V13–V15; V16–V17 added by the build, 2026-11-03; V18–V28 by major step 2, 2026-11-04; V29–V54 by its review-2 build and stage-3 review, 2026-11-05) · from the spec in `docs/components/eda.md`,
+budget, the notebooks' guides, `lagged_signal_drop`, the edges rule, V13–V15; V16–V17 added by the build, 2026-11-03; V18–V28 by major step 2, 2026-11-04; V29–V54 by its review-2 build and stage-3 review, 2026-11-05; V55–V73 by review 3 and the gaps spec, 2026-11-06) · from the spec in `docs/components/eda.md`,
 `feature_checks.md`, `feature_ledger.md`, `reporting.md`, `config.md`, `dataset.md` and the decision
 rows D-134–D-137 · the design record is `answers.md` beside this file · nothing is coded before the
 SDS approves this plan (`CLAUDE.md` §1 step 1) · the holistic review's outcomes are folded in (§9, with the
-decisions the spec step and the build made without the SDS, V1–V54, to veto by number)_
+decisions the spec step and the build made without the SDS, V1–V73, to veto by number)_
 
 **Where it stands (2026-11-03): the design is settled and specified; this plan, revised after the
 SDS's remarks, is waiting for approval.** Three major steps, each ending in the SDS's review with a
@@ -654,6 +654,56 @@ The stage-3 review's fix round (every finding confirmed by a second reader) adde
   one rule (`association.pairwise_sample`, `PAIRWISE_SEED`), drawn once in `run_eda`, and the
   timings' null-mask count reads that sample; `summarise_groups` refuses a summary whose columns
   differ from the task's list in either direction.
+Review 3 and the gaps spec (2026-11-06; `eda_gaps_spec.md` V55–V65 as built, then V66 onwards):
+- **V55** For a `top_n` decision `decision.n` joins the evaluation slices as the first slice (a
+  listed twin is dropped); other decision types take the evaluation slices alone.
+- **V56** The one-feature list order: a numeric by value in the snapshot's raw sign (`raw_sign`, a
+  new `tables/ranking` column beside `raw_sign_window`); a categorical cross-fitted by client
+  fold (the shrunk encoding fitted on the other folds, prior included, each fold cut at the share
+  and the counts summed: the ML audit showed the spec's "other window periods" order lifting a
+  null code to 1.3–1.6 on small populations); the null bin last. A one-period window works.
+- **V57** Linear interpolation inside the boundary bin; the curve on a 1% grid with a `random`
+  diagonal drawn dashed and muted; the capture axis stops at 100%.
+- **V58** The slices view in Core between the ranking and the deep dives; it says it is in
+  sample and descriptive, never a baseline (a model is judged against `decision.baselines`);
+  capture and the curve are not available for a target that can be negative; skipped counts are
+  named; the leak cue is "slices that capture far more than the other key features'".
+- **V59** The value profile: one vectorised quantile call on finite values, top levels from the
+  cells, not in the ledger; Extended, last; shown as two tables (numerics, categoricals) without
+  the constant `rows` column.
+- **V60** Two small modules, `eda/slices.py` and `eda/profile.py`.
+- **V61** The join entries carry `columns`; the model input's sidecar at schema 4 and the ledger
+  at schema 2, older files refused naming their writer and the fix; the frames' meta key is
+  `column_sources` (`sources` already names the join definition).
+- **V62** The sources table runs over the compared periods with `all`; a column found in a
+  feature source and the target source maps to the feature source; a lineage column of an
+  upstream target may have no source.
+- **V63** Target Factory reports the occurrences per period instead of the offset distribution,
+  `run_target_factory` returns `TargetSummary`; the outcome columns stop at the window's last + w
+  (the ML audit: later ones are later labels', the validation period's among them); the first
+  period's conversions are null (unknowable); an upstream target has none.
+- **V64** The two histogram sentences are deleted; chart rule 8 is unchanged.
+- **V65** `grouped_lines` gains `x_numeric` rather than a sixth chart primitive.
+- **V66** Target Factory's summary fills the label columns for every period up to the window's
+  last (the earlier periods included), null after it; the `all` row over the window (R31: "every
+  period but the last w" would have shown the gap periods, whose target windows reach the
+  validation period's outcomes).
+- **V67** The collect printout names the budget only when a frame is above it; the notebooks
+  carry no machine-specific numbers (R32).
+- **V68** Notebook 02's step 3 holds the how-to-read notes as text and no longer displays the
+  view (R33); the report keeps `blocks.how_to_read`, so the wording lives in two places.
+- **V69** A numeric reads its values (`0`, `1`, `2`) only when every group is one value; a mass
+  point among ranges keeps `= v`; `rate_by_period` labels a group by the occupied buckets it
+  receives; `pivot_target`'s few-valued numeric dimensions follow (R34).
+- **V70** The correlation heatmap shows the key features only; the candidates each represents
+  sit in a short table beneath, with the signed association, in rank order (R37).
+- **V71** Rate axes follow `TASK_SPECS[task]["axis_format"]` (binary `.1%`), the hover too, so a
+  hover reads 2.9% where the table reads 2.93%; lift and concordance axes stay plain (Q523).
+- **V72** A line chart counts its values only up to twice its highest supported point (the 1.25
+  headroom on top), the SDS's rule of review 4 (R41) replacing Q524's supported points only;
+  bars keep a greyed bar's height in range.
+- **V73** Report value columns print large numbers with thousands separators, never scientific
+  notation; a regression estimate (an amount) prints with two decimals (`{:,.2f}`).
 Applied without a decision: `environment.md`'s paths and functions, `architecture.md` §4, §9, §10
 and the stage table, `evaluation.md`'s support rule (`strata.min_events`) and OD-12 scope,
 `monitoring.md`'s PSI pointer, `training.md`'s signature and the train-only ranking inside a

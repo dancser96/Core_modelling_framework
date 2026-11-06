@@ -278,7 +278,12 @@ and that `eda.bins: null` gives the exact values.
   first to the latest validation period, are printed by name and kept in its join entry
   (`missing_periods`), so a missing validation period never shifts validation silently against
   test (ML audit, 2026-10-30). The join prints, per source, the share of spine rows it matches,
-  and the join log keeps its matched rows per period. A feature source that matches no spine row at all is refused, naming the source and
+  and the join log keeps its matched rows per period (EDA's "Sources per period" reads them).
+  Every join entry, every role's, lists the source's non-key columns as read (`columns`, after
+  `renamed`); `build_frames` maps each candidate and lineage column to its source from them
+  (`meta["column_sources"]`, the ledger's `source`; the feature sources first, so a column is a
+  target source's only when no feature source has it). A candidate in no entry fails loud; a
+  lineage column of an upstream target may have none. A feature source that matches no spine row at all is refused, naming the source and
   both raw id types: the ids are compared as strings, so an empty match means two id systems,
   never a type mismatch.
 - Periods run from `observation_window.first` (the earliest, when several configs share a model
@@ -306,7 +311,7 @@ recomputed exactly: eligibility (the analysis filters, the modelling tags, `elig
 candidates, the contract checks and the client split. A single config is the one-element list:
 one shape, whether one use case or several share the table.
 
-In the same folder, `_model_input.json` (sidecar schema 3) holds `schema_version`, the framework
+In the same folder, `_model_input.json` (sidecar schema 4) holds `schema_version`, the framework
 version and when it was built, the entity, the name, the use cases in order, the shared
 definition (`hash_version`, the feature sources, the keys, the period, the periods covered as
 labels), per use case its target column, target-spec hash, lineage, target source, observation
@@ -412,9 +417,10 @@ Its path is local until the M2.4 transport.
 5. **The collect printout** (D-133). Prune columns and rows, and sample where the config
    declares it, in Spark before collecting. Before a frame leaves Spark the dataset counts its
    rows exactly, measures bytes per row on a 10,000-row sample (`memory_usage(deep=True)`), doubles the product for the
-   conversion peak, and prints rows, columns, the estimate and `collect_budget_gb` from the
-   environment file, in a notebook and from a function call alike. Above the budget the printout
-   becomes a **callout**, worded for the frame. For the training frames: declare
+   conversion peak, and prints rows, columns and the estimate, in a notebook and from a function
+   call alike. Above `collect_budget_gb` from the environment file the printout becomes a
+   **callout** that names the budget, worded for the frame (the budget is the environment's, so
+   it is named only there). For the training frames: declare
    `training.sampling` (`negative_downsampling` for rare binary targets, `client_sample` for
    common targets and regression) or raise the budget and the Spark settings
    (`spark.driver.maxResultSize`, which caps the Arrow collect, and the driver memory). For the
@@ -607,7 +613,8 @@ is one entity's area and the data-definition hash carries the entity (D-136; [ED
   modelling tags, `eligible`, `target`, `split`; `period` stays a date and the stages add
   `period_label` through the period spec where they group by period. A future frame goes last,
   since the fields are positional. `log` is the list of entries in order, each with a fixed `step`: `join` (one per source: the spine's rows per
-  period, or the rows a source matched per period and the share; plus, per target column, the
+  period, or the rows a source matched per period and the share; its non-key `columns`, every
+  role's; plus, per target column, the
   null share with its `population`: the target source's rows in the window with a complete
   target window, before eligibility), `rename` (one per source column read as `source_<name>`
   on the read side), `eligibility` (one per filter: its `name`,
@@ -620,7 +627,7 @@ is one entity's area and the data-definition hash carries the entity (D-136; [ED
   built by `periods.label_by_period(rows, field, spec)` and `periods.period_labels(first, last,
   spec)`, the two functions every log entry uses.
   `meta`: the data-definition and target-spec hashes with `hash_version`, the lineage, the
-  candidates, the tags, for `eda` the kinds, the unsupported columns, the snapshot period and
+  candidates, the tags, `column_sources` (column → source, every stage), for `eda` the kinds, the unsupported columns, the snapshot period and
   the population counts ([Frames](#frames-d-030-d-131-d-135)), the sampling record and the
   collect entries.
 - `save_model_input(cfgs: UseCaseConfig | list[UseCaseConfig], entity, env, spark) -> str`
@@ -633,11 +640,11 @@ is one entity's area and the data-definition hash carries the entity (D-136; [ED
   `framework_version`, `built_at`, `entity`, `model_input`, `use_cases` in order, the meta of
   `load_panel`, `columns`, `log`: the join log). The file's name starts with `_` so Spark's
   listing skips it, and never with `_metadata`, which Spark reads as a parquet summary (T21).
-  Prints the path and returns it. `MODEL_INPUT_SCHEMA_VERSION` (3 since 2026-10-28: one table
-  for several use cases, the target columns `target_<use_case>`, the derived columns moved to
-  the read side, the sidecar keyed by the shared definition and the target-spec hashes; 2 was
-  the log entries' `kind`, labels in every period with a complete window, the draw in [0, 1))
-  is bumped when the sidecar's keys, the log entries' keys, a column's meaning or the split's
+  Prints the path and returns it. `MODEL_INPUT_SCHEMA_VERSION` (4 since 2026-11-06: the join
+  entries' `columns`; 3 since 2026-10-28: one table for several use cases, the target columns
+  `target_<use_case>`, the derived columns moved to the read side, the sidecar keyed by the
+  shared definition and the target-spec hashes; 2 was the log entries' `kind`, labels in every
+  period with a complete window, the draw in [0, 1)) is bumped when the sidecar's keys, the log entries' keys, a column's meaning or the split's
   draw change, so an older table is refused by name; until release 1.0 the migration of a model
   input is its rebuild from the sources, which `read_model_input_metadata` asks for, and
   `record_decision` refuses feature decisions until it is rebuilt (the artifact inventory in
@@ -752,8 +759,9 @@ is one entity's area and the data-definition hash carries the entity (D-136; [ED
   `estimate_cells(rows, kinds, bins, window_periods) -> int` (both passes). Each returns a
   result table, never rows.
 - `model_input.py`: `read_model_input_metadata(cfg, entity, env) -> dict` (refuses, in order
-  and each naming `save_model_input`: no table or sidecar; another `schema_version`, with the
-  version note; another `hash_version`; other feature sources, keys or period; a use case the
+  and each naming `save_model_input`: no table or sidecar; another `schema_version`, naming the
+  framework version that wrote it (a model input is shared, so a use case on an older pin is
+  told to raise its pin rather than rebuild over a newer table); another `hash_version`; other feature sources, keys or period; a use case the
   sidecar's `targets` lacks; another `target_spec_hash` for it; `periods` not covering
   `observation_window.first … validation_period`; a `validation_period + target_window` beyond
   the use case's saved `target_last`; never a changed eligibility, window, split or candidate

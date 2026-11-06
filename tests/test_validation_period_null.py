@@ -90,7 +90,8 @@ def test_target_source_must_reach_the_window_last_plus_w(
     _, log = load_targets(cc_config, ENTITY, unit_env, spark)
     w, source_last = cc_config.time.target_window, log["periods"][-1]
     fits = MONTH.from_index(MONTH.index(source_last) - w)
-    summary = run_target_factory(_eda_only_on(variant, fits, fits), ENTITY, unit_env, spark)
+    cfg = _eda_only_on(variant, fits, fits)
+    summary = run_target_factory(cfg, ENTITY, unit_env, spark).per_period
     assert summary.iloc[-1]["period"] == "all"
     assert summary.loc[summary["period"] == MONTH.label(fits), "mean_target"].notna().all()
     late = MONTH.from_index(MONTH.index(fits) + 1)

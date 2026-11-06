@@ -335,10 +335,12 @@ def _check_window_labelled(by_period: dict, cfg: UseCaseConfig, spec: Period) ->
 
 
 def _join_entry(source: JoinedSource, by_period: dict, all_rows: object, spec: Period) -> dict:
-    """One source's join entry, printed: the spine's rows per period; a joined source's matched
-    rows per period and share; a target's use case, column and null share per period too."""
+    """One source's join entry, printed: its non-key columns as read (`columns`); the spine's
+    rows per period; a joined source's matched rows per period and share; a target's use case,
+    column and null share per period too."""
     log, marker, role, use_case = source.log, source.marker, source.role, source.use_case
     entry = {"step": "join", "source": log["source"], "role": role, "period_tag": log["period_tag"]}
+    entry["columns"] = log["columns"]  # every role's: a column's source is read from the entries
     for key in ("renamed", "keys", "missing_periods"):  # only when present
         if log.get(key):
             entry[key] = log[key]

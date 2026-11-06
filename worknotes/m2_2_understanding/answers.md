@@ -2588,3 +2588,65 @@ _Verbatim; "Default" takes the default stated in the question (recorded in `ques
 - Q521. Default → both Target Factory modes stay.
 - Q522. "Dependent on time and Fable capacity, main thread might be ran on Opus too, it's to be
   decided" → the spec is written for an Opus implementer.
+
+# Review 3 (2026-11-06): remarks R29–R37, Q523–Q524 answered; the gaps spec merged
+The SDS's review of the review-2 build, verbatim, with the outcome of each. Built together with
+`eda_gaps_spec.md` (its questions Q525–Q530 and their answers are recorded verbatim in that
+file's §0.2 and below).
+- R29 (V46). "As said, I don't want to enforce any hardcoded rule on how much code has to be cut,
+  for as long as the result is efficient. If you do a good job at the first go, there wouldn't
+  be anything to cut" → no line-count targets for simplicity passes; code is written lean the
+  first time and a pass only removes what is genuinely redundant.
+- R30 (V47). "I don't have a problem with the fix, but can you explain what exactly happened
+  here?" → explained in chat (Somers' D drops the pairs tied on the target; the SE did not).
+- R31. "In the target factory notebook stage 1 summaries show only the observation window having
+  mean_target, positive_rows and positive_events non-null; I thought we agreed that every period
+  which is not in the last w period should be filled, why isn't it the case?" → by design since
+  M2.1 the summary showed label statistics for the observation window only, to keep the
+  validation period's label rate out of sight; the labels themselves are filled wherever the
+  forward window is complete. Outcome: the summary shows them for every period up to the
+  window's last; the periods after it stay blank, since their target windows reach into the
+  validation period's outcomes (§4.2, §4.4).
+- R32. "In printouts and comments in notebooks, don't have any reference to what the budget
+  should be for a laptop, it's not generic info. Snapshot size is, that's good, budgets etc is
+  not" → the collect printout drops "(budget … GB)", notebook 02 drops the laptop runtime line.
+- R33. "In part 3, concordance, lift, intervals etc comments are printed in their own rows
+  instead of being part of the description cell, why is it like that?" → they were the report's
+  how-to-read view displayed as five outputs; the notebook now carries them in step 3's
+  description cell and no longer displays the view (the report keeps it).
+- R34. "In the pivots with integer numericals, get rid of the = sign if you can (so groups aren't
+  = 0, = 1, = 2, rather 0, 1, 2)" → a numeric shown by level reads its values (`0`, `1`, `2`);
+  ranges and a mass point among ranges keep their brackets and `= v`.
+- R35. "What does the double star in a row like **_summary_views(meta, resolved) mean?" →
+  explained in chat (dict unpacking: the returned dict's keys merged into the enclosing dict).
+- R36. "I don't think you should define a function exactly called pivot_table, as that's
+  literally a pandas function" → renamed `_stratum_pivot` (private).
+- R37. "You say that in the correlation view, you display "the candidates they represent", but I
+  still only see just a bunch of very correlated features with the only improvement being that
+  you dropped the feature which has no correlation computed with others" → the heatmap shows the
+  key features only (the same selection: no pair above `max_correlation`); the candidates each
+  represents are listed in a short table beneath it.
+- Q523. "Yes, but do it now" → a per-task axis format: rate axes in percent.
+- Q524. "Option b), supported lines set the axis" → a line chart's axis follows its supported
+  points; a grey point may run off the top, its number in the table or pivot.
+
+# Review 4 (2026-11-06): remarks R38–R41, Q531 answered
+The SDS's review of the review-3 build, verbatim, with the outcome of each. EDA then goes to the
+LDS's review (`review_guide.md`, rewritten for the LDS) while Feature Checks starts in another
+chat (`worknotes/handovers/m2-2-major-step-3.md`).
+- R38. "Generally, unless I specifically tell you to do so, don't save the pre-cleared notebooks
+  anywhere, just rewrite it" → a notebook is rewritten in place; no copy of its old outputs is
+  kept (the review-3 copy deleted).
+- R39. "The new parts in decision slices print multiple separate HTML pieces; try to avoid that
+  and be in markdown cells as it's not great for readability" → the decision paragraph is its
+  own view (`decision_note`), which the report opens the slices with; notebook 02 says it in step 5's
+  markdown and displays only the table and the curve.
+- R40. "Same comment in section 6" → the key features' headings (and the strata's in step 4) are
+  displayed as Markdown, not raw HTML; section 6 prints no other text.
+- R41. "Issue with the grey dots not setting limits: Looks very stupid with many grey dots; lift
+  chart max should be decided by min(all_dots, colored_dots * 2)" → a line chart's top is the
+  lower of every point (as a bar chart: the supported points' intervals, not the grey ones') and
+  twice the highest supported point, with the usual 1.25 headroom on top; a grey point far above
+  runs off. Bars are unchanged.
+- Q531. "Do not split report.py, might be revisited based on LDS feedback." → `eda/report.py`
+  stays one module.

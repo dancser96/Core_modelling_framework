@@ -190,7 +190,8 @@ training:
   # sampling: {method: client_sample, share: 0.3, seed: 42}
 
 evaluation:
-  # metrics at the top of the ranking; either list may be empty
+  # metrics at the top of the ranking; either list may be empty. EDA reads them too (each key
+  # feature alone at the slices), plus decision.n as a slice for a top_n decision
   slices:
     top_pct: null  # null · level: autonomous [0.01, 0.1] · assisted [0.01, 0.05, 0.1]
     top_n: []                            # e.g. [10000]
