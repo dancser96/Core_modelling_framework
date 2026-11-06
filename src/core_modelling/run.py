@@ -2,10 +2,11 @@
 
 `STAGES` maps a stage name to the function that runs it for one entity over the list of
 configs; `run` loads every config and the environment, opens the Spark session and runs the
-asked stages for the asked entities. Stage 1 has one stage: Target Factory, whose summary is
-printed per use case and whose model input, one table for every config given, is saved when
-the configs name one (D-131; the Stage 1 addendum, section B). The later stages take the
-resolved config (the audit log replayed, D-125) and arrive with M2.2–M2.4.
+asked stages for the asked entities. Target Factory prints its summary per use case and saves
+the model input, one table for every config given, when the configs name one (D-131; the Stage 1
+addendum, section B). EDA runs per config and returns the paths it wrote (`eda/`, the report);
+it resolves the config itself (the audit log replayed, D-125). Feature Checks, Training and the
+later stages arrive with M2.2–M2.4.
 """
 
 from collections.abc import Callable
@@ -15,6 +16,7 @@ from pyspark.sql import SparkSession
 
 from core_modelling.config import UseCaseConfig, load_config
 from core_modelling.dataset import save_model_input
+from core_modelling.eda import run_eda
 from core_modelling.environment import EnvironmentConfig, get_spark_session, load_environment
 from core_modelling.target_factory import run_target_factory
 
@@ -34,7 +36,15 @@ def _run_target_factory_stage(
     return out
 
 
-STAGES: dict[str, Stage] = {"target_factory": _run_target_factory_stage}
+def _run_eda_stage(
+    cfgs: list[UseCaseConfig], entity: str, env: EnvironmentConfig, spark: SparkSession
+) -> dict:
+    """Every config's EDA, by use case: the paths it wrote. The result itself is not kept, so
+    one config's snapshot is freed before the next is collected."""
+    return {cfg.use_case: run_eda(cfg, entity, env, spark).paths for cfg in cfgs}
+
+
+STAGES: dict[str, Stage] = {"target_factory": _run_target_factory_stage, "eda": _run_eda_stage}
 
 
 def _entities(cfgs: list[UseCaseConfig], entity: str | None) -> list[str]:

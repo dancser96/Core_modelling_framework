@@ -123,6 +123,14 @@ def test_snapshot_keeps_every_client_of_the_snapshot_period_with_the_tags(
     assert eda_frames.meta["population"].set_index("period").loc["2025-08", "rows"] == len(snapshot)
 
 
+def test_collected_snapshot_is_sorted_by_the_keys_with_a_fresh_index(eda_frames: Frames) -> None:
+    """`toPandas()` has no set order, so a positional seeded sample needs the keys' order (T34)."""
+    snapshot = eda_frames.snapshot
+    ordered = snapshot.sort_values(["unit_id", "period"], ignore_index=True)
+    assert snapshot.equals(ordered)
+    assert snapshot.index.equals(pd.RangeIndex(len(snapshot)))
+
+
 def test_rows_hold_the_eligible_compared_periods_with_the_label_inside_the_window_only(
     eda_frames: Frames,
 ) -> None:

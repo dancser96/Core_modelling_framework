@@ -157,8 +157,12 @@ levels ≥ 1%; |association| ≥ 0.90.
 ### Inputs: what EDA provides
 All under `<use_case>/04_feature/<ddh>/` (D-136); the columns and how each statistic is computed
 are owned by [EDA](eda.md) and the [feature ledger](feature_ledger.md).
-- **`eda.json`:** the hashes, `replayed_to`, the settings digest (`features.kinds`, `strata.*`,
-  `eda.*`), the snapshot period, the compared periods, the population counts per period.
+- **`eda.json`:** the hashes (`config_hash`, `data_definition_hash`, `resolved_input_hash`),
+  `replayed_to`, `settings_digest` and `settings` (the digested values: `features.kinds`,
+  `strata`, `eda` and `time.validation_period`, which decides the compared periods and sits
+  outside the data-definition hash), `snapshot_period`, `compared_periods` (`window`, `gap`,
+  `latest`), `window_levels`, `over_ceiling`, `clients`, `population` (the counts per period,
+  nullable integers, null outside the window).
 - **The ledger's EDA columns:** `kind`, `levels`, `lineage`, `unsupported`, `concordance`,
   `concordance_se`, `direction`, `concordance_best_order`, `non_monotone`, and the window twins
   the findings cite: `concordance_window`, `missing_share_window`, `null_concordance_window`,
@@ -169,8 +173,8 @@ are owned by [EDA](eda.md) and the [feature ledger](feature_ledger.md).
 - **`tables/client_constant`:** `feature, constant_share, clients`.
 - **`tables/correlation`** (`a, b, statistic, method, rows`, method `spearman | cramers_v | eta`);
   the redundancy step cuts the clusters from it and writes its own `tables/clusters`.
-- **The digest check:** Feature Checks recomputes the digest of `features.kinds`, `strata.*` and
-  `eda.*` from the current resolved config and refuses on a difference. An EDA run removes
+- **The digest check:** Feature Checks recomputes the digest of `features.kinds`, `strata`, `eda`
+  and `time.validation_period` from the current resolved config and refuses on a difference. An EDA run removes
   `feature_checks/` and Feature Checks' ledger columns, so a stale judgement cannot survive it.
 
 ### The finding table

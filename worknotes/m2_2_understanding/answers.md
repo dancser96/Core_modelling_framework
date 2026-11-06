@@ -2468,3 +2468,123 @@ training, a held feature acts as an excluded feature without a final decision"
 column), `training.md` (the feature set), the glossary (held), `notebooks/README.md`, D-134 and the
 plan's notebook 03 content (m3.4) and done criteria; the report, Training's log and the ledger's
 `held` column carry it in the build.
+
+# Review 2 (2026-11-05): Q494–Q500 answered, remarks R10–R28
+_The SDS reviewed major step 2 through notebook 02 first (the Python files follow after the
+redesign); the review runs in three stages: (1) remarks and a brainstorming round (Q501–Q522 in
+`questions.md`), (2) an exact build plan from the answers, (3) the build and a comprehensive review
+of the major step 2 code. Unanswered questions take their default._
+
+**Q494** (simplicity pass): "Yes, there will be a big major review now" → the pass is part of the
+redesign (Q520). **Q497** (sort in pandas or Spark): "Do the orderBy in pandas, unnecessary double
+spike" → read as the Spark `orderBy` before `toPandas`, confirmed by Q516. **Q498** (regression
+intervals): "Yes, solve it now, we are building towards regression too" → the cells gain `sum_y2`
+(Q517). **Q495, Q496, Q499, Q500**: unanswered, the defaults hold (the CLI test keeps EDA; a binary
+numeric's deep dive shows the lift chart; `pivot_target`'s lift against the base before the filter;
+pre-V21 `eda.json` files are stale, rerun EDA).
+
+**R10.** "Can you remind me why we need to refuse strata column which the framework creates?"
+*Answer:* the frames add `unit_id`, `period`, `eligible`, `target`, `split` and the tag columns, and
+a source column so named is read as `source_<name>`; a stratum called `period` would stratify by
+the framework's column. A guard for a rare clash → Q518 folds it into the snapshot-column check.
+
+**R11.** "What is this DIRECTIONS dictionary preset at the top of many python files?" *Answer:* one
+dict in `eda/ranking.py` mapping a concordance's sign (+1, −1, 0) to the ledger's `direction` text
+(`+`, `-`, null); its inverse `SIGNS` sits in `eda/run.py`. The simplicity pass puts both in one
+module.
+
+**R12.** "What does shrinkage in rows mean? I don't understand the return row of window_k_rows"
+*Answer:* the level encoding's prior weight: a level's rate is `(events + k · base) / (rows + k)`
+with `k = min_events / base` rows, so the prior weighs 50 pseudo-events → Q519 renames it.
+
+**R13.** "As scope_statistics is optimized to compute on a window ... if the 'compaction' parameter
+is turned off ... do you transform the data into a cell-like table?" *Answer:* the parameter is
+`eda.bins`; with `null` every distinct value is its own bin and the counts pass still writes cells,
+one per feature × period × value × target bin; the statistics code is unchanged; the cell count is
+estimated first and refused above 50 million. Every ranking statistic reads cells; only the
+quartiles, the level counts and the pivots read the snapshot rows.
+
+**R14.** "If a window is never collected, how will the notebook user be able to build anything on
+top of the pre-orchestrated plots/outputs?" *Answer:* the snapshot (`result.frame`) and every table
+(`result.tables`, the cells included) are in pandas; the window is reachable through the cells, not
+through rows → Q514 adds `rate_by_period`, `lift_by_group`, `compare_sides`.
+
+**R15.** "Make the notebooks run on the whole 100k data please" → done in the build: the local
+environment file points at `synthetic_canonical`, notebooks 01 and 02 rerun on it.
+
+**R16.** "cut the 'read in this order' ... halve the length of concordance explanation ... be more
+concise ... AI sloppy elaborate" → Q515. **R17.** "No references to decisions" → Q515.
+**R18.** "Where are you taking the 'When to move' column from?" *Answer:* hard-coded in
+`reporting/blocks.py` `CHOICES`, echoing the template's comments → Q504.
+**R19.** "The plots just simply don't look that great; title should be centered, x and y axis better
+describing, label values are being cut off, there is no margin at the edges" → Q512.
+**R20.** "concordance bar makes the value invisible in dark mode ... what is the table ordered on?"
+*Answer:* ordered by the ranking value (best order when `non_monotone`), the bar on the plain
+concordance → Q507; the bar colour → Q513.
+**R21.** "What is 'Lift' in section 6? You literally display it everywhere but give no explanation"
+*Answer:* the group's rate divided by the snapshot's base rate; defined in the guide cells of steps
+4 and 6 but nowhere in the report or on the charts → Q503.
+**R22.** "Reevaluate how important displaying standard errors all the time ... displaying low-value
+data is a net negative" → Q505.
+**R23.** "Key features should be plotted against strata, and the 'do your own things' section
+should include more views, including this and holders vs non-holders" → Q509, Q514.
+**R24.** "why do we have buckets like [374, 379.51) – [415, 419) ... = 13 – = 37 looks horrible"
+*Answer:* a merged group's label joins its first and last bin's labels → Q511.
+**R25.** "It looks pretty bad if the correlation overview includes features which are not compared
+to any other features; shouldn't that overview have the same selection method as key_features?"
+→ Q508.
+**R26.** "Why is the 'How to read' at the end of the notebook?" *Answer:* the design (A25) put it in
+the appendix → Q503 moves it up front.
+**R27.** "Score by target class and concordance window should be plotted next to each other" →
+Q502, Q510.
+**R28.** "in the target factory notebook if you start from a 'pooled retail data', you create all
+targets and then effectively save N data frames with only one feature difference ... walk me
+through how this would work in the autonomous way in production" *Answer:* one table is saved,
+with one `target_<use_case>` column per use case; each stage reads it and keeps its own target on
+read (a projection, nothing written). The target source is read twice in a run by design (summary,
+then save) and the notebook's step 3 builds every use case's frames in memory to compare them.
+Autonomous flow: `run a.yml b.yml` runs the built stages in order; Target Factory builds the target
+when `data.target.rule` is set (an upstream `column` alone is only checked), saves when
+`data.model_input` is named, else every stage rebuilds the panel lazily in Spark → Q521 asks
+whether to keep both modes. Production scoring needs no target; monitoring reuses the rule when
+labels mature (D-054, designed not built); scheduling is the platform team's (D-079).
+
+## The brainstorming round answered (2026-11-05): Q501–Q522
+_Verbatim; "Default" takes the default stated in the question (recorded in `questions.md` of
+2026-11-05, kept in git). Outcome: the review-2 build spec, `review2_spec.md` beside this file._
+
+- Q501. Default → the notebook shows the summary, population and target, ranking, key features
+  and your-own-views; reference groups, correlation and the appendix in the report only.
+- Q502. Default → two rows of two charts per key feature; the level table only for a categorical or
+  a few-valued numeric; every key feature.
+- Q503. Default → how to read right after the choices (five lines), the appendix copy goes, lift
+  axes titled "Lift vs base rate (1 = base)", two sentences on concordance in the top cell.
+- Q504. "Drop When to move, the other three columns are sufficient"
+- Q505. Default → intervals on charts; `low`/`high` only in target per period and target by
+  stratum; `concordance_se` and `se` leave the views, stay in the tables and the ledger.
+- Q506. Default → the lean ranking view (about 14 columns).
+- Q507. Default → one `concordance` column holds the ranking value with the bar;
+  `concordance_plain` beside it only on non-monotone rows.
+- Q508. Default → the heatmap on the key features and the candidates they represent, always; a
+  feature without a compared pair dropped and counted in the subtitle.
+- Q509. "All key features, but don't drop the pivots, the styled pivots display numbers much better
+  than the hover" → the strata chart and the pivot table per key feature × stratum variable.
+- Q510. Default → one plotly figure with two panels through a `side_by_side` helper.
+- Q511. "Keep the half-open brackets, that should be understood" → a merged group's label is its
+  outer range `[374, 419)`, a single value `= 13`.
+- Q512. "For now, let's keep it simple, just better organized" → no template change: centred
+  titles, axis titles, margins, no clipped labels.
+- Q513. "Should be readable on both, some people run notebooks on dark VSCode, some in Jupyter lab,
+  you can't prescribe them how to do it"
+- Q514. Default → `lift_by_group`, `compare_sides`, `rate_by_period` beside `pivot_target`.
+- Q515. "Default, but don't set hardcoded target on word counts rather implement a mandatory
+  reevaluation after writing a guide with the aim to make it more concise"
+- Q516. "Spark" → `orderBy` before `toPandas`.
+- Q517. Default → the cells gain `sum_y2`; regression means get t-intervals per period and bin.
+- Q518. Default → the framework-name check folds into the snapshot-column check.
+- Q519. Default → `window_k_rows` becomes `encoding_prior_rows`, one sentence in the guide.
+- Q520. Default → the simplicity pass over `run.py`, `deep_dives.py`, `population.py` after the
+  redesign.
+- Q521. Default → both Target Factory modes stay.
+- Q522. "Dependent on time and Fable capacity, main thread might be ran on Opus too, it's to be
+  decided" → the spec is written for an Opus implementer.

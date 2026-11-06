@@ -24,6 +24,7 @@ from scipy.spatial.distance import squareform
 from scipy.stats import contingency
 
 PAIRWISE_ROWS = 50_000  # the seeded cap of snapshot rows; a ρ's noise there is ~0.004 (SDS)
+PAIRWISE_SEED = 0  # the cap's sample: the same rows on every run
 MIN_SHARED_ROWS = 500  # fewer shared filled rows: "not compared" (ρ's noise ~0.01 near 0.9)
 TABLE_COLUMNS = ["a", "b", "statistic", "method", "rows"]
 R2_TOLERANCE = 1e-9  # rounding room around [0, 1] for `explained_by_others`' R²
@@ -62,10 +63,18 @@ def correlation_ratio(numeric: pd.Series, categorical: pd.Series) -> float:
     return _eta(ranks, _codes(categorical))
 
 
-def association_table(frame: pd.DataFrame, kinds: dict[str, str], seed: int) -> pd.DataFrame:
-    """Every pair of the `kinds` features once, on a seeded cap of `PAIRWISE_ROWS` rows: columns
-    `a, b, statistic, method (spearman | cramers_v | eta), rows` (the rows the pair used; a
-    mixed pair has its numeric as `a`)."""
+def pairwise_sample(frame: pd.DataFrame) -> pd.DataFrame:
+    """The rows the pairwise association reads: a seeded sample of `PAIRWISE_ROWS` rows above the
+    cap, else the frame as it is (so a capped frame passes unchanged)."""
+    if len(frame) > PAIRWISE_ROWS:
+        return frame.sample(n=PAIRWISE_ROWS, random_state=PAIRWISE_SEED)
+    return frame
+
+
+def association_table(frame: pd.DataFrame, kinds: dict[str, str]) -> pd.DataFrame:
+    """Every pair of the `kinds` features once, on `pairwise_sample`'s rows (a no-op on a frame it
+    capped already): columns `a, b, statistic, method (spearman | cramers_v | eta), rows` (the
+    rows the pair used; a mixed pair has its numeric as `a`)."""
     unknown = sorted(set(kinds) - set(frame.columns))
     odd = sorted(f for f, kind in kinds.items() if kind not in ("numeric", "categorical"))
     if unknown or odd:
@@ -73,8 +82,7 @@ def association_table(frame: pd.DataFrame, kinds: dict[str, str], seed: int) -> 
             f"association_table: features not in the frame {unknown}, or neither numeric nor "
             f"categorical {odd}"
         )
-    if len(frame) > PAIRWISE_ROWS:
-        frame = frame.sample(n=PAIRWISE_ROWS, random_state=seed)
+    frame = pairwise_sample(frame)
     numerics = [f for f, kind in kinds.items() if kind == "numeric"]
     codes = {f: _codes(frame[f]) for f, kind in kinds.items() if kind == "categorical"}
     numeric = frame[numerics].astype(float)

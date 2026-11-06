@@ -21,6 +21,7 @@ from core_modelling.statistics.distributions import (
     new_level_share,
     psi,
     quantile_edges,
+    range_label,
     standardised_difference,
 )
 
@@ -108,17 +109,45 @@ def test_quantile_edges_edge_cases() -> None:
 
 def test_bin_labels_read_singletons_and_the_bins_around_them() -> None:
     """Hand edges give `<`, `=`, `(v, e)`, `[e, e)` and `≥`; a singleton closing the range reads
-    `> v`; -0.0 reads `= 0`; integer codes that six digits would merge fall back to their exact
-    text."""
+    `> v`; -0.0 reads `= 0`; integer codes print whole, a huge one short; values that six digits
+    would merge, reverse or show as one value in two formats fall back to their exact text."""
     edges = np.array([0.0, np.nextafter(0.0, np.inf), 1.5, 10.0])
     assert bin_labels(edges) == ["< 0", "= 0", "(0, 1.5)", "[1.5, 10)", "≥ 10"]
     assert bin_labels(quantile_edges(np.array([2.0, 2.0, 5.0]), BINS))[-1] == "> 5"
     assert bin_labels(quantile_edges(np.array([-0.0, -0.0, 1.0]), BINS))[1] == "= 0"
-    codes = quantile_edges(np.repeat([1000001.0, 1000002.0], 5), BINS)
-    labels = bin_labels(codes)
-    assert len(set(labels)) == len(labels) == codes.size + 1
-    assert labels[1] == "= 1000001.0"
+    assert bin_labels(quantile_edges(np.repeat([1000001.0, 1000002.0], 5), BINS))[1] == (
+        "= 1000001"
+    )
+    assert bin_labels(np.array([1e6, 1e6 + 0.4])) == ["< 1000000.0", "[1000000.0, 1000000.4)",
+                                                      "≥ 1000000.4"]  # fmt: skip
+    close = quantile_edges(np.repeat([1e6 + 0.001, 1e6 + 0.002], 5), BINS)
+    labels = bin_labels(close)
+    assert len(set(labels)) == len(labels) == close.size + 1
+    assert labels[1] == "= 1000000.001"
+    assert bin_labels(np.array([1000005.5, 1000007.0]))[1] == "[1000005.5, 1000007.0)"
+    assert bin_labels(np.array([0.5, 1e300]))[1] == "[0.5, 1e+300)"
     assert bin_labels(np.array([])) == ["all"]
+
+
+def test_range_label_reads_a_run_by_its_outer_range() -> None:
+    """Merged buckets read their outer range: closed `]` when the run ends in a singleton, open
+    `(` when it starts just above one, `<` / `≤` and `≥` / `>` at the ends, `all` over every
+    bucket; buckets out of order are refused."""
+    up = np.nextafter
+    edges = np.array([-5, -2, 0, up(0, 1), 3, 7, 13, up(13, 14), 14, up(14, 15), 15, up(15, 16),
+                      50, 374, 379.51, 415, 419, 900, 950])  # fmt: skip
+    bucket = {v: int(np.digitize(v, edges)) for v in (-5, 0, 1, 6, 13, 15, 16, 49, 374, 415, 900)}
+    assert range_label(edges, bucket[13], bucket[15]) == "[13, 15]"
+    assert range_label(edges, bucket[374], bucket[415]) == "[374, 419)"
+    assert range_label(edges, 0, bucket[49]) == "< 50"
+    assert range_label(edges, bucket[900], edges.size) == "≥ 900"
+    assert range_label(edges, bucket[-5], bucket[0]) == "[-5, 0]"
+    assert range_label(edges, bucket[1], bucket[6]) == "(0, 7)"
+    assert range_label(edges, 0, bucket[0]) == "≤ 0"
+    assert range_label(edges, bucket[16], edges.size) == "> 15"
+    assert range_label(edges, 0, edges.size) == "all"
+    with pytest.raises(ValueError, match="not within"):
+        range_label(edges, 3, 2)
 
 
 def _cells(n: np.ndarray, labels: list[str] | None = None) -> pd.DataFrame:
@@ -129,19 +158,21 @@ def _cells(n: np.ndarray, labels: list[str] | None = None) -> pd.DataFrame:
     )
 
 
-def _counted_cells(values: np.ndarray) -> pd.DataFrame:
-    """The occupied, labelled cells of `values` binned on their `quantile_edges` at `BINS`."""
+def _counted_cells(values: np.ndarray) -> tuple[pd.DataFrame, np.ndarray]:
+    """The occupied, labelled cells of `values` binned on their `quantile_edges` at `BINS`, each
+    `bin_order` its bucket, and the edges."""
     edges = quantile_edges(values, BINS)
     counts = np.bincount(np.digitize(values, edges), minlength=edges.size + 1)
     occupied = counts > 0
-    return _cells(counts[occupied], list(np.array(bin_labels(edges))[occupied]))
+    cells = _cells(counts[occupied], list(np.array(bin_labels(edges))[occupied]))
+    return cells.assign(bin_order=np.flatnonzero(occupied)), edges
 
 
 def test_merge_bins_keeps_the_mass_point_and_splits_the_rest(zero_inflated: np.ndarray) -> None:
     """The zero bin is one group of ten; the tail's bins share the other nine about equally,
-    and `sum_y` is summed along."""
-    cells = _counted_cells(zero_inflated)
-    merged = merge_bins(cells, 10)
+    and `sum_y` is summed along; a group reads its outer range."""
+    cells, edges = _counted_cells(zero_inflated)
+    merged = merge_bins(cells, 10, edges)
     columns = ["group", "bin_order_first", "bin_order_last", "label", "n", "sum_y"]
     assert list(merged.columns) == columns
     assert list(merged["group"]) == list(range(10))
@@ -151,7 +182,7 @@ def test_merge_bins_keeps_the_mass_point_and_splits_the_rest(zero_inflated: np.n
     tail = merged.iloc[1:]
     assert np.allclose(tail["n"], ROWS // 10 / 9, atol=2 * cells["n"].iloc[1:].max())
     assert merged["n"].sum() == ROWS and merged["sum_y"].sum() == pytest.approx(ROWS / 10)
-    assert " – " in tail["label"].iloc[0]
+    assert tail["label"].iloc[0].startswith("(0, ") and tail["label"].iloc[-1].startswith("≥ ")
 
 
 def test_merge_bins_gives_an_interior_mass_point_its_own_group() -> None:
@@ -159,7 +190,8 @@ def test_merge_bins_gives_an_interior_mass_point_its_own_group() -> None:
     the run of bins around it, which adds an eleventh group."""
     rng = np.random.default_rng(3)
     values = np.concatenate([rng.normal(size=ROWS * 4 // 5), np.full(ROWS // 5, 0.37)])
-    merged = merge_bins(_counted_cells(values), 10)
+    cells, edges = _counted_cells(values)
+    merged = merge_bins(cells, 10, edges)
     spike = merged.loc[merged["label"] == "= 0.37"]
     assert len(spike) == 1 and spike["n"].iloc[0] == ROWS // 5
     assert spike["bin_order_first"].iloc[0] == spike["bin_order_last"].iloc[0]
@@ -168,18 +200,21 @@ def test_merge_bins_gives_an_interior_mass_point_its_own_group() -> None:
 
 def test_merge_bins_equal_bins_and_few_bins() -> None:
     """A hundred equal bins give ten equal groups of ten; four bins give four groups, one per bin,
-    with the single labels; a repeated `bin_order` and a stray numeric `period` are refused."""
-    equal = merge_bins(_cells(np.ones(100)), 10)
+    with the single labels; no edges read `all`; a repeated `bin_order` and a stray numeric
+    `period` are refused."""
+    equal = merge_bins(_cells(np.ones(100)), 10, np.arange(1.0, 100.0))
     assert list(equal["n"]) == [10] * 10
     assert list(equal["bin_order_first"]) == list(range(0, 100, 10))
-    assert equal["label"].iloc[0] == "b0 – b9"
-    few = merge_bins(_cells(np.array([5.0, 1.0, 1.0, 50.0])), 10)
-    assert list(few["label"]) == ["b0", "b1", "b2", "b3"] and list(few["n"]) == [5, 1, 1, 50]
+    assert equal["label"].iloc[0] == "< 10" and equal["label"].iloc[1] == "[10, 20)"
+    few = merge_bins(_cells(np.array([5.0, 1.0, 1.0, 50.0])), 10, np.array([1.0, 2.0, 3.0]))
+    assert list(few["label"]) == bin_labels(np.array([1.0, 2.0, 3.0]))
+    assert list(few["n"]) == [5, 1, 1, 50]
+    assert (merge_bins(_cells(np.ones(100)), 10, None)["label"] == "all").all()
     twice = pd.concat([_cells(np.ones(3)), _cells(np.ones(3))])
     with pytest.raises(ValueError, match="one row per bin_order"):
-        merge_bins(twice, 10)
+        merge_bins(twice, 10, None)
     with pytest.raises(ValueError, match="period"):
-        merge_bins(_cells(np.ones(3)).assign(period=202401), 10)
+        merge_bins(_cells(np.ones(3)).assign(period=202401), 10, None)
 
 
 def test_psi_on_known_shares() -> None:

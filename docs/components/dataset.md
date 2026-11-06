@@ -204,7 +204,7 @@ from them are [EDA](eda.md)'s (its statistics section). The functions:
   positive is a non-zero label, for a flag and an amount alike. The unit counts are plain
   counts: one row per unit and period (`read_keyed_source` refuses a repeated key), so within a
   period a row is a unit; the labelled counts are set to null in pandas outside the window.
-  `build_frames` computes it for the `eda` stage as `Frames.meta["population"]`; EDA puts it in
+  The labelled counts are nullable integers (`Int64`). `build_frames` computes it for the `eda` stage as `Frames.meta["population"]`; EDA puts it in
   `eda.json`; the trap acceptance test and Training's count check read it there. A row whose target is null (the forward window not
   matured, or the client gone before it closed) is in the eligible counts and out of every
   labelled statistic; the gap and latest periods are label-free by construction (N10 of the
@@ -217,12 +217,13 @@ from them are [EDA](eda.md)'s (its statistics section). The functions:
   (V3), so the template's "refused above 50 million cells" is about the cells written.
 
 The counts table's columns are `feature, period, lagged, fold, bin, bin_order, is_null,
-target_bin, n, sum_y` (`CELL_COLUMNS`), one row per cell; `fold` is a categorical's client fold
+target_bin, n, sum_y, sum_y2` (`CELL_COLUMNS`), one row per cell; `fold` is a categorical's client fold
 (`pmod(xxhash64(unit_id), ENCODING_FOLDS)`, 5 folds, the same in every run; null for a numeric),
 which EDA's cross-fitted level encoding needs, set on the window's cells only (null in the gap
 and latest periods); `period` is the period's label, `bin` the
-`bin_labels` text, a level (a reserved name quoted) or `null`, `bin_order` the bucket index or
-the level's rank (the null bin last), `target_bin` a string or null, `sum_y` null where no
+`bin_labels` text, a level (a reserved name or a blank level quoted) or `null`, `bin_order` the bucket index or
+the level's rank (the null bin last), `target_bin` a string or null, `sum_y` the target's sum
+and `sum_y2` its sum of squares (a regression mean's interval per period), both null where no
 label. The passes use Spark SQL
 functions and JVM transformers (`Bucketizer`) only, never a pandas UDF: the legacy crunch never
 ran Python on the executors, so nothing else is proven inside the bank (bank parity; the passes'
@@ -726,7 +727,10 @@ is one entity's area and the data-definition hash carries the entity (D-136; [ED
   on an unsupported column fail loud naming the column; never a pandas dtype, N13);
   `estimate_collect(frame, name) -> dict` (the exact rows, bytes per row from a 10,000-row
   sample's `memory_usage(deep=True)`, the estimate at twice the product; an empty frame fails
-  loud naming it); `collect_frame(frame, name, env) -> tuple[pd.DataFrame, dict]` (the
+  loud naming it); `collect_frame(frame, name, env) -> tuple[pd.DataFrame, dict]` (every collected frame
+  is sorted in Spark, `orderBy("unit_id", "period")` before `toPandas()`, so pandas holds no
+  second copy at the peak; `toPandas()` after joins and shuffles has no set row order and a
+  seeded cap or a rerun must pick the same rows, T34; the
   printout, above the budget the callout of `CALLOUTS[name]` (req. 5: the snapshot's names the
   budget, the Spark settings and a smaller `eda.snapshot` population through eligibility, never
   sampling; a modelling frame's names `training.sampling`), the collect, the measured size).
@@ -735,7 +739,8 @@ is one entity's area and the data-definition hash carries the entity (D-136; [ED
   `NULL_BIN = "null"`, `RESERVED_BINS`, `POOLED_LEVEL_CAP = 10_000`, `CONSTANT_CHUNK = 50`,
   `ENCODING_FOLDS = 5`, `CELL_COLUMNS`; `compared_periods(cfg, available) -> dict[str,
   list[date]]`; `window_clients(rows, window_periods) -> dict[str, float]` (the window's labelled
-  rows and Kish's effective clients, by class and in all, for the window's SE);
+  rows and Kish's effective clients, by class and in all, for the window's SE, and
+  `event_clients`, the distinct clients with an event: the pooled window's positive events);
   `bin_edges(snapshot, kinds, bins) -> dict[str, np.ndarray | None]` (the eligible rows);
   `window_levels(rows, categoricals, window_periods) -> tuple[dict[str, list[str]],
   list[str]]` (the levels, and the categoricals over `POOLED_LEVEL_CAP`);

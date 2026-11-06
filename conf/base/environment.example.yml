@@ -18,6 +18,8 @@ sources:                     # entity → logical name (as the use-case config s
   entity_a:
     # format: parquet → path: a folder of month-partitioned parquet, absolute or a URI (hdfs://…);
     # a relative path is refused. The synthetic dev dataset comes from `python -m synthetic --preset dev`.
+    # Two synthetic presets: dev (20k clients) for quick tries and tests, canonical (100k) for the
+    # notebooks: replace synthetic_dev with synthetic_canonical in the three paths below.
     retail_mart:              {format: parquet, path: /ABSOLUTE/PATH/data/01_raw/synthetic_dev/mart}
     retail_holdings:          {format: parquet, path: /ABSOLUTE/PATH/data/01_raw/synthetic_dev/holdings}
     retail_fs_extract:        {format: parquet, path: /ABSOLUTE/PATH/data/01_raw/synthetic_dev/fs_extract}

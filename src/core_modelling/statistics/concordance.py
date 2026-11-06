@@ -11,12 +11,13 @@ raw AUC at 100 bins and about 0.01 from the raw rows' value against a 20-bin reg
 values and a dense table would be too large: Kendall's τ-b on the rows the cells expand to
 (O(n log n)), turned into Somers' D through the tie counts.
 
-The standard errors follow D-082 (Hanley–McNeil in events; Kendall's null SE in units, halved),
-floored at `SE_FLOOR`; `cochran_q` tests whether per-period values differ. A window's events are
-counted in effective clients (`effective_count`, through the per-task `client_support`): the
-same client is labelled in every period and, with overlapping target windows, mostly with the
-same label, so the pooled rows overstate what the window knows (a null numeric was marked
-`non_monotone` 12–18% of the time on the rows' SE, 0% on the clients', 2026-11-04).
+The standard errors follow D-082 (Hanley–McNeil in events; Kendall's null SE in units, halved
+and scaled for the target's ties), floored at `SE_FLOOR`; `cochran_q` tests whether per-period
+values differ. A window's events are counted in effective clients (`effective_count`, through
+the per-task `client_support`): the same client is labelled in every period and, with
+overlapping target windows, mostly with the same label, so the pooled rows overstate what the
+window knows (a null numeric was marked `non_monotone` 12–18% of the time on the rows' SE, 0% on
+the clients', 2026-11-04).
 
 A categorical has no order, so `encode_levels` scores its levels by their shrunk target mean
 (Micci-Barreca) and the levels are read in that order. Read on the rows it was fitted on, that
@@ -27,10 +28,11 @@ ordered by the encoding fitted on the other folds' clients, and only pairs insid
 so no client informs its own order and the null code reads 0.5 on average. Its spread is wider
 than its SE says (about 1.4×: each fold's order is fitted partly on the others' noise), so its
 SE is multiplied by `CROSS_FIT_SE_INFLATION`.
-`best_order_concordance`
-merges a numeric's bins into ten groups and orders them by their in-sample rate, what a ten-leaf
-tree on the feature would reach, and `ranking_value` takes it only when it beats the plain value
-by `max(NON_MONOTONE_MARGIN, NON_MONOTONE_SE_MULTIPLE · SE)` (V2).
+
+`best_order_concordance` merges a numeric's bins into ten groups and orders them by their
+in-sample rate, what a ten-leaf tree on the feature would reach, and `ranking_value` takes it
+only when it beats the plain value by `max(NON_MONOTONE_MARGIN, NON_MONOTONE_SE_MULTIPLE · SE)`
+(V2).
 """
 
 import math
@@ -110,12 +112,29 @@ def effective_count(count: float, rows: float, effective: float) -> float:
     return max(count * effective / rows, min(count, 1.0))
 
 
-def kendall_null_se(units: float) -> float:
-    """Kendall's null standard error, `sqrt(2(2n + 5) / (9n(n − 1)))`, halved for the
-    concordance scale (D-082) and floored at `SE_FLOOR`."""
+def kendall_null_se(units: float, target_shares: np.ndarray) -> float:
+    """The null standard error of a regression concordance over `units` (D-082), floored at
+    `SE_FLOOR` after the tie factor.
+
+    Kendall's null SE of τ, `sqrt(2(2n + 5) / (9n(n − 1)))`, is halved for the concordance
+    scale and multiplied by `sqrt(1 − Σp³) / (1 − Σp²)`, `p` the target bins' shares of the rows
+    the concordance reads (`cells.target_shares`): Somers' D divides by the pairs untied on the
+    target only, so a zero-inflated target's value spreads wider than τ's (1.6× at 70% zeros).
+    The factor is 1 without target ties (to 1/n), and the shares are scale-free, so they hold on
+    effective units too. The feature's ties are left out: they only narrow the null spread, so
+    the SE errs large, as Hanley–McNeil's does on a binned feature.
+    """
+    p = np.asarray(target_shares, dtype=float)
+    if (p < 0).any() or (p > 0).sum() < 2 or not math.isclose(p.sum(), 1.0):
+        raise ValueError(
+            "kendall_null_se: the target shares must be non-negative, fill two bins or more and "
+            f"sum to 1; got {p.size} shares summing to {p.sum()}"
+        )
     if units < 2:
         raise ValueError(f"kendall_null_se: needs at least two units, got {units}")
-    return max(math.sqrt(2 * (2 * units + 5) / (9 * units * (units - 1))) / 2, SE_FLOOR)
+    tau_se = math.sqrt(2 * (2 * units + 5) / (9 * units * (units - 1))) / 2
+    ties = math.sqrt(1 - (p**3).sum()) / float(1 - (p**2).sum())
+    return max(tau_se * ties, SE_FLOOR)
 
 
 def cochran_q(values: np.ndarray, ses: np.ndarray) -> float:
@@ -170,11 +189,11 @@ def cross_fitted_concordance(
     not carry over, which `(1 + |D|) / 2` would fold upwards.
 
     The cells carry `fold` (the counts table's, for a categorical's window cells). A level unseen
-    in the other folds scores their base. The snapshot's value is `read=[snapshot period]`, a
-    period's `read=[period]`, the lagged value `lagged=True`, always with the window as
-    `periods`. Its SE is the task's SE on the same support times `CROSS_FIT_SE_INFLATION`: its
-    spread under no signal is about 1.4× the Hanley–McNeil SE (the folds' orders share fitted
-    noise).
+    in the other folds scores their base; a fold without labelled rows in `read` is skipped. The
+    snapshot's value is `read=[snapshot period]`, a period's `read=[period]`, the lagged value
+    `lagged=True`, always with the window as `periods`. Its SE is the task's SE on the same
+    support times `CROSS_FIT_SE_INFLATION`: its spread under no signal is about 1.4× the
+    Hanley–McNeil SE (the folds' orders share fitted noise).
     """
     read = list(periods) if read is None else read
     if not read:
@@ -195,7 +214,11 @@ def cross_fitted_concordance(
         encoding = encode_levels(fit, k_rows)
         fitted = _labelled_values(fit)
         base = fitted["sum_y"].sum() / fitted["n"].sum()
-        rows = _labelled_values(pool_periods(cells.loc[held_out], read, lagged))
+        read_cells = cells.loc[held_out & (cells["lagged"] == lagged) & cells["period"].isin(read)]
+        if read_cells.empty:  # none of the fold's clients is in the read periods
+            continue
+        present = sorted(read_cells["period"].unique())
+        rows = _labelled_values(pool_periods(read_cells, present, lagged))
         if rows.empty:
             continue
         table = _table_by_score(rows.assign(score=rows["bin"].map(encoding).fillna(base)))
@@ -219,7 +242,7 @@ def best_order_concordance(cells: pd.DataFrame, k_rows: float) -> float:
     if values["n"].sum() == 0:
         raise ValueError("best_order_concordance: no labelled non-null rows")
     per_bin = values.groupby(["bin_order", "bin"], as_index=False)[["n", "sum_y"]].sum()
-    groups = merge_bins(per_bin, BEST_ORDER_GROUPS)
+    groups = merge_bins(per_bin, BEST_ORDER_GROUPS, None)  # no edges: the labels go unread
     base = per_bin["sum_y"].sum() / per_bin["n"].sum()
     score = _shrunk(groups["n"], groups["sum_y"], k_rows, base).to_numpy()
     group = np.searchsorted(groups["bin_order_first"], values["bin_order"], side="right") - 1

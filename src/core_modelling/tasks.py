@@ -26,7 +26,12 @@ the rare effect (a rate or mean ratio), the concordance's standard error, the ev
 support's name, the target's headline (`base_rate_views`), the shrinkage of the level encoding
 and whether a lift exists: a ratio to a mean needs a positive mean, so a regression target whose
 mean is not positive shows "not available: mean not positive", decided before anything runs
-(D-035, V8). Both tasks share one rule where the formula is the same (the lift test).
+(D-035, V8). Both tasks share one rule where the formula is the same (the lift test). EDA's
+tables add more: how a feature's cells give its concordance (a regression target with every
+value a bin goes through Kendall's τ, not the dense table), the estimate per window period with
+its interval from the population counts and the cells (a mean's t-interval from the cells' sum
+of squares), the target class a box plot groups by, how an estimate is printed and named (rate
+or mean) and whether the target has a distribution to show per group.
 """
 
 from functools import partial
@@ -39,7 +44,14 @@ from pyspark.sql.types import BooleanType, DoubleType, FloatType, NumericType
 
 from core_modelling.config import UseCaseConfig
 from core_modelling.periods import label_by_period, period_spec
-from core_modelling.statistics.concordance import concordance_se, effective_count, kendall_null_se
+from core_modelling.statistics.cells import two_way_table
+from core_modelling.statistics.concordance import (
+    concordance_exact,
+    concordance_from_table,
+    concordance_se,
+    effective_count,
+    kendall_null_se,
+)
 from core_modelling.statistics.distributions import quantile_edges
 from core_modelling.statistics.intervals import t_interval, wilson_interval
 
@@ -49,6 +61,11 @@ TARGET_BINS = 20  # quantile bins of a regression target in the counts table
 EVENTS_WARNING = 500  # fewer events (units with a non-zero target) in the snapshot: a warning
 BINARY_SUPPORT = "positive events"  # what the concordance's support counts, per task
 REGRESSION_SUPPORT = "units with a non-zero target"
+# A group table's summary columns every task shares; `summary_columns` per task adds its own, so
+# a table keeps its schema whatever the data (an empty one included).
+SUMMARY_COLUMNS = ["rows", "support", "estimate", "low", "high", "lift", "insufficient"]
+AMOUNT_SUMMARY_COLUMNS = [*SUMMARY_COLUMNS, "median", "nonzero_share", "nonzero_low",
+                          "nonzero_high", "nonzero_mean", "nonzero_median"]  # fmt: skip
 
 
 def _flag_goes_up(value: Column, forward: WindowSpec) -> Column:
@@ -283,9 +300,18 @@ def _mean_ratio(cell: float, rest: float) -> float:
     return cell / rest
 
 
-def _regression_se(value: float, events: float, non_events: float) -> float:
-    """Kendall's null standard error over every unit, halved (A29)."""
-    return kendall_null_se(events + non_events)
+def _binary_se(value: float, events: float, non_events: float, target_shares: np.ndarray) -> float:
+    """Hanley–McNeil's standard error (D-082); the target shares go unread, since it conditions
+    on the split into events and non-events already."""
+    return concordance_se(value, events, non_events)
+
+
+def _regression_se(
+    value: float, events: float, non_events: float, target_shares: np.ndarray
+) -> float:
+    """Kendall's null standard error over every unit, halved and scaled for the ties on the
+    target (A29, D-082)."""
+    return kendall_null_se(events + non_events, target_shares)
 
 
 def _binary_client_support(
@@ -304,11 +330,15 @@ def _regression_client_support(
 ) -> tuple[float, float]:
     """A window's units with a non-zero and a zero target in effective clients, both by the
     window's one ratio: Kendall's SE counts units whatever their target, and a target need not
-    take the value 0."""
-    return (
-        effective_count(events, clients["rows"], clients["effective"]),
-        effective_count(non_events, clients["rows"], clients["effective"]),
-    )
+    take the value 0.
+
+    The total is scaled once, floored at two units (at the rows when fewer), and split by the
+    classes' shares: flooring each class at one row instead gave a strictly positive target over
+    few rows a single unit, which Kendall's SE refuses.
+    """
+    total = events + non_events
+    units = max(effective_count(total, clients["rows"], clients["effective"]), min(total, 2.0))
+    return units * events / total, units * non_events / total
 
 
 def _events_warning(events: int, support: str) -> str | None:
@@ -352,6 +382,57 @@ def _regression_shrinkage_rows(min_events: int, base: float) -> float:
     return float(min_events)
 
 
+def _table_concordance(cells: pd.DataFrame, exact: bool, sign: int | None) -> float:
+    """One feature's pooled cells' concordance from the two-way table; a 0/1 target has two
+    target bins, so the table stays small whatever the feature's bins (`exact` changes nothing)."""
+    return concordance_from_table(two_way_table(cells), sign)
+
+
+def _regression_concordance(cells: pd.DataFrame, exact: bool, sign: int | None) -> float:
+    """The table's concordance, or with `exact` (`eda.bins: null`, every target value a bin)
+    Kendall's τ on the rows the cells expand to, without the dense table."""
+    return concordance_exact(cells, sign) if exact else _table_concordance(cells, exact, sign)
+
+
+def _binary_period_estimate(
+    known: np.ndarray, positive_rows: np.ndarray, sum_y: np.ndarray, sum_y2: np.ndarray
+) -> dict[str, np.ndarray]:
+    """Per period, the rate (positive rows / rows with a known target) with its Wilson interval."""
+    low, high = wilson_interval(positive_rows, known)
+    return {"estimate": positive_rows / known, "low": low, "high": high}
+
+
+def _regression_period_estimate(
+    known: np.ndarray, positive_rows: np.ndarray, sum_y: np.ndarray, sum_y2: np.ndarray
+) -> dict[str, np.ndarray]:
+    """Per period, the mean (`sum_y` / rows with a known target) with its t-interval from the
+    sum of squares (NaN under two rows), and the non-zero share with its Wilson interval.
+
+    The variance is the one-pass `(Σy² − (Σy)² / n) / (n − 1)`, all the cells hold: it loses
+    precision when the mean is far above the spread, and the floor at 0 keeps it defined.
+    """
+    estimate = sum_y / known
+    low, high = np.full(np.shape(known), np.nan), np.full(np.shape(known), np.nan)
+    enough = known >= 2  # `t_interval` refuses fewer rows
+    variance = (sum_y2[enough] - sum_y[enough] ** 2 / known[enough]) / (known[enough] - 1)
+    sd = np.sqrt(np.maximum(variance, 0))  # one-pass formula: rounding can take it below 0
+    low[enough], high[enough] = t_interval(estimate[enough], sd, known[enough])
+    nonzero_low, nonzero_high = wilson_interval(positive_rows, known)
+    return {"estimate": estimate, "low": low, "high": high,
+            "nonzero_share": positive_rows / known, "nonzero_low": nonzero_low,
+            "nonzero_high": nonzero_high}  # fmt: skip
+
+
+def _binary_class(target: pd.Series) -> pd.Series:
+    """The target class of each known 0/1 target: `"0"` or `"1"`."""
+    return target.astype(int).astype(str)
+
+
+def _regression_class(target: pd.Series) -> pd.Series:
+    """The target class of each known amount: `"zero"` or `"non-zero"` (the support's split)."""
+    return pd.Series(np.where(target != 0, "non-zero", "zero"), index=target.index)
+
+
 TASK_SPECS = {
     "binary": {
         "target_rules": {"flag_goes_up": _flag_goes_up},
@@ -360,14 +441,21 @@ TASK_SPECS = {
         "contract_checks": [_check_flag_target],
         "target_bins": _binary_target_bins,
         "summarise_group": _binary_group,
+        "summary_columns": SUMMARY_COLUMNS,  # the columns of a group table
         "rare_effect": _rate_ratio,
-        "concordance_se": concordance_se,
+        "concordance_se": _binary_se,
         "client_support": _binary_client_support,
         "events_warning": partial(_events_warning, support=BINARY_SUPPORT),
         "support_name": BINARY_SUPPORT,
         "base_rate_views": _binary_headline,
         "shrinkage_rows": _binary_shrinkage_rows,
         "lift_available": _lift_available,
+        "cells_concordance": _table_concordance,
+        "period_estimate": _binary_period_estimate,
+        "target_class": _binary_class,
+        "estimate_format": "{:.2%}",
+        "estimate_noun": "rate",  # the y titles ("Target rate") and the how-to-read wording
+        "target_distribution": False,  # a 0/1 target has no distribution to show per group
     },
     "regression": {
         "target_rules": {"forward_sum": _forward_sum},
@@ -376,6 +464,7 @@ TASK_SPECS = {
         "contract_checks": [_check_amount_target],
         "target_bins": _regression_target_bins,
         "summarise_group": _regression_group,
+        "summary_columns": AMOUNT_SUMMARY_COLUMNS,
         "rare_effect": _mean_ratio,
         "concordance_se": _regression_se,
         "client_support": _regression_client_support,
@@ -384,5 +473,11 @@ TASK_SPECS = {
         "base_rate_views": _regression_headline,
         "shrinkage_rows": _regression_shrinkage_rows,
         "lift_available": _lift_available,
+        "cells_concordance": _regression_concordance,
+        "period_estimate": _regression_period_estimate,
+        "target_class": _regression_class,
+        "estimate_format": "{:,.4g}",
+        "estimate_noun": "mean",
+        "target_distribution": True,  # an amount's quartiles per group and its group table
     },
 }

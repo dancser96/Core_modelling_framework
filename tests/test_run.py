@@ -1,6 +1,6 @@
 """`run` and the CLI (D-024): the Target Factory stage through `python -m core_modelling run`,
-one model input saved for the two example configs at once, and the guided notebook calling only
-the Public API."""
+one model input saved for the two example configs at once, `--stages eda` on both configs, and
+the guided notebooks calling only the Public API."""
 
 import json
 import re
@@ -20,6 +20,8 @@ CONFIG = ROOT / "conf/base/cc_acquisition.yml"
 SECOND_CONFIG = ROOT / "conf/base/td_acquisition.yml"
 MODEL_INPUT = "05_model_input/retail_acquisition"
 NOTEBOOK = ROOT / "notebooks/01_target_factory.ipynb"
+NOTEBOOKS = [NOTEBOOK, ROOT / "notebooks/02_eda.ipynb"]
+EDA_CANDIDATES = ["age", "income", "segment", "onboarding_channel", "cc_bal", "spend_cc_cnt"]
 # The Public API table of docs/architecture.md: what the shipped notebooks may import.
 PUBLIC_API = {
     "core_modelling.config": {"load_config", "UseCaseConfig"},
@@ -33,6 +35,14 @@ PUBLIC_API = {
     "core_modelling.target_factory": {"run_target_factory"},
     "core_modelling.dataset": {"build_frames", "save_model_input", "Frames"},
     "core_modelling.run": {"run"},
+    "core_modelling.artifacts": {"StageResult"},
+    "core_modelling.eda": {
+        "run_eda",
+        "pivot_target",
+        "lift_by_group",
+        "compare_sides",
+        "rate_by_period",
+    },  # fmt: skip
 }
 
 
@@ -91,8 +101,8 @@ def test_run_refuses_an_unknown_stage_or_entity_or_no_config(
     """A stage not built, an entity the config doesn't list, an empty config list, or configs
     listing different entities when no entity is given, each fail before anything runs."""
     env_file = _environment_file(tmp_path, unit_output)
-    with pytest.raises(ValueError, match=r"unknown stages \['eda'\]; the built stages"):
-        run(CONFIG, env_path=str(env_file), stages=["eda"])
+    with pytest.raises(ValueError, match=r"unknown stages \['feature_checks'\]; the built"):
+        run(CONFIG, env_path=str(env_file), stages=["feature_checks"])
     with pytest.raises(ValueError, match="unknown entity 'entity_b': the config 'cc_acquisition'"):
         run(CONFIG, env_path=str(env_file), entity="entity_b")
     with pytest.raises(ValueError, match="run needs at least one config"):
@@ -110,10 +120,32 @@ def test_run_refuses_an_unknown_stage_or_entity_or_no_config(
         run([CONFIG, second_path], env_path=str(env_file))
 
 
-def test_notebook_calls_only_the_public_api() -> None:
-    """The shipped notebook imports from the Public API table only and defines nothing (D-024,
+def test_run_stages_eda_on_two_configs_writes_both_eda_folders(
+    spark: SparkSession, tmp_path: Path, unit_output: tuple[str, dict]
+) -> None:
+    """`run([a, b], stages=["eda"])` runs EDA per config (built in memory, a few candidates to
+    keep it short) and writes each use case's `eda/` with its json and report."""
+    env_file = _environment_file(tmp_path, unit_output)
+    paths = []
+    for config in (CONFIG, SECOND_CONFIG):
+        raw = yaml.safe_load(config.read_text())
+        raw["data"]["model_input"] = None
+        raw["features"]["candidates"]["include"] = EDA_CANDIDATES
+        paths.append(tmp_path / config.name)
+        paths[-1].write_text(yaml.safe_dump(raw))
+    out = run(paths, env_path=str(env_file), stages=["eda"])
+    written = out["entity_a"]["eda"]
+    assert sorted(written) == ["cc_acquisition", "td_acquisition"]
+    for use_case, files in written.items():
+        assert f"/{use_case}/04_feature/" in files["folder"]
+        assert Path(files["eda.json"]).is_file() and Path(files["report.html"]).is_file()
+
+
+@pytest.mark.parametrize("notebook", NOTEBOOKS, ids=lambda path: path.stem)
+def test_notebook_calls_only_the_public_api(notebook: Path) -> None:
+    """Each shipped notebook imports from the Public API table only and defines nothing (D-024,
     D-039)."""
-    cells = json.loads(NOTEBOOK.read_text())["cells"]
+    cells = json.loads(notebook.read_text())["cells"]
     code = "\n".join("".join(cell["source"]) for cell in cells if cell["cell_type"] == "code")
     imports = re.findall(r"^from (core_modelling\S*) import (.+)$", code, flags=re.MULTILINE)
     assert imports, "the notebook imports nothing from core_modelling"

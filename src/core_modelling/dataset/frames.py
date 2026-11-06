@@ -285,7 +285,7 @@ def estimate_collect(frame: DataFrame, name: str) -> dict:
 def collect_frame(frame: DataFrame, name: str, env: EnvironmentConfig) -> tuple[pd.DataFrame, dict]:
     """The frame collected to pandas after the printout: rows, columns, the estimate and the
     budget; above the budget the callout worded for the frame (`CALLOUTS`), and the collect
-    proceeds. The measured size joins the entry."""
+    proceeds. Sorted by the keys with a fresh index; the measured size joins the entry."""
     estimate = estimate_collect(frame, name)
     budget = int(env.collect_budget_gb * GB)
     print(f"collect {name}: {estimate['rows']:,} rows × {estimate['columns']} columns, "
@@ -293,7 +293,10 @@ def collect_frame(frame: DataFrame, name: str, env: EnvironmentConfig) -> tuple[
           f"(budget {env.collect_budget_gb} GB)")  # fmt: skip
     if estimate["estimate_bytes"] > budget:
         print(f"  above the budget: {CALLOUTS[name]}; collecting anyway")
-    collected = frame.toPandas()
+    # toPandas() after joins and shuffles has no set row order, and a positional seeded sample
+    # (the association's cap) must pick the same rows on a rerun of the same data (T34, §4.10);
+    # sorted in Spark, so pandas holds no second copy at the peak
+    collected = frame.orderBy("unit_id", "period").toPandas()
     measured = int(collected.memory_usage(deep=True).sum())
     print(f"  collected {name}: {measured / GB:.2f} GB in pandas")
     entry = {"step": "collect", "frame": name, **estimate, "measured_bytes": measured,

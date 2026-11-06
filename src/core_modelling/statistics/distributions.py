@@ -6,10 +6,11 @@ quantile edges are taken over the remaining values, so no bin but a singleton ho
 about `2 / bins` of the rows. Plain quantile edges collapse on a zero-inflated or discrete column
 (ninety of a hundred edges land on 0 and one bucket takes the rest), and fixed-width edges put a
 skewed column into its first bucket (T25). `bin_labels` names the bins the edges define, and is
-the `bin` column of the counts table. `merge_bins` merges cells into the groups a chart shows,
-by cumulative row share, a mass point its own group (chart rule 4). `psi`, `new_level_share`
-and `standardised_difference` compare two periods' distributions for Feature Checks. Everything
-is pure: numpy and pandas in, numbers and frames out, no Spark.
+the `bin` column of the counts table; `range_label` names a run of them by its outer range.
+`merge_bins` merges cells into the groups a chart shows, by cumulative row share, a mass point
+its own group (chart rule 4). `psi`, `new_level_share` and `standardised_difference` compare
+two periods' distributions for Feature Checks. Everything is pure: numpy and pandas in, numbers
+and frames out, no Spark.
 
 A bin is `(-inf, e_1)`, `[e_i, e_{i+1})` or `[e_m, +inf)` over the interior edges `e_1 < … <
 e_m`, exactly what `pyspark.ml.feature.Bucketizer` does with `splits = [-inf, *edges, +inf]`
@@ -19,6 +20,7 @@ and what `numpy.digitize(values, edges)` returns. A singleton bin for `v` is `[v
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 PSI_FLOOR = 1e-4  # a share below this is raised to it before the log, so an empty bin stays finite
 
@@ -63,44 +65,74 @@ def _interior_quantiles(values: np.ndarray, bins: int) -> np.ndarray:
 
 def bin_labels(edges: np.ndarray) -> list[str]:
     """One label per bin, `len(edges) + 1` of them in bin order: `< e_1`, `[e_i, e_{i+1})` and
-    `≥ e_m`; a singleton reads `= v` and the bin above it `(v, e)` or `> v`."""
+    `≥ e_m`; a singleton reads `= v` and the bin above it `(v, e)` or `> v` (`range_label`)."""
     edges = np.asarray(edges, dtype=float)
-    if edges.size == 0:
-        return ["all"]
-    closes = np.zeros(edges.size, dtype=bool)  # edge i closes the singleton that edge i-1 opens
+    closes, text = _edge_text(edges)  # formatted once: `eda.bins: null` can mean many edges
+    return [_range_text(closes, text, i, i) for i in range(edges.size + 1)]
+
+
+def range_label(edges: np.ndarray, first: int, last: int) -> str:
+    """The label of buckets `first..last` (0-based over `[-inf, *edges, inf]`): their outer
+    range, `= v` for one singleton, `≤ v` / `[u, v]` when the last bucket is `v`'s singleton,
+    `> v` / `(v, u)` when the first bucket is the one just above it; `all` for every bucket."""
+    edges = np.asarray(edges, dtype=float)
+    if not 0 <= first <= last <= edges.size:
+        raise ValueError(
+            f"range_label: buckets {first}..{last} are not within 0..{edges.size} in order"
+        )
+    return _range_text(*_edge_text(edges), first, last)
+
+
+def _edge_text(edges: np.ndarray) -> tuple[np.ndarray, list[str]]:
+    """Which edges close a singleton (edge i closes the one edge i-1 opens), and each edge's
+    text, a closing edge written as the singleton's value."""
+    closes = np.zeros(edges.size, dtype=bool)
     closes[1:] = edges[1:] == np.nextafter(edges[:-1], np.inf)
-    text = _format_numbers(np.where(closes, np.roll(edges, 1), edges))
-    labels = [f"< {text[0]}"]
-    for i in range(1, edges.size):  # bin i is [edges[i - 1], edges[i])
-        if closes[i]:
-            labels.append(f"= {text[i - 1]}")
-        elif closes[i - 1]:
-            labels.append(f"({text[i - 1]}, {text[i]})")
-        else:
-            labels.append(f"[{text[i - 1]}, {text[i]})")
-    last = edges.size - 1
-    labels.append(f"> {text[last]}" if closes[last] else f"≥ {text[last]}")
-    return labels
+    return closes, _format_numbers(np.where(closes, np.roll(edges, 1), edges))
+
+
+def _range_text(closes: np.ndarray, text: list[str], first: int, last: int) -> str:
+    """`range_label`'s text from `_edge_text`: bucket i spans edges i-1 and i, and is a
+    singleton when edge i closes one."""
+    lower_open = first >= 1 and closes[first - 1]  # the first bucket follows a singleton
+    upper_closed = last < closes.size and closes[last]  # the last bucket is a singleton
+    if first == 0 and last == closes.size:
+        return "all"
+    if first == last and upper_closed:
+        return f"= {text[first - 1]}"
+    if first == 0:
+        return f"≤ {text[last]}" if upper_closed else f"< {text[last]}"
+    if last == closes.size:
+        return f"> {text[first - 1]}" if lower_open else f"≥ {text[first - 1]}"
+    lower = f"({text[first - 1]}" if lower_open else f"[{text[first - 1]}"
+    return f"{lower}, {text[last]}]" if upper_closed else f"{lower}, {text[last]})"
 
 
 def _format_numbers(numbers: np.ndarray) -> list[str]:
-    """Six significant digits, or the shortest exact text when six digits would make two
-    distinct numbers read alike (integer codes above 999,999)."""
-    short = [f"{x:.6g}" for x in numbers]
-    if len(set(short)) == np.unique(numbers).size:
+    """An integral value below 1e15 whole, any other to six significant digits, or every one as
+    the shortest exact text when the short texts would not keep the numbers' order and ties
+    (1000000.001 and 1000000.002 reading alike, 1000005.5 reading 1.00001e+06 above 1000007)."""
+    # No thousands separator: inside a range label it would read like the comma between the bounds
+    short = [
+        str(int(x)) if float(x).is_integer() and abs(x) < 1e15 else f"{x:.6g}" for x in numbers
+    ]
+    ranks = stats.rankdata([float(text) for text in short], method="dense")
+    if np.array_equal(ranks, stats.rankdata(numbers, method="dense")):
         return short
     return [repr(float(x)) for x in numbers]
 
 
-def merge_bins(cells: pd.DataFrame, groups: int) -> pd.DataFrame:
+def merge_bins(cells: pd.DataFrame, groups: int, edges: np.ndarray | None) -> pd.DataFrame:
     """One feature's pooled non-null cells merged in `bin_order` into about `groups` groups.
 
-    The cells hold one row per `bin_order` with `bin`, `n` and optionally `sum_y`, the only
-    columns that add up; any other numeric column is refused. A bin holding at least
-    `1 / groups` of the rows (a mass point) is its own group and the other bins are cut by
-    cumulative row share into the groups left; with at most `groups` bins each bin is a group. A
-    mass point inside a run of other bins splits that run, which can add a group. Columns:
-    `group`, `bin_order_first`, `bin_order_last`, `label`, `n` and `sum_y` when given.
+    The cells hold one row per `bin_order` with `n` and optionally `sum_y`, the only columns
+    that add up; any other numeric column is refused. A bin holding at least `1 / groups` of the
+    rows (a mass point) is its own group and the other bins are cut by cumulative row share into
+    the groups left; with at most `groups` bins each bin is a group. A mass point inside a run of
+    other bins splits that run, which can add a group. A group's label is its outer range on the
+    feature's `edges` (`range_label`; `all` without edges): the occupied bins it spans, so a
+    bin empty here lies in no label. Columns: `group`, `bin_order_first`,
+    `bin_order_last`, `label`, `n` and `sum_y` when given.
     """
     if groups < 1:
         raise ValueError(f"merge_bins: groups must be at least 1, got {groups}")
@@ -121,15 +153,12 @@ def merge_bins(cells: pd.DataFrame, groups: int) -> pd.DataFrame:
     else:
         ordered["group"] = _group_keys(ordered["n"].to_numpy(dtype=float), groups)
     by = ordered.groupby("group")
-    merged = by.agg(
-        bin_order_first=("bin_order", "min"),
-        bin_order_last=("bin_order", "max"),
-        first=("bin", "first"),
-        last=("bin", "last"),
-    )
-    single = merged["first"] == merged["last"]
-    merged["label"] = merged["first"].where(single, merged["first"] + " – " + merged["last"])
-    merged = merged.drop(columns=["first", "last"]).join(by[summed].sum()).reset_index()
+    merged = by.agg(bin_order_first=("bin_order", "min"), bin_order_last=("bin_order", "max"))
+    merged["label"] = [
+        "all" if edges is None or edges.size == 0 else range_label(edges, first, last)
+        for first, last in merged[["bin_order_first", "bin_order_last"]].itertuples(index=False)
+    ]
+    merged = merged.join(by[summed].sum()).reset_index()
     return merged[["group", "bin_order_first", "bin_order_last", "label", *summed]]
 
 

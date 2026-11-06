@@ -123,7 +123,9 @@ def _expected_cells(frame: pd.DataFrame, edges: dict, levels: dict, lagged: bool
     cells = pd.concat(parts)
     key = ["feature", "period", "fold", "bin", "bin_order", "is_null", "target_bin"]
     grouped = cells.groupby(key, dropna=False).agg(
-        n=("target", "size"), sum_y=("target", lambda s: s.sum(min_count=1))
+        n=("target", "size"),
+        sum_y=("target", lambda s: s.sum(min_count=1)),
+        sum_y2=("target", lambda s: (s**2).sum(min_count=1)),
     )
     grouped = grouped.reset_index()
     grouped["period"] = grouped["period"].map(MONTH.label)
@@ -173,9 +175,9 @@ def test_cells_equal_a_pandas_groupby_on_the_collected_rows(
     frames: Frames, window: list[date], edges: dict, levels: dict, collected: pd.DataFrame
 ) -> None:
     """Pass 1 on three features (a numeric, a categorical, one with nulls) over the window's
-    first and the latest period, `n` and `sum_y` alike, equals the pandas groupby on the same
-    rows: the Bucketizer's buckets are `np.digitize`'s, the levels the window's, the null bin its
-    own, the target bin null in the latest period."""
+    first and the latest period, `n`, `sum_y` and `sum_y2` alike, equals the pandas groupby on
+    the same rows: the Bucketizer's buckets are `np.digitize`'s, the levels the window's, the null
+    bin its own, the target bin null in the latest period."""
     periods = [window[0], collected["period"].max()]
     rows = frames.rows.select("unit_id", "period", *FEATURES, "target")
     cells = count_cells(
@@ -190,7 +192,8 @@ def test_cells_equal_a_pandas_groupby_on_the_collected_rows(
     assert (cells.loc[cells["is_null"], "bin"] == NULL_BIN).all()
     assert cells.loc[cells["feature"] == "income", "is_null"].any()
     latest = cells[cells["period"] == MONTH.label(periods[1])]
-    assert latest["target_bin"].isna().all() and latest["sum_y"].isna().all()
+    assert latest["target_bin"].isna().all() and latest[["sum_y", "sum_y2"]].isna().all(axis=None)
+    assert cells["sum_y2"].equals(cells["sum_y"])  # a 0/1 target: y² = y
     first = cells[cells["period"] == MONTH.label(window[0])]
     assert {"0", "1"} <= set(first["target_bin"])  # plus null: leavers inside the window (N10)
 
@@ -254,6 +257,7 @@ def test_window_clients_count_each_client_once(
         per_client = labelled.loc[chosen].groupby("unit_id").size()
         expected[f"{prefix}rows"] = float(per_client.sum())
         expected[f"{prefix}effective"] = per_client.sum() ** 2 / (per_client**2).sum()
+    expected["event_clients"] = float(labelled.loc[labelled["event"], "unit_id"].nunique())
     assert window_clients(frames.rows, window) == pytest.approx(expected)
     assert expected["effective"] < expected["rows"]
 
@@ -288,6 +292,7 @@ def test_population_counts_equal_target_factorys_summary_where_both_exist(
     labelled = ["known_target", "positive_rows", "positive_events", "non_event_units"]
     outside = [MONTH.label(period) for period in [*periods["gap"], *periods["latest"]]]
     assert outside and table.loc[outside, labelled].isna().all().all()
+    assert (table[labelled].dtypes == "Int64").all()  # 3042 in eda.json, never 3042.0
     events = table.loc[window, "positive_events"] + table.loc[window, "non_event_units"]
     assert (table.loc[window, "known_target"] == events).all()
 
@@ -401,7 +406,7 @@ def test_minus_zero_null_and_nan_land_where_they_belong(spark: SparkSession) -> 
 
 def test_regression_target_bins_through_the_target_edges(spark: SparkSession) -> None:
     """A regression target binned on the edges the task spec builds (0 its own bin): the target
-    bin is the bucket's label, `sum_y` the summed amounts."""
+    bin is the bucket's label, `sum_y` the summed amounts, `sum_y2` their squares."""
     amounts = [0.0] * 5 + [10.0, 20.0, 30.0, 40.0]
     target_edges = TASK_SPECS["regression"]["target_bins"](np.array(amounts), exact=False)
     rows = [(str(i), MONTHS[0], float(i), amount) for i, amount in enumerate(amounts)]
@@ -412,6 +417,7 @@ def test_regression_target_bins_through_the_target_edges(spark: SparkSession) ->
     assert set(cells["target_bin"]) <= set(bin_labels(target_edges))
     assert cells.loc[cells["target_bin"] == "= 0", "n"].sum() == 5
     assert cells["sum_y"].sum() == sum(amounts) and cells["n"].sum() == len(amounts)
+    assert cells["sum_y2"].sum() == sum(a * a for a in amounts)
 
 
 def test_window_levels_rank_pool_and_mark_unseen_levels(
@@ -453,20 +459,23 @@ def test_reserved_level_names_are_quoted_and_a_nan_level_is_the_null_bin(
     spark: SparkSession,
 ) -> None:
     """A real level `"null"` or `"__other__"` is quoted in the level list and its bin (`'null'`),
-    so it never merges with the null bin or the pooled bin; a float column counted as a
-    categorical puts a NaN in the null bin with the nulls (N2), never a `NaN` level."""
+    so it never merges with the null bin or the pooled bin; so are the empty and a blank string
+    (`''`, `' '`: levels, never trimmed, N3); a float column counted as a categorical puts a NaN
+    in the null bin with the nulls (N2), never a `NaN` level."""
     m0 = MONTHS[0]
     rows = [("u1", m0, "null", 1.5, 1), ("u2", m0, None, float("nan"), 0),
-            ("u3", m0, "__other__", None, 0), ("u4", m0, "a", 1.5, 1)]  # fmt: skip
+            ("u3", m0, "__other__", None, 0), ("u4", m0, "a", 1.5, 1),
+            ("u5", m0, "", 1.5, 0), ("u6", m0, " ", 1.5, 1)]  # fmt: skip
     frame = spark.createDataFrame(
         rows, "unit_id string, period date, c string, f double, target int"
     )
     levels, over_ceiling = window_levels(frame, ["c", "f"], [m0])
-    assert levels == {"c": ["'__other__'", "'null'", "a"], "f": ["1.5"]} and over_ceiling == []
+    quoted = ["' '", "''", "'__other__'", "'null'"]
+    assert levels == {"c": [*quoted, "a"], "f": ["1.5"]} and over_ceiling == []
     cells = count_cells(frame, {}, levels, [], None, [m0], MONTH)
     by_bin = cells.groupby(["feature", "bin"])["n"].sum()
-    assert by_bin["c"].to_dict() == {"'__other__'": 1, "'null'": 1, "a": 1, NULL_BIN: 1}
-    assert by_bin["f"].to_dict() == {"1.5": 2, NULL_BIN: 2}
+    assert by_bin["c"].to_dict() == {**dict.fromkeys([*quoted, "a"], 1), NULL_BIN: 1}
+    assert by_bin["f"].to_dict() == {"1.5": 4, NULL_BIN: 2}
     assert cells.loc[cells["bin"] == "'null'", "is_null"].eq(False).all()
     assert cells.loc[cells["bin"] == NULL_BIN, "is_null"].all()
 

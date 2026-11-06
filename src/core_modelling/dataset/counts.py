@@ -2,7 +2,8 @@
 
 Two passes over `Frames.rows` (the eligible rows of the compared periods, the label kept in the
 window only) leave Spark as result tables, never as rows. Pass 1 (`count_cells`) counts every
-feature's rows and target sums per period, bin and target bin; pass 2 (`count_lagged_cells`) the
+feature's rows, target sum (`sum_y`) and target sum of squares (`sum_y2`, for a regression
+mean's interval) per period, bin and target bin; pass 2 (`count_lagged_cells`) the
 same for each feature's value one period back, against the current period's target. A numeric is
 bucketed by one `Bucketizer` on the edges `bin_edges` takes from the collected snapshot's
 eligible rows (`statistics.distributions.quantile_edges`, T25), a categorical mapped to the
@@ -43,10 +44,12 @@ OTHER = "__other__"  # a window level beyond the cap
 NEW = "__new__"  # a level unseen in the window
 NULL_BIN = "null"  # a Spark null or a NaN (N2)
 RESERVED_BINS = (NULL_BIN, OTHER, NEW)  # a real level of these names is quoted: `'null'`
+# … and so is a blank one, `''` or `' '` (N3: never trimmed); Java's `\s`, ASCII only
+BLANK_LEVEL = r"^[ \t\n\x0B\f\r]*$"
 CONSTANT_CHUNK = 50  # columns per client-constant job: one job over 139 filled the 2 GB heap
 ENCODING_FOLDS = 5  # client folds on a categorical's cells, for the cross-fitted encoding (V16)
 CELL_COLUMNS = ["feature", "period", "lagged", "fold", "bin", "bin_order", "is_null",
-                "target_bin", "n", "sum_y"]  # fmt: skip
+                "target_bin", "n", "sum_y", "sum_y2"]  # fmt: skip
 
 
 def compared_periods(cfg: UseCaseConfig, available: list[date]) -> dict[str, list[date]]:
@@ -238,7 +241,11 @@ def _aggregate_cells(
             "cell.is_null",
             "target_bin",
         )
-        .agg(F.count(F.lit(1)).alias("n"), F.sum(F.col("target").cast("double")).alias("sum_y"))
+        .agg(
+            F.count(F.lit(1)).alias("n"),
+            F.sum(F.col("target").cast("double")).alias("sum_y"),
+            F.sum(F.col("target").cast("double") * F.col("target").cast("double")).alias("sum_y2"),
+        )
         .toPandas()
     )
     if target_edges is None:
@@ -312,10 +319,11 @@ def _categorical_cell(
 
 def _level(frame: DataFrame, name: str) -> Column:
     """A categorical's value as its bin label: a string, a float NaN null (N2), and a real level
-    named like a reserved bin (`RESERVED_BINS`) quoted (`'null'`), so every label is distinct."""
+    named like a reserved bin (`RESERVED_BINS`) or blank (`BLANK_LEVEL`) quoted (`'null'`, `''`),
+    so every label is distinct and visible."""
     value = _nan_as_null(frame, name).cast("string")
     quoted = F.concat(F.lit("'"), value, F.lit("'"))
-    return F.when(value.isin(*RESERVED_BINS), quoted).otherwise(value)
+    return F.when(value.isin(*RESERVED_BINS) | value.rlike(BLANK_LEVEL), quoted).otherwise(value)
 
 
 def _nan_as_null(frame: DataFrame, name: str) -> Column:
@@ -454,7 +462,8 @@ def population_counts(
         .toPandas()
     )
     labelled = ["known_target", "positive_rows", "positive_events", "non_event_units"]
-    table[labelled] = table[labelled].where(table["period"].isin(periods["window"]))
+    in_window = table["period"].isin(periods["window"])
+    table[labelled] = table[labelled].where(in_window).astype("Int64")  # 3042, never 3042.0
     table["period"] = table["period"].map(period_spec(cfg).label)
     return table
 
@@ -462,7 +471,8 @@ def population_counts(
 def window_clients(rows: DataFrame, window_periods: list[date]) -> dict[str, float]:
     """The window's labelled rows and their effective number of clients, per class and in all:
     `event_rows` and `event_effective` (a non-zero target), `non_event_rows` and
-    `non_event_effective` (a zero one), `rows` and `effective`. The same client is labelled in
+    `non_event_effective` (a zero one), `rows` and `effective`; and `event_clients`, the distinct
+    clients with an event (the pooled window's positive events). The same client is labelled in
     every period, mostly with the same label under overlapping target windows, so its rows are
     near copies: the effective number is Kish's `(Σ m)² / Σ m²` over the clients' row counts
     `m`, the clients themselves when each has as many rows. The window's standard errors rest on
@@ -481,6 +491,7 @@ def window_clients(rows: DataFrame, window_periods: list[date]) -> dict[str, flo
             F.sum(F.col(name) ** 2).alias(f"{name}_squares")
             for name in ("event", "non_event", "all")
         ],
+        F.count(F.when(F.col("event") > 0, True)).alias("event_clients"),
     ).collect()[0]
     sizes = {}
     for name, prefix in (("event", "event_"), ("non_event", "non_event_"), ("all", "")):
@@ -488,6 +499,7 @@ def window_clients(rows: DataFrame, window_periods: list[date]) -> dict[str, flo
         squares = sums[f"{name}_squares"] or 0
         sizes[f"{prefix}rows"] = float(total)
         sizes[f"{prefix}effective"] = total**2 / squares if squares else 0.0
+    sizes["event_clients"] = float(sums["event_clients"])
     return sizes
 
 

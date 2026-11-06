@@ -2,6 +2,53 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-11-05 — Review 2 of major step 2: remarks, Q501–Q522, the build and the stage-3 review
+- Built from `review2_spec.md` the same day, on Opus throughout (main thread and every agent):
+  A+B (data layer, range labels) ∥ C (primitives) → D (views, `eda/explore.py`) → E (notebooks
+  on the 100k data) ∥ F (component docs) → the D fix round and two simplicity passes; one
+  code review per step, every finding fixed or ruled on.
+- Main-thread rulings on the way: one figure has one legend, so a deep dive pairs the group
+  chart with the first strata chart only (V34); label numbers lose the thousands separator (V30);
+  a key feature that is a stratum gets no chart against itself (V41, found on the 100k report by
+  headless-Chrome screenshots, the way the report was checked here); the deep-dive views read
+  the stored tables (V45); a numeric's groups stay cut from the cells (D-135).
+- Stage 3: seven reviewers (code ×4, ML audit: safe, silent failures, compatibility), every
+  finding checked by a second reader (none refuted; two partly), one fix round on disjoint files,
+  a review of the fixes, a last small round. The weightiest: the regression concordance's SE
+  ignored the target's ties, 1.3–2.7× too small on a zero-inflated target, so a null feature got
+  a direction up to 44% of the time (V47, D-082 amended); the report rendered after the commit
+  marker (V49); negative estimates clipped (V50); `pivot_target` sorting labels as text.
+- Results: full suite 510 passed (9 slow deselected, 8:49) after the fix round, the touched
+  modules green after the last small round; `ruff check .` clean; notebook 02 on the 100k data:
+  `run_eda` 132 s, 1.2 GB peak, report 5.6 MB; notebook words 02 4,009 → 2,046, 01 796 → 581.
+- Open for the SDS: V29–V54 (`plan.md` §9), Q523 (percent rate axes), Q524 (thin strata levels
+  setting the strata chart's axis); the review guide is rewritten for review 3. Nothing committed.
+- Earlier the same day: the SDS reviewed through notebook 02 and set a three-stage review
+  (remarks and brainstorming questions, an exact build plan, then the build and a comprehensive
+  review); remarks R10–R28 and the answers Q494–Q522 are in `m2_2_understanding/answers.md`.
+
+### 2026-11-04 — Major step 2 built: EDA, its report, notebook 02
+- Built in three workflows on the main thread's briefs and one contract file (the interfaces
+  between the reporting primitives, the EDA modules and the stage, fixed up front): m2.1
+  (Sonnet) ∥ m2.2 (Opus), then m2.3 (Opus·xhigh), then its review ∥ the ML audit of m2.2+m2.3 ∥
+  m2.4 → its review; one fix round by three fixers on disjoint files; no Fable.
+- Fixed before m2.3 (main thread): the reporting reviewer's chart bugs (a greyed bar kept its
+  height, the support axis title, a null line or box dropped or mislabelled, lift 0 uncoloured,
+  numpy ints); the pooled window's interval, √periods too narrow, now on effective clients
+  (`window_clients` gains `event_clients`).
+- The ML audit (no §4 invariant broken) found: the settings digest lacked
+  `time.validation_period` (V21), a collect's row order made the association cap
+  non-deterministic (T34, V22), a strictly positive regression target over few rows crashed the
+  Kendall SE, Hanley–McNeil is not symmetric below 0.5 (V24), an empty client fold raised; all
+  fixed with tests.
+- Decisions to veto: V18–V28 (`plan.md` §9); questions Q494–Q500 (`review_guide.md`). Size: about
+  2,750 lines of `src/` and 890 of tests against the plan's 1,000 and 500 (Q494 proposes a
+  simplicity pass).
+- Measured: `run_eda` 50–54 s on the unit preset, 60 s on the `dev` preset (20,000 clients, 161
+  candidates); the report 5.6 MB (plotly.js 4.83 MB of it). Full suite 491 passed (9 slow
+  deselected) in 9 min; `ruff check .` clean; notebook 02 ran end to end on `dev` with no error.
+- On `dev` the traps rank on top, the null controls read 0.50–0.52 and are never key features.
+
 ### 2026-11-04 — Handover for major step 2
 - `worknotes/handovers/m2-2-major-step-2.md`: state, routing, the EDA call sequence and the statistics callers' guards (moved out of the session scratchpad), the builders' common brief; resume with `/resume m2-2-major-step-2`.
 

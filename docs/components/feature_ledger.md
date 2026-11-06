@@ -1,5 +1,5 @@
 # Feature ledger
-**Status:** building (spec settled 2026-11-02; `ledger.py` built in Stage 2's m1.5, 2026-11-03, its callers come with the EDA and Feature Checks stages; the per-run part in M2.3) · **Legacy:** none (the crunch had only `features_include` / `features_exclude`)
+**Status:** building (spec settled 2026-11-02; `ledger.py` built in Stage 2's m1.5, 2026-11-03; EDA writes the identity and EDA columns since 2026-11-04, Stage 2 major step 2, review 2 pending; Feature Checks appends in major step 3; the per-run part in M2.3) · **Legacy:** none (the crunch had only `features_include` / `features_exclude`)
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [training](training.md) ·
 [evaluation](evaluation.md) · [config](config.md) (the decision audit log) · [reporting](reporting.md) ·
 D-030, D-031, D-043, D-125, D-134, D-135, D-136, D-137 · settles OD-11
@@ -122,10 +122,10 @@ meanings below are one line each.
 | Identity | `kind` | str | EDA | `numeric`, `categorical` or `unsupported`, after `features.kinds` overrides |
 | Identity | `lineage` | bool | EDA | a target-lineage column, excluded automatically |
 | Identity | `unsupported` | bool | EDA | an unsupported type (date, timestamp, array, map, struct, binary), excluded automatically |
-| EDA | `levels` | int | EDA | distinct non-null values or levels in the snapshot (written with EDA's statistics, from the snapshot's cells) |
-| EDA | `concordance` | float | EDA | the snapshot's concordance with the target |
+| EDA | `levels` | int | EDA | distinct non-null values on the snapshot's eligible rows, before the level cap (counted from the rows, not the cells) |
+| EDA | `concordance` | float | EDA | the snapshot's concordance with the target; a categorical's is cross-fitted and read in the encoding's direction, so it may read below 0.5 |
 | EDA | `concordance_se` | float | EDA | its standard error |
-| EDA | `direction` | str | EDA | `+`, `-`, or null below 0.5 + 2 SE |
+| EDA | `direction` | str | EDA | `+`, `-`, or null below 0.5 + 2 SE; a categorical's is `+` when its concordance reaches 0.5 + 2 SE, else null |
 | EDA | `concordance_best_order` | float | EDA | the concordance with the bins ordered by their shrunk target rate; the ranking uses it only for `non_monotone` features |
 | EDA | `non_monotone` | bool | EDA | the best order beats the value order by ≥ max(0.03, 4 · SE) |
 | EDA | `concordance_window` | float | EDA | the concordance over the window periods pooled |

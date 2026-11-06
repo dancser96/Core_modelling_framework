@@ -22,8 +22,7 @@ from core_modelling.artifacts import (
 from core_modelling.config.audit_log import read_resolved_config
 from core_modelling.config.identities import data_definition_hash
 from core_modelling.config.schema import UseCaseConfig
-
-EDA_PATHS = ["features.kinds", "strata", "eda"]
+from core_modelling.eda.run import SETTINGS_PATHS as EDA_PATHS
 
 
 def _result(config: UseCaseConfig, run: int = 1) -> StageResult:
@@ -172,6 +171,18 @@ def test_a_rerun_rewrites_the_folder_whole(cc_config: UseCaseConfig, tmp_path: P
     assert [path.name for path in tmp_path.iterdir()] == ["eda"]
 
 
+def test_a_text_file_is_committed_with_the_stage(cc_config: UseCaseConfig, tmp_path: Path) -> None:
+    """A text file handed to `write_stage` (the report) is in the folder after the commit and in
+    the returned paths; a name the stage writes itself or a subfolder fails, leaving nothing."""
+    folder = str(tmp_path / "eda")
+    paths = write_stage(_result(cc_config), folder, "eda", texts={"report.html": "<p>é</p>"})
+    assert Path(paths["report.html"]).read_text(encoding="utf-8") == "<p>é</p>"
+    for clash in ("log.json", "sub/report.html"):
+        with pytest.raises(ValueError, match="plain file name"):
+            write_stage(_result(cc_config), str(tmp_path / "other"), "eda", texts={clash: "x"})
+    assert [path.name for path in tmp_path.iterdir()] == ["eda"]
+
+
 def test_the_meta_may_not_set_the_stamp(cc_config: UseCaseConfig, tmp_path: Path) -> None:
     """`schema_version` and the other stamped keys come from `write_stage` only."""
     result = _result(cc_config)
@@ -235,10 +246,13 @@ def _eda_meta(resolved: UseCaseConfig) -> dict:
 
 
 def test_check_upstream_names_the_changed_path(variant: Callable[..., UseCaseConfig]) -> None:
-    """Unchanged settings pass; a changed kind or strata setting is refused naming its path and
-    both values; the validation period is no EDA setting."""
+    """Unchanged settings pass; a changed kind, strata setting or validation period (it decides
+    the compared periods, outside the data-definition hash) is refused naming its path."""
     meta = _eda_meta(_resolved(variant))
-    check_upstream(meta, _resolved(variant, time={"validation_period": None}), EDA_PATHS)
+    check_upstream(meta, _resolved(variant), EDA_PATHS)
+    moved = _resolved(variant, time={"validation_period": None})
+    with pytest.raises(ValueError, match=r"time\.validation_period"):
+        check_upstream(meta, moved, EDA_PATHS)
     kinds = _resolved(variant, features={"kinds": {"income": "categorical"}})
     with pytest.raises(ValueError, match=r"features\.kinds = \{\}.*'income': 'categorical'"):
         check_upstream(meta, kinds, EDA_PATHS)

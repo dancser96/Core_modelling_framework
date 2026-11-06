@@ -3,10 +3,11 @@
 Every reporting stage returns one `StageResult` and writes it with `write_stage` into its folder,
 `<use_case>/04_feature/<ddh>/<stage>/` for EDA and Feature Checks: `tables/<table>.parquet`,
 `<stage>.json` (the stage's meta, stamped with `schema_version`, the framework version, when and
-the tables written), `resolved_config.yml` and `log.json`; the report step adds `report.html`
-afterwards. The folder is written whole into a temporary sibling and swapped in only once every
-file is written, so a crash leaves the previous run's folder (or none), never half a stage. A
-stage saves the ledger first and writes its folder last, so `<stage>.json` is the commit marker.
+the tables written), `resolved_config.yml`, `log.json` and the text files the stage hands it (its
+`report.html`, rendered before anything is written). The folder is written whole into a
+temporary sibling and swapped in only once every file is written, so a crash leaves the previous
+run's folder (or none), never half a stage. A stage renders its report first, saves the ledger
+next and writes its folder last, so `<stage>.json` is the commit marker.
 The next stage reads it with `read_stage` and refuses it with `check_upstream` when its data
 definition or the settings it was computed from (`settings_meta`, a digest plus the values, so the
 refusal names the changed path) no longer match the resolved config. `write_parquet`, `write_json`
@@ -140,6 +141,20 @@ def _write_files(result: StageResult, temporary: Path, name: str) -> list[str]:
     return [*written, f"{name}.json", "log.json", "resolved_config.yml"]
 
 
+def _write_texts(texts: dict[str, str], temporary: Path) -> list[str]:
+    """The stage's text files (its report) into the temporary folder after its own files; a
+    name that is not a plain file name, or one the stage writes itself, fails."""
+    for file, text in texts.items():
+        path = temporary / file
+        if path.parent != temporary or path.exists():
+            raise ValueError(
+                f"write_stage: the text file {file!r} must be a plain file name the stage does "
+                "not write itself"
+            )
+        path.write_text(text, encoding="utf-8")
+    return list(texts)
+
+
 def _swap_in(temporary: Path, target: Path) -> None:
     """Move the written folder onto `target`; an older `target` is moved aside first, moved back
     when the swap fails and removed only after it succeeds, so no failure leaves half of it."""
@@ -157,12 +172,15 @@ def _swap_in(temporary: Path, target: Path) -> None:
         shutil.rmtree(aside)
 
 
-def write_stage(result: StageResult, folder: str, name: str) -> dict[str, str]:
+def write_stage(
+    result: StageResult, folder: str, name: str, texts: dict[str, str] | None = None
+) -> dict[str, str]:
     """Write a stage's artifacts into `folder` whole, replacing an older run's folder, through a
-    temporary sibling that is removed when any write fails; returns the paths written by their
-    path relative to the folder, plus `folder` itself. The stage saves the ledger before calling
-    it, so `<name>.json` is the commit marker: a crash in between leaves a new ledger beside the
-    old json, which `check_upstream` then refuses, never an old ledger beside a new json."""
+    temporary sibling that is removed when any write fails; `texts` adds text files by name (the
+    rendered `report.html`), committed with the rest. Returns the paths written by their path
+    relative to the folder, plus `folder` itself. The stage saves the ledger before calling it,
+    so `<name>.json` is the commit marker: a crash in between leaves a new ledger beside the old
+    json, which `check_upstream` then refuses, never an old ledger beside a new json."""
     reserved = sorted(set(STAMP_KEYS) & set(result.meta))
     if reserved:
         raise ValueError(f"stage {name}: the meta may not set {reserved}; write_stage stamps them")
@@ -180,7 +198,7 @@ def write_stage(result: StageResult, folder: str, name: str) -> dict[str, str]:
     temporary = target.with_name(f"{target.name}.tmp-{os.getpid()}")
     temporary.mkdir(parents=True)
     try:
-        written = _write_files(result, temporary, name)
+        written = _write_files(result, temporary, name) + _write_texts(texts or {}, temporary)
     except BaseException:
         shutil.rmtree(temporary)
         raise
@@ -229,7 +247,7 @@ def _settings(resolved: UseCaseConfig, paths: list[str]) -> dict[str, object]:
 
 def settings_digest(resolved: UseCaseConfig, paths: list[str]) -> str:
     """A short sha256 of the canonical JSON of the values at the dotted `paths` (EDA's:
-    `features.kinds`, `strata`, `eda`)."""
+    `features.kinds`, `strata`, `eda`, `time.validation_period`)."""
     text = canonical_json(_settings(resolved, paths))
     return short(hashlib.sha256(text.encode("utf-8")).hexdigest())
 

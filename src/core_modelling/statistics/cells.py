@@ -1,12 +1,13 @@
 """One feature's cells summed into the shapes the statistics read (D-135).
 
 The counts table holds one row per feature, period, lagged flag, bin and target bin: `feature,
-period, lagged, bin, bin_order, is_null, target_bin, n, sum_y`. A statistic of one feature over
-some periods is a sum over its cells: `pool_periods` sums the periods wanted; `two_way_table`
-and `null_table` give the count tables the concordance reads; `shares` gives the shares and
-counts the ledger and the quality findings read; `group_shares` and `level_share_difference`
-compare two distributions. Rows without a label (`target_bin` null: the gap and latest periods,
-unknown targets) count in the shares only (N4, N6).
+period, lagged, bin, bin_order, is_null, target_bin, n, sum_y, sum_y2`. A statistic of one
+feature over some periods is a sum over its cells: `pool_periods` sums the periods wanted;
+`two_way_table` and `null_table` give the count tables the concordance reads and
+`target_shares` the table's target bins' shares, which its SE reads; `shares` gives the shares
+and counts the ledger and the quality findings read; `group_shares` and
+`level_share_difference` compare two distributions. Rows without a label (`target_bin` null:
+the gap and latest periods, unknown targets) count in the shares only (N4, N6).
 
 Target bins are ordered by their mean target, `sum_y / n`: they are disjoint intervals of the
 target, so their means order them exactly (binary: `0` then `1`; regression: the quantile bins,
@@ -20,11 +21,11 @@ import pandas as pd
 from core_modelling.statistics.distributions import bin_labels
 
 _ZERO_SINGLETON = np.array([0.0, np.nextafter(0.0, np.inf)])
-# The 0 singleton's label as `bin_labels` writes it, in its two number formats: six digits, and
-# the exact text it falls back to when six digits read two edges alike (edges above 999,999)
+# The 0 singleton's label as `bin_labels` writes it, in its two number formats: the short one,
+# and the exact text it falls back to when six digits read two non-integral edges alike
 ZERO_LABELS = (
     bin_labels(_ZERO_SINGLETON)[1],
-    bin_labels(np.append(_ZERO_SINGLETON, [1e6, 1e6 + 1]))[1],
+    bin_labels(np.append(_ZERO_SINGLETON, [1e6 + 0.001, 1e6 + 0.002]))[1],
 )
 BIN_KEYS = ["bin", "bin_order", "is_null", "target_bin"]
 
@@ -32,8 +33,8 @@ BIN_KEYS = ["bin", "bin_order", "is_null", "target_bin"]
 def pool_periods(cells: pd.DataFrame, periods: list[str], lagged: bool = False) -> pd.DataFrame:
     """One feature's current (or lagged) cells over `periods`, summed per bin and target bin.
 
-    Columns: `bin, bin_order, is_null, target_bin, n, sum_y`; an unlabelled target bin stays null
-    and so does its `sum_y`.
+    Columns: `bin, bin_order, is_null, target_bin, n, sum_y, sum_y2`; an unlabelled target bin
+    stays null and so do its `sum_y` and `sum_y2`.
     """
     _check_one_feature(cells, "pool_periods")
     chosen = cells.loc[cells["lagged"] == lagged]
@@ -46,7 +47,7 @@ def pool_periods(cells: pd.DataFrame, periods: list[str], lagged: bool = False) 
         )
     chosen = chosen.loc[chosen["period"].isin(periods)]
     pooled = chosen.groupby(BIN_KEYS, dropna=False, as_index=False)
-    return pooled[["n", "sum_y"]].sum(min_count=1)  # min_count: a null sum_y stays null
+    return pooled[["n", "sum_y", "sum_y2"]].sum(min_count=1)  # min_count: a null sum stays null
 
 
 def two_way_table(cells: pd.DataFrame, order: list[str] | None = None) -> np.ndarray:
@@ -66,6 +67,14 @@ def two_way_table(cells: pd.DataFrame, order: list[str] | None = None) -> np.nda
     return table.reindex(index=order, columns=columns).fillna(0).to_numpy(dtype=float)
 
 
+def target_shares(cells: pd.DataFrame) -> np.ndarray:
+    """The labelled non-null rows' share in each target bin: `two_way_table`'s column sums over
+    their total, without the dense table (`eda.bins: null` can mean many bins on both sides)."""
+    labelled = _labelled(cells, "target_shares")
+    counts = labelled.loc[~labelled["is_null"]].groupby("target_bin")["n"].sum()
+    return (counts / counts.sum()).to_numpy(dtype=float)
+
+
 def null_table(cells: pd.DataFrame) -> np.ndarray:
     """The labelled rows as counts: two rows (non-null, null) × target bins in target order."""
     labelled = _labelled(cells, "null_table")
@@ -78,13 +87,14 @@ def shares(cells: pd.DataFrame) -> dict:
     """The shares and counts of one feature's cells (one period, or pooled).
 
     `rows` (every row, labelled or not); `missing_share` (null rows / rows); `zero_share` (the
-    `= 0` bin's rows / non-null rows, NaN when every row is null; exact when 0 is its own bin,
-    while a 0 holding under `1 / bins` of a column with more than `bins` values shares a quantile
-    bin and reads 0); `dominant_share` and `dominant_value` (the largest bin, null counting
-    as a value: a value whenever its share reaches `1 / bins`); `bins` (the non-null bins
-    holding rows; the ledger's `levels`, distinct values before the level cap, come from the
-    snapshot instead); `events` and `non_events` (the labelled non-null rows with a non-zero and a
-    zero target: the concordance's support, N6; rows, so events only within one period).
+    `= 0` bin's rows / non-null rows, NaN when every row is null; exact whenever 0 occurs in the
+    snapshot's eligible rows, since `counts.bin_edges` gives it its own bin; a 0 seen only in
+    other periods shares a quantile bin there and reads 0); `dominant_share` and
+    `dominant_value` (the largest bin, null counting as a value: a value whenever its share
+    reaches `1 / bins`); `bins` (the non-null bins holding rows; the ledger's `levels`, distinct
+    values before the level cap, come from the snapshot instead); `events` and `non_events` (the
+    labelled non-null rows with a non-zero and a zero target: the concordance's support, N6;
+    rows, so events only within one period).
     """
     _check_one_distribution(cells, "shares")
     rows = cells["n"].sum()
@@ -95,7 +105,7 @@ def shares(cells: pd.DataFrame) -> dict:
     non_null = values["n"].sum()
     zero_rows = values.loc[values["bin"].isin(ZERO_LABELS), "n"].sum()
     labelled = values.loc[values["target_bin"].notna()]
-    zero_target = labelled["target_bin"].isin(_zero_target_bins(cells))
+    zero_target = labelled["target_bin"].isin(zero_target_bins(cells))
     return {
         "rows": int(rows),
         "missing_share": float(1 - non_null / rows),
@@ -154,7 +164,7 @@ def _target_order(labelled: pd.DataFrame) -> list:
     return list((sums["sum_y"] / sums["n"]).sort_values(kind="stable").index)
 
 
-def _zero_target_bins(cells: pd.DataFrame) -> list:
+def zero_target_bins(cells: pd.DataFrame) -> list:
     """The target bins whose target sums to 0: binary `0`, the regression zero bin."""
     sums = cells.loc[cells["target_bin"].notna()].groupby("target_bin")["sum_y"].sum()
     return list(sums.index[sums == 0])

@@ -13,7 +13,9 @@ several seeds, since one seed would test luck: a null numeric at 500 events is r
 `non_monotone`, and a null 50-level code at 190 events a period reads high in sample and not
 cross-fitted; on a panel (the same clients in every period, a target that persists over a
 three-month window) a null code reads high cross-fitted by period and not by client fold, and a
-null numeric is not marked on the window's effective clients. No Spark.
+null numeric is not marked on the window's effective clients. A fifth checks the regression
+concordance's SE against a null numeric's spread on a zero-inflated amount (300 seeds). No
+Spark.
 """
 
 import numpy as np
@@ -39,6 +41,7 @@ from core_modelling.statistics.cells import (
     null_table,
     pool_periods,
     shares,
+    target_shares,
     two_way_table,
 )
 from core_modelling.statistics.concordance import (
@@ -66,10 +69,11 @@ KEYS = ["feature", "period", "lagged", "bin", "bin_order", "is_null", "target_bi
 
 def _count(rows: pd.DataFrame) -> pd.DataFrame:
     """Rows (`period, bin, bin_order, is_null, target_bin, y`) summed into counts-table cells; a
-    null target's `sum_y` is NaN, as Spark's sum of nulls is null."""
-    rows = rows.assign(feature="f", lagged=False)
-    grouped = rows.groupby(KEYS + ["fold"] if "fold" in rows else KEYS, dropna=False)["y"]
-    return pd.concat([grouped.size().rename("n"), grouped.sum(min_count=1).rename("sum_y")], axis=1)
+    null target's `sum_y` and `sum_y2` are NaN, as Spark's sum of nulls is null."""
+    rows = rows.assign(feature="f", lagged=False, y2=rows["y"] ** 2)
+    grouped = rows.groupby(KEYS + ["fold"] if "fold" in rows else KEYS, dropna=False)
+    sums = grouped[["y", "y2"]].sum(min_count=1).set_axis(["sum_y", "sum_y2"], axis=1)
+    return pd.concat([grouped.size().rename("n"), sums], axis=1)
 
 
 def _numeric_cells(
@@ -255,15 +259,57 @@ def test_exact_path_equals_the_table_with_values_as_bins() -> None:
 
 def test_standard_errors_follow_hanley_mcneil_and_kendall_with_the_floor() -> None:
     """Hanley–McNeil at A = 0.8 with 50 events and 100 non-events (hand value 0.041247); the
-    Kendall null SE at 1,000 units, halved (0.010559); both floored at `SE_FLOOR`."""
+    Kendall null SE at 1,000 units without target ties, halved (0.010559, the tie factor 1 to
+    1/n); both floored at `SE_FLOOR`; the binary hook leaves the target shares unread."""
+    no_ties = np.full(1_000, 1e-3)
     assert concordance_se(0.8, 50, 100) == pytest.approx(0.041247, abs=1e-6)
     assert concordance_se(1.0, 50, 100) == SE_FLOOR
     assert concordance_se(0.7, 1_000_000, 1_000_000) == SE_FLOOR
-    assert kendall_null_se(1_000) == pytest.approx(0.010559, abs=1e-6)
-    assert kendall_null_se(10_000_000) == SE_FLOOR
-    assert TASK_SPECS["regression"]["concordance_se"](0.6, 400, 600) == kendall_null_se(1_000)
+    assert kendall_null_se(1_000, no_ties) == pytest.approx(0.010559, rel=2e-3)
+    assert kendall_null_se(10_000_000, [0.5, 0.5]) == SE_FLOOR
+    binary, regression = TASK_SPECS["binary"], TASK_SPECS["regression"]
+    assert binary["concordance_se"](0.8, 50, 100, no_ties) == concordance_se(0.8, 50, 100)
+    assert regression["concordance_se"](0.6, 400, 600, no_ties) == kendall_null_se(1_000, no_ties)
     with pytest.raises(ValueError, match="needs events and non-events, got 0 and 10"):
         concordance_se(0.6, 0, 10)
+
+
+def test_kendall_se_scales_for_the_ties_on_the_target() -> None:
+    """τ's null SE times `sqrt(1 − Σp³) / (1 − Σp²)`: a hand table's target shares (0.4, 0.3,
+    0.3) at 100 units give 0.048263; two equal target bins give the Mann–Whitney null SE
+    `sqrt((n + 1) / (12 n₁ n₂))` to 1/n; the floor comes after the factor (τ's SE alone is 0.0024
+    at 20,000 units); shares that are negative, fill one bin or don't sum to 1 are refused."""
+    table = np.array([[30.0, 10.0, 0.0], [10.0, 20.0, 30.0]])
+    assert kendall_null_se(100, table.sum(axis=0) / 100) == pytest.approx(0.048263, abs=1e-6)
+    mann_whitney = np.sqrt(1_001 / (12 * 500 * 500))
+    assert kendall_null_se(1_000, [0.5, 0.5]) == pytest.approx(mann_whitney, rel=2e-3)
+    assert kendall_null_se(20_000, [0.9, 0.1]) == pytest.approx(0.006805, abs=1e-6)
+    for bad in ([0.5, 0.6], [1.0, 0.0], [1.2, -0.2], []):
+        with pytest.raises(ValueError, match="the target shares must be"):
+            kendall_null_se(1_000, bad)
+
+
+def test_kendall_se_matches_a_null_numerics_spread_on_a_zero_inflated_target() -> None:
+    """A null numeric (100 quantile bins) against a 70%-zero lognormal amount, 2,000 units, 300
+    seeds: the concordance's spread is within 10% of the tie-scaled SE and about 1.6× the SE
+    that leaves the target's ties out (a null feature then got a direction 21% of the time)."""
+    regression, n = TASK_SPECS["regression"], 2_000
+    signed, ses = [], []
+    for seed in range(300):
+        rng = np.random.default_rng(seed)
+        x = rng.normal(size=n)
+        y = np.where(rng.random(n) < 0.7, 0.0, rng.lognormal(size=n))
+        feature_bin = np.digitize(x, quantile_edges(x, 100))
+        target_bin = np.digitize(y, regression["target_bins"](y, False))
+        table = np.zeros((feature_bin.max() + 1, target_bin.max() + 1))
+        np.add.at(table, (feature_bin, target_bin), 1)
+        signed.append(concordance_from_table(table, sign=1))
+        events = int((y != 0).sum())
+        value = max(signed[-1], 1 - signed[-1])
+        ses.append(regression["concordance_se"](value, events, n - events, table.sum(axis=0) / n))
+    spread = np.std(signed, ddof=1)
+    assert spread / np.mean(ses) == pytest.approx(1, abs=0.1)
+    assert spread / kendall_null_se(n, np.full(n, 1 / n)) > 1.4
 
 
 def test_encoding_shrinks_levels_towards_the_base() -> None:
@@ -299,6 +345,26 @@ def test_cross_fitting_removes_a_null_codes_in_sample_gain() -> None:
         cross_fitted.append(cross_fitted_concordance(cells, periods, k_rows))
     assert min(in_sample) > 0.53 > max(cross_fitted)
     assert abs(np.mean(cross_fitted) - 0.5) < 0.005
+
+
+def test_cross_fitting_skips_a_fold_without_the_read_period() -> None:
+    """Fold 2's clients are all outside the read period: the fold is skipped, as one without
+    labelled rows is, so the value equals the one with an unlabelled read-period cell added to
+    fold 2 (a level it already has, so no encoding moves)."""
+    rng = np.random.default_rng(3)
+    names = ["2025-07", "2025-08"]
+    periods = np.repeat(names, 600)
+    folds = np.tile([0, 1, 2], 400)
+    folds = np.where((periods == names[1]) & (folds == 2), rng.integers(0, 2, folds.size), folds)
+    codes = rng.integers(0, 4, periods.size)
+    y = (rng.random(periods.size) < 0.1 + 0.1 * codes).astype(float)
+    cells = _categorical_cells(codes, y, periods, folds)
+    k_rows = TASK_SPECS["binary"]["shrinkage_rows"](50, y.mean())
+    value = cross_fitted_concordance(cells, names, k_rows, read=[names[1]])
+    unlabelled = cells.iloc[[0]].assign(period=names[1], fold=2, target_bin=None, sum_y=np.nan)
+    padded = pd.concat([cells, unlabelled], ignore_index=True)
+    assert value == cross_fitted_concordance(padded, names, k_rows, read=[names[1]])
+    assert 0.6 < value < 1
 
 
 def test_cross_fitting_by_client_holds_on_a_panel() -> None:
@@ -415,7 +481,13 @@ def test_client_support_per_task() -> None:
     assert TASK_SPECS["binary"]["client_support"](30, 600, clients) == (10.0, 300.0)
     assert TASK_SPECS["binary"]["client_support"](2, 600, clients)[0] == 1.0
     assert TASK_SPECS["regression"]["client_support"](30, 0, clients) == (10.0, 0.0)
-    assert TASK_SPECS["regression"]["concordance_se"](0.6, 10.0, 0.0) > 0
+    assert TASK_SPECS["regression"]["concordance_se"](0.6, 10.0, 0.0, [0.5, 0.5]) > 0
+    # the audit's case: a strictly positive amount on two rows of a 1,002-row window keeps two
+    # units, split by the classes' shares, so Kendall's SE exists
+    few = TASK_SPECS["regression"]["client_support"](2, 0, {"rows": 1_002.0, "effective": 200.0})
+    assert few == (2.0, 0.0)
+    assert np.isfinite(TASK_SPECS["regression"]["concordance_se"](0.7, *few, [0.5, 0.5]))
+    assert TASK_SPECS["regression"]["client_support"](3, 3, clients) == (1.0, 1.0)
     with pytest.raises(ValueError, match="no labelled rows of this class"):
         effective_count(5, 0, 0)
 
@@ -433,7 +505,7 @@ def test_best_order_on_a_regression_target() -> None:
         pooled = pool_periods(_numeric_cells(x, y, quantile_edges(x, 100), target_edges), [PERIOD])
         plain = concordance_from_table(two_way_table(pooled))
         best = best_order_concordance(pooled, regression["shrinkage_rows"](50, y.mean()))
-        se = regression["concordance_se"](plain, 0, x.size)
+        se = regression["concordance_se"](plain, 0, x.size, target_shares(pooled))
         assert is_non_monotone(plain, best, se) is inverted_u
         assert best >= plain + 0.1 if inverted_u else best < 0.53
 
@@ -477,15 +549,17 @@ def test_intervals_against_scipy() -> None:
 
 
 def test_pool_periods_and_shares() -> None:
-    """Two periods summed per bin and target bin; the shares count unlabelled and null rows,
-    the events only labelled non-null rows (N4, N6)."""
+    """Two periods summed per bin and target bin, `sum_y2` too; the shares count unlabelled and
+    null rows, the events only labelled non-null rows (N4, N6)."""
     x = np.array([0.0, 0.0, 0.0, 1.0, 2.0, np.nan, 0.0, 3.0])
     y = np.array([1.0, 0.0, 0.0, 1.0, 0.0, 1.0, np.nan, 0.0])
     periods = np.array(["p1"] * 4 + ["p2"] * 4)
     cells = _numeric_cells(x, y, quantile_edges(x[~np.isnan(x)], 100), periods=periods)
     pooled = pool_periods(cells, ["p1", "p2"])
     assert pooled["n"].sum() == 8 and not pooled.duplicated(["bin", "target_bin"]).any()
-    assert pooled.loc[pooled["target_bin"].isna(), "sum_y"].isna().all()  # unlabelled: no sum
+    assert pooled.loc[pooled["target_bin"].isna(), ["sum_y", "sum_y2"]].isna().all(axis=None)
+    labelled = pooled.dropna(subset=["target_bin"])  # binary: y² = y
+    assert labelled["sum_y2"].tolist() == labelled["sum_y"].tolist()
     summary = shares(pooled)
     assert summary == {"rows": 8, "missing_share": 1 / 8, "zero_share": 4 / 7,
                        "dominant_share": 4 / 8, "dominant_value": "= 0", "bins": 4,
@@ -499,15 +573,17 @@ def test_pool_periods_and_shares() -> None:
 
 
 def test_regression_shares_and_one_target_bin() -> None:
-    """Regression events are the labelled non-null rows outside the zero target bin; a 0 written
-    as `= 0.0` (six digits reading two edges alike) is still the zero bin; a table with one
-    target bin has no concordance, which the caller sees first as no events."""
+    """Regression events are the labelled non-null rows outside the zero target bin, and the
+    target shares are those rows'; a 0 written as `= 0.0` (six digits reading two edges alike)
+    is still the zero bin; a table with one target bin has no concordance, which the caller sees
+    first as no events."""
     x = np.array([0.0, 1.0, 2.0, 3.0, np.nan, 5.0])
     y = np.array([0.0, 4.0, 0.0, 7.5, 2.0, np.nan])
     target_edges = TASK_SPECS["regression"]["target_bins"](y[~np.isnan(y)], False)
     pooled = pool_periods(_numeric_cells(x, y, quantile_edges(x[~np.isnan(x)], 100),
                                          target_edges), [PERIOD])  # fmt: skip
     assert (shares(pooled)["events"], shares(pooled)["non_events"]) == (2, 2)
+    assert sorted(target_shares(pooled)) == [0.25, 0.25, 0.5]
     large = np.concatenate([np.zeros(1_000), 1e6 + np.arange(1_000) / 1_000])
     edges = quantile_edges(large, 100)
     assert bin_labels(edges)[1] == "= 0.0" and set(ZERO_LABELS) == {"= 0", "= 0.0"}
@@ -537,7 +613,7 @@ def test_group_shares_align_two_periods_bin_for_bin() -> None:
     cells = _numeric_cells(x, np.zeros(x.size), edges, periods=periods)
     first, second = pool_periods(cells, ["p1"]), pool_periods(cells, ["p2"])
     per_bin = first.loc[~first["is_null"]].groupby(["bin_order", "bin"], as_index=False)["n"].sum()
-    groups = merge_bins(per_bin, 10)
+    groups = merge_bins(per_bin, 10, edges)
     a, b = group_shares(first, groups), group_shares(second, groups)
     assert a.shape == b.shape == (len(groups) + 1,)
     assert a.sum() == pytest.approx(1) and b.sum() == pytest.approx(1)
@@ -583,7 +659,7 @@ def test_correlation_ratio_is_spearman_for_two_levels_and_cramers_v_guards() -> 
 
 def test_association_table_methods_rows_and_seeded_cap(monkeypatch: pytest.MonkeyPatch) -> None:
     """One row per pair with its method and rows; above the cap a seeded sample of exactly the
-    cap's rows, the same for the same seed."""
+    cap's rows (`pairwise_sample`), the same on every call."""
     rng = np.random.default_rng(8)
     numeric = rng.normal(size=(3_000, 2))
     frame = pd.DataFrame(
@@ -591,13 +667,13 @@ def test_association_table_methods_rows_and_seeded_cap(monkeypatch: pytest.Monke
     ).assign(c2=rng.choice(["x", "y"], 3_000))
     frame.loc[:99, "n2"] = np.nan
     kinds = {"n1": "numeric", "n2": "numeric", "c1": "categorical", "c2": "categorical"}
-    table = association_table(frame, kinds, seed=1)
+    table = association_table(frame, kinds)
     assert sorted(table["method"]) == ["cramers_v", "eta", "eta", "eta", "eta", "spearman"]
     assert table.set_index(["a", "b"]).loc[("n1", "n2"), "rows"] == 2_900
     monkeypatch.setattr(association_module, "PAIRWISE_ROWS", 2_000)
-    capped = association_table(frame, kinds, seed=1)
+    capped = association_table(frame, kinds)
     assert capped.loc[capped["method"] == "cramers_v", "rows"].item() == 2_000
-    pd.testing.assert_frame_equal(capped, association_table(frame, kinds, seed=1))
+    pd.testing.assert_frame_equal(capped, association_table(frame, kinds))
 
 
 def test_cluster_features_on_a_hand_table() -> None:
@@ -666,7 +742,8 @@ def test_regression_group_summary_with_zeros() -> None:
 
 def test_binary_group_summary_and_the_task_entries() -> None:
     """The binary summary; the lift test, the rare effect, the events warning, the target
-    bins (0 its own regression bin) and the headline."""
+    bins (0 its own regression bin), the estimate's noun (no `period_interval` any more) and the
+    headline."""
     binary, regression = TASK_SPECS["binary"], TASK_SPECS["regression"]
     summary = binary["summarise_group"](pd.Series([1.0, 0.0, 0.0, 1.0, 0.0]), 0.2)
     assert summary["support"] == 2 and summary["estimate"] == 0.4 and summary["lift"] == 2.0
@@ -683,6 +760,8 @@ def test_binary_group_summary_and_the_task_entries() -> None:
     assert binary["target_bins"](np.array([0.0, 1.0]), False) is None
     edges = regression["target_bins"](np.arange(1.0, 101.0), False)
     assert "= 0" in bin_labels(edges) and len(bin_labels(edges)) == 22
+    assert (binary["estimate_noun"], regression["estimate_noun"]) == ("rate", "mean")
+    assert "period_interval" not in binary and "period_interval" not in regression
     headline = regression["base_rate_views"](pd.Series([0.0, 0.0, 3.0, 5.0]))
     assert headline["zero_share"] == 0.5 and headline["nonzero_units"] == 2
     with pytest.raises(ValueError, match="known targets"):

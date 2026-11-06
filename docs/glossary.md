@@ -107,6 +107,19 @@ Whether this glossary is also published to the wider unit is part of the open do
   a **mass point** (a value holding at least `1 / bins` of the rows, such as 0) is its own
   singleton bin and the quantile edges are taken over the remaining values (T25); `null` turns
   binning off (D-135).
+- **Effective clients:** the size a window's statistic is worth when the same clients are
+  labelled in several periods, mostly alike: Kish's `(Σ m)² / Σ m²` over the clients' labelled
+  row counts `m` (`counts.window_clients`). Every window standard error and interval takes its
+  support in effective clients, never in rows (D-135, T33).
+- **Deep dive:** EDA's closer look at one key feature: a group table (by level, or for an amount
+  target), its lift (or estimate) by group with intervals beside the same groups per stratum
+  level, its distribution by target class beside its concordance per window period (an amount
+  target's distribution per group), and one pivot table per stratum variable
+  (`docs/components/eda.md`).
+- **Settings digest:** a short hash of the settings a stage's output depends on outside the
+  data-definition hash (EDA's: `features.kinds`, `strata`, `eda`, `time.validation_period`),
+  stored in the stage's json; a later stage refuses to read artifacts whose digest differs from
+  the current resolved config's (`artifacts.check_upstream`, D-137).
 - **Model input:** one saved table per name (`data.model_input`), written by `save_model_input`
   from the Target Factory notebook or `run a.yml b.yml --stages target_factory` for one or
   several use cases that share the entity's feature sources, keys and period: the sources
@@ -248,7 +261,7 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Decision (business decision):** how the scores will be used (e.g. top-N list, threshold, ranking,
   probability). It drives the optimisation metric, the gates and what reports emphasise.
 - **Choices block:** the opening section of every report: what was chosen, the alternatives, and
-  rule-based warnings. It is one table (label, value, alternatives, when to move) built from the
+  rule-based warnings. It is one table (choice, value, alternatives) built from the
   resolved config (`docs/components/reporting.md`).
 
 ## Stages and modelling
@@ -371,6 +384,8 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Stratified metrics:** every metric overall and per level of the configured variables.
 - **Baselines:** population base rate (business reporting); previous model and historic predicted
   rate (internal metrics).
+- **Lift:** a group's rate (or mean) divided by the base, the snapshot's base rate or mean; 1 is
+  the base, 2 twice it. Not available when the base is not positive (`docs/components/eda.md`).
 - **Concordance:** the one ranking statistic on one scale for both tasks: Somers' D of the feature
   with respect to the target, rescaled to [0.5, 1] after the direction is taken out. For a 0/1
   target it is exactly the univariate AUC (the share of positive–negative pairs the feature orders

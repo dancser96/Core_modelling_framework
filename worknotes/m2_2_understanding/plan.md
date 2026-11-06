@@ -1,10 +1,10 @@
 # Stage 2 (M2.2 Understanding): the build plan
 _Written 2026-11-02 for the SDS's approval, revised 2026-11-03 after their remarks (the routing
-budget, the notebooks' guides, `lagged_signal_drop`, the edges rule, V13–V15; V16–V17 added by the build, 2026-11-03) · from the spec in `docs/components/eda.md`,
+budget, the notebooks' guides, `lagged_signal_drop`, the edges rule, V13–V15; V16–V17 added by the build, 2026-11-03; V18–V28 by major step 2, 2026-11-04; V29–V54 by its review-2 build and stage-3 review, 2026-11-05) · from the spec in `docs/components/eda.md`,
 `feature_checks.md`, `feature_ledger.md`, `reporting.md`, `config.md`, `dataset.md` and the decision
 rows D-134–D-137 · the design record is `answers.md` beside this file · nothing is coded before the
 SDS approves this plan (`CLAUDE.md` §1 step 1) · the holistic review's outcomes are folded in (§9, with the
-decisions the spec step and the build made without the SDS, V1–V17, to veto by number)_
+decisions the spec step and the build made without the SDS, V1–V54, to veto by number)_
 
 **Where it stands (2026-11-03): the design is settled and specified; this plan, revised after the
 SDS's remarks, is waiting for approval.** Three major steps, each ending in the SDS's review with a
@@ -217,7 +217,7 @@ notebook 02, the ranking against the trap list by eye.
 - Functions: `write_report(title, sections: list[dict], path) -> str` (plotly.js embedded once,
   `div_id`s unique); `figure_html(fig, div_id) -> str`; `table_html(styler) -> str`;
   `style_table(df, ...) -> Styler`; `bar_with_intervals(df, x, y, low, high, counts, title)`,
-  `lift_chart(...)`, `box_from_quartiles(df, ...)`, `per_period_lines(df, ...)`, `heatmap(matrix,
+  `lift_chart(...)`, `box_from_quartiles(df, ...)`, `grouped_lines(df, ...)`, `heatmap(matrix,
   ...)`, `apply_rules(fig, kind)` (axes from the data, the null bar, greyed insufficient cells);
   `choices_block(resolved, choices: list[dict]) -> Styler`; `headline(numbers) -> str`;
   `warnings_block(items) -> str`; `appendix(parts) -> list[dict]`; `THEME`.
@@ -270,6 +270,8 @@ notebook 02, the ranking against the trap list by eye.
 
 **End of major step 2:** the full suite, the review guide extended, the SDS's review (the report
 and notebook 02 are what the SDS tries). Estimated size: about 1,000 lines of code and 500 of tests.
+
+**Review 2 (2026-11-05).** The SDS reviewed major step 2 through notebook 02 (remarks R10–R28, the brainstorming round Q501–Q522: `answers.md`). The redesign is specified in `review2_spec.md` beside this file (steps A–G: the data layer, range labels, the reporting primitives, the EDA views and exploration functions, the notebooks on the 100k data, docs, a simplicity pass), built on 2026-11-05 and followed by the comprehensive review of the major step 2 code (seven reviewers, every finding checked by a second reader, one fix round); decisions taken on the way are V29–V54 in §9, the review guide is rewritten for review 3.
 
 ### Major step 3: Feature Checks (the steps, the decisions, the stage, notebook 03, the acceptance test)
 What the SDS reviews at the end: the findings on the synthetic traps, the held set, the proposed
@@ -534,6 +536,124 @@ writers' findings. Silence confirms them.
   the pairwise-complete correlations are inconsistent (R² outside [0, 1]); the categorical level
   list is capped at 10,000 window levels, above which `new_levels` is "not available" for that
   feature; the edges are cut on the snapshot's eligible rows.
+- **V18** (2026-11-04, major step 2) The views and the report's four parts live in a new
+  `eda/report.py`, not in `run.py` (it would have passed 600 lines); `report.py` (≈450 lines,
+  a view builder per section) and `run.py` (≈370, the orchestration) are kept whole as tied
+  functions rather than split further.
+- **V19** The ranking's snapshot columns (`concordance`, its SE, `direction`, the best order,
+  `non_monotone`, `rank`) all come from the snapshot period's cells, the SE on its own rows (one
+  per client): `is_non_monotone` gets plain, best order and SE from the same cells. eda.md had
+  said "the window SE on effective clients" for the margin; the doc now follows the code.
+- **V20** Target per period: the pooled `all` row's interval (both tasks) takes its support in
+  effective clients, like every window SE (it was √periods too narrow). A regression mean's
+  per-period t-interval comes from the cells' `sum_y2` since review 2 (Q498).
+- **V21** EDA's settings digest gains `time.validation_period`: it decides which periods are gap
+  and latest and is outside the data-definition hash, so a moved validation period forces an
+  EDA rerun before Feature Checks reads the cells (the ML audit).
+- **V22** Every collected frame is sorted by the keys (`collect_frame`, in Spark before the
+  collect since review 2, Q516): Spark's collect order is not deterministic, so a seeded
+  positional sample (the association cap) could differ between reruns (T34).
+- **V23** Reference groups compare the rows a modelling tag excludes (tag = 0) with the eligible
+  rows, label-free, with per-period sizes from the funnel; the tags get no target-by-stratum
+  table (constant on the eligible rows); a categorical's "SMD" is its largest level-share gap.
+- **V24** A categorical's `direction` is `+` when its cross-fitted value (in the encoding's
+  order) reaches 0.5 + 2 SE, else null; its `concordance` may read below 0.5 (the order did not
+  carry over), which the ledger doc now says. Its SE (like a flipped period's) is computed at
+  `max(value, 1 − value)`: Hanley–McNeil is not symmetric.
+- **V25** The regression deep dive is the lift chart (the t-interval in lift units), the group
+  table (mean, interval, median, non-zero share) and the target's boxes per group; no separate
+  bar chart of the mean, which would repeat the lift chart in currency units.
+- **V26** The correlation heatmap always shows the key features and the candidates they
+  represent (review 2, R25); the full association table is `tables/correlation`.
+- **V27** Requirement 12: every strata check runs right after the snapshot is collected (one
+  check since review 2, Q518): not a column or named like a framework column, a numeric stratum
+  above `strata.max_levels`, an `include` that is not a candidate.
+- **V28** Notebook 02 shows the views and the report's path, not the report inline (6 MB that
+  the release example's outputs would carry twice); the report opens in a browser.
+
+Review 2's build (2026-11-05, `review2_spec.md`) took these without the SDS:
+- **V29** One label rule: `range_label` labels a run of buckets by its outer range, and
+  `bin_labels` and `merge_bins` both go through it (the edges formatted once per feature, since
+  `eda.bins: null` can mean many edges); every bucket reads `all`.
+- **V30** Label numbers carry no thousands separator (`[1500, 2000)`: a comma inside a range
+  reads like the bounds' separator) and an integral value prints whole; when two distinct values
+  would read alike, even in two formats (`1e+06` beside `1000000`), the feature's labels fall back
+  to exact text. The spec had separators (B2); the step's review found the collision.
+- **V31** A merged group's label covers its occupied bins, so a bin empty at the snapshot lies in
+  no label; `merge_bins(cells, groups, edges)` no longer reads `bin`.
+- **V32** `zero_target_bins` is public; `ZERO_LABELS`' second probe uses non-integral edges, so
+  the exact-text `= 0.0` still marks a regression target's zero bin.
+- **V33** `side_by_side` refuses a subplot, a heatmap, a figure without the primitives' meta, and
+  two figures that both show a legend; the grey note sits above the panel titles; panel titles
+  are sized like a figure's title.
+- **V34** A deep dive pairs the group chart with the first strata chart only; every further
+  strata chart stands alone (one figure has one legend and one colour sequence, so two strata
+  charts would mix their levels). The configs' two strata read [lift | segment], [channel].
+- **V35** The how-to-read grey note names the task's support and the deep dive's threshold
+  (`how_to_read(bins, estimate_noun, support_name, group_support)`); the lift note reads "2 twice
+  the base" for both tasks.
+- **V36** Bar text sits inside the bar at its base, clear of the error bar; the per-period table
+  hides its `insufficient` column (the grey rows show it); the headline's values are bold.
+- **V37** The exploration functions cut groups on the snapshot's eligible rows with the stage's
+  edges and read every label statistic on the eligible rows with a known target, as the report.
+- **V38** `rate_by_period` reads the window's labelled cells, grouped as the snapshot's deep
+  dive; each numeric group is labelled by the buckets it receives across the window (the ML
+  audit: a snapshot-only label read as drift), so it can read wider than the deep dive's; a
+  categorical keeps the snapshot's `strata.max_levels` largest levels, the rest `__other__`;
+  every group × period is drawn, a missing one as no point.
+- **V39** Chart titles are short: "Target per period", "Lift by income", "income by segment",
+  "income: concordance per period", "income by target class", "Association"; the detail moved
+  to axis titles ("Concordance (window's direction)", "(log axis)") and captions; the deep
+  dive's table caption quotes the ranking's `concordance`.
+- **V40** The strata check matches names exactly: a framework name in another case is refused
+  as "not a snapshot column" (its source column is read as `source_<Name>`).
+- **V41** A key feature that is itself a stratum gets no strata chart or pivot against itself (a
+  diagonal), found on the 100k report.
+- **V42** `report.py` ends at about 476 lines (473 before the build) with the strata charts, the
+  two-panel rows and four public chart builders; it stays one module of tied views.
+- **V43** Notebook 02's step 7 examples use `income` (a key feature, not a trap) and
+  `employment_status` (not a stratum): the top key features are the synthetic leak traps. Steps
+  2, 4, 5 and 6 end with one "Decide:" line; the calls live in step 9. The inline-report recipe
+  is gone (V28).
+- **V44** The exploration functions cut groups by the deep dive's rules: a numeric through one
+  group-count rule (`dive_group_count`: by level up to `strata.max_levels` values, else about
+  ten); a categorical feature at `LEVEL_CAP` alone (like its level table) and at
+  `strata.max_levels` with `by` (like the report's strata chart), the `by` column like a stratum;
+  `rate_by_period` keeps `strata.max_levels` levels (one line each); `compare_sides` refuses a
+  side without a finite value; `by` equal to the feature is refused.
+- **V45** The deep-dive views read the stored tables per key feature (no parallel dict; "by
+  level" means the feature is in `tables/levels`); the strata rows cut a numeric with the same
+  group count as its group table.
+- **V46** The simplicity passes cut `report.py` and `charts.py` by 15% and `run.py`,
+  `deep_dives.py` and `population.py` by about 7%, short of the spec's ~20% there: the next cut
+  (a numeric's groups from the rows instead of the cells) would break the one engine on the
+  cells (D-135). Compact plotly calls sit under `# fmt: skip`, as `report.py` already did.
+The stage-3 review's fix round (every finding confirmed by a second reader) added:
+- **V47** The regression concordance's SE carries the target-tie factor √(1 − Σp³) / (1 − Σp²)
+  over the target-bin shares, the 0.005 floor after it (D-082 amended): Somers' D drops pairs tied
+  on the target, so on a 90%-zero target a null feature got a direction 44% of the time (5% now).
+  The per-task `concordance_se` hook takes the shares (`cells.target_shares`, not the dense
+  table); the feature's own ties stay out (errs wide, as Hanley–McNeil does).
+- **V48** A label falls back to exact text also when rounding would put two bounds out of order;
+  whole numbers print as integers below 1e15 only.
+- **V49** The report is rendered before anything is removed or replaced and lands in `eda/` in
+  the same rename as `eda.json` (`write_stage(..., texts)`; `write_report` became
+  `render_report`): a render error leaves the previous `eda/` and ledger untouched.
+- **V50** An axis from zero reaches below 0 when an estimate does (an amount target can be
+  negative), and keeps a supported bar's interval bottom in view (chart rule 1).
+- **V51** One colour per thing across the report: strata lines and pivot columns follow the
+  stratum's level order, a `null` line or box takes the null colour, target-class colours only on
+  boxes by target class; `side_by_side` takes a legend only on the right panel.
+- **V52** The per-period concordance reads each period in the raw sign of the window's D
+  (`raw_sign_window`, a new `tables/ranking` column: the window's direction where it has one, 0
+  without a window concordance); with no direction it read every period ≥ 0.5, hiding a flip;
+  every period unavailable reads "Not available" with the reasons.
+- **V53** The group summary's columns are per task (`TASK_SPECS[task]["summary_columns"]`), so
+  `tables/bins`, `levels` and `strata` keep the task's columns when empty.
+- **V54** A modelling tag listed in `strata.variables` is refused; the association's seeded cap is
+  one rule (`association.pairwise_sample`, `PAIRWISE_SEED`), drawn once in `run_eda`, and the
+  timings' null-mask count reads that sample; `summarise_groups` refuses a summary whose columns
+  differ from the task's list in either direction.
 Applied without a decision: `environment.md`'s paths and functions, `architecture.md` §4, §9, §10
 and the stage table, `evaluation.md`'s support rule (`strata.min_events`) and OD-12 scope,
 `monitoring.md`'s PSI pointer, `training.md`'s signature and the train-only ranking inside a

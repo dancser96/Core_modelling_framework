@@ -48,7 +48,7 @@ here once agreed (OD-01).
 |---|---|---|---|
 | M0 | Design baseline | to 10-12 | Done 2026-10-12 |
 | M1 | Synthetic data + local Spark harness | 10-13 – 10-21 | Done: accepted by the LDS 2026-10-21; its to-dos built in M2.1 (0.5.0) except the `unstable` kind (M4); regression chosen (D-020); its per-task spec entries for EDA and Feature Checks designed with Stage 2 (D-050, 2026-11-02), Training's and Evaluation's with M2.3 |
-| M2 | Round 1a: walking skeleton, stages M2.1–M2.4 | 10-26 – 11-20 | M2.1 Foundation built 2026-10-27 (version 0.2.0), under the SDS's review; M2.2 Understanding designed 2026-11-02 (four question rounds, Q418–Q493; the spec in the component docs, D-134–D-137; the plan in `worknotes/m2_2_understanding/plan.md`), built from 11-03 |
+| M2 | Round 1a: walking skeleton, stages M2.1–M2.4 | 10-26 – 11-20 | M2.1 Foundation built 2026-10-27 (version 0.2.0), under the SDS's review; M2.2 Understanding designed 2026-11-02 (four question rounds, Q418–Q493; the spec in the component docs, D-134–D-137; the plan in `worknotes/m2_2_understanding/plan.md`), built from 11-03: major step 1 (foundations) built 11-03 and reviewed, major step 2 (EDA, its report, notebook 02) built 11-04, review 2 applied 11-05 and waiting for the SDS's review 3, major step 3 (Feature Checks) next |
 | M3 | Round 1b: exit points and calibration | 11-23 – 12-08 | — |
 | M5a | Run-through 1 → pre-release (internal repo, not production) | 12-09 – 12-18 | — |
 | M4 | Round 2: depth and integrations | 01-04 – 02-05 | — |

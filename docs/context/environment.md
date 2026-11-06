@@ -44,8 +44,8 @@ default framework version, which the use case pins and may raise within the imag
 Newer devcontainer images may move packages forward. When the user reports new versions, update
 this table and `requirements.txt` in the same change and re-run the tests.
 
-**Also in the standard devcontainer (usable; pin in `requirements.txt` on first use, D-012; scipy
-and plotly are already pinned above):**
+**Also in the standard devcontainer (usable; pin in `requirements.txt` on first use, D-012; scipy,
+plotly and jinja2 are already pinned):**
 
 | Package | Version | Likely use |
 |---|---|---|
@@ -53,7 +53,7 @@ and plotly are already pinned above):**
 | statsmodels | 0.14.5 | Statistical tests and intervals |
 | seaborn | 0.13.2 | Exploration in notebooks (reports use plotly) |
 | plotly | 6.3.1 | Report charts (D-036) |
-| jinja2 | 3.1.6 | Required by pandas Styler for styled HTML tables |
+| jinja2 | 3.1.6 | Required by pandas Styler for styled HTML tables (pinned 2026-11-04, the EDA report) |
 
 **Dev-only tools** (`requirements-dev.txt`, never needed inside the bank): pytest, ruff, ipykernel
 and nbformat. plotly renders charts in a notebook only with nbformat; Jupyter installs it inside the
