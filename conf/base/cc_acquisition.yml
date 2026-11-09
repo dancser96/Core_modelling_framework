@@ -69,7 +69,8 @@ feature_checks:                          # every step listed runs; {} takes its 
   quality: {}
   leakage: {}
   time_alignment: {}
-  stability: {psi_max: 0.25}             # the PSI notes at Monitoring's drift threshold
+  stability: {}                          # PSI: a note from 0.10, a flag from 0.25
+                                         # (Monitoring's drift threshold)
   redundancy: {}
 
 training:

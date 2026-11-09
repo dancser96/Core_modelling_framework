@@ -32,7 +32,10 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["slow: canonical-size checks (pytest -m slow)"]
+markers = [
+    "slow: canonical-size checks (pytest -m slow)",
+    "traps: the trap acceptance test on the dev preset (skip with -m 'not slow and not traps')",
+]
 addopts = "-m 'not slow'"  # a later `-m slow` on the command line overrides it
 # PySpark 3.4.3's own imports (typing.io, distutils' LooseVersion); the pin can't change them
 filterwarnings = [

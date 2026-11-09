@@ -52,14 +52,16 @@ ENTITY = "entity_a"
 SETTINGS = ["features.kinds", "strata", "eda", "time.validation_period"]
 TABLES = {"cells", "client_constant", "population", "funnel", "sources", "target_per_period",
           "ranking", "correlation", "slices", "capture_curve", "profile", "bins", "levels",
-          "quartiles", "per_period", "strata", "reference_groups"}  # fmt: skip
+          "quartiles", "per_period", "strata", "reference_groups",
+          "concordance_per_period"}  # fmt: skip
 # The report's sections and subsections in order (a deep dive's and a tag's names between).
 HEADINGS = ["Summary", "Choices", "How to read", "Headline", "Warnings", "Core",
             "Funnel per window period", "Sources per period", "Target per period",
             "Target by stratum", "Univariate ranking", "Excluded automatically",
             "At the decision's slices", "Key features", "Extended", "Reference groups",
-            "Correlation overview", "Value profile", "Appendix", "Kinds", "Feature ledger",
-            "Resolved config", "Decisions", "Collect log", "Timings"]  # fmt: skip
+            "Correlation overview", "Value profile", "Concordance per period", "Appendix", "Kinds",
+            "Feature ledger", "Resolved config", "Decisions", "Collect log",
+            "Timings"]  # fmt: skip
 REGRESSION_CANDIDATES = ["age", "income", "segment", "onboarding_channel", "employment_status",
                          "cc_active_flag", "cc_bal*", "cc_limit", "spend_cc_*"]  # fmt: skip
 
@@ -246,10 +248,17 @@ def test_a_numeric_stratum_outside_the_candidates_is_checked(regression: StageRe
 def test_dive_tables_keep_their_columns(result: StageResult) -> None:
     """The stacked deep-dive tables hold exactly the task's columns (the group tables its
     summary columns, an amount target its boxes per group too), and without a key feature they
-    are empty with those columns."""
+    are empty with those columns. The per-period dive is the key features' rows of
+    `concordance_per_period`, which holds every ranked candidate in every window period."""
     columns = _dive_columns(result.config.task)
     for name, names in columns.items():
         assert result.tables[name].columns.tolist() == names, name
+    every, periods = result.tables["concordance_per_period"], result.meta["compared_periods"]
+    assert every.columns.tolist() == columns["per_period"]
+    assert len(every) == len(result.tables["ranking"]) * len(periods["window"])
+    keys = every.loc[every["feature"].isin(list(result.meta["key_features"]))]
+    keys = keys.reset_index(drop=True)
+    pd.testing.assert_frame_equal(keys, result.tables["per_period"], check_like=True)
     empty = _dive_tables([], result.config.task)
     assert set(empty) == set(columns)
     assert all(table.empty and table.columns.tolist() == columns[name]

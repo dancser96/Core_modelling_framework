@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from conftest import write_environment_file
 from pyspark.sql import SparkSession
 
 from core_modelling.__main__ import main
@@ -20,12 +21,17 @@ CONFIG = ROOT / "conf/base/cc_acquisition.yml"
 SECOND_CONFIG = ROOT / "conf/base/td_acquisition.yml"
 MODEL_INPUT = "05_model_input/retail_acquisition"
 NOTEBOOK = ROOT / "notebooks/01_target_factory.ipynb"
-NOTEBOOKS = [NOTEBOOK, ROOT / "notebooks/02_eda.ipynb"]
+NOTEBOOKS = [
+    NOTEBOOK,
+    ROOT / "notebooks/02_eda.ipynb",
+    ROOT / "notebooks/03_feature_checks.ipynb",
+    ROOT / "notebooks/00_eda_fc_helper.ipynb",
+]
 EDA_CANDIDATES = ["age", "income", "segment", "onboarding_channel", "cc_bal", "spend_cc_cnt"]
 # The Public API table of docs/architecture.md: what the shipped notebooks may import.
 PUBLIC_API = {
     "core_modelling.config": {"load_config", "UseCaseConfig"},
-    "core_modelling.environment": {"get_spark_session", "load_environment"},
+    "core_modelling.environment": {"get_spark_session", "load_environment", "feature_dir"},
     "core_modelling.config.audit_log": {
         "record_decision",
         "show_decisions",
@@ -35,7 +41,8 @@ PUBLIC_API = {
     "core_modelling.target_factory": {"run_target_factory", "TargetSummary"},
     "core_modelling.dataset": {"build_frames", "save_model_input", "Frames"},
     "core_modelling.run": {"run"},
-    "core_modelling.artifacts": {"StageResult"},
+    "core_modelling.artifacts": {"StageResult", "read_stage"},
+    "core_modelling.ledger": {"read_ledger"},
     "core_modelling.eda": {
         "run_eda",
         "pivot_target",
@@ -43,23 +50,14 @@ PUBLIC_API = {
         "compare_sides",
         "rate_by_period",
     },  # fmt: skip
+    "core_modelling.feature_checks": {"run_feature_checks"},
 }
 
 
 def _environment_file(tmp_path: Path, unit_output: tuple[str, dict]) -> Path:
     """An environment file on the written unit preset with the model input under the test
     folder and the Spark settings of the test session."""
-    data = str(tmp_path / "data")
-    sources = {
-        "retail_mart": {"format": "parquet", "path": unit_output[0] + "/mart"},
-        "retail_holdings": {"format": "parquet", "path": unit_output[0] + "/holdings"},
-        "retail_fs_extract": {"format": "parquet", "path": unit_output[0] + "/fs_extract"},
-        "retail_acquisition_input": {"format": "parquet", "path": f"{data}/{MODEL_INPUT}"},
-    }
-    path = tmp_path / "environment.yml"
-    content = {"schema_version": 1, "roots": {"data": data}, "sources": {"entity_a": sources}}
-    path.write_text(yaml.safe_dump(content))
-    return path
+    return write_environment_file(unit_output[0], tmp_path)
 
 
 def test_run_through_the_cli_prints_the_summary_and_saves_the_model_input(
@@ -101,8 +99,8 @@ def test_run_refuses_an_unknown_stage_or_entity_or_no_config(
     """A stage not built, an entity the config doesn't list, an empty config list, or configs
     listing different entities when no entity is given, each fail before anything runs."""
     env_file = _environment_file(tmp_path, unit_output)
-    with pytest.raises(ValueError, match=r"unknown stages \['feature_checks'\]; the built"):
-        run(CONFIG, env_path=str(env_file), stages=["feature_checks"])
+    with pytest.raises(ValueError, match=r"unknown stages \['training'\]; the built"):
+        run(CONFIG, env_path=str(env_file), stages=["training"])
     with pytest.raises(ValueError, match="unknown entity 'entity_b': the config 'cc_acquisition'"):
         run(CONFIG, env_path=str(env_file), entity="entity_b")
     with pytest.raises(ValueError, match="run needs at least one config"):

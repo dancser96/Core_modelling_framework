@@ -177,6 +177,8 @@ Whether this glossary is also published to the wider unit is part of the open do
   (D-134).
 - **Finding:** what a Feature Checks step reports about a feature: `<step>.<finding>`, a flag or a
   note, with its value and threshold (`docs/components/feature_checks.md`).
+- **Dominant value:** the filled value on ≥ 90% (`leakage.dominant_share_min`) of a feature's filled
+  rows; `leakage.rare_value_leak` and `near_constant`'s detail compare the other values against it.
 - **Held:** a candidate with an open flag: out of training at both automation levels until a
   person records `keep` or `exclude`; for Training it acts as an excluded feature without a
   final decision; visible in the ledger, the reports, the sign-off view and the model card
@@ -404,8 +406,18 @@ Whether this glossary is also published to the wider unit is part of the open do
   floor use it only for features marked `non_monotone` (D-135).
 - **Null concordance:** the concordance of the null indicator against the target:
   `nulls_informative` from 0.55, `missingness_leak` from 0.70.
+- **Null set:** features whose labelled null counts match in every window period and target bin,
+  in practice the same null rows (e.g. every six-month roll-up of clients too new for one);
+  `nulls_informative` names it in its detail. A shared null set often marks a population worth
+  an eligibility filter or a model of its own (`docs/components/feature_checks.md`).
+- **Cohen's h / Cohen's d:** effect sizes with the conventional bands 0.2 small, 0.5 medium,
+  0.8 large. h compares two rates on the arcsine-square-root scale (2·asin√p₁ − 2·asin√p₂), so
+  a small rate must move far before h grows; d compares two means over their pooled standard
+  deviation. `rare_value_leak` reads h (binary) or d (regression) through the per-task spec
+  (D-050); EDA's reference groups use d as the standardised mean difference.
 - **PSI:** the population stability index, with one definition: a null bin and the Lewis bands
-  0.10 / 0.25 as labels, not tests. Feature Checks' two PSI notes compare named periods (D-135).
+  0.10 / 0.25 as labels, not tests. Feature Checks' PSI findings compare named periods (D-135):
+  a note from `psi_note_min` (0.10), a flag from `psi_max` (0.25, Monitoring's drift threshold).
 - **Shrunk level encoding:** a categorical's levels scored by their target rate shrunk towards the
   base rate, fitted on the pooled window (D-135). Binary: `k_rows = strata.min_events /
   base_rate`, so the prior weighs `min_events` pseudo-events; regression: `k_rows =

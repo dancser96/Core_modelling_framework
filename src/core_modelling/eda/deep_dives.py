@@ -1,20 +1,22 @@
 """The key features' deep dives and the strata pivots (docs/components/eda.md).
 
-A deep dive reads the snapshot: `bin_table` merges a numeric's snapshot cells into about ten
-groups (`merged_groups`, a mass point its own group, chart rule 4) and summarises the eligible
-rows with a known target mapped to those groups through the feature's edges, the way the counts
-table's `Bucketizer` buckets them (`bin_orders`); `level_table` gives one row per level instead
-(a categorical, or a numeric with few values); `quartiles_by_target` the feature's box per target
-class and `target_quartiles_by_group` an amount target's box per group of the feature
-(`box_table`); `per_period_concordance` the window periods' concordance read in the window's
-direction. Every group table carries the per-task summary columns (`population.summarise_groups`)
-and greys a group below `MIN_BIN_SUPPORT` events (strata cells below `strata.min_events`), never
-hides it. `dive_group_count` is the one rule for how a feature's deep dive groups it (by level,
-or about ten merged groups). `strata_pivots` crosses every key feature's groups with each other
-stratum variable's levels. A numeric whose every group is one value (by level) reads its values,
-`0`, `1`, not `= 0` (`value_labels`); merged ranges and a mass point among them keep `[a, b)` and
-`= v`. `dive_group_count`, `numeric_groups`, `merged_groups`, `value_labels` and `box_table` are
-public because the exploration functions (`explore.py`) cut and draw the same groups.
+A deep dive reads the snapshot: `bin_table` merges a numeric's snapshot cells into about ten groups
+(`merged_groups`, a mass point its own group, chart rule 4) and summarises the eligible rows with a
+known target mapped to those groups through the feature's edges, the way the counts table's
+`Bucketizer` buckets them (`bin_orders`); `level_table` gives one row per level instead (a
+categorical, or a numeric with few values); `quartiles_by_target` the feature's box per target class
+and `target_quartiles_by_group` an amount target's box per group of the feature (`box_table`);
+`per_period_concordance` the window periods' concordance read in the window's direction, which
+`concordance_per_period` gives for every ranked candidate (stored, and read by Feature Checks'
+stability step). Every group table carries the per-task summary columns
+(`population.summarise_groups`) and greys a group below `MIN_BIN_SUPPORT` events (strata cells below
+`strata.min_events`), never hides it. `dive_group_count` is the one rule for how a feature's deep
+dive groups it (by level, or about ten merged groups). `strata_pivots` crosses every key feature's
+groups with each other stratum variable's levels. A numeric whose every group is one value (by
+level) reads its values, `0`, `1`, not `= 0` (`value_labels`); merged ranges and a mass point among
+them keep `[a, b)` and `= v`. `dive_group_count`, `numeric_groups`, `merged_groups`, `value_labels`
+and `box_table` are public because the exploration functions (`explore.py`) cut and draw the same
+groups.
 """
 
 import numpy as np
@@ -268,6 +270,29 @@ def per_period_concordance(
                         "support": events, "concordance": value, "se": se,
                         "insufficient": events < min_events, "unavailable": reason})  # fmt: skip
     return pd.DataFrame.from_records(records)
+
+
+def concordance_per_period(
+    cells: pd.DataFrame,
+    ranking: pd.DataFrame,
+    task: str,
+    window_periods: list[str],
+    prior_rows: float,
+    min_events: int,
+    exact: bool,
+) -> pd.DataFrame:
+    """`per_period_concordance` of every feature of `ranking` in its order, each read in its
+    `raw_sign_window`, stacked (`per_period_concordance`'s columns)."""
+    current = cells.loc[~cells["lagged"]]
+    by_feature = dict(tuple(current.groupby("feature")))  # one pass, not one filter per feature
+    settings = {"task": task, "window_periods": window_periods, "prior_rows": prior_rows,
+                "min_events": min_events, "exact": exact}  # fmt: skip
+    parts = [
+        per_period_concordance(by_feature[row.feature], row.feature, row.kind,
+                               sign=int(row.raw_sign_window), **settings)
+        for row in ranking.itertuples()
+    ]  # fmt: skip
+    return pd.concat(parts, ignore_index=True)
 
 
 def _read_in(scope: dict, kind: str, sign: int) -> float:

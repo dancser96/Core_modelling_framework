@@ -140,7 +140,7 @@ def kendall_null_se(units: float, target_shares: np.ndarray) -> float:
 def cochran_q(values: np.ndarray, ses: np.ndarray) -> float:
     """The p-value of Cochran's Q that the values differ: weights `1 / se²`, Q around the
     weighted mean, χ² with k − 1 degrees of freedom. Fewer than two values are refused; the
-    caller reports "not tested"."""
+    caller reports "not available"."""
     values, ses = np.asarray(values, dtype=float), np.asarray(ses, dtype=float)
     if values.size < 2 or values.shape != ses.shape:
         raise ValueError(

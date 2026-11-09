@@ -349,11 +349,19 @@ class Quality(StrictModel):
 
 
 class Leakage(StrictModel):
-    """Feature Checks' `leakage` step: too strong, missingness leak, rare-value leak (flags)."""
+    """Feature Checks' `leakage` step: too strong, missingness leak, rare-value leak (flags).
+
+    `rare_effect_max` is on Cohen's h (binary) or d (regression) scale: 0.2 small, 0.5 medium,
+    0.8 large; capped at 3, so a ratio-era value (5, 10) fails at load instead of never firing (h
+    tops out at π, a d above 3 is implausible). `dominant_share_min` is the filled rows' share one
+    value must hold before the other values pooled are a minority (the rare-value rule's and
+    `near_constant`'s detail).
+    """
 
     concordance_max: float = Field(default=0.80, gt=0.5, le=1)
     null_concordance_max: float = Field(default=0.70, gt=0.5, le=1)
-    rare_effect_max: float = Field(default=5.0, gt=1)
+    rare_effect_max: float = Field(default=0.8, gt=0, le=3)
+    dominant_share_min: float = Field(default=0.90, gt=0.5, lt=1)
 
 
 class TimeAlignment(StrictModel):
@@ -365,13 +373,32 @@ class TimeAlignment(StrictModel):
 
 
 class Stability(StrictModel):
-    """Feature Checks' `stability` step: concordance unstable (flag); PSI and new levels
-    (notes)."""
+    """Feature Checks' `stability` step: concordance unstable (flag); PSI in two tiers, a note
+    from `psi_note_min` and a flag from `psi_max` (Monitoring's drift threshold); new levels
+    (note).
 
-    psi_max: float = Field(default=0.10, gt=0)
+    `concordance_range_min` is relative to the window's signal: the per-period concordances'
+    range must reach it × |`concordance_window` − 0.5| (0.5: the periods differ by half the
+    signal; 2: from the full signal to its mirror image), so a wobble that matters for a weak
+    feature does not flag a strong one.
+    """
+
+    psi_note_min: float = Field(default=0.10, gt=0)
+    psi_max: float = Field(default=0.25, gt=0)
     heterogeneity_p_max: float = Field(default=0.01, gt=0, lt=1)
-    concordance_range_min: float = Field(default=0.05, ge=0, le=0.5)
+    concordance_range_min: float = Field(default=0.5, ge=0, le=2)
     new_level_share_max: float = Field(default=0.01, gt=0, le=1)
+
+    @model_validator(mode="after")
+    def _check_psi_tiers(self) -> "Stability":
+        """The PSI note's floor is not above the flag's bound: the note fires between the two."""
+        if self.psi_note_min > self.psi_max:
+            raise ValueError(
+                f"feature_checks.stability.psi_note_min {self.psi_note_min} must be at most "
+                f"feature_checks.stability.psi_max {self.psi_max}: the PSI note fires from the "
+                "first, the flag from the second"
+            )
+        return self
 
 
 class Redundancy(StrictModel):

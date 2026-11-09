@@ -5,7 +5,8 @@ It resolves the config (the audit log replayed, D-125), builds the frames (the s
 collected, `rows` left in Spark and persisted for the counts passes of `dataset/counts.py`),
 checks the strata and the listed key features against the snapshot (requirement 12), computes
 the tables with `ranking.py`, `population.py`, `slices.py`, `profile.py` and `deep_dives.py`
-and the association on the snapshot, creates a fresh ledger with EDA's columns, turns
+(every candidate's concordance per window period among them, once the ranking gives its
+direction) and the association on the snapshot, creates a fresh ledger with EDA's columns, turns
 everything into views and renders the report (`report.py`) before anything is written, then
 writes in the order that makes `eda.json` the commit marker: Feature Checks' stale folder
 removed, the ledger saved, `eda/` written with `report.html` in it (D-136). It orchestrates
@@ -36,9 +37,9 @@ from core_modelling.dataset.counts import (
 from core_modelling.eda.deep_dives import (
     BOX_COLUMNS,
     bin_table,
+    concordance_per_period,
     dive_group_count,
     level_table,
-    per_period_concordance,
     quartiles_by_target,
     strata_pivots,
     target_quartiles_by_group,
@@ -111,17 +112,21 @@ def run_eda(
     seconds["passes"], start = _lap(start)
     ranking, correlation, prior_rows, extra = _rank(counts, frames, resolved, labels)
     seconds["statistics"], start = _lap(start)
+    min_events, exact = resolved.strata.min_events, resolved.eda.bins is None
+    per_period = concordance_per_period(counts["cells"], ranking, resolved.task, labels["window"],
+                                        prior_rows, min_events, exact)  # fmt: skip
+    seconds["concordance_per_period"], start = _lap(start)
     meta = _stage_meta(resolved, frames, counts, ranking, labels)
     tables = _population_tables(frames, resolved, counts, labels, ranking)
     tables.update(cells=counts["cells"], client_constant=counts["client_constant"])
-    tables.update(ranking=ranking, correlation=correlation)
+    tables.update(ranking=ranking, correlation=correlation, concordance_per_period=per_period)
     window = meta["compared_periods"]["window"]
     tables["slices"], tables["capture_curve"] = slice_tables(counts["cells"], ranking, meta,
                                                              resolved, window)  # fmt: skip
     tables["profile"] = value_profile(frames.snapshot, frames.meta["kinds"], ranking,
                                       counts["cells"], meta["snapshot_period"])  # fmt: skip
     keys = ranking.loc[ranking["key_feature"] != ""].iterrows()
-    dives = [_deep_dive(key, counts, frames, resolved, labels, prior_rows) for _, key in keys]
+    dives = [_deep_dive(key, counts, frames, resolved, per_period) for _, key in keys]
     tables.update(_dive_tables(dives, resolved.task))
     seconds["tables"], start = _lap(start)
     ledger = _ledger(frames.meta, ranking)
@@ -277,13 +282,12 @@ def _deep_dive(
     counts: dict,
     frames: Frames,
     resolved: UseCaseConfig,
-    labels: dict,
-    prior: float,
+    per_period: pd.DataFrame,
 ) -> dict[str, pd.DataFrame]:
     """One key feature's parts of the stacked tables from its `ranked` row of the ranking:
-    `levels` when `dive_group_count` says by level, else `bins`; `per_period` in the window's
-    direction; a numeric's `quartiles` by target class; and, when the task's target has a
-    distribution, its `target_quartiles` per group."""
+    `levels` when `dive_group_count` says by level, else `bins`; `per_period`, its rows of
+    `concordance_per_period`'s table; a numeric's `quartiles` by target class; and, when the
+    task's target has a distribution, its `target_quartiles` per group."""
     snapshot, task, cells = frames.snapshot, resolved.task, counts["cells"]
     base = known_rows(snapshot)["target"].mean()
     name, kind = ranked["feature"], ranked["kind"]
@@ -294,9 +298,7 @@ def _deep_dive(
     else:
         period = frames.meta["snapshot_period"]
         dive = {"bins": bin_table(cells, snapshot, name, edges, period, task, base, group_count)}
-    sign = int(ranked["raw_sign_window"])
-    args = (labels["window"], prior, resolved.strata.min_events, sign, resolved.eda.bins is None)
-    dive["per_period"] = per_period_concordance(cells, name, kind, task, *args)
+    dive["per_period"] = per_period.loc[per_period["feature"] == name].reset_index(drop=True)
     if kind == "numeric":
         dive["quartiles"] = quartiles_by_target(snapshot, name, task)
     if TASK_SPECS[task]["target_distribution"]:

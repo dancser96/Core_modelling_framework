@@ -2,6 +2,75 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-11-07, 2026-11-09 — Stage 2 major step 3 (Feature Checks): built, then the SDS's review 1
+- 2026-11-09, the answers Q539–Q545 and R57–R58 (recorded verbatim in `answers.md`): the
+  rare-value effect as Cohen's h (d for an amount) from 0.8, `rare_effect_max` capped at 3; no
+  check skips for support, each detail stating its support and SE and "not significant at this
+  support" within 2 SE of the threshold; `too_strong` on the higher of the plain and EDA's new
+  best-order window concordance (4 SE for the best order); EDA stores and shows the concordance
+  per period, Feature Checks reads it (PSI per period stays); null sets named
+  (`nulls_informative`); the instability range relative to the signal; the leaf
+  `leakage.dominant_share_min`; the trap test's count-free guard on legitimate columns; the
+  helper notebook `00_eda_fc_helper` (three readers made public: `feature_dir`, `read_stage`,
+  `read_ledger`); the synthetic coverage to-do `worknotes/synthetic_trap_coverage.md`. The ML
+  audit (xhigh) found the per-period SE collapsing on thin periods near 0 or 1 (3–4% false
+  `concordance_unstable` in simulation) and significance judged at the estimate: fixed (T37,
+  V103). Measured: canonical card 42 held (46 before: `segment` and three travel-spend minorities
+  released), canonical term deposit 28 (two signal-less digital flags held as unstable: Q547),
+  `dev` card 42 and term deposit 23, no flag "not significant" anywhere. Tests all green, the
+  trap test alone. A duplicate session (the chat reopened) ran part of the round in parallel; it
+  stood down and its changes are reconciled. Open: Q546 (split `steps.py`), Q547 (a floor on the
+  relative range).
+- 2026-11-09, review 1 (the SDS read the notebook, the report, the questions and the vetoes; the
+  code is round 2): remarks R42–R55 and answers Q532–Q538 recorded verbatim in `answers.md`.
+  Applied: PSI a note from 0.10 and a flag from 0.25 (`psi_note_min`, `psi_max`; the flags
+  `psi_window_large`, `psi_latest_large` hold); the held table's `flag_values` (a `measure` per
+  finding); `client_constant`'s concordance shown once; the redundancy step leads with one row
+  per cluster and suggests excluding a near-duplicate that adds nothing; the proposed calls take
+  any subset of a finding's features, the exclude naming its finding in `evidence`; captions styled
+  inside the tables (both notebooks) and larger report headings; notebook 03 loads the rows
+  (`build_frames`) and checks a finding in a new step 8, its walk-through splitting
+  `client_constant`; the trap test's count bound removed (it came from the plan's V7, not from
+  the SDS). V91 rewritten, V92–V97 added; D-134 extended; T36 (a background run needs a deadline).
+- Measured: the canonical card config holds 46 (was 40: the four login roll-ups of the drift
+  trap, the shifted loan trap column, one legitimate ratio at window PSI 0.26). Tests: the touched
+  pure tests, the stage, `run` and EDA tests, the trap test alone, EDA's module tests and notebook
+  03 end to end on a scratch copy, all green. Reviews: code review (one blocker, two stale step
+  numbers in the notebook, fixed), compatibility "safe" (0.3.0 absorbs it), ML audit "safe".
+- Build time (the SDS asked why the build took 27 h): 5 h 45 min a hung background test (a dead
+  Spark JVM, nothing watching: T36), about 9 h for the trap test and the notebook run one after
+  the other with an 18-minute trap loop, long Opus agents at xhigh, four fix rounds. Review 1's
+  round took under an hour.
+- Open: Q539–Q545 (`feature_checks_questions.md`), round 2's guide
+  `feature_checks_review_guide.md`. Nothing committed.
+
+**2026-11-07, the build:**
+- Built on Opus in four waves on disjoint files, Spark one job at a time: the five steps with
+  their measures ∥ the decisions module; the stage, its report and `run --stages
+  feature_checks`; the trap acceptance test, then notebook 03; the docs. One combined review per
+  piece, the ML audit of the steps and the stage (Opus), the whole-stage audit (Fable, "safe"),
+  the compatibility check ("safe"), four fix rounds. Output tokens: Opus 95%, Fable 5%, Sonnet <1%.
+- Findings that changed the design: measured on the canonical artifacts, the spec's
+  `rare_value_leak` text ("a cell below 1% of the rows") held 51 legitimate top quantile bins and
+  missed the process leak (T35): the build restored the rule the SDS approved (Q441: a dominant
+  value on ≥ 90% of the filled rows, the others pooled against it) with `strata.min_events`
+  effective events in the minority (V74, V75); the lagged pool leaves out the window's first
+  period, whose lagged cells are null by construction (V76); below EDA's 0.5% null share Feature
+  Checks reads the null concordance itself, so a field blanked on conversion at a low prevalence
+  is still flagged (the whole-stage audit); the spec's acceptance bound ("at most two non-trap
+  held") cannot hold, so the test lists the by-design holds with their reasons (V91).
+- The table formats moved to `reporting/formats.py` (an EDA file touched: `eda/report.py`
+  imports them, V86); version 0.3.0.
+- Results: canonical card config 40 held (15 trap columns, 25 by-design holds), 10 flag entries,
+  none on a rerun, about 17 s; every trap caught by its mapped step on `dev`, null controls clean;
+  notebook 03 reruns (its walk-through reverted). Full suite 592 passed, one stale test fixed
+  (it named `feature_checks` as an unbuilt stage); after the final fixes every touched file reran
+  green (a first rerun lost its Spark JVM to memory pressure: the trap test now runs in its own
+  process when others ran before it).
+- Open for the SDS: Q532–Q538 (`m2_2_understanding/feature_checks_questions.md`), V74–V91
+  (`plan.md` §9); review guide `m2_2_understanding/feature_checks_review_guide.md`. Nothing
+  committed.
+
 ### 2026-11-06 — Reviews 3 and 4 of major step 2, the EDA gaps spec built; EDA to the LDS
 - Review 4 (R38–R41, Q531, verbatim in `answers.md`): a line chart's top is min(every point,
   twice the highest supported point), so many grey points no longer flatten or escape the chart;

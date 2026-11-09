@@ -1,6 +1,6 @@
 # Stage 2 (M2.2 Understanding): the build plan
 _Written 2026-11-02 for the SDS's approval, revised 2026-11-03 after their remarks (the routing
-budget, the notebooks' guides, `lagged_signal_drop`, the edges rule, V13–V15; V16–V17 added by the build, 2026-11-03; V18–V28 by major step 2, 2026-11-04; V29–V54 by its review-2 build and stage-3 review, 2026-11-05; V55–V73 by review 3 and the gaps spec, 2026-11-06) · from the spec in `docs/components/eda.md`,
+budget, the notebooks' guides, `lagged_signal_drop`, the edges rule, V13–V15; V16–V17 added by the build, 2026-11-03; V18–V28 by major step 2, 2026-11-04; V29–V54 by its review-2 build and stage-3 review, 2026-11-05; V55–V73 by review 3 and the gaps spec, 2026-11-06; V74–V91 by major step 3, 2026-11-07; V92–V97 by its review 1 and V98–V102 by its answers, 2026-11-09) · from the spec in `docs/components/eda.md`,
 `feature_checks.md`, `feature_ledger.md`, `reporting.md`, `config.md`, `dataset.md` and the decision
 rows D-134–D-137 · the design record is `answers.md` beside this file · nothing is coded before the
 SDS approves this plan (`CLAUDE.md` §1 step 1) · the holistic review's outcomes are folded in (§9, with the
@@ -309,9 +309,8 @@ decisions and the `keep` round trip, the acceptance test's mapping, the two repo
   preset into a temporary folder), `tests/README.md`.
 - Content: the mapping of `test_harness.md` keyed by trap kind and target (kind → step.finding for
   the card, the term deposit and the "any product" rows), `NOT_CHECKS` ((kind, target) → reason: an EDA
-  view, no config for the loan target, off by default), the rule that an unlisted pair fails; the
-  false-positive bound: at most two non-trap candidates held on the card config, named on failure; assertions on the `*_window` ledger columns; the null
-  controls below 0.55; the D-088 counts compared from `eda.json`; the term-deposit config without
+  view, no config for the loan target, off by default), the rule that an unlisted pair fails; assertions on the `*_window` ledger
+  columns; the null controls below 0.55 and never flagged (the false-positive check, V91); the D-088 counts compared from `eda.json`; the term-deposit config without
   per-period findings; only `client_constant` for the look-ahead trap; the bin-count assertion on
   every numeric candidate (at least `eda.bins / 2` bins where the distinct count allows, no
   non-singleton bin above 5%; T25).
@@ -490,9 +489,7 @@ writers' findings. Silence confirms them.
   redundancy) rather than in YAML order; a step is skipped by leaving it out of a present
   `feature_checks` mapping (Q488's wording changed; D-137).
 - **V7** `concordance_unstable` stays a flag (the review proposed a note until the `unstable` trap
-  exists in M4); instead the acceptance test gains a false-positive bound: at most two non-trap
-  candidates may be held on the `dev` card config, named on failure, so the flag is checked against
-  legitimate features too.
+  exists in M4).
 - **V8** The regression lift and rare effect are mean ratios computed only when the overall mean is
   positive; otherwise "not available: mean not positive", decided by the per-task spec before
   running (D-035, D-050).
@@ -704,6 +701,113 @@ Review 3 and the gaps spec (2026-11-06; `eda_gaps_spec.md` V55–V65 as built, t
   bars keep a greyed bar's height in range.
 - **V73** Report value columns print large numbers with thousands separators, never scientific
   notation; a regression estimate (an amount) prints with two decimals (`{:,.2f}`).
+- **V74** (2026-11-06, major step 3) `leakage.rare_value_leak` follows the rule the SDS approved
+  (Q441, A28), not the spec text that had drifted to "a cell below 1% of the window's rows": one
+  filled value on at least 90% of the filled window rows, the other values pooled as the minority,
+  its rate (mean) against the dominant value's at least `rare_effect_max`, with `strata.min_events`
+  effective events in the minority. Measured on the canonical data: the drifted rule held 51
+  legitimate top quantile bins and missed the process leak (T35); the approved rule catches the
+  card process leak (37×), the shifted column (57×) and the upstream target (inf) and holds four
+  legitimate minorities (`segment` 7.9×, three travel-spend aggregates 5.6–6.2×), which a person
+  keeps once. `near_constant`'s detail shows the same minority effect (Q440).
+- **V75** (the support guards replaced 2026-11-09 by the SDS's Q540) No check skips for support;
+  a finding with an SE states its support in effective clients (`client_support` on `eda.json`'s
+  `clients`) and its SE, "not significant at this support" within 2 SE of its threshold; EDA
+  stores no window SE, so `measures.effective_se` recomputes it as EDA's ranking does. Known
+  limits: a best-order `too_strong` uses the plain SE (no selection gain), `signal_kept`'s SE
+  leaves out the window's own noise. Below EDA's null-share range
+  (0.5%), Feature Checks reads the null concordance itself from the same cells, so a field blanked
+  on conversion at a low prevalence is still flagged `missingness_leak` (the whole-stage audit).
+- **V76** The lagged pool leaves out the window's first period, whose lagged cells are null by
+  construction (the "no lagged value" share read 18.6% instead of 2.4%).
+- **V77** Feature Checks also reads `tables/ranking` (`raw_sign_window`, the window's direction for
+  the per-period and lagged concordances): the ledger's `direction` is the snapshot's and null
+  below 2 SE.
+- **V78** The finding table is plain data (`feature_checks/findings.py`); a finding's text names no
+  threshold (the findings' `threshold` column carries it), so a `flag` entry's reason is the text
+  and does not move with a threshold; finding names are part of the audit-log format (§2).
+- **V79** The findings table gains `detail` (the dominant value and both rates, a pair's partners,
+  the share without a lagged value, the periods tested); the stage saves an `unavailable` table
+  (feature, finding, "not available" or "not tested" with the reason, decided up front, D-035).
+- **V80** Two modules beyond the plan's list: `measures.py` (the numbers EDA does not store: the
+  lagged concordance, PSI between two periods, the per-period table) and `report.py` (as EDA's,
+  V18); `steps.py` stays one module (about 700 lines: the five steps share the inputs and the row
+  builders, and the finding table reads top to bottom in it).
+- **V81** A step is `check_<step>(inputs: CheckInputs, params) -> StepResult(findings, columns,
+  unavailable, tables)`; `check_inputs` builds the inputs once, the per-period table included.
+- **V82** A cluster lists its members by the snapshot `concordance` (the association is measured
+  on the snapshot).
+- **V83** A skipped step's ledger columns are written as null, so readers always find the column
+  set (Training reads `cluster`).
+- **V84** The `run` entry carries the `replayed_to` and resolved-input hash of the config the run
+  read; the result's config is resolved again after the run's entries (the held set Training
+  sees).
+- **V85** Feature Checks' settings digest covers EDA's paths plus `feature_checks`
+  (`FEATURE_CHECKS_SETTINGS`), in `feature_checks.json` and the ledger's sidecar, for Training to
+  check.
+- **V86** The table formats moved to `reporting/formats.py` (`plain_number`, `p_value`,
+  `column_formats`), not into `html.py`: one concept shared by both reports (an EDA file touched:
+  `eda/report.py` imports them, a mechanical move).
+- **V87** The per-task spec's `rare_effect(minority, dominant, sizes) -> (effect, se)` is Cohen's h
+  (binary) or Cohen's d (regression, the pooled SD from `sum_y2`, "no spread" below 1e-12 of the
+  mean square), with `rare_effect_unavailable` and `rare_effect_name` (D-050; the SDS's Q539).
+- **V88** The time-alignment gate is `concordance_window ≥ concordance_min` and above 0.5, since a
+  `concordance_min` of 0.5 would divide by zero.
+- **V89** A run refuses while the log holds an open flag of a finding this version does not know,
+  before writing, until a person settles it or a log migration renames it; and refuses a ledger
+  whose `concordance_window` differs from `eda/`'s ranking (two EDA runs after a crash and a
+  reverted setting).
+- **V90** The proposed decisions' call texts carry `env_path=ENVIRONMENT` beside `CONFIG`, like
+  notebook 02's, so a copied call writes to the log the notebook reads; notebook 03's walk-through
+  ends with a `revert_to`, so its demo entries leave nothing in force and the notebook reruns.
+- **V91** The trap acceptance test's false-positive check is the null controls (pure noise, never
+  flagged); no bound counts the held non-trap candidates (the SDS, R55: an earlier V7 had added
+  one, which Q534 wrongly called the SDS's). Drift is asserted as the flag `psi_latest_large` on
+  the login column or one of its roll-ups; collinearity as the status ⇔ flag identity.
+- **V92** (2026-11-09, review 1) The PSI tiers (R49): the notes `psi_window` and `psi_latest` from
+  `stability.psi_note_min` (0.10), the flags `psi_window_large` and `psi_latest_large` from
+  `stability.psi_max` (its default moved from 0.10 to 0.25), exclusive, so a feature raises one;
+  the example configs take the defaults (`stability: {}`).
+- **V93** The held table's `flag_values` is keyed by each finding's `measure`, a new field of the
+  finding table (the name of what `value` holds); a view, not a stored table.
+- **V94** The proposed exclude call names its finding in `evidence` (a keep names it in
+  `findings`, which scopes it); the calls' header says each call takes any subset (R52).
+- **V95** The cluster summary (R51) reads the stored `tables/clusters`, which keeps one row per
+  member for Training: per cluster its size, the lowest association with the best member and the
+  highest `explained_by_others`; the per-member columns join the redundancy feature table, and the
+  report's extended "Redundancy clusters" section is gone.
+- **V96** A table's caption is styled inside its Styler (both reports, both notebooks), and the
+  report's third- and fourth-level headings are larger (R43).
+- **V97** Notebook 03 loads the frames in step 1 (`build_frames` on `result.config`, the resolved
+  config, so the rows are the data definition the run judged) and shows three checks in a new step
+  8; the decisions move to step 9 and the report to 10; the walk-through splits `client_constant`
+  (keeps the three static attributes, excludes the look-ahead column) and still reverts both.
+- **V98** (2026-11-09, review 1's answers) Three existing readers become Public API as they are,
+  for the helper notebook `00_eda_fc_helper` (R57): `environment.feature_dir`,
+  `artifacts.read_stage`, `ledger.read_ledger`; the notebook runs nothing and writes nothing.
+- **V99** A null set (Q543) is the `nulls_informative` features with the same null counts in
+  every window period and target bin, numbered by size; grouped among the firing features only
+  (identical null rows give an identical null concordance, so the grouping is the same).
+- **V100** EDA's `concordance_per_period` (Q542) is computed after the ranking from the cells it
+  holds, timed as its own phase; the key features' per-period dive reads its rows, so nothing is
+  computed twice; Feature Checks refuses an EDA without it or without
+  `concordance_best_order_window` (Q541), naming what is missing.
+- **V101** The evidence phrase (Q540): "support N effective <events>, SE x", then "; not
+  significant at this support" unless the value is more than 2 SE past its threshold; the window,
+  null-indicator and lagged SEs come from `measures.effective_se`, EDA's formula repeated
+  (`client_support`, the task's SE at max(v, 1 − v), a categorical's × 1.5). A best-order
+  `too_strong` takes the SE at its own value, so its "significant" overstates a little (the best
+  order gains about 2 SE on noise).
+- **V102** `concordance_best_order_window` lives in `tables/ranking` only (not the ledger, not
+  the ranking view); Feature Checks' `tables/per_period` is label-free (PSI per compared period),
+  and its stability chart reads EDA's `concordance_per_period` (Q542).
+- **V103** (the ML audit of the answers) Cochran's Q weights each period by the SE at the window's
+  concordance on the period's own rows (EDA's per-period `se` sits at the period's own value and
+  collapses to its floor on a thin period near 0 or 1: 3–4% false `concordance_unstable` in
+  simulation); "not significant" is judged with the SE at the threshold (0.5 for a flip), a
+  best-order `too_strong` needs 4 SE (EDA's non-monotone margin); a null set's key is every
+  current null cell of the compared periods. Not built: a floor on the relative range (the SDS's
+  call: as the signal nears 0.5, Cochran's Q alone decides).
 Applied without a decision: `environment.md`'s paths and functions, `architecture.md` §4, §9, §10
 and the stage table, `evaluation.md`'s support rule (`strata.min_events`) and OD-12 scope,
 `monitoring.md`'s PSI pointer, `training.md`'s signature and the train-only ranking inside a

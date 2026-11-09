@@ -22,17 +22,18 @@ returns its log entry and raises with its numbers when the window can't be model
 
 Stage 2 adds what EDA and Feature Checks read (D-050, A28, A29): the target bins of the counts
 table, the group summary (binary: positive events, the rate with its Wilson interval; regression:
-units with a non-zero target, the mean with its t-interval and the median, the non-zero share),
-the rare effect (a rate or mean ratio), the concordance's standard error, the events warning, the
-support's name, the target's headline (`base_rate_views`), the shrinkage of the level encoding
-and whether a lift exists: a ratio to a mean needs a positive mean, so a regression target whose
-mean is not positive shows "not available: mean not positive", decided before anything runs
-(D-035, V8). Both tasks share one rule where the formula is the same (the lift test). EDA's
-tables add more: how a feature's cells give its concordance (a regression target with every
-value a bin goes through Kendall's τ, not the dense table), the estimate per window period with
-its interval from the population counts and the cells (a mean's t-interval from the cells' sum
-of squares), the target class a box plot groups by, how an estimate is printed and named (rate
-or mean) and whether the target has a distribution to show per group.
+units with a non-zero target, the mean with its t-interval and the median, the non-zero share), the
+rare effect (Cohen's h on two rates, Cohen's d on two means, each with its SE in effective clients),
+the concordance's standard error, the events warning, the support's name, the target's headline
+(`base_rate_views`), the shrinkage of the level encoding and whether a lift exists: a ratio to a
+mean needs a positive mean, so a regression target whose mean is not positive shows "not available:
+mean not positive", decided before anything runs (D-035, V8). Both tasks share one rule where the
+formula is the same (the lift test). EDA's tables add more: how a feature's cells give its
+concordance (a regression target with every value a bin goes through Kendall's τ, not the dense
+table), the estimate per window period with its interval from the population counts and the cells (a
+mean's t-interval from the cells' sum of squares), the target class a box plot groups by, how an
+estimate is printed and named (rate or mean) and whether the target has a distribution to show per
+group.
 """
 
 from collections.abc import Callable
@@ -345,23 +346,70 @@ def _regression_group(target: pd.Series, base: float) -> dict[str, float]:
     return _with_lift(summary, base)
 
 
-def _rate_ratio(cell: float, rest: float) -> float:
-    """The rare effect: a cell's rate over the rest's; a positive cell over a zero rest is
-    infinite and nothing over nothing is 1 (no difference). Call only when `lift_available`."""
-    if rest != 0:
-        return cell / rest
-    return 1.0 if cell == 0 else float(np.inf)
+def _cohens_h(
+    minority: pd.DataFrame, dominant: pd.DataFrame, sizes: tuple[float, float]
+) -> tuple[float, float]:
+    """The rare effect: Cohen's h of the minority's rate against the dominant value's,
+    `2·asin√p₁ − 2·asin√p₂` (signed), from both sides' labelled cells, and its SE
+    `√(1/n₁ + 1/n₂)`, `sizes` the sides' rows in effective clients. Defined for any two rates:
+    the arcsine-square-root scale keeps a proportion's variance independent of the proportion.
+    Call only when `_h_unavailable` says '' (D-035)."""
+    reason = _h_unavailable(minority, dominant)
+    if reason:
+        raise ValueError(f'rare_effect: {reason}; decide "not available" before calling')
+    h = 2 * np.arcsin(np.sqrt(_mean(minority))) - 2 * np.arcsin(np.sqrt(_mean(dominant)))
+    return float(h), float(np.sqrt(1 / sizes[0] + 1 / sizes[1]))
 
 
-def _mean_ratio(cell: float, rest: float) -> float:
-    """The rare effect: a cell's mean over the rest's. Call only when `lift_available(base)` and
-    the rest's mean is positive; the caller decides "not available" up front (D-035)."""
-    if not rest > 0:
-        raise ValueError(
-            f"rare_effect: the rest's mean {rest} is not positive, so no mean ratio exists; "
-            'decide "not available" before calling'
-        )
-    return cell / rest
+def _cohens_d(
+    minority: pd.DataFrame, dominant: pd.DataFrame, sizes: tuple[float, float]
+) -> tuple[float, float]:
+    """The rare effect: Cohen's d, the minority's mean minus the dominant value's over their
+    pooled standard deviation (from the cells' `sum_y2`, on the rows), and its SE
+    `√((n₁ + n₂)/(n₁n₂) + d²/(2(n₁ + n₂)))`, `sizes` the sides' rows in effective clients. Call
+    only when `_d_unavailable` says '' (D-035)."""
+    reason = _d_unavailable(minority, dominant)
+    if reason:
+        raise ValueError(f'rare_effect: {reason}; decide "not available" before calling')
+    n1, n2 = sizes
+    d = (_mean(minority) - _mean(dominant)) / np.sqrt(_pooled_variance(minority, dominant))
+    return float(d), float(np.sqrt((n1 + n2) / (n1 * n2) + d**2 / (2 * (n1 + n2))))
+
+
+def _mean(side: pd.DataFrame) -> float:
+    """The mean target (a rate or a mean) of one side's labelled cells."""
+    return side["sum_y"].sum() / side["n"].sum()
+
+
+def _pooled_variance(minority: pd.DataFrame, dominant: pd.DataFrame) -> float:
+    """The two sides' pooled variance from the cells' sums, the one-pass
+    `Σ(Σy² − (Σy)²/n) / (n₁ + n₂ − 2)`, floored at 0 (rounding)."""
+    squares = sum(
+        side["sum_y2"].sum() - side["sum_y"].sum() ** 2 / side["n"].sum()
+        for side in (minority, dominant)
+    )
+    return max(squares / (minority["n"].sum() + dominant["n"].sum() - 2), 0.0)
+
+
+def _h_unavailable(minority: pd.DataFrame, dominant: pd.DataFrame) -> str:
+    """Why Cohen's h cannot exist ('' when it can): a side without labelled rows."""
+    if minority["n"].sum() == 0 or dominant["n"].sum() == 0:
+        return "a side without labelled rows"
+    return ""
+
+
+def _d_unavailable(minority: pd.DataFrame, dominant: pd.DataFrame) -> str:
+    """Why Cohen's d cannot exist ('' when it can): fewer than two labelled rows a side, or no
+    spread (the pooled variance at the one-pass formula's rounding, relative to the mean
+    square)."""
+    if minority["n"].sum() < 2 or dominant["n"].sum() < 2:
+        return "fewer than two labelled rows a side"
+    mean_square = (minority["sum_y2"].sum() + dominant["sum_y2"].sum()) / (
+        minority["n"].sum() + dominant["n"].sum()
+    )
+    if _pooled_variance(minority, dominant) <= 1e-12 * max(mean_square, 1.0):
+        return "no spread in the target on both sides"
+    return ""
 
 
 def _binary_se(value: float, events: float, non_events: float, target_shares: np.ndarray) -> float:
@@ -520,7 +568,9 @@ TASK_SPECS = {
         "target_bins": _binary_target_bins,
         "summarise_group": _binary_group,
         "summary_columns": SUMMARY_COLUMNS,  # the columns of a group table
-        "rare_effect": _rate_ratio,
+        "rare_effect": _cohens_h,  # (minority, dominant, effective sizes) -> (effect, SE)
+        "rare_effect_unavailable": _h_unavailable,  # why the effect cannot exist, or ''
+        "rare_effect_name": "Cohen's h",
         "concordance_se": _binary_se,
         "client_support": _binary_client_support,
         "events_warning": partial(_events_warning, support=BINARY_SUPPORT),
@@ -528,6 +578,8 @@ TASK_SPECS = {
         "base_rate_views": _binary_headline,
         "shrinkage_rows": _binary_shrinkage_rows,
         "lift_available": _lift_available,
+        # Cochran's Q weighs a period by Hanley–McNeil at the window's value on the period's rows
+        "period_se_at_window_value": True,
         "cells_concordance": _table_concordance,
         "period_estimate": _binary_period_estimate,
         "target_class": _binary_class,
@@ -547,7 +599,9 @@ TASK_SPECS = {
         "target_bins": _regression_target_bins,
         "summarise_group": _regression_group,
         "summary_columns": AMOUNT_SUMMARY_COLUMNS,
-        "rare_effect": _mean_ratio,
+        "rare_effect": _cohens_d,
+        "rare_effect_unavailable": _d_unavailable,
+        "rare_effect_name": "Cohen's d",
         "concordance_se": _regression_se,
         "client_support": _regression_client_support,
         "events_warning": partial(_events_warning, support=REGRESSION_SUPPORT),
@@ -555,6 +609,7 @@ TASK_SPECS = {
         "base_rate_views": _regression_headline,
         "shrinkage_rows": _regression_shrinkage_rows,
         "lift_available": _lift_available,
+        "period_se_at_window_value": False,  # Kendall's null SE does not depend on the value
         "cells_concordance": _regression_concordance,
         "period_estimate": _regression_period_estimate,
         "target_class": _regression_class,

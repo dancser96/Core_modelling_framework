@@ -1,5 +1,5 @@
 # Reporting and model card
-**Status:** built in part 2026-11-04 (Stage 2 major step 2: the renderer, the five primitives and `side_by_side`, the blocks and the theme, built with the EDA report; reviews 2 and 3 applied 2026-11-05/06); the Feature Checks report comes with major step 3 and the model card in M2.3/M2.4 · **Legacy:** `src/card.py`, `src/analysis.py` plotting helpers
+**Status:** built in part 2026-11-04 (Stage 2 major step 2: the renderer, the five primitives and `side_by_side`, the blocks and the theme, built with the EDA report; reviews 2 and 3 applied 2026-11-05/06; the Feature Checks report and `formats.py` built 2026-11-06, major step 3); the model card comes in M2.3/M2.4 · **Legacy:** `src/card.py`, `src/analysis.py` plotting helpers
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [feature ledger](feature_ledger.md) ·
 [evaluation](evaluation.md) · [monitoring](monitoring.md) · [lifecycle](lifecycle.md) ·
 [config](config.md) (template explanations, audit log) · [environment](environment.md) (theme) ·
@@ -14,7 +14,7 @@ tables and plotly charts, plotly.js embedded once per file so a report opens off
 bank. Every report has the same four parts: **summary → core → extended → appendix** (D-036).
 Stage 2 builds the renderer, the chart primitives, the shared blocks and a neutral theme
 (`src/core_modelling/reporting/`, built 2026-11-04 with the EDA report), and two reports with
-them: `eda/report.html` (built) and `feature_checks/report.html` (next), each beside its stage's
+them: `eda/report.html` and `feature_checks/report.html` (both built), each beside its stage's
 artifacts (D-136). Every figure is
 pre-aggregated, there is no cap on figures, and a report regenerates from the resolved config.
 Notebooks display the same objects (`StageResult.views`) and never assemble a report. The
@@ -41,9 +41,9 @@ headline numbers from `eda.json` so its reader knows the population.
   warning) → core (funnel, sources per period, target per period, target by stratum, univariate
   ranking, the key features at the decision's slices, key-feature deep dives with their strata
   pivots) → extended (reference groups, correlation overview, value profile) → appendix.
-- **Feature Checks:** summary (EDA's headline, choices, flags and notes per step, held features)
-  → core (findings per step, proposed decisions, ledger with decisions) → extended (per-period
-  concordance and PSI for every candidate, redundancy clusters) → appendix.
+- **Feature Checks:** summary (choices, how to read, EDA's headline, warnings, flags and notes,
+  held features) → core (findings per step, proposed decisions, ledger with decisions) →
+  extended (per-period concordance and PSI for every candidate) → appendix.
 
 Every report opens with the one **`CHOICES` table** in three columns, Choice, Value and
 Alternatives; when to move to an alternative is the config template's and the component docs' to
@@ -57,7 +57,11 @@ explain, not the report's (D-032).
 - `charts.py`: `bar_with_intervals`, `lift_chart`, `box_from_quartiles`, `grouped_lines`,
   `heatmap`, each returning a plotly figure with the chart rules applied, and `side_by_side`,
   which sets two of them as one figure of two panels (details under "The chart primitives");
-- `blocks.py`: `CHOICES` (23 rows), `choices_block(resolved, choices) -> Styler`,
+- `formats.py`: how numbers read in a table, shared by every report: `column_formats(df, task)`
+  (each known column's format by name, from the shared column lists `CONCORDANCES`, `SHARES`,
+  `THREE_DECIMALS`, `PLAIN`, `P_VALUES`, `ESTIMATES` and the prefixes), `plain_number(x)` and
+  `p_value(x)`;
+- `blocks.py`: `CHOICES` (31 rows), `choices_block(resolved, choices) -> Styler`,
   `headline(numbers)`, `warnings_block(items)` (numbered), `how_to_read(bins, estimate_noun,
   support_name, group_support)`; there is no `appendix` function: a stage composes its appendix
   from these blocks;
@@ -85,8 +89,9 @@ and recorded in the log (Q455).
    2. **Core** views.
    3. **Extended** views, or "not available: reason" where a view is declared incompatible up
       front (`CLAUDE.md` §1 rule 8).
-   4. **Appendix:** the resolved config with the origin of every entry-written field and the
-      run's housekeeping (collect log, timings).
+   4. **Appendix:** the resolved config, the audit log and the run's housekeeping (collect log,
+      entries written, timings). The origin of every entry-written value is the header
+      `resolve_config(save_to=…)` writes into a saved `resolved_config.yml`, not the report's.
 3. **Theme:** neutral in the repo (`THEME`); a theme file in `conf/local/` (palette, fonts, logo
    path) is read in M4, when the bank's theme is known. Nothing in the repo names a brand.
 4. **Model card = structured facts only**, with a versioned schema (§2). It covers:
@@ -109,7 +114,9 @@ and recorded in the log (Q455).
    notebook (D-039). Decisions are read from the audit log when the report is written, never
    stored ([feature ledger](feature_ledger.md)).
 8. **How-to-read notes,** in the summary of every report that shows a concordance, five short
-   paragraphs (`how_to_read`):
+   paragraphs. EDA's (`how_to_read`) are below; the Feature Checks report writes its own five
+   (concordance read in the window's direction, a flag, a note, grey, `null`;
+   [feature checks](feature_checks.md) "The report"):
    - concordance: "Concordance says how well a feature orders clients by the target: 0.5 is no
      better than chance, 1 a perfect ordering, whichever way round (the direction column says
      which). For a yes/no target it is the AUC of that feature alone.", then "Numerics are read
@@ -140,21 +147,25 @@ and recorded in the log (Q455).
 | Extended: reference groups | per tag: rows kept and excluded per window period, then sizes, composition and key-feature SMDs | `funnel`, `reference_groups` |
 | Extended: correlation overview | `heatmap` of the key features only (one without a compared pair left out, counted in the subtitle); beneath it, the candidates each represents | `correlation`, `ranking` |
 | Extended: value profile | two tables in rank order: the numerics' range and ±infinity share, the categoricals' three largest levels | `profile` |
+| Extended: concordance per period | one feature × window period table, every candidate in rank order, in the window's direction, greyed below `strata.min_events`, blank where not available | `concordance_per_period` |
 | Appendix | kinds with overrides and sources; the ledger (identity, EDA); resolved config; decisions; collect log; timings (a table) | ledger; `resolved_config.yml`; `eda.json` |
 
 ### The Feature Checks report
 
 | Section | Views | Source table |
 |---|---|---|
-| Summary | EDA's headline; choices block; how to read; flags and notes per step; held features | `eda.json`; `feature_checks.json`; `findings` |
-| Core: findings per step (fixed order) | one table per step | `findings` |
-| Core: proposed decisions | grouped flags with the `record_decision` call text | `proposed_decisions` |
+| Summary | choices block; how to read (five notes); EDA's headline; numbered warnings (skipped steps, always the all-client one); flags and notes (per finding its kind and count, a flag's features named, a note's counted); held features with each open flag's value (`flag_values`; the hold-out sentence as the table's caption) | resolved config; `feature_checks.json` (with `eda_headline`); `findings` |
+| Core: findings per step (fixed order, one subsection per step: "Quality" … "Redundancy") | per step the raised findings' texts (a table), one table (value, threshold, the ledger's statistics, detail), what it could not test; "Not run" when skipped; redundancy first shows one row per cluster, then its feature table | `findings`, `unavailable`, `clusters`; ledger |
+| Core: proposed decisions | a table (per open flag finding its threshold and each feature's value) plus the two `record_decision` calls per finding in one code block | `proposed_decisions` |
 | Core: ledger with decisions | table | ledger + `render_decisions` |
-| Extended: per-period concordance and PSI, every candidate | table; `grouped_lines` | `per_period` |
-| Extended: redundancy clusters | one table per cluster, sorted by concordance | `clusters`; ledger |
-| Appendix | resolved config; timings | `resolved_config.yml`; `feature_checks.json` |
+| Extended: per period, every candidate | a line pointing to EDA's report for the concordance per window period; one feature × period table of PSI against the snapshot per compared period (the caption names `psi_note_min` and `psi_max`); `grouped_lines` of the per-period concordance of the features `concordance_unstable` raised ("Not available" without one), greyed below `strata.min_events` | `per_period` (label-free); EDA's `concordance_per_period`; `findings` |
+| Appendix | resolved config; decisions (the audit log); entries written; timings | resolved config; audit log; `feature_checks.json` |
 
-The report never suggests dropping a feature (Q472) or a verb for a flag (Q449).
+Its choices block adds eight `CHOICES` rows to the shared ones: the support rule
+(`strata.min_events`), the five steps' thresholds (each step's mapping, "not run" when skipped),
+the skipped steps and the compared periods. The report never suggests a verb for a flag (Q449);
+for near-duplicates it names the trade-off and leaves the choice to a person (Q472). Each view's
+columns and wording: [feature checks](feature_checks.md) "The report".
 
 ### The renderer
 - A section is `(heading, blocks)`; a block is a Styler, a plotly figure, a str (an HTML
@@ -165,9 +176,15 @@ The report never suggests dropping a feature (Q472) or a verb for a flag (Q449).
   is rendered with `include_plotlyjs=False, full_html=False` and its own `div_id`
   (`figure_html`). `include_plotlyjs=False` with `full_html=True` gives a broken page.
 - Tables go through `Styler.to_html()`; Styler raises above `styler.render.max_elements` =
-  262,144 cells (the ledger is far below). A value column (quantiles, medians) prints with
-  thousands separators from 1,000 and four significant digits below, never in scientific
-  notation.
+  262,144 cells (the ledger is far below). Numbers read by `formats.column_formats`: a value
+  column (quantiles, medians, a finding's value and threshold) prints through `plain_number`,
+  with thousands separators from 1,000 and four significant digits below, never in scientific
+  notation; a p-value below 0.0001 reads "< 0.0001".
+- A table's caption is styled inside its Styler (`style_table`'s `caption`, `html.CAPTION_CSS`:
+  top, left, bold, 1.1em, the theme's muted colour), so a notebook shows it as the report does.
+  The page's headings step down from h1 1.6rem and h2 1.3rem to h3 1.2rem and h4 1.1rem, above
+  the browser's defaults, so a subsection's heading (a Feature Checks step) reads larger than
+  the captions beneath it.
 - No templating beyond what Styler needs: string building plus plotly, and a CSS block from
   `THEME`.
 - No WebGL traces (browsers allow 8–16 WebGL contexts per page): bars, box plots and markers are
@@ -272,6 +289,7 @@ cannot follow the page's text colour, and the report page is white. The path
   `choices_block` (the "metric" row shows `decision.metric`, or "derived from decision.type" until
   Training derives it, M2.3), `headline`, `warnings_block`, `how_to_read(bins, estimate_noun,
   support_name, group_support)`.
+- `reporting/formats.py`: `column_formats`, `plain_number`, `p_value` and the shared column lists.
 - `reporting/theme.py`: `THEME`.
 - Each stage builds its own sections from its tables ([EDA](eda.md),
   [feature checks](feature_checks.md)).
@@ -293,6 +311,9 @@ def choices_block(resolved: UseCaseConfig, choices: list[dict]) -> Styler: ...
 def how_to_read(bins: int | None, estimate_noun: str, support_name: str,
                 group_support: int) -> list[str]: ...
 def side_by_side(left: go.Figure, right: go.Figure, height: int = 380) -> go.Figure: ...
+def column_formats(df: pd.DataFrame, task: str) -> dict[str, str | Callable[[float], str]]: ...
+def plain_number(x: float) -> str: ...
+def p_value(x: float) -> str: ...
 ```
 
 `render_report` returns the page; the stage writes it with `artifacts.write_stage(result,

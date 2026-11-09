@@ -33,6 +33,7 @@ from core_modelling.eda.deep_dives import (
     DEEP_DIVE_GROUPS,
     MIN_BIN_SUPPORT,
     bin_table,
+    concordance_per_period,
     level_table,
     numeric_groups,
     per_period_concordance,
@@ -61,9 +62,9 @@ from core_modelling.eda.ranking import (
 from core_modelling.eda.report import (
     _concordance_row,
     _correlation_view,
+    _per_period_view,
     _profile_views,
     _slices_views,
-    _value,
 )
 from core_modelling.eda.slices import (
     CURVE_COLUMNS,
@@ -82,6 +83,7 @@ from core_modelling.eda.slices import (
 from core_modelling.environment import EnvironmentConfig
 from core_modelling.ledger import COLUMNS_BY_STAGE
 from core_modelling.periods import PERIODS
+from core_modelling.reporting.formats import plain_number
 from core_modelling.reporting.theme import THEME
 from core_modelling.statistics.cells import pool_periods
 from core_modelling.statistics.distributions import bin_labels, merge_bins, quantile_edges
@@ -221,12 +223,13 @@ def test_levels_count_distinct_non_null_eligible_values() -> None:
 
 
 def _hand_cells(feature: str, rows: list[tuple]) -> pd.DataFrame:
-    """One feature's current cells from `(period, bin, target, n, fold)` rows, `bin` None the
-    null bin, a binary target."""
+    """One feature's current cells from `(period, bin, target, n, fold)` rows, `bin` "a" to "e"
+    in order or None the null bin (the last order), a binary target."""
     frame = pd.DataFrame(rows, columns=["period", "bin", "target", "n", "fold"])
+    orders = {letter: order for order, letter in enumerate("abcde")}
     return frame.assign(
         feature=feature, lagged=False, is_null=frame["bin"].isna(),
-        bin_order=frame["bin"].map({"a": 0, "b": 1}).fillna(2).astype(int),
+        bin_order=frame["bin"].map(orders).fillna(len(orders)).astype(int),
         target_bin=frame["target"].astype(str), sum_y=frame["target"] * frame["n"],
         sum_y2=frame["target"] * frame["n"],
     ).assign(bin=frame["bin"].fillna("null"))  # fmt: skip
@@ -280,6 +283,65 @@ def test_unavailable_statistics_are_decided_up_front_and_a_flip_reads_below_half
     assert (stats.loc[list(reasons), signs] == 0).all().all()
     gone = per_period_concordance(cells, "no_events", *args, 0, False)
     assert gone["concordance"].isna().all() and gone["unavailable"].str.startswith("not").all()
+
+
+PERIODS_TWO = ["2025-07", "2025-08"]
+CLIENTS = {"event_rows": 100.0, "event_effective": 100.0, "non_event_rows": 100.0,
+           "non_event_effective": 100.0, "rows": 200.0, "effective": 200.0}  # fmt: skip
+
+
+def _u_shaped_rows(events_in_a: int) -> list[tuple]:
+    """Two periods of bins "a" to "e" in two client folds, the outer bins mostly events and the
+    inner ones mostly not (a U: the plain order cancels out); "a" holds `events_in_a` events."""
+    rates = {"a": events_in_a, "b": 10, "c": 10, "d": 10, "e": 40}
+    return [(p, b, t, rates[b] if t == 1 else 50 - rates[b], f)
+            for p in PERIODS_TWO for b in "abcde" for t in (0, 1) for f in (0, 1)]  # fmt: skip
+
+
+def test_a_u_shaped_numeric_reaches_its_window_value_only_in_best_order() -> None:
+    """A U-shaped numeric reads about 0.5 on the window in its plain order and well above in
+    best order, as on the snapshot; a categorical on the same cells has no best order."""
+    cells = pd.concat([_hand_cells(name, _u_shaped_rows(40)) for name in ("u_numeric", "u_code")])
+    kinds = {"u_numeric": "numeric", "u_code": "categorical"}
+    stats = feature_statistics(
+        cells, kinds, "binary", PERIODS_TWO[1], PERIODS_TWO, CLIENTS, 10.0, dict.fromkeys(kinds, 5),
+        False,
+    ).set_index("feature")  # fmt: skip
+    numeric = stats.loc["u_numeric"]
+    assert numeric["concordance_window"] == pytest.approx(0.5, abs=0.01)
+    assert numeric["concordance_best_order_window"] > numeric["concordance_window"] + 0.2
+    assert numeric["concordance_best_order_window"] == pytest.approx(
+        numeric["concordance_best_order"], abs=0.01
+    )
+    assert stats.loc["u_code", "concordance_window"] > 0.7
+    assert np.isnan(stats.loc["u_code", "concordance_best_order_window"])
+
+
+def test_concordance_per_period_reads_every_ranked_feature_in_its_window_direction(
+    variant: Callable[..., UseCaseConfig],
+) -> None:
+    """Every ranked feature's `per_period_concordance` in rank order, each in its
+    `raw_sign_window`; the view pivots it feature × period in that order, greyed where
+    insufficient, its caption naming the direction and `strata.min_events`."""
+    cells = pd.concat([_hand_cells("rising", _u_shaped_rows(10)),
+                       _hand_cells("u_code", _u_shaped_rows(40))])  # fmt: skip
+    ranking = pd.DataFrame({"feature": ["u_code", "rising"], "kind": ["categorical", "numeric"],
+                            "raw_sign_window": [1, 1]})  # fmt: skip
+    table = concordance_per_period(cells, ranking, "binary", PERIODS_TWO, 10.0, 200, False)
+    assert table.columns.tolist() == ["feature", "period", "rows", "support", "concordance", "se",
+                                      "insufficient", "unavailable"]  # fmt: skip
+    assert table["feature"].tolist() == ["u_code", "u_code", "rising", "rising"]
+    alone = per_period_concordance(cells, "rising", "numeric", "binary", PERIODS_TWO, 10.0, 200,
+                                   1, False)  # fmt: skip
+    pd.testing.assert_frame_equal(table.iloc[2:].reset_index(drop=True), alone)
+    assert (table["concordance"] > 0.5).all()
+    assert table["insufficient"].tolist() == [False, False, True, True]  # 220 and 160 events
+    view = _per_period_view(table, PERIODS_TWO, variant(strata={"min_events": 200}))
+    assert view.data.index.tolist() == ["u_code", "rising"]
+    assert view.data.columns.tolist() == PERIODS_TWO
+    assert "a flip reads below 0.5" in view.caption
+    assert "min_events = 200 positive events" in view.caption
+    assert THEME["insufficient"] in view.to_html()
 
 
 def test_cap_levels_name_levels_as_spark_casts_them() -> None:
@@ -764,7 +826,7 @@ def test_the_value_profile_view_splits_the_kinds_and_prints_amounts_plainly() ->
     assert categorical.data.columns.tolist() == ["feature", "rank", "missing_share", "top_levels"]
     only = _profile_views(value_profile(snapshot, {"x": "numeric"}, ranking, cells, "2025-08"))
     assert only[1] == "<p>Not available: no categorical candidate.</p>"
-    assert [_value(x) for x in (69_310.4, -1_000.0, 0.331_49, 12.0)] == [
+    assert [plain_number(x) for x in (69_310.4, -1_000.0, 0.331_49, 12.0)] == [
         "69,310", "-1,000", "0.3315", "12"]  # fmt: skip
 
 

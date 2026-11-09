@@ -6,7 +6,8 @@ fragment with its own div id and each table carries its own uuid, both counted u
 counter so a report is reproducible byte for byte. The stage writes the page with its artifacts
 (`artifacts.write_stage`'s `texts`), so a render error, which a Styler raises only when rendered,
 leaves the previous run's folder. `style_table` is the one place a DataFrame becomes a Styler:
-formats, lift colouring, greyed insufficient rows or cells, an in-cell bar, a caption.
+formats, lift colouring, greyed insufficient rows or cells, an in-cell bar, a caption styled
+in the table itself, so a notebook shows it as the report does.
 """
 
 import itertools
@@ -23,6 +24,10 @@ from core_modelling.reporting.theme import THEME
 
 MAX_LIFT_COLOUR = 0.55  # the opacity of the strongest lift colour: text stays readable
 MAX_HEADING_LEVEL = 6
+CAPTION_CSS = (
+    "caption-side: top; text-align: left; font-weight: 600; font-size: 1.1em; "
+    f"color: {THEME['muted']}; padding: 4px 0"
+)
 
 
 def paragraph(text: str) -> str:
@@ -133,7 +138,10 @@ def style_table(
     if bar is not None:
         styler = styler.bar(subset=[bar], color=THEME["bar"], vmin=bar_min)
     if caption:
-        styler = styler.set_caption(escape(caption))
+        # styled in the Styler, so a notebook shows the caption as the report does
+        styler = styler.set_caption(escape(caption)).set_table_styles(
+            [{"selector": "caption", "props": CAPTION_CSS}], overwrite=False
+        )
     if isinstance(df.index, pd.RangeIndex):
         styler = styler.hide(axis="index")
     return styler
@@ -148,6 +156,8 @@ body {{ font-family: {t["font"]}; color: {t["text"]}; background: {t["background
 h1 {{ font-size: 1.6rem; margin: 24px 0 8px; }}
 h2 {{ font-size: 1.3rem; margin-top: 40px; padding-bottom: 4px;
   border-bottom: 2px solid {t["accent"]}; }}
+h3 {{ font-size: 1.2rem; }}
+h4 {{ font-size: 1.1rem; }}
 h3, h4, h5, h6 {{ margin-top: 28px; }}
 nav.toc {{ background: {t["surface"]}; border: 1px solid {t["border"]}; border-radius: 6px;
   padding: 8px 16px; font-size: 0.9rem; }}
@@ -158,8 +168,6 @@ a {{ color: {t["accent"]}; }}
 .table-scroll th, .table-scroll td {{ border-bottom: 1px solid {t["border"]}; padding: 4px 8px;
   text-align: left; vertical-align: top; }}
 .table-scroll th {{ background: {t["surface"]}; }}
-.table-scroll caption {{ caption-side: top; text-align: left; font-weight: 600;
-  padding: 4px 0; color: {t["muted"]}; }}
 dl.kv {{ display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }}
 dl.kv dt {{ font-weight: 600; color: {t["muted"]}; }}
 dl.kv dd {{ margin: 0; }}

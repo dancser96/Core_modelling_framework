@@ -756,7 +756,7 @@ def test_regression_group_summary_with_zeros() -> None:
 
 
 def test_binary_group_summary_and_the_task_entries() -> None:
-    """The binary summary; the lift test, the rare effect, the events warning, the target
+    """The binary summary; the lift test, the events warning, the target
     bins (0 its own regression bin), the estimate's noun (no `period_interval` any more) and the
     headline."""
     binary, regression = TASK_SPECS["binary"], TASK_SPECS["regression"]
@@ -764,11 +764,6 @@ def test_binary_group_summary_and_the_task_entries() -> None:
     assert summary["support"] == 2 and summary["estimate"] == 0.4 and summary["lift"] == 2.0
     assert not regression["lift_available"](0.0) and not regression["lift_available"](-1.0)
     assert regression["lift_available"](0.1) and binary["lift_available"](0.02)
-    assert binary["rare_effect"](0.10, 0.02) == pytest.approx(5.0)
-    assert binary["rare_effect"](0.10, 0.0) == np.inf and binary["rare_effect"](0.0, 0.0) == 1.0
-    assert regression["rare_effect"](3.0, 2.0) == 1.5
-    with pytest.raises(ValueError, match="rest's mean 0.0 is not positive"):
-        regression["rare_effect"](3.0, 0.0)
     assert "499 positive events" in binary["events_warning"](499)
     assert regression["support_name"] in regression["events_warning"](499)
     assert regression["events_warning"](500) is None
@@ -781,3 +776,44 @@ def test_binary_group_summary_and_the_task_entries() -> None:
     assert headline["zero_share"] == 0.5 and headline["nonzero_units"] == 2
     with pytest.raises(ValueError, match="known targets"):
         binary["summarise_group"](pd.Series([1.0, np.nan]), 0.2)
+
+
+def _side(values: list[float]) -> pd.DataFrame:
+    """One side of a rare-value comparison as cells: one row per value, `n` 1."""
+    y = np.asarray(values, dtype=float)
+    return pd.DataFrame({"n": 1, "sum_y": y, "sum_y2": y**2})
+
+
+def _rates(positives: int, rows: int) -> pd.DataFrame:
+    """One side of a binary rare-value comparison: `positives` of `rows` labelled rows."""
+    return pd.DataFrame({"n": [rows - positives, positives], "sum_y": [0.0, positives],
+                         "sum_y2": [0.0, positives]})  # fmt: skip
+
+
+def test_rare_effect_is_cohens_h_on_rates_and_cohens_d_on_means() -> None:
+    """Cohen's h reads a fivefold rate at 0.2% → 1% far below one at 5% → 25% (0.11 and 0.60,
+    Q539), signed, with SE √(1/n₁ + 1/n₂) on the effective sizes given, and exists for any two
+    rates; Cohen's d is the mean difference over the pooled SD from the sums of squares, its SE
+    √((n₁ + n₂)/(n₁n₂) + d²/(2(n₁ + n₂))), not available under two rows a side or without
+    spread, and refused when called there."""
+    binary, regression = TASK_SPECS["binary"], TASK_SPECS["regression"]
+    low, _ = binary["rare_effect"](_rates(10, 1000), _rates(20, 10000), (1000.0, 10000.0))
+    high, se = binary["rare_effect"](_rates(250, 1000), _rates(500, 10000), (100.0, 400.0))
+    assert (low, high) == pytest.approx([0.111, 0.596], abs=0.001)
+    assert se == pytest.approx(np.sqrt(1 / 100 + 1 / 400))
+    below, _ = binary["rare_effect"](_rates(0, 50), _rates(500, 10000), (50.0, 10000.0))
+    assert below == pytest.approx(-2 * np.arcsin(np.sqrt(0.05)))
+    assert binary["rare_effect_unavailable"](_rates(0, 50), _rates(0, 10)) == ""
+    assert binary["rare_effect_unavailable"](_rates(0, 0), _rates(0, 10)) != ""
+    minority, dominant = [1.0, 2.0, 3.0, 4.0], [0.0, 0.0, 1.0, 1.0, 2.0, 2.0]
+    d, se = regression["rare_effect"](_side(minority), _side(dominant), (4.0, 6.0))
+    pooled = np.sqrt((3 * np.var(minority, ddof=1) + 5 * np.var(dominant, ddof=1)) / 8)
+    assert d == pytest.approx((2.5 - 1.0) / pooled)
+    assert se == pytest.approx(np.sqrt(10 / 24 + d**2 / 20))
+    assert regression["rare_effect_unavailable"](_side(minority), _side(dominant)) == ""
+    one = regression["rare_effect_unavailable"](_side([5.0]), _side(dominant))
+    flat = regression["rare_effect_unavailable"](_side([5.0, 5.0]), _side([1.0, 1.0, 1.0]))
+    assert (one, flat) == ("fewer than two labelled rows a side",
+                           "no spread in the target on both sides")  # fmt: skip
+    with pytest.raises(ValueError, match="no spread"):
+        regression["rare_effect"](_side([5.0, 5.0]), _side([1.0, 1.0, 1.0]), (2.0, 3.0))

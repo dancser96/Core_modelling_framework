@@ -1141,43 +1141,62 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
 Framework tests assert against the ground truth, from M2.2 (D-064, D-137). The **trap acceptance
 test** runs EDA and Feature Checks on the `dev` preset (20,000 clients: about 380 positive card
 rows per period; the `unit` preset's 5,000 clients leave a null control's concordance only 1.7
-standard errors below 0.55), generated from its seed in the test run:
-- **The acceptance list is `truth.json`'s trap list.** A test in `tests/` maps each trap kind,
-  keyed by kind **and** target, to the check that must catch it (the mapping lives there, not in
-  this package): rows whose target is one of the run configs' (card, term deposit, "any product")
-  are mapped, rows with another target (the personal loan's `inverted_u`, `rare_level`,
-  `hidden_openings` and its `eligibility_defining`) go to `NOT_CHECKS`. It asserts on
-  the window statistics (the ledger's `*_window` columns, about 1,100 positive rows, a standard
-  error near 0.015), not the snapshot's:
+standard errors below 0.55), generated from its seed in the test run. It is
+`tests/test_traps.py`, marked `traps`: the default `pytest` runs it (about 5.5 minutes of compute
+on the Mac: generation 80 s, the six Spark stage runs about 240 s), and
+`pytest -m "not slow and not traps"` skips it in a quick loop.
+- **The acceptance list is `truth.json`'s trap list.** The test maps each trap row, keyed by kind
+  **and** target, to the finding that must catch it (the mapping lives there, not in this
+  package): a row whose target is one of the run configs' (card, term deposit) is asserted on that
+  config, an "any product" row on both; every row with the personal-loan target (`process_leak`,
+  `shifted`, `inverted_u`, `rare_level`, `hidden_openings`, `eligibility_defining`) goes to
+  `NOT_CHECKS`. It asserts on the window statistics (the ledger's `*_window` columns and the
+  findings, about 1,100 positive rows, a standard error near 0.015), not the snapshot's:
 
   | Check | Trap kinds |
   |---|---|
   | `quality` | `constant`, `near_constant`, `all_null`, `low_fill`, `high_cardinality`, `eligibility_defining` |
-  | `leakage` | `leak`, `missing_leak`, `process_leak`, `upstream_target` |
+  | `leakage` | `leak`, `missing_leak`, `upstream_target`, `process_leak` (`rare_value_leak`) |
   | `time_alignment` | `shifted` (`lagged_signal_drop`), `lookahead` (`client_constant`) |
-  | `stability` | `drift` (the `psi_latest` note: the latest synthetic period is after the relaunch) |
-  | `redundancy` | `redundant`, `collinearity` |
+  | `stability` | `drift` (`psi_latest_large`: the latest synthetic period is after the relaunch) |
+  | `redundancy` | `redundant` (paired with its source), `collinearity` |
   | kind `numeric` | `decimal_type` |
 
-- **The look-ahead trap asserts `client_constant` only.** Its card concordance (≈ 0.81) sits at
-  `leakage.too_strong`'s 0.80 threshold, so asserting that flag would flap.
+- **Per kind:**
+  - the process leak is caught by `rare_value_leak` (asserted) and also raises
+    `lagged_signal_drop` (not asserted);
+  - the drift is asserted as the flag `psi_latest_large` on the login column **or** a roll-up:
+    the raw column sits just below `psi_max`'s 0.25 (a `psi_latest` note), and the roll-ups
+    drift more (0.43–0.50 on the canonical card data);
+  - collinearity is asserted as the `<product>_status` ⇔ `<product>_flag` identity: each pair
+    whose members are both read candidates raises `associated_pair` with each other.
+- **The look-ahead trap asserts `client_constant` only.** Its `dev` concordance (about 0.78 on
+  the card config, 0.77 on the term-deposit one) sits near `leakage.too_strong`'s 0.80 threshold,
+  so asserting that flag would flap.
 - **No per-period finding is asserted for the term-deposit config**: about 35 events per period
-  leave every per-period statistic below `strata.min_events`.
+  leave every per-period statistic below `strata.min_events` (greyed, still tested, so too noisy
+  to assert).
 - **`NOT_CHECKS`** is an explicit dict, trap kind (and target) → reason: an EDA view (`simpson`,
-  `onboarding`, `null_income_eligibility`), "no config: loan target" (the loan-target rows
-  named above), off by default (`dirty`, `extra`). A trap kind that is neither mapped, nor `null_control` (asserted below),
-  nor in `NOT_CHECKS` fails the test, so a new trap kind cannot slip past it.
+  `onboarding`, `null_income_eligibility`), "no config: loan target" (the loan-target rows named
+  above), off by default (`dirty`, `extra`). A trap kind that is neither mapped, nor `null_control`
+  (asserted below), nor in `NOT_CHECKS` fails the test, so a new trap kind cannot slip past it.
 - The D-088 counts per period are compared from `eda.json` (EDA's population counts), not from
   Target Factory's summary, which covers every row before eligibility.
-- **Bin count:** every numeric candidate with at least `eda.bins` distinct non-null values gets at
-  least `eda.bins / 2` bins, and no bin but a singleton holds more than 5% of its non-null rows
-  (the edges rule, T25); the failure names the feature and its bin count.
-- **False-positive bound:** on the `dev` preset's card config at most two non-trap candidates
-  may be held, named in the failure message, so `concordance_unstable` and the other flags are
-  checked against legitimate features too.
+- **Bin count:** in the snapshot's cells every numeric candidate has at least
+  min(distinct non-null values, `eda.bins // 2`) bins (50 at the configs' 100), and no bin but a
+  singleton holds more than 5% of its non-null rows (the edges rule, T25); the failure names the
+  feature and its bin count.
+- **False positives are checked on the null controls**, pure noise that must never be flagged
+  (below), and by a count-free guard (the SDS's Q545): no card-config candidate outside the
+  truth's trap list raises `too_strong`, `missingness_leak` or `lagged_signal_drop`
+  (`NEVER_ON_LEGITIMATE`), so a leakage or time-alignment check firing on genuine signal fails
+  the test. There is no bound on the count of held non-trap features (the SDS, 2026-11-09): the
+  legitimate features a flag holds by design (static attributes under `client_constant`, a
+  genuine minority under `rare_value_leak`, a drifting roll-up under a PSI flag) are a person's
+  to keep or exclude, which is why those findings stay out of the guard.
 - **The inverted-U age** (a loan-target trap) is covered by a unit test on a synthetic column
   built in the test ([EDA](eda.md)), not by the acceptance test.
-- Null controls (`null_control`) carry no signal: concordance below 0.55.
+- Null controls (`null_control`) carry no signal: window concordance below 0.55 and no flag.
 - No model beats the oracle (M2.3).
 
 The tests compare against the spec and the oracle, never against stored values, so the same
@@ -1350,6 +1369,11 @@ None. Answered in the SDS's review (2026-10-19):
 - the decisions taken during the build are confirmed.
 
 ### Deferred
+- **A trap and a control column for every Feature Checks finding** (the SDS's Q545): a control
+  sits near the threshold and must not raise the finding, so a rule that over-fires fails too.
+  Most findings have a trap today and almost none a control (the null controls only show that
+  noise raises nothing); the per-finding to-do is
+  [`worknotes/synthetic_trap_coverage.md`](../../worknotes/synthetic_trap_coverage.md).
 - An **`unstable` trap kind** (a one-month campaign flag whose link to acquisition exists in one
   window month only) waits for M4, with Feature Checks' stability.
 - A noisy copy of a real column was considered and dropped: the redundant column covers

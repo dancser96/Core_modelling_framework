@@ -57,8 +57,8 @@ the template with every option's when-to-use is `conf/base/TEMPLATE.yml`). A sec
 period and `model_input`, its own target and eligibility. A `null` on a level
 path (`levels.py`) takes the level default; any other `null` is off or derived (the template's
 reading key). `features.kinds`, `eda` and `feature_checks` show the Stage 2 defaults, as the template
-does; the two examples write `{}` for each step (its defaults) and keep `stability: {psi_max:
-0.25}`, Monitoring's drift threshold.
+does; the two examples write `{}` for each step (its defaults, `stability`'s PSI flag at 0.25
+being Monitoring's drift threshold).
 
 ```yaml
 schema_version: 1
@@ -135,12 +135,18 @@ feature_checks:
   # quality: all-null, constant, near-constant, high-missing, high-cardinality (flags); two null notes
   quality:        {dominant_share_max: 0.99, missing_share_max: 0.95, max_levels: 50,
                    nulls_may_be_zeros: {missing_min: 0.2, zero_share_max: 0.005}, nulls_informative_min: 0.55}
-  # leakage: too strong, missingness leak, rare-value leak (flags)
-  leakage:        {concordance_max: 0.80, null_concordance_max: 0.70, rare_effect_max: 5}
+  # leakage: too strong, missingness leak, rare-value leak (flags); rare_effect_max: beside a
+  # value on ≥ dominant_share_min of the filled rows, the others' rate (mean) above its by this
+  # Cohen's h (binary) or d (regression): 0.2 small, 0.5 medium, 0.8 large (feature_checks.md)
+  leakage:        {concordance_max: 0.80, null_concordance_max: 0.70, rare_effect_max: 0.8,
+                   dominant_share_min: 0.90}
   # time alignment: signal lost when lagged one period; constant within the client and predictive (flags)
   time_alignment: {signal_kept_min: 0.5, constant_clients_min: 0.99, concordance_min: 0.6}
-  # stability: power unstable across the window (flag); PSI and new levels (notes)
-  stability:      {psi_max: 0.10, heterogeneity_p_max: 0.01, concordance_range_min: 0.05, new_level_share_max: 0.01}
+  # stability: power unstable across the window (flag; the range at least concordance_range_min
+  # × |concordance_window − 0.5|); PSI a note from psi_note_min, a flag from psi_max
+  # (Monitoring's drift threshold); new levels (note)
+  stability:      {psi_note_min: 0.10, psi_max: 0.25, heterogeneity_p_max: 0.01,
+                   concordance_range_min: 0.5, new_level_share_max: 0.01}
   # redundancy: correlated and associated pairs, shown as clusters (notes)
   redundancy:     {correlation_max: 0.90, association_max: 0.90}
 
@@ -423,7 +429,7 @@ LOGGABLE_SETTINGS = {
     "feature_checks.quality.dominant_share_max": "feature_checks",
     "feature_checks.quality.nulls_may_be_zeros.missing_min": "feature_checks",
     "feature_checks.leakage.concordance_max": "feature_checks",
-    # ... every other threshold leaf of the five steps, 18 in all, at stage "feature_checks"
+    # ... every other threshold leaf of the five steps, 20 in all, at stage "feature_checks"
     "training.estimator_list": "training",
     "training.max_iter": "training",
     "training.time_budget_s": "training",
@@ -536,7 +542,9 @@ belong to the operation is refused, also when given as `null`: `features` goes w
 operations, `path` / `from` / `to` with `set`, `to_seq` with `revert`, `finding` with `flag`,
 `findings` with `keep`, and `periods`, `run_id`, `replayed_to`, `resolved_input_hash` with
 `run`. Evidence cites earlier entries as `#n`, which is how replay finds the person entries that
-cite a rule or stage entry. Entries 3 and 6 of the worked example, as stored:
+cite a rule or stage entry. `finding` values are the names in Feature Checks' [finding
+table](feature_checks.md#the-finding-table); a name or kind changed is a log-format change (from
+1.0: bump `log_schema_version` and migrate). Entries 3 and 6 of the worked example, as stored:
 
 ```json
 {
@@ -547,7 +555,7 @@ cite a rule or stage entry. Entries 3 and 6 of the worked example, as stored:
   "op": "flag",
   "finding": "leakage.too_strong",
   "features": ["cc_preapproval_score_trap_leak", "cc_campaign_response_score_trap_leak"],
-  "reason": "Concordance 0.97 and 0.88, above leakage.concordance_max 0.80",
+  "reason": "A single feature this strong is usually the target under another name or a consequence of it.",
   "data_definition_hash": "d_A",
   "hash_version": 1,
   "log_schema_version": 1
@@ -814,9 +822,14 @@ functions)); the CLI command `decide` in `core_modelling/__main__.py`.
   of five typed step models (`Quality`, `Leakage`, `TimeAlignment`, `Stability`, `Redundancy`,
   the null note's `NullsMayBeZeros`) with a default for every parameter, so an unknown
   parameter or step fails loud (each bounded: shares in (0, 1], concordance thresholds from
-  0.5, `psi_max` above 0, `rare_effect_max` above 1, `max_levels` at least 2); a step left out
-  of a present mapping is
-  `None` (not run), and the section left out is `EVERY_CHECK`, all five with their defaults;
+  0.5, `psi_note_min` and `psi_max` above 0, `rare_effect_max` in (0, 3] (Cohen's h tops out
+  at π and a d above 3 is implausible, so a ratio-era 5 fails at load instead of never firing),
+  `leakage.dominant_share_min` in (0.5, 1), `stability.concordance_range_min` in [0, 2] (a
+  multiple of the window's signal), `max_levels` at least 2), and `stability.psi_note_min`
+  above `stability.psi_max` is refused naming both (a `model_validator` on `Stability`: the PSI
+  note fires between the two); a step left out of a
+  present mapping is `None` (not run), and the section left out is `EVERY_CHECK`, all five with
+  their defaults;
   a present mapping naming no step (`feature_checks: {}`) is refused naming the five, and
   `quality.nulls_informative_min` at or above `leakage.null_concordance_max` is refused naming
   both values when both steps are present (two `model_validator`s on `FeatureChecks`; with

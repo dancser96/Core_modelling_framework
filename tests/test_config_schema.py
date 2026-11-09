@@ -568,7 +568,8 @@ def test_stage_2_fields_round_trip(tmp_path: Path, raw: dict) -> None:
     quality = cfg.feature_checks.quality
     assert (quality.max_levels, quality.dominant_share_max) == (30, 0.99)
     assert quality.nulls_may_be_zeros.model_dump() == {"missing_min": 0.3, "zero_share_max": 0.005}
-    assert cfg.feature_checks.stability.psi_max == 0.25  # the example's override
+    stability = cfg.feature_checks.stability
+    assert (stability.psi_note_min, stability.psi_max) == (0.10, 0.25)  # the example's `{}`
     assert cfg.time.validation_period is None
     assert UseCaseConfig.model_validate(cfg.model_dump(mode="json")) == cfg
 
@@ -580,7 +581,8 @@ def test_feature_checks_left_out_runs_every_step_with_its_defaults(
     del raw["feature_checks"]
     checks = _load(tmp_path, raw).feature_checks
     assert checks == EVERY_CHECK
-    assert (checks.leakage.concordance_max, checks.stability.psi_max) == (0.80, 0.10)
+    assert (checks.leakage.concordance_max, checks.stability.psi_max) == (0.80, 0.25)
+    assert checks.stability.psi_note_min == 0.10
     assert checks.quality.nulls_may_be_zeros.zero_share_max == 0.005
 
 
@@ -588,9 +590,26 @@ def test_step_left_out_of_a_present_mapping_is_not_run(tmp_path: Path, raw: dict
     """A present mapping runs only the steps it names, each with its defaults filled (V6)."""
     raw["feature_checks"] = {"leakage": {"concordance_max": 0.9}}
     checks = _load(tmp_path, raw).feature_checks
-    assert (checks.leakage.concordance_max, checks.leakage.rare_effect_max) == (0.9, 5)
+    assert (checks.leakage.concordance_max, checks.leakage.rare_effect_max) == (0.9, 0.8)
+    assert checks.leakage.dominant_share_min == 0.90
     left_out = [checks.quality, checks.time_alignment, checks.stability, checks.redundancy]
     assert left_out == [None] * 4
+
+
+@pytest.mark.parametrize(
+    ("step", "leaf", "value"),
+    [("leakage", "dominant_share_min", 0.5), ("leakage", "dominant_share_min", 1.0),
+     ("leakage", "rare_effect_max", 0.0), ("leakage", "rare_effect_max", 5.0),
+     ("stability", "concordance_range_min", 2.01)],
+)  # fmt: skip
+def test_feature_checks_leaves_refuse_values_outside_their_bounds(
+    tmp_path: Path, raw: dict, step: str, leaf: str, value: float
+) -> None:
+    """A dominant value must hold more than half of the filled rows and less than all of them,
+    the rare effect (Cohen's h or d) bound is positive, and the relative concordance range is at
+    most 2 (from the full signal to its mirror image)."""
+    raw["feature_checks"] = {step: {leaf: value}}
+    assert leaf in _error(tmp_path, raw)
 
 
 def test_present_mapping_naming_no_step_refused(tmp_path: Path, raw: dict) -> None:
@@ -619,6 +638,17 @@ def test_nulls_informative_min_must_lie_below_the_leak_bound(tmp_path: Path, raw
     raw["feature_checks"] = {"quality": {"nulls_informative_min": 0.75}}
     assert "must be below feature_checks.leakage.null_concordance_max 0.7" in _error(tmp_path, raw)
     assert "null_concordance_max 0.6" in message
+
+
+def test_psi_note_min_above_psi_max_refused(tmp_path: Path, raw: dict) -> None:
+    """The PSI note's floor above the flag's bound is refused naming both leaves and values; equal
+    loads (the note then never fires)."""
+    raw["feature_checks"]["stability"] = {"psi_note_min": 0.3, "psi_max": 0.2}
+    message = _error(tmp_path, raw)
+    assert "feature_checks.stability.psi_note_min 0.3 must be at most" in message
+    assert "feature_checks.stability.psi_max 0.2" in message
+    raw["feature_checks"]["stability"] = {"psi_note_min": 0.25}
+    assert _load(tmp_path, raw).feature_checks.stability.psi_note_min == 0.25
 
 
 def test_unknown_step_or_parameter_refused_naming_it(tmp_path: Path, raw: dict) -> None:

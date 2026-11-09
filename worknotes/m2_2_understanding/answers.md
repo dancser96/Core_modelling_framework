@@ -2650,3 +2650,159 @@ chat (`worknotes/handovers/m2-2-major-step-3.md`).
   runs off. Bars are unchanged.
 - Q531. "Do not split report.py, might be revisited based on LDS feedback." → `eda/report.py`
   stays one module.
+
+# Feature Checks review 1 (2026-11-09): remarks R42–R55, Q532–Q538 answered
+The SDS's first review of the Feature Checks build (major step 3), verbatim, with the outcome of
+each. The SDS read the notebook, the report, the questions and the vetoes, not yet the code. The
+follow-up questions are Q539–Q545 in `feature_checks_questions.md`.
+- R42. "Note that in the first review round, I have only looked at the notebook, the report, the
+  questions and vetoes, have not reviewed the code yet, mind this in the review guide updates." →
+  the review guide for round 2 leads with the code, then what this round changed.
+- R43. "Is it possible that the above-table tdescription HTML blocks be a bit larger font and
+  left-aligned, so that it looks better in the notebook and doesn't blend it with everything
+  else? I see that it works well in the report but looks weird in the notebook. On the other
+  hand, major segment names (leakage, stability etc) are not big enough and capitalized in the
+  report" → a table's caption is styled inside the table itself (top, left, bold, 1.1 times the
+  table's font, muted), so notebooks 02 and 03 show it as the report does; the report's step
+  headings read "Quality", "Leakage", "Time alignment", "Stability", "Redundancy", and its third-
+  and fourth-level headings are larger.
+- R44. "Step 2 concordance_window displayed is the higher or standard and non-monotone one,
+  right?" → answered in chat: the standard (plain) concordance, its bins in their order, pooled
+  over the window's periods; the best-order (non-monotone) value exists on the snapshot only and
+  enters the ledger's `concordance` when a feature is marked non-monotone. Follow-up: Q541
+  (`too_strong` sees only the monotone value).
+- R45. "In the step 2 held features, is it possible/would it add value to have one more column
+  which displays in a dictionary format what the problematic value was? So if it's like
+  leakage.too_strong then it would be {'concordance': 0.95}. If there are checks where this view
+  would be too reductionist, let me know" → the held table's `flag_values`: per open flag, its
+  statistic and this run's value (`not raised`: open from an earlier run). Reductionist, said in
+  chat: `rare_value_leak` (a ratio without the two rates and the minority's size: the detail has
+  them), `concordance_unstable` (a p-value without the range), `client_constant` (no number tells
+  a static attribute from a look-ahead).
+- R46. "One thing a DS will need on the spot for any assisted workflow is quick data access to
+  check on any findings; make sure that in notebooks this is available" → notebook 03's step 1
+  loads the frames (`build_frames`: the snapshot in pandas, every compared period's eligible rows
+  in Spark), and a new step 8 shows three checks on them: a feature's target by value, a few
+  clients' values across the periods, a feature's distribution per compared period.
+- R47. "Why are there so many nulls_informative columns on all sorts of different raw inputs (but
+  with the almost exact same concordance), what is happening there?" → answered in chat: a
+  roll-up is null while the client has fewer months on the book than it spans (the generator's
+  rule), so the 37 six-month roll-ups share one null set (6.8% of the window's rows) and the 17
+  three-month roll-ups another (3.1%): two facts, "a new client", repeated per column. Follow-up:
+  Q543.
+- R48. "In time-alignment view, for client_constant finding the concordance appears three times
+  (concordance_window, detail and additional table),can you compact the info?" → the finding's
+  detail is empty and the separate table is gone: the concordance shows once, in
+  `concordance_window`.
+- R49. "I think for Stability, PSI between 0.1-0.25 should be a not, but PSI above 0.25 should be
+  a flag" → two tiers: the notes `stability.psi_window` and `stability.psi_latest` from
+  `stability.psi_note_min` (0.10), the new flags `stability.psi_window_large` and
+  `stability.psi_latest_large` from `stability.psi_max` (now 0.25), which hold the feature.
+  Measured on the canonical card data: six more holds (46 in all), the four login roll-ups of the
+  drift trap (0.43–0.50), the shifted loan trap column and one ratio
+  (`inflow_casa_vol_0_2_vs_3_5_months_ratio`, window PSI 0.26).
+- R50. "For concordance_unstable, why is there a 0.05 minimum difference, what does it want to
+  achieve? Generally I have a bit of a problem with preset numeric thresholds as for a “strong” vs
+  “weak” model they actually behave very differently, but at least the ones where it’s an input in
+  the config, one could argue the DS should have an idea of what she faces. However, this baked-in
+  inflexible thresholds are just not good really." → answered in chat: the 0.05 is a config leaf
+  (`stability.concordance_range_min`), the effect-size floor beside Cochran's Q, which on a large
+  population makes a tiny wobble significant. Follow-up: Q544 (the range relative to the
+  feature's signal; the constants outside config).
+- R51. "Redundancy findings: First, I want to see a table with clusters only, one row per cluster,
+  feature is the highest-concordance feature with the target, a column with features list in the
+  cluster and then thee computed cluster statistics you have; Afterwards, the feature-granularity
+  table, but also in that the ordering should be finding type first, but then cluster and and
+  values only afterwards. Also, wording on “no decisions should be made” is a bit strong for me,
+  surely you want to consider dropping some features if they are the same thing?" → the
+  redundancy step shows the cluster summary first (one row per cluster: its best member, that
+  member's concordance, the size, the members, the lowest association with the best, the highest
+  `explained_by_others`), then the feature table sorted by finding, cluster, then value; the
+  wording now says to consider excluding the near-duplicates that add nothing.
+- R52. "Two major questions for part 8, proposing decisions: First, why would the user give
+  findings parameter for keeping something but not for excluding? Also, what if a user wants to
+  keep half of the features and exclude the other half based on a finding’s review? Your examples
+  suggest it’s all or nothing having the same features copied into both keep and exclude
+  examples." → answered in chat: a `keep` is scoped (it settles only the findings it names, so a
+  later, different flag holds the feature again), an `exclude` is not (out of training whatever
+  its flags), so `findings` would change nothing on an exclude; the proposed exclude call now
+  names its finding in `evidence`, for the trail. Each call takes any subset: the calls' header
+  and step 9's guide say so, and the walk-through splits one finding (keeps three static
+  attributes, excludes the look-ahead column).
+- R53. "Why is concordance per period in Feature Checks’s report and not in EDA’s?" → answered in
+  chat. Follow-up: Q542.
+- R54. "For V88: shouldn’t those calculations be based on absolute values? It’s probably
+  edge-case, but if a concordance moves from 0.65 to 0.48 that should be flagged, isn’t it? And in
+  addition, if a feature would move from 0.65 to 0.35 (so the opposite of 0.5) , that’s suspicious
+  for entirely new reasons, isn’t it?" → answered in chat: the window concordance carries no
+  direction (at least 0.5) and the lagged one is read in the window's direction, so 0.65 → 0.48
+  gives `signal_kept` −0.13 and 0.65 → 0.35 gives −1.0, both flagged `lagged_signal_drop`;
+  absolute values would pass the second. Naming a flip in the detail needs the lagged value's SE:
+  part of Q540.
+- R55. "V91 (and Q534). When did I say you can hold at most two of the non-trap candidates? I
+  don’t remember such hard constraint, and if I did, I was wrong to do so." → you did not: the
+  plan's V7 (2026-11-03) introduced it in answer to a plan review, and Q534 wrongly called it
+  yours. The count bound and `EXPECTED_HOLDS` are removed; the false-positive check is the null
+  controls, which are never flagged.
+- R56 (the build time). "Extra note: I know I said no hurry, but why did you take 26-28 hours to
+  complete this stage? Based on previous times, I expected 3-4 hours of build time, this was
+  almost 10 times that" → answered in chat from the session's timestamps; T36 (a background test
+  run needs a deadline).
+- Q532. "Shouldn’t the rare_effect_max be scaled not just as a linear multiplier to probabilities
+  but rather a non-linear scalar? 0.002 -> 0.01 feels like a very different jump for me than 0.05
+  -> 0.25" → follow-up Q539 (Cohen's h and d).
+- Q533. "Yes" → categoricals stay in the rare-value rule.
+- Q534 → R55.
+- Q535. "Note my earlier PSI comment" → with R49 the example configs take the template's PSI
+  defaults (`stability: {}`), and the acceptance test asserts the flag `psi_latest_large` on the
+  login column or its roll-ups.
+- Q536. "Default" → D-088 as worded: only Feature Checks' look at drift makes a period
+  unavailable as the validation period, per data definition.
+- Q537. "General question here with regards to the support guard anywhere: Assuming a smaller
+  effective training base or rare positive rate (low count of events), wouldn’t a lot of “skipped
+  tests” be a problem? My skeptical assumption of a user is that if you just tell I have skipped
+  checks due to low events, any possible issues with the data will just be skipped because the
+  user is often lazy and will just confuse “no tests” claim with “no issues” claim. Besides this, I
+  agree with the D-031 reference, although statistical non-significance should be noted somewhere
+  with any results (in detail prssibly)" → follow-up Q540; no 2-SE condition on
+  `lagged_signal_drop` (a false hold errs the D-031 way).
+- Q538. "Default" → `check_inputs` and one `steps.py`, as built.
+
+# Feature Checks review 1, answers (2026-11-09): Q539–Q545 answered, remarks R57–R58
+The SDS's answers to review 1's follow-up questions, verbatim, with the outcome of each.
+- R57. "Note: Both for me for code review and a user who wants to better understand where
+  calculations are referenced from, seeing the shape/examples of tables that are often referenced
+  (like ledger). Can you create a 00_eda_fc_helper notebook where all you do is to load these
+  relevant tables and display it for better understanding? The idea is that as I go through the
+  code (for both EDA and Feature checks), I have a reference to compare things to; I expected the
+  notebooks to be like that, but (and this is not a critique) they are wrapped up one level
+  higher, therefore it’s really hard to review code at this point." → `notebooks/00_eda_fc_helper`:
+  it loads EDA's and Feature Checks' stored artifacts (the ledger, every table, the two jsons, the
+  audit log) read-only and shows each one's shape, columns and example rows, with what reads it.
+- R58. "Delete the extra note about the 3-4 hour time, just keep the parallelism, tight loops and
+  managed fix rounds; again, no set targets on timing, I just want efficient and quality work; I’m
+  trying to manage review and prompting timing so that I don’t spend too much of my workday just
+  waiting around." → the memory keeps parallelism, tight loops and managed fix rounds, with no
+  time target.
+- Q539. "Option (B)" → Cohen's h for a binary target, Cohen's d for a regression one, through the
+  per-task spec; `rare_effect_max` 0.8.
+- Q540. "Option (B) for now, it might be a bit risky with too many flags as an outcome but I’d
+  rather start with too many flags and adjust based on takeaways from real data" → no check skips
+  for support; each detail states the support in effective events and whether the value is more
+  than 2 SE past its threshold; a statistic that cannot exist stays "not available".
+- Q541. "Option (C), and make the change now, the LDS will not catch these small bits therefore a
+  “freeze” is not required" → EDA computes the best-order concordance on the window too, and
+  `too_strong` reads the higher of the two.
+- Q542. "As above, build it now" → EDA computes, stores and shows the window's concordance per
+  period; Feature Checks reads it; PSI per period stays in Feature Checks.
+- Q543. "Option (B); this note is actually useful as can influence (triggering a restart) minimum
+  relationship length filters too as we would generally want to model “new” and “established”
+  clients separately" → the note's detail names the features sharing its null rows, the step
+  table sorts them together, and the guide says a shared null set often marks a population (new
+  clients) worth a filter or a model of its own.
+- Q544. "Default" → `concordance_range_min` relative to the window's signal (default 0.5);
+  `DOMINANT_SHARE` becomes `leakage.dominant_share_min` (0.90).
+- Q545. "Option (B), but create a work note todo note for a synthetic data extension which I will
+  do today whereas there must be trap and check columns for every single test" → the count-free
+  guard in the trap test; `worknotes/synthetic_trap_coverage.md` lists, per finding, the trap
+  column that must fire and the control column that must not, what exists and what is missing.

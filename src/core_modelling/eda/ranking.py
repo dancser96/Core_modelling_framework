@@ -2,7 +2,8 @@
 
 `feature_statistics` reads each feature's current cells twice: the snapshot period's (the
 `concordance`, its SE, `direction`, the best order and `non_monotone`, and the snapshot shares)
-and the window periods' pooled (the `*_window` twins), with the definitions of
+and the window periods' pooled (the `*_window` twins, the best order's among them, which Feature
+Checks' leak screen reads: a U-shaped leak shows only in best order), with the definitions of
 `docs/components/eda.md` "The statistics" and the functions of `statistics/`. A snapshot's SE
 takes its support in its own rows (one per client); a window's in effective clients
 (`client_support`). A categorical's value is cross-fitted by client fold and its SE inflated by
@@ -32,7 +33,8 @@ NULL_SHARE_RANGE = (0.005, 0.995)  # the missing shares for which the null conco
 DIRECTIONS = {1: "+", -1: "-", 0: None}
 STATISTIC_COLUMNS = [
     "feature", "kind", "levels", "concordance", "concordance_se", "direction",
-    "concordance_best_order", "non_monotone", "concordance_window", "direction_window",
+    "concordance_best_order", "non_monotone", "concordance_window",
+    "concordance_best_order_window", "direction_window",
     "raw_sign", "raw_sign_window",
     "missing_share", "missing_share_window", "null_concordance", "null_concordance_window",
     "zero_share", "zero_share_window", "dominant_share", "dominant_share_window", "unavailable",
@@ -75,7 +77,8 @@ def feature_statistics(
     exact: bool,
 ) -> pd.DataFrame:
     """One row per feature of `kinds` (`STATISTIC_COLUMNS`): the ledger's EDA columns except
-    `rank`, `key_feature` and `represented_by`, plus `kind`, `direction_window`, `raw_sign`
+    `rank`, `key_feature` and `represented_by`, plus `kind`, `concordance_best_order_window`
+    (the best order on the window's pooled cells), `direction_window`, `raw_sign`
     (the snapshot's D's sign, + on an exact 0, 0 without a snapshot concordance: the direction a
     one-feature list takes, `slices.py`), `raw_sign_window` (the sign a per-period concordance
     is read in: the window's D's, so it equals `direction_window` where that exists) and
@@ -145,12 +148,10 @@ def scope_statistics(
 def _record(
     name: str, kind: str, levels: int, snapshot: dict, window: dict, prior_rows: float
 ) -> dict:
-    """One feature's row of the statistics table from its snapshot and window scopes; the best
-    order for an available numeric only (a categorical's equals its plain value by definition)."""
-    best, non_monotone = np.nan, False
-    if kind == "numeric" and not snapshot["reason"]:
-        best = best_order_concordance(snapshot["pooled"], prior_rows)
-        non_monotone = is_non_monotone(snapshot["concordance"], best, snapshot["se"])
+    """One feature's row of the statistics table from its snapshot and window scopes."""
+    best = _best_order(snapshot, kind, prior_rows)
+    plain, se = snapshot["concordance"], snapshot["se"]
+    non_monotone = not np.isnan(best) and is_non_monotone(plain, best, se)
     scopes = {"snapshot": snapshot, "window": window}
     reasons = [f"{s['reason']} in the {scope}" for scope, s in scopes.items() if s["reason"]]
     shares = ["missing_share", "null_concordance", "zero_share", "dominant_share"]
@@ -158,12 +159,22 @@ def _record(
         "feature": name, "kind": kind, "levels": levels, "concordance": snapshot["concordance"],
         "concordance_se": snapshot["se"], "direction": DIRECTIONS[snapshot["sign"]],
         "concordance_best_order": best, "non_monotone": non_monotone,
-        "concordance_window": window["concordance"], "direction_window": DIRECTIONS[window["sign"]],
+        "concordance_window": window["concordance"],
+        "concordance_best_order_window": _best_order(window, kind, prior_rows),
+        "direction_window": DIRECTIONS[window["sign"]],
         "raw_sign": _raw_sign(snapshot), "raw_sign_window": _raw_sign(window),
         **{column: snapshot[column] for column in shares},
         **{f"{column}_window": window[column] for column in shares},
         "unavailable": f"not available: {'; '.join(reasons)}" if reasons else "",
     }  # fmt: skip
+
+
+def _best_order(scope: dict, kind: str, prior_rows: float) -> float:
+    """A scope's best-order concordance for an available numeric; NaN otherwise (a categorical's
+    equals its plain value by definition)."""
+    if kind != "numeric" or scope["reason"]:
+        return np.nan
+    return best_order_concordance(scope["pooled"], prior_rows)
 
 
 def _raw_sign(scope: dict) -> int:

@@ -20,6 +20,7 @@ from core_modelling.reporting.html import paragraph, style_table
 
 STAT_STYLE = "display: inline-block; margin: 4px 16px 4px 0"  # a headline figure
 VALUE_STYLE = "display: block; font-weight: 600"  # its value on one line, its label below
+STEP_THRESHOLDS = "each threshold a config leaf; a step left out of the mapping is skipped"
 
 CHOICES: dict[str, dict] = {
     "automation_level": {
@@ -138,15 +139,58 @@ CHOICES: dict[str, dict] = {
         "path": None,
         "alternatives": "-",
     },
+    "min_events": {
+        "label": "Support rule (strata.min_events)",
+        "path": "strata.min_events",
+        "alternatives": "any count of at least 1; a period below it is greyed, still tested",
+    },
+    "quality": {
+        "label": "Quality thresholds",
+        "path": "feature_checks.quality",
+        "alternatives": STEP_THRESHOLDS,
+    },
+    "leakage": {
+        "label": "Leakage thresholds",
+        "path": "feature_checks.leakage",
+        "alternatives": STEP_THRESHOLDS,
+    },
+    "time_alignment": {
+        "label": "Time-alignment thresholds",
+        "path": "feature_checks.time_alignment",
+        "alternatives": STEP_THRESHOLDS,
+    },
+    "stability": {
+        "label": "Stability thresholds",
+        "path": "feature_checks.stability",
+        "alternatives": STEP_THRESHOLDS,
+    },
+    "redundancy": {
+        "label": "Redundancy thresholds",
+        "path": "feature_checks.redundancy",
+        "alternatives": STEP_THRESHOLDS,
+    },
+    "skipped_steps": {
+        "label": "Steps skipped",
+        "path": None,
+        "alternatives": "list the step in feature_checks; the section left out runs all five",
+    },
+    "compared_periods": {
+        "label": "Compared periods",
+        "path": None,
+        "alternatives": "set by the window and the validation period; never the validation period",
+    },
 }
 
 
 def _show(value: object) -> str:
-    """A config value as readable text: lists one item per line, dicts as `key: value` pairs."""
+    """A config value as readable text: lists one item per line, dicts as `key: value` pairs, a
+    mapping inside a mapping in braces."""
     if value is None:
         return "null"
     if isinstance(value, dict):
-        pairs = [f"{key}: {_show(item)}" for key, item in value.items() if item is not None]
+        shown = {key: f"{{{_show(item)}}}" if isinstance(item, dict) else _show(item)
+                 for key, item in value.items() if item is not None}  # fmt: skip
+        pairs = [f"{key}: {item}" for key, item in shown.items()]
         return ", ".join(pairs) or "none"
     if isinstance(value, list):
         return "\n".join(_show(item) for item in value) or "none"

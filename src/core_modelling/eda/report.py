@@ -34,11 +34,11 @@ over a non-positive whisker, T30); an empty section reads "Not available: <reaso
   represent (Styler, or a line saying none).
 - `profile` (list of two Stylers, each "Not available" without a candidate of its kind): the
   numerics' value ranges, then the categoricals' largest levels, in rank order.
+- `concordance_per_period` (Styler): every candidate × window period, in rank order, read in
+  the window's direction, greyed where insufficient (`_per_period_view`).
 - `kinds`, `ledger`, `decisions`, `collect`, `timings` (Stylers), `resolved_config` (HTML): the
   appendix.
 """
-
-from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -53,31 +53,12 @@ from core_modelling.eda.deep_dives import MIN_BIN_SUPPORT
 from core_modelling.eda.profile import QUANTILES, TOP_LEVELS
 from core_modelling.eda.slices import RANDOM, skipped_slices
 from core_modelling.reporting import blocks, charts
+from core_modelling.reporting.formats import COUNT, SHARE, column_formats, plain_number
 from core_modelling.reporting.html import paragraph, preformatted, style_table
 from core_modelling.reporting.theme import THEME
 from core_modelling.statistics.association import PAIRWISE_ROWS
 from core_modelling.tasks import TASK_SPECS
 
-
-def _value(x: float) -> str:
-    """A value as an amount reads, never in scientific notation: `69,310` from |x| ≥ 999.5, four
-    significant digits below (`0.3315`, `0.00001234`)."""
-    if abs(x) >= 999.5:  # .4g would round 999.95 to "1000" without the separator
-        return f"{x:,.0f}"
-    plain = np.format_float_positional
-    return plain(x + 0.0, precision=4, unique=False, fractional=False, trim="-")
-
-
-COUNT, SHARE = "{:,.0f}", "{:.1%}"
-CONCORDANCES = ["concordance", "concordance_plain", "concordance_se", "concordance_best_order",
-                "concordance_window", "null_concordance", "null_concordance_window",
-                "se"]  # fmt: skip
-SHARES = ["missing_share", "missing_share_window", "zero_share", "zero_share_window",
-          "dominant_share", "dominant_share_window", "nonzero_share", "nonzero_low",
-          "nonzero_high", "eligible_share", "capture", "inf_share"]  # fmt: skip
-ESTIMATES = ["estimate", "low", "high", "median", "nonzero_mean", "nonzero_median", "q1", "q3",
-             "lower_whisker", "upper_whisker"]  # fmt: skip
-PREFIXES = {"rows_": COUNT, "share_": SHARE, "median_": _value, "p10_": _value, "p90_": _value}
 RANKING_VIEW = ["rank", "feature", "kind", "concordance", "concordance_plain", "direction",
                 "concordance_window", "missing_share", "null_concordance", "zero_share",
                 "dominant_share", "levels", "key_feature", "represented_by",
@@ -93,21 +74,6 @@ ALL_CLIENTS = (
 )
 
 
-def _formats(df: pd.DataFrame, task: str) -> dict[str, str | Callable[[float], str]]:
-    """Each known column's format: counts with separators, the estimate as the task prints it,
-    shares as percentages, concordances to three decimals, lift and differences to two."""
-    estimate = TASK_SPECS[task]["estimate_format"]
-    rules = {
-        **dict.fromkeys(["rows", "support", "positive_rows", "levels", "rank", "n"], COUNT),
-        **dict.fromkeys(ESTIMATES, estimate),
-        **dict.fromkeys(SHARES, SHARE),
-        **dict.fromkeys(CONCORDANCES, "{:.3f}"),
-        **dict.fromkeys(["lift", "smd", "skew"], "{:.2f}"),
-    }
-    prefixed = {c: f for c in df.columns for p, f in PREFIXES.items() if str(c).startswith(p)}
-    return {c: rules.get(c, prefixed.get(c)) for c in df.columns if c in rules or c in prefixed}
-
-
 def _group_table(groups: pd.DataFrame, task: str, caption: str, interval: bool = False) -> Styler:
     """A group table (deep dive or stratum): rows, support, the estimate coloured by its lift,
     the lift and an amount's median and non-zero share; insufficient groups greyed."""
@@ -117,7 +83,7 @@ def _group_table(groups: pd.DataFrame, task: str, caption: str, interval: bool =
     table = groups[[column for column in shown if column in groups]].reset_index(drop=True)
     lift = table[["lift"]].rename(columns={"lift": "estimate"})
     greyed = groups["insufficient"].reset_index(drop=True)
-    return style_table(table, _formats(table, task), lift, greyed, caption=caption)
+    return style_table(table, column_formats(table, task), lift, greyed, caption=caption)
 
 
 def build_views(
@@ -147,6 +113,9 @@ def build_views(
             tables["correlation"], ranking, resolved.eda.key_features.max_correlation
         ),
         "profile": _profile_views(tables["profile"]),
+        "concordance_per_period": _per_period_view(
+            tables["concordance_per_period"], meta["compared_periods"]["window"], resolved
+        ),
         **_appendix_views(meta, resolved, ledger, decisions),
     }
 
@@ -199,7 +168,7 @@ def _target_views(tables: dict[str, pd.DataFrame], resolved: UseCaseConfig) -> d
         f"{spec['support_name']}"
     )
     shown = per_period.drop(columns="insufficient")  # the grey rows say it
-    table = style_table(shown, _formats(shown, task), greyed=per_period["insufficient"],
+    table = style_table(shown, column_formats(shown, task), greyed=per_period["insufficient"],
                         caption=caption)  # fmt: skip
     plain = tables["strata"].loc[tables["strata"]["feature"].isna()]
     steps = ("Rows per window period through each eligibility step (tagged: the rows a modelling "
@@ -243,7 +212,7 @@ def _ranking_views(ranking: pd.DataFrame, meta: dict, task: str) -> dict:
         concordance_plain=ranking["concordance"].where(ranking["non_monotone"].astype(bool)),
     )[RANKING_VIEW]
     return {
-        "ranking": style_table(view, _formats(view, task), bar="concordance", caption=caption,
+        "ranking": style_table(view, column_formats(view, task), bar="concordance", caption=caption,
                                bar_min=0.5),
         "excluded": style_table(pd.DataFrame(excluded, columns=["feature", "why"]),
                                 caption="Excluded automatically, never ranked"),
@@ -434,11 +403,11 @@ def _reference_views(table: pd.DataFrame, funnel: pd.DataFrame, task: str) -> di
     for tag, part in table.groupby("tag", sort=False):
         sizes = _tag_sizes(funnel, tag)
         caption = f"{tag}: the rows per window period the filter keeps and excludes (tag 0)"
-        views[tag] = [style_table(sizes, _formats(sizes, task), caption=caption)]
+        views[tag] = [style_table(sizes, column_formats(sizes, task), caption=caption)]
         for section, caption in captions.items():
             rows = _section_rows(part, section)
             if not rows.empty:
-                styled = style_table(rows, _formats(rows, task), caption=f"{tag}: {caption}")
+                styled = style_table(rows, column_formats(rows, task), caption=f"{tag}: {caption}")
                 views[tag].append(styled)
     return views
 
@@ -570,7 +539,7 @@ def _slices_table(slices: pd.DataFrame, resolved: UseCaseConfig, rows: int) -> S
         f"lift, greyed below MIN_BIN_SUPPORT = {MIN_BIN_SUPPORT} {spec['support_name']}"
         + (f"; skipped, above the labelled rows: {', '.join(skipped)}" if skipped else "")
     )
-    return style_table(table, _formats(table, task), lift, slices["insufficient"],
+    return style_table(table, column_formats(table, task), lift, slices["insufficient"],
                        caption=caption)  # fmt: skip
 
 
@@ -609,7 +578,7 @@ def _profile_views(profile: pd.DataFrame) -> list:
         "shares of the rows",
     }
     formats = {"rank": COUNT, "missing_share": SHARE, "inf_share": SHARE,
-               **dict.fromkeys(QUANTILES, _value)}  # fmt: skip
+               **dict.fromkeys(QUANTILES, plain_number)}  # fmt: skip
     views = []
     for kind, view in {"numeric": numeric, "categorical": categorical}.items():
         part = profile.loc[profile["kind"] == kind, view["columns"]].reset_index(drop=True)
@@ -618,6 +587,29 @@ def _profile_views(profile: pd.DataFrame) -> list:
         else:
             views.append(style_table(part, formats, caption=view["caption"]))
     return views
+
+
+def _per_period_view(
+    per_period: pd.DataFrame, window: list[str], resolved: UseCaseConfig
+) -> Styler:
+    """Every candidate's concordance per window period (`concordance_per_period`) as a feature ×
+    period table in rank order, greyed below `strata.min_events`, blank where not available."""
+    order = {"index": pd.unique(per_period["feature"]), "columns": window}
+    shown, greyed = (
+        per_period.pivot(index="feature", columns="period", values=column).reindex(**order)
+        for column in ("concordance", "insufficient")
+    )
+    support = TASK_SPECS[resolved.task]["support_name"]
+    caption = (
+        f"Every candidate's concordance per window period, in rank order, read in the window's "
+        f"direction (a flip reads below 0.5); greyed below strata.min_events = "
+        f"{resolved.strata.min_events} {support}; blank where not available "
+        "(tables/concordance_per_period's unavailable says why)"
+    )
+    formats = dict.fromkeys(shown.columns, "{:.3f}")
+    # a period the reindex adds (none in the table) is blank, not greyed
+    greyed = greyed.astype("boolean").fillna(False).astype(bool)
+    return style_table(shown, formats, greyed=greyed, caption=caption)
 
 
 def _sources_view(sources: pd.DataFrame) -> Styler | str:
@@ -655,7 +647,7 @@ def _appendix_views(
              f"{times['numeric_null_masks']:,} distinct numeric null masks")  # fmt: skip
     return {
         "kinds": style_table(kinds, caption=kinds_caption),
-        "ledger": style_table(ledger, _formats(ledger, resolved.task), caption="The ledger"),
+        "ledger": style_table(ledger, column_formats(ledger, resolved.task), caption="The ledger"),
         "resolved_config": preformatted(config),
         "decisions": style_table(decisions, caption="The audit log's entries, replayed in order"),
         "collect": style_table(collect, counts, caption="Collected frames (bytes)"),
@@ -721,6 +713,7 @@ def report_sections(views: dict) -> list[tuple[str, list]]:
             ("Reference groups", _nested(views["reference_groups"], "no modelling filter")),
             ("Correlation overview", views["correlation"]),
             ("Value profile", views["profile"]),
+            ("Concordance per period", [views["concordance_per_period"]]),
         ]),
         ("Appendix", [
             ("Kinds", [views["kinds"]]), ("Feature ledger", [views["ledger"]]),

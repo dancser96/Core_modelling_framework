@@ -151,18 +151,24 @@ feature_checks:
     # target a single field is known to predict
     concordance_max: 0.80
     null_concordance_max: 0.70           # flag: whether it is filled predicts this well (ask how)
-    rare_effect_max: 5                   # flag: a value on < 1% of rows, its rate this × the rest's
+    # flag rare_value_leak: beside a dominant value, the others' rate (mean) this far above its,
+    # as Cohen's h (binary) or d (regression): 0.2 small, 0.5 medium, 0.8 large
+    rare_effect_max: 0.8
+    dominant_share_min: 0.90             # one value on this share of filled rows: the rest is rare
   time_alignment:                        # both flags look only at features with concordance_min+
     signal_kept_min: 0.5                 # flag: keeps under this share of its signal once lagged
     constant_clients_min: 0.99           # flag: this share of clients constant, and predictive
     concordance_min: 0.6                 # the signal a feature needs before either flag looks
   stability:
-    psi_max: 0.10                        # notes: PSI window first → last, and last → latest period
+    psi_note_min: 0.10                   # note from this PSI: window first → last, or last → latest
+    psi_max: 0.25                        # flag: from this PSI the feature is held (Monitoring's
+                                         # drift threshold)
     # flag concordance_unstable: power differs across the window's periods, when Cochran's p is at
-    # most heterogeneity_p_max and the concordance's range at least concordance_range_min (the
-    # range stops a large population from flagging everything)
+    # most heterogeneity_p_max and the concordance's range at least concordance_range_min × the
+    # signal (concordance_window − 0.5; 0.5: half the signal), which stops a large population from
+    # flagging every wobble
     heterogeneity_p_max: 0.01
-    concordance_range_min: 0.05
+    concordance_range_min: 0.5
     new_level_share_max: 0.01            # note: unseen levels on this share of the latest rows
   redundancy:                            # notes, shown as clusters; a person decides what to keep
     correlation_max: 0.90                # |Spearman| of a numeric pair; also the cluster cut

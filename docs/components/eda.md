@@ -1,9 +1,10 @@
 # EDA
 **Status:** built 2026-11-04, reviews 2 and 3 applied 2026-11-05/06 (Stage 2 major step 2:
 `src/core_modelling/eda/`, `src/core_modelling/reporting/`, `notebooks/02_eda.ipynb`), with the
-decision slices, the value profile and the sources added 2026-11-06; Feature Checks is next
-(major step 3) · **Legacy:** `src/feature_stats.py`, `src/plots.py`,
-`notebooks/EDA.ipynb`
+decision slices, the value profile and the sources added 2026-11-06; Feature Checks reads its
+artifacts since 2026-11-06 (major step 3), and EDA computes the window's best order and its
+concordance per period for it since 2026-11-09 (Q541, Q542) · **Legacy:**
+`src/feature_stats.py`, `src/plots.py`, `notebooks/EDA.ipynb`
 **Related:** [dataset](dataset.md) (the frames) · [feature checks](feature_checks.md) (reads
 EDA's artifacts; owns the flag and hold-out rule) · [feature ledger](feature_ledger.md) (the
 ledger's columns) · [reporting](reporting.md) (the renderer, chart rules) · [config](config.md)
@@ -45,8 +46,10 @@ window is never collected (D-135).
   Checks *gates*: findings, flags and notes, the hold-out ([feature checks](feature_checks.md)).
   Training *selects*, on the train split only, recomputing its own statistics (D-030).
 - **What later stages reuse.** Feature Checks reads the counts table, the client-constant table,
-  the correlation table, the ledger and `eda.json`; it collects nothing and refuses to run when
-  EDA's settings digest differs from the current resolved config. Training reads the ledger
+  the correlation table, `tables/ranking` (`raw_sign_window`, `concordance_best_order_window`),
+  `tables/concordance_per_period`, the ledger and `eda.json` (with `clients`); it collects
+  nothing and refuses to run when EDA's settings digest differs from the current resolved config
+  or an older EDA run lacks one of those tables or columns. Training reads the ledger
   (`kind`, `levels`, both concordances) and compares its per-period counts with `eda.json`
   (D-088). An EDA rerun removes Feature Checks' folder and ledger columns.
 - **The per-task spec** (`tasks.py`, D-050) supplies every task-specific piece: the target bins,
@@ -65,7 +68,8 @@ window is never collected (D-135).
 6. Collect the cells (a few MB) and fit the level encoding on the pooled window cells.
 7. Compute every statistic per feature from the cells: snapshot and window twins.
 8. Compute the association matrix on the snapshot (one seeded sample of 50,000 rows).
-9. Rank; choose the key features with the correlation skip.
+9. Rank; choose the key features with the correlation skip; then every candidate's concordance
+   per window period, read in the ranking's window direction.
 10. The population views (funnel, sources per period, target per period, by stratum, reference
     groups); the key features at the decision's slices and the value profile; deep dives for the
     key features, each with its strata pivots.
@@ -349,10 +353,21 @@ definitions; Feature Checks uses the ones marked FC.
   the groups the data may reorder (at 100 bins it is the in-sample encoding's problem). Not
   computed for a categorical.
 - **Twins:** `concordance_window`, `missing_share_window`, `null_concordance_window`,
-  `zero_share_window`, `dominant_share_window` are the same functions on the window periods' cells.
-- **Per-period and heterogeneity (FC):** per-period concordances only for periods whose support
-  reaches `strata.min_events`; `cochran_q(values, ses) -> p`, weights 1/SE², χ² with k − 1 degrees
-  of freedom, none with fewer than two supported periods.
+  `zero_share_window`, `dominant_share_window` are the same functions on the window periods' cells;
+  so is `concordance_best_order_window` (a numeric's best order on the pooled window, NaN for a
+  categorical; `tables/ranking` only, not the ledger), which Feature Checks' `too_strong` reads:
+  a U-shaped leak is strong only in best order (Q541).
+- **Concordance per period (FC)** (`deep_dives.concordance_per_period(cells, ranking, task,
+  window_periods, prior_rows, min_events, exact)`, stacking `per_period_concordance` per ranked
+  candidate in rank order; `tables/concordance_per_period`): each window period's concordance
+  read in the window's raw sign (`raw_sign_window`), a categorical's cross-fitted `read=[period]`;
+  its SE on the period's own rows (one per client) at max(A, 1 − A), a categorical's times
+  `CROSS_FIT_SE_INFLATION`; `insufficient` below `strata.min_events` support, a display mark only:
+  every period with a value is computed and Feature Checks tests it (Q540, Q542). Columns:
+  `feature, period, rows` (labelled non-null rows), `support, concordance, se, insufficient,
+  unavailable`. `cochran_q(values, ses) -> p` (FC), weights 1/SE² (Feature Checks passes binary
+  SEs taken at the window's concordance, [feature checks](feature_checks.md#stability)), χ² with
+  k − 1 degrees of freedom, needs two periods with a value. The periods share clients, so Q is conservative.
 - **Distributions:** `quantile_edges(values, bins)` (the edges rule above), `merge_bins(cells,
   groups, edges)` (one feature's cells, one row per `bin_order` summed over periods and target bins, merged
   in `bin_order` by cumulative row share into about `groups` groups; a bin whose share reaches
@@ -398,7 +413,9 @@ definitions; Feature Checks uses the ones marked FC.
   semi-definite matrix) is refused, not clipped.
 - **Support rules:** `strata.min_events` for strata tables and every per-period statistic (events
   for binary, units with a non-zero target for regression); `MIN_BIN_SUPPORT = 20` for bins and
-  levels in the deep dives.
+  levels in the deep dives. Below support a cell is greyed as insufficient, never dropped, and
+  Feature Checks computes on whatever support there is
+  ([feature checks](feature_checks.md#the-finding-table)).
 - **Per-task spec entries:** `target_bins(known, exact)` (binary: none, the two values are the
   bins; regression: the edges of 20 quantile bins, every value with `eda.bins: null`, 0 always
   its own bin); `summarise_group(target, base)` on a group's known targets (binary: support =
@@ -409,12 +426,16 @@ definitions; Feature Checks uses the ones marked FC.
   `estimate`, `low`, `high`, `lift`, `insufficient`; regression adds `median`,
   `nonzero_share`, `nonzero_low`, `nonzero_high`, `nonzero_mean`, `nonzero_median`), so
   `tables/bins`, `levels` and `strata` keep their columns whatever the data;
-  `rare_effect(cell, rest)` (rate ratio / mean ratio; a positive cell over a
-  zero rest is infinite; the regression mean ratio refuses a rest whose mean is not positive,
-  so the caller decides "not available" before calling). The regression lift and
-  `rare_effect` are mean ratios and are computed only when the overall mean is positive; for a
-  signed or zero-mean amount they are "not available: mean not positive" (D-035), decided by the
-  per-task spec before running (`lift_available(base)`; `summarise_group` leaves `lift` out then);
+  `rare_effect(minority, dominant, sizes) -> (effect, se)` on two sides' labelled cells, `sizes`
+  their rows in effective clients (binary: **Cohen's h**, 2·asin√p₁ − 2·asin√p₂, SE √(1/n₁ +
+  1/n₂); regression: **Cohen's d**, the mean difference over the pooled SD from the cells'
+  `sum_y2`, SE √((n₁ + n₂)/(n₁n₂) + d²/(2(n₁ + n₂)))), `rare_effect_unavailable(minority,
+  dominant)` (why it cannot exist, '' when it can: a side without labelled rows; for d fewer
+  than two a side or no spread, so the caller decides "not available" before calling) and
+  `rare_effect_name`; Feature Checks' `rare_value_leak` reads them. The regression lift is a
+  mean ratio and is computed only when the overall mean is positive; for a signed or zero-mean
+  amount it is "not available: mean not positive" (D-035), decided by the per-task spec before
+  running (`lift_available(base)`; `summarise_group` leaves `lift` out then);
   `concordance_se(value, events, non_events, target_shares)` (the shares from
   `cells.target_shares`, read by regression only); `events_warning(events)` and `support_name`
   (one support name per task, used by both);
@@ -478,7 +499,8 @@ embedded once.
   `levels`, `key_feature` (`top_n | listed | ''`), `represented_by`, `unavailable` (why a
   statistic is missing); a bar on `concordance` starting at 0.5. `tables/ranking` keeps every
   column (the ledger its EDA columns), among them `concordance_se`, `concordance_best_order`,
-  `non_monotone`, `ranking_value`, `direction_window`, `raw_sign` and `raw_sign_window` (the
+  `non_monotone`, `ranking_value`, `concordance_best_order_window`, `direction_window`,
+  `raw_sign` and `raw_sign_window` (the
   sign of the snapshot's and the window's D without the 2-SE threshold, + on an exact 0, 0
   without a concordance: the direction a one-feature list takes, and the sign the per-period
   values are read in) and the other `*_window` twins.
@@ -536,11 +558,11 @@ embedded once.
      Every further strata chart stands alone (one figure holds one legend). A stratum that is the feature itself gets no strata chart and no pivot
      (it would be a diagonal).
   3. A numeric's **box plots by target class** from quartiles (a log axis only when the skew is
-     above 2 and every whisker positive) beside **the per-period concordance** (the window
-     periods read in the raw sign of the window's D, `raw_sign_window`, which is the window's
-     direction where it has one, so a flip shows below 0.5; support bars, insufficient periods
-     greyed; "Not available: <reasons>" when no period has a value); a
-     categorical's per-period chart alone.
+     above 2 and every whisker positive) beside **the per-period concordance** (the feature's
+     rows of `concordance_per_period`, read in the raw sign of the window's D,
+     `raw_sign_window`, which is the window's direction where it has one, so a flip shows below
+     0.5; support bars, insufficient periods greyed; "Not available: <reasons>" when no period
+     has a value); a categorical's per-period chart alone.
   4. Regression: **the target's boxes per group** (`target_distribution`, table
      `target_quartiles`), alone.
   5. **One pivot table per stratum variable** (the strata pivots, for every key feature): the
@@ -563,17 +585,22 @@ embedded once.
   short table of the candidates each key feature represents (`represented_by`, with their
   association and method). Every candidate pair is in `tables/correlation`; the redundancy
   reading (clusters with concordance and `explained_by_others`) is Feature Checks'.
-- **Value profile** (`eda/profile.py::value_profile`, one stored table `tables/profile`; last):
+- **Value profile** (`eda/profile.py::value_profile`, one stored table `tables/profile`):
   every supported candidate in rank order on the snapshot's eligible rows, shown as two tables.
   Numerics: `min`, `p1`, `median`, `p99`, `max` over the finite non-null values (one vectorised
   `quantile` call), the ±infinity share and `missing_share`; a sentinel (−1, 999, 9 999 999)
   shows as a mass point at `min` or `max`. Categoricals: the three largest levels with their
   shares (from the snapshot's cells, blank levels quoted). A kind without a candidate reads "Not
   available". It describes values, not a feature's path, so it is not in the ledger.
+- **Concordance per period** (last; `tables/concordance_per_period`): every candidate × window
+  period in rank order, read in the window's direction (a flip reads below 0.5), greyed below
+  `strata.min_events`, blank where not available (the table's `unavailable` says why). Feature
+  Checks' report points here and charts only the features `concordance_unstable` raised.
 
-**Appendix:** the kinds table with the overrides and each column's source; the ledger; the resolved config with the origin
-of every entry-written field; the decisions (`show_decisions`); the collect log; timings (a
-table: phase, seconds).
+**Appendix:** the kinds table with the overrides and each column's source; the ledger; the
+resolved config (each entry-written value's origin is the header of the file
+`resolve_config(save_to=…)` writes, not the report's); the decisions (`show_decisions`); the
+collect log; timings (a table: phase, seconds).
 
 **Kinds** (decided in the dataset from the Spark schema, frames' meta): `numeric` (any numeric
 type, decimals included), `categorical` (string, boolean), `unsupported` (date, timestamp, array,
@@ -676,7 +703,8 @@ and the hashes.
   `rank_features` (the ranking table from the cells) and `select_key_features(ranking,
   association, rule)`.
 - `eda/deep_dives.py`: `MIN_BIN_SUPPORT = 20`; one deep dive per key feature (bin and level
-  tables, quartiles, `target_quartiles_by_group`, the per-period concordance); `strata_pivots`
+  tables, quartiles, `target_quartiles_by_group`, the per-period concordance);
+  `concordance_per_period` (every ranked candidate's, stored); `strata_pivots`
   (every key feature × each stratum variable but itself); `dive_group_count` (by level or about
   ten groups), `numeric_groups`, `merged_groups`, `value_labels`, `box_table`.
 - `eda/slices.py`: `slice_shares`, `skipped_slices`, `ordered_numeric_bins`,
@@ -742,10 +770,12 @@ Call flow: Level 2's numbered list. Reading order for review: `statistics/concor
     `population` (the counts per period), `window_levels`, `over_ceiling`, `clients`,
     `key_features` (`{feature: top_n | listed}`), `represented_by`, `candidates`, `kinds`,
     `kind_overrides`, `unsupported`, `lineage`, `collect`, `snapshot_base`, `slices` (label →
-    share of the snapshot's labelled rows), `warnings`, `headline`, `timings`; `log.json` beside it holds the run's log entries;
+    share of the snapshot's labelled rows), `warnings`, `headline`, `timings` (seconds per
+    phase, `concordance_per_period` its own); `log.json` beside it holds the run's log entries;
   - `tables/*.parquet`: `cells` (`CELL_COLUMNS`, `sum_y2` among them), `client_constant`,
-    `population`, `funnel`, `sources`, `target_per_period`, `ranking`, `correlation`, `slices`,
-    `capture_curve`, `profile`, `bins`, `levels`, `quartiles`, `per_period`, `strata`,
+    `population`, `funnel`, `sources`, `target_per_period`, `ranking`, `correlation`,
+    `concordance_per_period` (every candidate), `slices`, `capture_curve`, `profile`, `bins`,
+    `levels`, `quartiles`, `per_period` (the key features' rows of it), `strata`,
     `reference_groups`, and `target_quartiles` when the task has a target distribution
     (regression); the deep-dive and slices tables keep their columns when empty (the clusters are Feature
     Checks', cut at its `redundancy.correlation_max`);

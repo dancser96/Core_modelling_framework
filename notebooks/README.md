@@ -40,7 +40,7 @@ Anything worth keeping moves into the config, an audit-log entry or the package.
 
 Notebooks: `00_synthetic_data` (exists; dev only and temporary: a visual tour of the synthetic data,
 with its checks in an appendix, see `docs/components/test_harness.md`; not a guided stage notebook).
-`01_target_factory` (built with Stage 1: the targets, the model input saved, the frames).
+`00_eda_fc_helper` (a reference while reading the EDA and Feature Checks code, not a stage: it reads both stages' stored artifacts read-only through `feature_dir`, `read_stage`, `read_ledger` and `show_decisions`, no Spark session and no entry, and shows each one's grain, columns, writers, readers and a few telling rows: `eda.json`, the counts table first, then `ranking`, `client_constant`, `correlation` and every other EDA table, the ledger, `feature_checks.json` and its five tables, the decision audit log; run `02_eda` and `03_feature_checks` first). `01_target_factory` (built with Stage 1: the targets, the model input saved, the frames).
 `02_eda` (built with Stage 2, nine steps: `run_eda` on one config; the report's views with how to
 read each number: the choices, the headline and the warnings (the how-to-read notes in step 3's
 text), the funnel, the sources per period, the target per period and by stratum, the ranking, the
@@ -48,9 +48,18 @@ key features at the decision's slices, each key feature's deep dive; one call ea
 exploration functions `pivot_target`, `lift_by_group`, `compare_sides` and `rate_by_period`; the
 report file and what only it holds (the reference groups, the correlation overview of the key
 features, the value profile, the appendix); the decisions EDA can lead to as `record_decision`
-text at both levels). `03_feature_checks` is built with Stage 2. In `03_feature_checks`:
-`run_feature_checks`, the findings, and the proposed decisions with the `record_decision` call
-text, using a `CONFIG` placeholder the setup cell defines (no commented-out cell). Planned,
+text at both levels). `03_feature_checks` (built with Stage 2, ten steps: `run_feature_checks` on
+one config, and the rows it judged (`build_frames`: the snapshot and every compared period's
+eligible rows) to check a finding on the spot; the choices and the summary (the flags and notes per
+finding, the held features with each open flag's value); one section per step in run order,
+`quality`, `leakage`, `time_alignment`, `stability` (with the per-period chart) and `redundancy`
+(the clusters first, one row each, then the features), each with its findings' rules and how to read
+their numbers; three checks on the data (the target by value, a few clients across the periods, the
+distribution per period); the proposed decisions with the `record_decision` call text, using the
+`CONFIG` and `ENVIRONMENT` names the setup cell defines, each call taking any subset of a finding's
+features, and a walk-through that splits one finding between a `keep` and an `exclude`, reruns the
+stage and reverts both; the report file and what only it holds (the per-period tables, the ledger
+with decisions, the appendix)). Planned,
 created as their stages are built: `04_training`, `05_evaluation`, `06_register_promote`,
 `07_inference`, `08_monitoring`. No notebook deploys: the change-request process runs `deploy`
 (D-033). The feature sign-off is recorded after training and before register, at every automation

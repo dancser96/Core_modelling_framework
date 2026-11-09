@@ -1,5 +1,5 @@
 # Feature ledger
-**Status:** building (spec settled 2026-11-02; `ledger.py` built in Stage 2's m1.5, 2026-11-03; EDA writes the identity and EDA columns since 2026-11-04, Stage 2 major step 2; the identity column `source` and `ledger_schema_version` 2 since 2026-11-06; Feature Checks appends in major step 3; the per-run part in M2.3) · **Legacy:** none (the crunch had only `features_include` / `features_exclude`)
+**Status:** building (spec settled 2026-11-02; `ledger.py` built in Stage 2's m1.5, 2026-11-03; EDA writes the identity and EDA columns since 2026-11-04, Stage 2 major step 2; the identity column `source` and `ledger_schema_version` 2 since 2026-11-06; Feature Checks writes its columns since 2026-11-06, major step 3; the per-run part in M2.3) · **Legacy:** none (the crunch had only `features_include` / `features_exclude`)
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [training](training.md) ·
 [evaluation](evaluation.md) · [config](config.md) (the decision audit log) · [reporting](reporting.md) ·
 D-030, D-031, D-043, D-125, D-134, D-135, D-136, D-137 · settles OD-11
@@ -55,10 +55,13 @@ This spec settles OD-11 (the ledger's shape).
    run starts from a fresh ledger, so **an EDA rerun removes Feature Checks' columns** (and EDA
    removes the `feature_checks/` folder, A22).
 3. Feature Checks reads the ledger with `read_ledger(folder, data_definition_hash)` (another data
-   definition is refused), refuses one without EDA's columns or whose EDA settings digest differs
-   from the current resolved config, runs its steps and adds its columns with
-   `add_columns(..., stage="feature_checks")`. A Feature Checks rerun replaces its own columns.
-4. Feature Checks writes its `flag` entries to the audit log, saves the ledger and writes its
+   definition is refused), refuses one without EDA's columns, whose EDA settings digest differs
+   from the current resolved config, or whose `concordance_window` differs from `eda/`'s ranking
+   (two EDA runs), runs its steps and adds its columns with
+   `add_columns(..., stage="feature_checks")`, a skipped step's as null. A Feature Checks rerun
+   replaces its own columns.
+4. Feature Checks writes its `flag` entries to the audit log, renders its report, saves the
+   ledger with its own sidecar (stage `feature_checks`, its settings digest) and writes its
    `feature_checks/` folder last, the same order as EDA.
 5. A report, the notebook's review view or Training reads the ledger with `read_ledger` and calls
    `render_decisions` (the view; it takes the resolved config and the entries, for the entry
@@ -138,8 +141,8 @@ meanings below are one line each.
 | EDA | `rank` | int | EDA | the position by the ranking value: `concordance`, or `concordance_best_order` for a `non_monotone` feature |
 | EDA | `key_feature` | str | EDA | `top_n | listed | ''`: in the top N, or the person's `include` list, or neither |
 | EDA | `represented_by` | str | EDA | the key feature it was skipped for (association above `eda.key_features.max_correlation`) |
-| Checks | `flags` | list[str] | Feature Checks | the flags the latest run raised on the feature (open or settled), as `step.finding` |
-| Checks | `notes` | list[str] | Feature Checks | the notes the latest run raised, as `step.finding` |
+| Checks | `flags` | list[str] | Feature Checks | the flags the latest run raised on the feature (open or settled), full names (`step.finding`) in the finding table's order; empty when none |
+| Checks | `notes` | list[str] | Feature Checks | the notes the latest run raised, the same way |
 | Checks | `lagged_concordance` | float | Feature Checks | the concordance of the value lagged one period |
 | Checks | `signal_kept` | float | Feature Checks | the share of the signal (concordance − 0.5) kept when lagged one period |
 | Checks | `constant_share` | float | Feature Checks | the share of clients whose value never changes in the window |
@@ -148,9 +151,9 @@ meanings below are one line each.
 | Checks | `psi_window` | float | Feature Checks | PSI between the window's first and last period |
 | Checks | `psi_latest` | float | Feature Checks | PSI between the window's last period and the latest period |
 | Checks | `new_level_share` | float | Feature Checks | the latest period's share of levels unseen in the window |
-| Checks | `cluster` | int | Feature Checks | the redundancy cluster's number (null when alone) |
+| Checks | `cluster` | Int64 | Feature Checks | the redundancy cluster's number (null when alone) |
 | Checks | `explained_by_others` | float | Feature Checks | the within-cluster R² on ranks over the Spearman members; null when a pair was not compared, for a non-numeric member, or when the correlations are inconsistent |
-| Checks | `partners` | list[str] | Feature Checks | the features it is correlated or associated with above the threshold |
+| Checks | `partners` | list[str] | Feature Checks | the features it is correlated or associated with above either threshold, strongest first |
 | Derived | `held` | bool | `render_decisions` | an open flag holds it out of training: for Training, an excluded feature without a final decision |
 | Derived | `kept` | list[int] | `render_decisions` | the numbers of the `keep` entries in force for it |
 | Derived | `excluded` | int | `render_decisions` | the number of the `exclude` entry in force (the latest no `include` reversed), null when none |
@@ -158,6 +161,8 @@ meanings below are one line each.
 
 The columns Training needs are written now: `kind` and `levels` (the encoder), `cluster`
 (grouped importance and a top-per-cluster rule, M2.3), `lineage` and `unsupported` (A35).
+Feature Checks writes every one of its columns on every run: a skipped step's are null (floats
+NaN, `cluster` a null Int64, `partners` None), so readers always find the column set.
 
 ### How the derived columns are read
 From the resolved config, where replay writes `features.held`, `features.excluded` and
@@ -209,7 +214,9 @@ The hold-out rule is [feature checks](feature_checks.md)'s (D-134); in short:
   `partners` are parquet list columns.
 - `_ledger.json`: `ledger_schema_version`, the framework version, when, the stages whose
   columns the file holds (`eda`, `feature_checks`), and the writing stage's `stage`,
-  `data_definition_hash` (also the folder's name) and `settings_digest` (when it has one).
+  `data_definition_hash` (also the folder's name) and `settings_digest` (when it has one). After
+  Feature Checks, the sidecar records stage `feature_checks` and Feature Checks' settings digest
+  (EDA's paths plus `feature_checks`, the one in `feature_checks.json`).
 - Both files are written to temporary names (removed when a write fails) and renamed, so a crash
   never leaves half a ledger (A22). The stage folder is written after the ledger, so the stage's
   json is the commit marker.
@@ -230,8 +237,11 @@ The hold-out rule is [feature checks](feature_checks.md)'s (D-134); in short:
   there), then `add_columns`.
 
 ### Interface
-No public function: the ledger is read through the reports, `StageResult.ledger` in the
-notebooks and the versioned artifact. The private interface:
+One public function, `read_ledger`, promoted as it is in 0.3.0 for the helper notebook
+`00_eda_fc_helper`, which reads the stored artifacts read-only
+([architecture](../architecture.md#public-api)); otherwise the ledger is read through the
+reports, `StageResult.ledger` in the notebooks and the versioned artifact. The interface, the
+rest private:
 
 ```python
 LEDGER_SCHEMA_VERSION = 2
@@ -284,3 +294,7 @@ feature was in or out.
 - Readable labels per feature: not in Stage 2 (Q452; D-046).
 - The per-run part's columns (automated selection with its rule and train-split statistic, use in
   the model, importance and rank, effect direction): decided in M2.3.
+- A crash between Feature Checks' ledger save and its folder write leaves the ledger's
+  informational columns one run ahead of `feature_checks.json` (the held set is read from the
+  audit log, so the hold-out stays right). Training (M2.3) cross-checks a per-run marker (e.g. the
+  `run` entry's `seq` in both) when it reads them.

@@ -328,7 +328,8 @@ def test_side_by_side_refuses_a_heatmap_and_a_figure_without_meta() -> None:
 
 
 def test_style_table_greys_rows_and_cells_and_colours_lift() -> None:
-    """Greyed rows and cells carry the insufficient colour; lift cells are coloured by lift."""
+    """Greyed rows and cells carry the insufficient colour; lift cells are coloured by lift; the
+    caption carries its own style, so a notebook shows it as the report does."""
     df = pd.DataFrame({"estimate": [0.1, 0.2, np.nan], "support": [5, 500, 70]})
     rows = table_html(
         style_table(df, {"estimate": "{:.1%}"}, greyed=pd.Series([True, False, False])), "a"
@@ -341,6 +342,7 @@ def test_style_table_greys_rows_and_cells_and_colours_lift() -> None:
     assert "rgba(217, 130, 43" in html  # lift 2 is the full "high" colour
     assert "#T_b_row1_col0 {\n  color:" in html and "#T_b_row0_col0 {" in html
     assert "linear-gradient" in html and "<caption>c&lt;</caption>" in html
+    assert "#T_b caption {\n  caption-side: top;\n  text-align: left;" in html
 
 
 def test_style_table_escapes_axis_names_and_reads_a_missing_flag_as_false() -> None:

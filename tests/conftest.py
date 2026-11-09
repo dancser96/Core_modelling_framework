@@ -1,11 +1,12 @@
 """Shared fixtures: one real local Spark session (never a stub, T15) and the synthetic datasets.
 
-The unit preset is generated in memory once and written to disk once. The canonical dataset is
-written once per session by a separate process (`python -m synthetic`), for the slow tests
-(`pytest -m slow`). Each slow test checks one family of it in a separate process too: a family's
-working set at the canonical size reaches several GB (the panel is sorted, joined and turned into
-bools, copies of the columns read), so the test run itself stays small and every family's memory
-goes back to the system when it ends.
+The unit preset is generated in memory once and written to disk once. The dev preset is written
+once per session by a separate process, for the trap acceptance test (`test_traps.py`), with an
+environment file on it. The canonical dataset is written once per session by a separate process
+(`python -m synthetic`), for the slow tests (`pytest -m slow`). Each slow test checks one family
+of it in a separate process too: a family's working set at the canonical size reaches several GB
+(the panel is sorted, joined and turned into bools, copies of the columns read), so the test run
+itself stays small and every family's memory goes back to the system when it ends.
 """
 
 import os
@@ -17,6 +18,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 from pyspark.sql import DataFrame, SparkSession
 
 from core_modelling.config import UseCaseConfig, load_config
@@ -153,6 +155,39 @@ def canonical_output(tmp_path_factory: pytest.TempPathFactory) -> tuple[str, dic
     # ru_maxrss is in bytes on macOS and in KiB on Linux.
     peak_bytes = usage.ru_maxrss if sys.platform == "darwin" else usage.ru_maxrss * 1024
     return out_dir, load_truth(out_dir), {"seconds": seconds, "peak_bytes": peak_bytes}
+
+
+@pytest.fixture(scope="session")
+def dev_output(tmp_path_factory: pytest.TempPathFactory) -> tuple[str, dict]:
+    """The dev preset (seed 0) written by a separate process, which keeps the generator's memory
+    (about 1.2 GB) out of the test run: (out_dir, truth)."""
+    out_dir = str(tmp_path_factory.mktemp("dev_output"))
+    command = [sys.executable, "-m", "synthetic", "--preset", "dev", "--seed", "0"]
+    subprocess.run([*command, "--out", out_dir], check=True)
+    return out_dir, load_truth(out_dir)
+
+
+def write_environment_file(out_dir: str, root: Path) -> Path:
+    """Write `root/environment.yml`: `entity_a`'s sources are the mart, holdings and
+    feature-store extract written to `out_dir` and the model input under the data root
+    `root/data`, with the local Spark defaults (so `run` reuses the `spark` session)."""
+    data = str(root / "data")
+    tables = {"retail_mart": "mart", "retail_holdings": "holdings",
+              "retail_fs_extract": "fs_extract"}  # fmt: skip
+    sources = {name: {"format": "parquet", "path": f"{out_dir}/{table}"}
+               for name, table in tables.items()}  # fmt: skip
+    model_input = f"{data}/05_model_input/retail_acquisition"
+    sources["retail_acquisition_input"] = {"format": "parquet", "path": model_input}
+    path = root / "environment.yml"
+    content = {"schema_version": 1, "roots": {"data": data}, "sources": {"entity_a": sources}}
+    path.write_text(yaml.safe_dump(content))
+    return path
+
+
+@pytest.fixture(scope="session")
+def dev_env_file(dev_output: tuple[str, dict], tmp_path_factory: pytest.TempPathFactory) -> str:
+    """An environment file on the written dev preset under a temporary data root."""
+    return str(write_environment_file(dev_output[0], tmp_path_factory.mktemp("dev_env")))
 
 
 @pytest.fixture(scope="session")

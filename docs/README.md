@@ -31,8 +31,8 @@ listed alongside.
 | # | Stage | Main doc | Also uses | Status |
 |---|---|---|---|---|
 | 1 | Target Factory (optional) | [target_factory](components/target_factory.md) | config, dataset | built (thin) |
-| 2 | EDA | [eda](components/eda.md) | dataset, feature ledger, reporting, config | building (plan approved 2026-11-03) |
-| 3 | Feature Checks | [feature_checks](components/feature_checks.md) | feature ledger, config (the audit log), reporting | building (plan approved 2026-11-03) |
+| 2 | EDA | [eda](components/eda.md) | dataset, feature ledger, reporting, config | built 2026-11-04 (reviews 2–4 applied 2026-11-05/06; with the LDS for review) |
+| 3 | Feature Checks | [feature_checks](components/feature_checks.md) | feature ledger, config (the audit log), reporting | built 2026-11-06 (Stage 2 major step 3; for the SDS's review) |
 | 4 | Training | [training](components/training.md) | dataset, feature ledger, config | legacy-only |
 | 5 | Evaluation | [evaluation](components/evaluation.md) | reporting, dataset | legacy-only |
 | 6 | register → promote → deploy | [lifecycle](components/lifecycle.md) | reporting (model card), environment | designing |

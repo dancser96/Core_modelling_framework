@@ -120,7 +120,8 @@ functions and their YAML source mapping.
 - `data_path(env, use_case: str, layer: str, *parts: str) -> str`: `<roots.data>/<use_case>/
   <layer>/<parts…>`, in that argument order, the use case lower-cased (names differing only in
   case share one folder on every file system), joined as strings (T2).
-- `feature_dir(env, cfg, entity: str, *parts: str) -> str`: `<use_case>/04_feature/<ddh>`
+- `feature_dir(env, cfg, entity: str, *parts: str) -> str` (public since 0.3.0, for the helper
+  notebook `00_eda_fc_helper`): `<use_case>/04_feature/<ddh>`
   through `data_path`, `<ddh>` the 12-character data-definition hash, so the entity enters only
   through the hash; with parts, a folder in it: `feature_dir(env, cfg, entity, "eda")` and
   `"feature_checks"` are the stage folders, the ledger sits in `feature_dir(env, cfg, entity)`
