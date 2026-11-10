@@ -600,14 +600,14 @@ def test_step_left_out_of_a_present_mapping_is_not_run(tmp_path: Path, raw: dict
     ("step", "leaf", "value"),
     [("leakage", "dominant_share_min", 0.5), ("leakage", "dominant_share_min", 1.0),
      ("leakage", "rare_effect_max", 0.0), ("leakage", "rare_effect_max", 5.0),
-     ("stability", "concordance_range_min", 2.01)],
+     ("stability", "concordance_range_min", 2.01), ("stability", "concordance_range_floor", 1.01)],
 )  # fmt: skip
 def test_feature_checks_leaves_refuse_values_outside_their_bounds(
     tmp_path: Path, raw: dict, step: str, leaf: str, value: float
 ) -> None:
     """A dominant value must hold more than half of the filled rows and less than all of them,
-    the rare effect (Cohen's h or d) bound is positive, and the relative concordance range is at
-    most 2 (from the full signal to its mirror image)."""
+    the rare effect (Cohen's h or d) bound is positive, the relative concordance range is at
+    most 2 (from the full signal to its mirror image) and its absolute floor at most 1."""
     raw["feature_checks"] = {step: {leaf: value}}
     assert leaf in _error(tmp_path, raw)
 

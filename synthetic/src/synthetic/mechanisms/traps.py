@@ -9,11 +9,13 @@ list (`spec.traps.TRAPS`, looked up by kind and column, `trap_record`). By when 
   consent flag, the branch code, the two constants, the redundant relationship months and the two
   low-fill columns (`noise_columns`). Null controls and quality columns depend on nothing else, so
   their AUC is 0.5; the redundant column repeats `relationship_days`;
-- look-ahead (`finalize_lookahead`): the leaks, the upstream target, the missing leak, the process
-  leaks and the shifted columns read the months after their own, so a panel month is final only
-  once the next `lookahead_months` months exist (fewer at the panel's end). These are the only
-  columns that look ahead; their draws are sized by the month's rows, never by outcomes, so prefix
-  stability holds for every other column.
+- monthly, from this month's oracle scores and the month alone: the five control columns
+  (`controls.control_columns`, the `controls` stream);
+- look-ahead (`finalize_lookahead`): the leaks (one U-shaped), the upstream target, the two missing
+  leaks, the process leaks (one a status), the shifted columns and the spend leak read the months
+  after their own, so a panel month is final only once the next `lookahead_months` months exist
+  (fewer at the panel's end). These are the only columns that look ahead; their draws are sized by
+  the month's rows, never by outcomes, so prefix stability holds for every other column.
 Extra columns (`extra_columns`, off by default) are weak (a hidden trait plus noise) or pure noise.
 
 Dirty data (off by default): `apply_dirty` plants duplicate client-months, a month whose login
@@ -22,7 +24,8 @@ current/savings balances × 1,000 (typos) in a finished panel, and returns the r
 `truth["dirty"]`; `dirty_panel` does it for the month loop's months (small presets: the panel is
 held in memory). Its draws come from the `traps` stream after every month has run, so switching
 the defects on changes no clean value; the oracle stays clean. Streams: `traps`, `leaks`, `extras`,
-`noise` (the 0.5.0 noise and quality columns) and `card_leaks` (the 0.5.0 look-ahead draws).
+`noise` (the 0.5.0 noise and quality columns), `card_leaks` (the 0.5.0 look-ahead draws),
+`controls` and `control_leaks` (the 0.6.0 monthly and look-ahead draws).
 """
 
 import numpy as np
@@ -34,7 +37,8 @@ from synthetic.spec.presets import LATENTS
 
 TRAP_KINDS = ("leak", "upstream_target", "process_leak", "shifted", "null_control",
               "near_constant", "all_null", "weak", "noise", "high_cardinality", "constant",
-              "redundant", "low_fill", "missing_leak", "lookahead")  # fmt: skip
+              "redundant", "low_fill", "missing_leak", "lookahead", "spend_leak", "honest",
+              "unstable", "one_value", "drift_window", "drift_moderate")  # fmt: skip
 
 
 def trap_name(name: str, kind: str) -> str:
@@ -66,6 +70,15 @@ CYCLE_DAYS = trap_name("statement_cycle_days", "constant")
 RELATIONSHIP_MONTHS = trap_name("relationship_months", "redundant")
 LOYALTY = trap_name("loyalty_points_bal", "low_fill")
 COMPLAINT = trap_name("complaint_category", "low_fill")
+REVIEW_SCORE = trap_name("cc_review_score", "leak")  # the U-shaped leak
+TD_RATE = trap_name("td_offer_rate", "missing_leak")
+CC_STATUS = trap_name("application_cc_status", "process_leak")
+SPEND_REVIEW = trap_name("cc_spend_review", "spend_leak")
+HONEST_SCORE = trap_name("cc_propensity_score", "honest")
+VENDOR_SCORE = trap_name("cc_vendor_score", "unstable")
+STATEMENT_FORMAT = trap_name("statement_format", "one_value")
+SUPPORT_WAIT = trap_name("support_wait_min", "drift_window")
+CONTACT_CHANNEL = trap_name("contact_channel", "drift_moderate")
 # Written type of each trap column; the all-null grade is a string column, not null-typed.
 TRAP_TYPES = {
     LEAK: pa.int64(),
@@ -88,6 +101,15 @@ TRAP_TYPES = {
     RELATIONSHIP_MONTHS: pa.int64(),
     LOYALTY: pa.float64(),  # null for clients outside the scheme
     COMPLAINT: pa.string(),  # null where no complaint
+    REVIEW_SCORE: pa.int64(),
+    TD_RATE: pa.float64(),  # null for half of the clients taking a deposit within the window
+    CC_STATUS: pa.string(),
+    SPEND_REVIEW: pa.int32(),  # 0/1, named like no flag: typed here, not by `with_int_flags`
+    HONEST_SCORE: pa.int64(),
+    VENDOR_SCORE: pa.int64(),
+    STATEMENT_FORMAT: pa.string(),
+    SUPPORT_WAIT: pa.float64(),
+    CONTACT_CHANNEL: pa.string(),
 }
 KEYS = ["client_id", "snapshot_month"]
 SUMMARY_COLUMNS = ["product", "target", "kind", "column", "trap_column", "parameters", "expected"]
@@ -110,9 +132,9 @@ def trap_summary(spec: dict) -> pd.DataFrame:
 
 def lookahead_months(spec: dict) -> int:
     """Months after its own that a panel month's look-ahead columns read: the leaks', the upstream
-    target's and the missing leak's windows, the shifted columns' shifts, and the process leaks'
-    next month."""
-    windowed = ("leak", "upstream_target", "missing_leak")
+    target's, the missing leaks' and the spend leak's windows, the shifted columns' shifts, and
+    the process leaks' next month."""
+    windowed = ("leak", "upstream_target", "missing_leak", "spend_leak")
     windows = [t["parameters"]["w"] for t in spec["traps"] if t["kind"] in windowed]
     shifts = [t["parameters"]["months"] for t in spec["traps"] if t["kind"] == "shifted"]
     return max(*windows, *shifts, 1)
@@ -226,23 +248,29 @@ def finalize_lookahead(
     frames: list[tuple[pd.DataFrame, pd.DataFrame]],
     rng: np.random.Generator,
     card_rng: np.random.Generator,
+    control_rng: np.random.Generator,
 ) -> pd.DataFrame:
     """The oldest buffered month's mart rows with the look-ahead columns, placed before the
     month's other trap columns.
 
     `frames` are consecutive panel months as (mart, oracle), the month to finalise first, then up
     to `lookahead_months` later ones (fewer at the panel's end). Draws, per row of the month: one
-    normal per leak, then the loan application uniform, from `rng` (the `leaks` stream); the card
-    application uniform, the offer fill uniform, then the offer code, from `card_rng` (the
-    `card_leaks` stream, so the 0.4.0 columns keep their draws).
+    normal per calibrated leak, then the loan application uniform, from `rng` (the `leaks`
+    stream); the card application uniform, the offer fill uniform, then the offer code, from
+    `card_rng` (the `card_leaks` stream, so the 0.4.0 columns keep their draws); the U-shaped
+    leak's normal, then the deposit rate's value and blank uniforms, from `control_rng` (the
+    `control_leaks` stream, so the 0.5.0 columns keep theirs). The status and the spend leak draw
+    nothing.
     """
     mart, n = frames[0][0], len(frames[0][0])
-    leaks = [t for t in spec["traps"] if t["kind"] == "leak"]
+    calibrated = [t for t in spec["traps"] if t["kind"] == "leak" and t["column"] != REVIEW_SCORE]
     codes = trap_record(spec, "missing_leak", OFFER_CODE)["parameters"]["codes"]
-    normals, u = rng.standard_normal((n, len(leaks))), rng.random(n)
+    normals, u = rng.standard_normal((n, len(calibrated))), rng.random(n)
     u_cc, fill = card_rng.random(n), card_rng.random(n)
     code = card_rng.integers(0, codes, n)
-    columns = {t["column"]: _leak(t, frames, normals[:, j]) for j, t in enumerate(leaks)}
+    review_noise = control_rng.standard_normal(n)
+    rate_u, blank_u = control_rng.random(n), control_rng.random(n)
+    columns = {t["column"]: _leak(t, frames, normals[:, j]) for j, t in enumerate(calibrated)}
     columns |= {
         UPSTREAM: _upstream_target(spec, frames),
         APPLICATION: _applications(spec, frames, u, APPLICATION),
@@ -250,6 +278,12 @@ def finalize_lookahead(
         OFFER_CODE: _offer_codes(spec, frames, fill, code),
         CC_APPLICATION: _applications(spec, frames, u_cc, CC_APPLICATION),
         CC_SHIFTED: _shifted(spec, frames, CC_SHIFTED),
+        REVIEW_SCORE: _u_leak(trap_record(spec, "leak", REVIEW_SCORE), frames, review_noise),
+        TD_RATE: _blanked_on_conversion(spec, frames, rate_u, blank_u),
+    }
+    columns |= {
+        CC_STATUS: _application_status(spec, frames, columns),
+        SPEND_REVIEW: _spend_leak(spec, frames),
     }
     at = next(i for i, column in enumerate(mart.columns) if "_trap_" in column)
     columns = pd.DataFrame(columns, index=mart.index)
@@ -268,6 +302,59 @@ def _leak(
     _, acquired = _acquired(frames, f"{record['product']}_flag", p["w"])
     mu = np.sqrt(2) * norm.ppf(p["auc"])
     return np.round(p["centre"] + p["scale"] * (mu * acquired + noise)).astype("int64")
+
+
+def _u_leak(
+    record: dict, frames: list[tuple[pd.DataFrame, pd.DataFrame]], noise: np.ndarray
+) -> np.ndarray:
+    """A U-shaped leak of an acquisition: round(centre + scale · (noise + offset·acquired·
+    sign(noise))), acquirers pushed away from the centre on their own side, holders getting the
+    noise only. The value orders clients at AUC 0.5 by symmetry; only its distance from the
+    centre separates them (AUC P(|ε₁| + offset > |ε₂|), 0.885 at 1)."""
+    p = record["parameters"]
+    _, acquired = _acquired(frames, f"{record['product']}_flag", p["w"])
+    shift = p["offset"] * acquired * np.sign(noise)
+    return np.round(p["centre"] + p["scale"] * (noise + shift)).astype("int64")
+
+
+def _blanked_on_conversion(
+    spec: dict, frames: list[tuple[pd.DataFrame, pd.DataFrame]], u: np.ndarray, blank: np.ndarray
+) -> np.ndarray:
+    """The missing leak below EDA's null-share range: a rate in `rate_range` (to 0.01, `u` places
+    it) for every client, holders included, NaN where a non-holder takes the product within w
+    months inside the panel and `blank` falls below `blank_share` (a field some booking flows
+    clear on conversion): its null share is a part of the product's prevalence."""
+    record = trap_record(spec, "missing_leak", TD_RATE)
+    p = record["parameters"]
+    _, acquired = _acquired(frames, f"{record['product']}_flag", p["w"])
+    low, high = p["rate_range"]
+    rate = np.round(low + (high - low) * u, 2)
+    return np.where(acquired & (blank < p["blank_share"]), np.nan, rate)
+
+
+def _application_status(
+    spec: dict, frames: list[tuple[pd.DataFrame, pd.DataFrame]], columns: dict[str, np.ndarray]
+) -> np.ndarray:
+    """The status of the application count `of` (one of the month's look-ahead `columns`):
+    `approved` where the client applied this month and holds the product next month, `declined`
+    where it applied and does not, `none` otherwise (so everywhere in the panel's last month,
+    which has no applications)."""
+    record = trap_record(spec, "process_leak", CC_STATUS)
+    p = record["parameters"]
+    none, approved, declined = p["levels"]
+    applied = columns[p["of"]] > 0
+    holds_next = (_ahead(frames[:2], 0, f"{record['product']}_flag") == 1).any(axis=1)
+    return np.where(applied, np.where(holds_next, approved, declined), none).astype(object)
+
+
+def _spend_leak(spec: dict, frames: list[tuple[pd.DataFrame, pd.DataFrame]]) -> np.ndarray:
+    """The regression leak: 1 for a holder whose `of` spend over the next w months inside the
+    panel exceeds `threshold` (a month it has left counts 0), else 0; 0 for non-holders."""
+    record = trap_record(spec, "spend_leak", SPEND_REVIEW)
+    p = record["parameters"]
+    holder = frames[0][0][f"{record['product']}_flag"].to_numpy() == 1
+    spend = np.nansum(_ahead(frames, 0, p["of"])[:, : p["w"]], axis=1)
+    return (holder & (spend > p["threshold"])).astype("int32")
 
 
 def _offer_codes(

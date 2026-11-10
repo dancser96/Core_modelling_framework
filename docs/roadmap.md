@@ -1,11 +1,10 @@
 # Roadmap
 
 **Verdict:** Phase 2 builds a first usable version of every part, on synthetic data, then moves it
-into the bank. The working assumption (D-022, under review with the LDS and stakeholders): a
-walking skeleton, then two deepening rounds, each followed by a run-through; a pre-release into
-the bank's internal repo by 2026-12-18, and release 1.0 (the definition of done) by 2027-02-19,
-submitted as the first change request (D-021). It is
-milestones with dates per stage, not a task board (D-022). Release 1.0 also integrates, thinly,
+into the bank. The plan (D-022, agreed 2026-11-10): a walking skeleton, then two deepening
+rounds, each followed by a run-through; a pre-release into the bank's internal repo by
+2026-12-18, and release 1.0 (the definition of done) by 2027-02-19, submitted as the first change
+request (D-021). It is milestones with dates per stage, not a task board (D-022). Release 1.0 also integrates, thinly,
 with the feature store, and a production model's source tables are pointed to the data
 observability framework at deploy; LLM-assisted modelling comes in Phase 3 (D-021). This file holds the plan and the **open decisions**. Current status lives in `docs/UPDATES.md`; settled decisions in `docs/decisions.md`.
 
@@ -37,22 +36,130 @@ thin, plus the integrations of D-021; LLM-assisted modelling comes in Phase 3.
 Tests are a milestone criterion, not part of a level: light at the pre-release, every function and
 CI / Sonar by release 1.0 (D-014).
 
-These are proposed wordings; confirm them together with the depth table (OD-01).
+## Phase 2 plan
+Agreed 2026-11-10 (D-022). Two build rounds, each followed by a short run-through:
+1. **Round 1** (M2 + M3, 10-26 – 12-11): every component end to end, then the exit points close
+   to final and calibration right.
+2. **Run-through 1** (M5a, 12-14 – 12-18): a real run as a user would make it, fixes only, then
+   the code moves into the bank's internal repo, committed and demonstrated: **the December
+   pre-release**. Not production: the year-end change freeze (D-021).
+3. **Round 2** (M4, 01-04 – 02-05): depth where the pre-release showed it matters, both
+   integrations, regression end to end, tests to every function.
+4. **Run-through 2** (M5b, 02-08 – 02-19): the same procedure, ending in **release 1.0**,
+   submitted as the first change request; production follows once it clears.
 
-## Phase 2 milestones
-Working assumption (D-022), still under the LDS's review and needing stakeholder buy-in; the full
-plan (dates, M2's stages, depth per component) is in `worknotes/timeline_proposal.md` and moves
-here once agreed (OD-01).
+Why this shape:
+- The skeleton comes first inside round 1: every stage thin before anything deepens, so problems
+  between stages surface early, not in the run-through.
+- Shapes final, contents thin: round 1 brings the exit points (`glossary.md`) close to final
+  (the scores table and manifest, the model bundle, registry records, monitoring tables, the model
+  card). The downstream teams plan on them, and from release 1.0 they only grow (D-007).
+  December's two purposes (D-022) need a working run and these shapes, not depth everywhere.
+- The run-through is mirrored before release 1.0, so the release checklist is tested once in
+  December. Two deepening rounds; don't plan for more.
 
-| # | Milestone | Dates (working assumption) | Status |
-|---|---|---|---|
-| M0 | Design baseline | to 10-12 | Done 2026-10-12 |
-| M1 | Synthetic data + local Spark harness | 10-13 – 10-21 | Done: accepted by the LDS 2026-10-21; its to-dos built in M2.1 (0.5.0) except the `unstable` kind (M4); regression chosen (D-020); its per-task spec entries for EDA and Feature Checks designed with Stage 2 (D-050, 2026-11-02), Training's and Evaluation's with M2.3 |
-| M2 | Round 1a: walking skeleton, stages M2.1–M2.4 | 10-26 – 11-20 | M2.1 Foundation built 2026-10-27 (version 0.2.0), under the SDS's review; M2.2 Understanding designed 2026-11-02 (four question rounds, Q418–Q493; the spec in the component docs, D-134–D-137; the plan in `worknotes/m2_2_understanding/plan.md`), built from 11-03: major step 1 (foundations) built 11-03 and reviewed, major step 2 (EDA, its report, notebook 02) built 11-04, reviews 2–4 applied 11-05/06 with the gaps spec (D-138) and with the LDS for review, major step 3 (Feature Checks, its report, notebook 03, the trap acceptance test; version 0.3.0) built 11-06/07 and waiting for the SDS's review 3 (Q532–Q538, V74–V91) |
-| M3 | Round 1b: exit points and calibration | 11-23 – 12-08 | — |
-| M5a | Run-through 1 → pre-release (internal repo, not production) | 12-09 – 12-18 | — |
-| M4 | Round 2: depth and integrations | 01-04 – 02-05 | — |
-| M5b | Run-through 2 → release 1.0, the first change request (D-021) | 02-08 – 02-19 | — |
+**Calendar.** Stage 2 took one week more than first planned: it ends 11-13, built to its design's
+full scope (Q418–Q419) and reviewed twice. The fortnight 11-23 – 12-06 counts as one working week
+(the SDS's leave and National Day). 12-21 – 01-01 is a slowdown, about six slower days (2–3 days'
+leave plus 01-01), for fixes, the integration designs and the pre-release's buffer.
+
+| # | Milestone | Dates | Done when | Status |
+|---|---|---|---|---|
+| M0 | Design baseline | to 10-12 | Docs rebuilt from three review rounds and the LDS's notes | Done 2026-10-12 |
+| M1 | Synthetic data + local Spark harness | 10-13 – 10-21 | `synthetic/` (~100k × 24 months, traps, oracle) generated into `data/01_raw/`; Spark fixtures; the second task chosen | Done: accepted by the LDS 2026-10-21; its to-dos built in M2.1 (0.5.0), the `unstable` kind in M2.2 (0.6.0); regression chosen (D-020); its per-task spec entries for EDA and Feature Checks designed with Stage 2 (D-050, 2026-11-02), Training's and Evaluation's with M2.3 |
+| M2 | Round 1a: walking skeleton, stages M2.1–M2.4 below | 10-26 – 12-04 | `run` end to end on synthetic data, binary task; `deploy` to a production-tier path and inference from it; nothing the crunch did is missing (D-037) | In progress (stages below) |
+| M3 | Round 1b: exit points and calibration | 12-07 – 12-11 | The LDS has reviewed the exit-point shapes; calibrated scores match the oracle's probabilities on synthetic data (D-049). Its third goal, a presentable EDA + Feature Checks report, was built in M2.2 | — |
+| M5a | Run-through 1 → pre-release (internal repo, not production) | 12-14 – 12-18 | The code runs inside the bank to a local model: a smoke run on a real mart, the reports to show, a demo | — |
+| M4 | Round 2: depth and integrations | 01-04 – 02-05 | Each item reviewed by the LDS | — |
+| M5b | Run-through 2 → release 1.0, the first change request (D-021) | 02-08 – 02-19 | The definition of done (D-021), plus CI / Sonar; aimed at 02-12; shared formats freeze from its first row in the bank (D-007) | — |
+
+**M2's stages,** sized by weight (working days; the fortnight 11-23 – 12-06 holds five: M2.3's
+last and M2.4's four):
+
+| Stage | Dates | Days | Goal | Status |
+|---|---|---|---|---|
+| M2.1 Foundation | 10-26 – 11-02 | 6 | One config gives the train, test and validation frames, with eligibility and split logs | Built (0.2.0) and reviewed by the SDS; with the LDS (`worknotes/m2_1_foundation/review_guide.md`) |
+| M2.2 Understanding | 11-03 – 11-13 | 9 | The traps are flagged, the EDA + Feature Checks report opens offline and reads well, the ledger shows each feature's trail | Built (0.3.0; D-134–D-138, `worknotes/m2_2_understanding/`): EDA reviewed and with the LDS; Feature Checks reviewed once, its code review next |
+| M2.3 Modelling | 11-16 – 11-24 | 6 | A calibrated model beats the baselines and never the oracle; three families round-trip without pickle; no CV fold mixes a client's rows (D-106) | — |
+| M2.4 Operations | 11-25 – 12-04 | 4 | Register, promote, deploy, score and monitor from the CLI and the notebooks | — |
+
+M3 and M4 deepen across stages rather than stage by stage.
+
+### Depth per component
+Levels as in [Depth levels](#depth-levels-d-022). "Shape final": the output's schema is close to
+final (an exit point) while its content is thin. "Nice to have": done only if the round has room;
+the first cut. Stage 5 (integrations and release) runs in M4 and both run-throughs.
+
+| Stage | Component | Pre-release (Dec) | Release 1.0 (Feb) | Nice to have |
+|---|---|---|---|---|
+| 1 | Config spine (YAML, levels, identities, decision audit log) | deep | deep | A command showing where each resolved value came from |
+| 1 | Environment adapter | deep (bank-verified) | deep | — |
+| 1 | Dataset (window, split, sampling) | thin (uniform negative downsampling, D-117) | deep (simple sampling: options 1, 2 or none, D-117) | — |
+| 1 | Target Factory | thin (one binary rule family, lineage) | deep (other rule families, labels for scored months) | Incremental builds |
+| 2 | EDA | as built in M2.2 (Q418: every view of `eda.md`); report presentable | deep (what the pre-release shows is missing) | Pivot functions |
+| 2 | Feature Checks | as built in M2.2: all five steps, stability included | deep | — |
+| 2 | Feature ledger | thin | deep (joined with the audit log) | — |
+| 2 | Reporting | thin (HTML, embedded plotly, styled tables) | deep (theme file) | — |
+| 2 | Synthetic data | as accepted (M1) plus the LDS's noise, constant, redundant and very-low-fill columns (0.5.0) and a trap and a control for every Feature Checks finding, the `unstable` kind included (0.6.0) | as the pre-release | — |
+| 3 | Training (FLAML) | thin; client groups (D-106); calibration chain right (D-049); bundle shape final | deep (categoricals, automated selection; retraining keeps the data definition, D-052) | — |
+| 3 | Evaluation | thin (core views, reliability among them) | deep (comparison, stratified) | Window ablation and the sweep function |
+| 3 | Model card | shape final | deep | — |
+| 4 | Lifecycle (register / promote / deploy) | thin; records shape final (D-111) | deep (registry tables, inventory) | — |
+| 4 | Inference | thin; scores table and manifest shape final | deep (reinference) | — |
+| 4 | Monitoring | frame in place: four layers, tables with flags, shape final | frame deep, content light (D-040) | — |
+| 4 | CLI and Python API | thin | deep | — |
+| 4 | Guided notebooks | thin | deep (guidance reviewed by the LDS) | — |
+| 5 | Feature store integration | — (learn session; design in the slowdown) | thin | — |
+| 5 | Data observability (a deploy step, nothing built; D-021) | — | the step in the deploy docs | — |
+| 5 | MLflow (registry, experiment tracking; if confirmed available, D-111) | — (M2.4's records map onto it) | thin | — |
+| 5 | Regression | shapes (per-task spec entries) | end to end | — |
+| 5 | Tests | invariants, migrations, bundle round trip, e2e on `unit` | every function; CI / Sonar | — |
+| — | LLM-assisted modelling | — | — (Phase 3) | — |
+
+### Work streams beside the critical path
+- **Spikes** (the SDS runs them, Claude reminds; due before M2.3, 11-16): (1) FLAML 2.7's group
+  split on the synthetic data (D-106 needs it, or its fallback; no sample weights in Phase 2,
+  D-117); (2) non-pickle round trips for `lgbm`, `xgboost`, `catboost`; (3) Arrow `toPandas`
+  with date columns; (5) plotly in the bank's JupyterLab, opening time included (the SDS, inside,
+  later). Spike 4 is dropped (D-036).
+- **Learn sessions, booked by the LDS, by 11-06:** platform / MLOps (change-request steps and the
+  freeze, MLflow's availability OD-08, the registry owner OD-23, Sonar's quality gate,
+  scheduling); the feature store team (OD-26: how a use case reads from it; its design is written
+  in the slowdown). The data observability team only needs to show how a source table is pointed
+  to their framework, before a model's first deploy (D-021).
+- **The first change request** (release 1.0, the framework only, D-021): if the bank allows,
+  start its first-time steps (security review of the saved formats, the deployment path) when the
+  freeze lifts in January, using the pre-release as material, so only the final submission waits
+  for 1.0 (unverified: the freeze's dates and the process are unknown).
+
+### Assumptions and how each block ends
+- The SDS works on the framework about 6 hours a day with Claude and reviews every line; the LDS
+  reads 30–60 minutes a day. Review time, about 40% of build time, is inside each block.
+- The year-end change freeze is long and its dates are unknown; nothing in the plan needs a change
+  request before release 1.0. External teams are unavailable until a session is booked, and
+  nothing on the critical path depends on them before round 2.
+- One memory-heavy job at a time on the 8 GB Mac; the WSL2 PC takes round 2's heavy comparisons.
+- Each stage M2.1–M2.4 and round 1b ends in the SDS's review with a review guide (D-003) and the
+  LDS's review (D-072 (i): the design docs, the ML-critical code, the functionality and the
+  notebooks); the decisions the LDS must take are the short-term open decisions below. A
+  fresh-context holistic review closes each round, before its run-through.
+- A run-through: the SDS takes one use case from config to scores through the guided notebooks and
+  the CLI, on the canonical synthetic data, as a user would; the LDS reads the reports and the exit
+  points. Findings become a fix list; nothing new is built.
+
+### Risks to these dates
+
+| Risk | Trigger | Response |
+|---|---|---|
+| Review backlog grows | More than five items on the sync page's review list for a week | The LDS reviews designs and ML-critical code only; the SDS reviews with review guides |
+| Round 1a slips (M2.2 took nine days against four) | M2.3 not done by 11-24, or M2.4 by 12-04 | Round 1b keeps the exit points; calibration depth moves to round 2 |
+| Round 1b is short | Five days, 12-07 – 12-11 | The exit points first, then calibration; the slowdown's first days are the pre-release's buffer |
+| An exit point's shape changes after the pre-release | A downstream team needs a different shape | Cheap until release 1.0's first shared row (D-007); collect the changes in run-through 1 |
+| Round 2 is too full | Behind plan in its third week | Cut the nice to haves, then depth in EDA and Evaluation. The integrations, regression and tests stay (D-021, D-022) unless the CDS agrees otherwise |
+| A spike fails | Any spike result before 11-16 | A family whose round trip fails is fixed in M2.3 rather than dropped (D-037); a failed group split falls back to a client-grouped holdout (D-106) |
+| External teams not available | No session booked by 11-06 | The feature-store settings of the release example stay commented out (D-021); a flat monitoring export stands in; the integrations stay in round 2 |
+| Memory on the 8 GB Mac | An out-of-memory error in M2.3 or round 2 | The `dev` preset of about 20k clients for daily work; the WSL2 PC for comparisons |
+| The first change request is slow | Its first-time steps can't start before 1.0 is final | Release 1.0 is ready by 02-19 but reaches production later (March or after); tell the CDS early |
 
 ## Backlog
 
@@ -61,15 +168,19 @@ here once agreed (OD-01).
   static/time-varying metadata once it exists (the SDS, 2026-11-04) — `feature_checks.md`
 - Synthetic data: sticky holdings and usage, 24 months, traps, oracle (M1) — `test_harness.md`.
   The LDS's to-dos (2026-10-21: noise columns of several kinds, very-low-fill columns, each named
-  like the traps) are built in M2.1 (2026-10-25, version 0.5.0), except the `unstable` kind, which
-  waits for M4 with Feature Checks' stability. Built 2026-10-30 (0.5.3): a feature-store extract
-  stand-in that the primary example joins, and mistake tests for every source guardrail —
-  [merges and mistake tests](components/test_harness.md#merges-and-mistake-tests)
+  like the traps) are built in M2.1 (2026-10-25, version 0.5.0). Built 2026-10-30 (0.5.3): a
+  feature-store extract stand-in that the primary example joins, and mistake tests for every
+  source guardrail ([merges and mistake tests](components/test_harness.md#merges-and-mistake-tests)).
+  Built 2026-11-10 (0.6.0): a trap and a control for every Feature Checks finding, the `unstable`
+  kind included ([trap summary](components/test_harness.md#trap-summary))
 - Dataset: observation window, client-grouped split, OOT validation, Spark-side sampling, row
   budget (M2 thin, M4 deep) — `dataset.md`
 - A migration hook for the model input's sidecar (`_model_input.json`), like the config's
   `migrate`, once a saved model input must outlive a framework version inside the bank; until
   then its migration is a rebuild from the sources (M5a at the earliest) — `dataset.md`
+- A saved model input does not notice new source columns (its hashes see logical names, D-131):
+  compare the saved table's columns with the sources' at read and print the difference
+  (candidate; seen with synthetic 0.6.0, 2026-11-10) — `dataset.md`
 - Identities before anything is kept inside the bank (by M5a, the pre-release): whether hashes
   leave out values at their schema default, so an added optional field doesn't change every
   digest, and a `definition.json` beside each audit-log folder so a recipe change can re-key it
@@ -123,14 +234,9 @@ here once agreed (OD-01).
   2026-10-25), written to `data/01_raw/synthetic_dev/` — D-091, `test_harness.md`
 - Lossless non-pickle model formats for what is promoted, researched per model family before it is
   offered (D-051): `lgbm`, `xgboost` and `catboost` all verified in M2 (D-037; spike 2, due
-  11-09) — `training.md`
+  11-16) — `training.md`
 - Retraining in production: research (M4) — OD-27, `lifecycle.md`
-- Learn sessions with the platform / MLOps team and the feature store team, booked by the LDS by
-  11-06; the platform one also covers MLflow's availability. The data observability team only
-  needs to show how a source table is pointed to their framework, before a model's first deploy
-  — OD-08, OD-13, OD-23, OD-26
-- The first change request (release 1.0, D-021): start its first-time steps (security review of
-  the saved formats, the deployment path) when the freeze lifts, if the bank allows; unverified
+- The learn sessions and the first change request: [Work streams](#work-streams-beside-the-critical-path)
 
 ## Phase 3 wishlist
 Long-term targets, not planned into Phase 2 (D-072). Each item names where it came from.
@@ -203,7 +309,6 @@ direction or needs people outside the team.
 
 | ID | Question | Current leaning / proposal | Decided by / forum | Detail |
 |---|---|---|---|---|
-| OD-01 | **Scope:** the Phase 2 plan: dates, M2's stages and the depth per component (full / deep / thin / stub) at the pre-release and release 1.0; level wording to review | Working assumption D-022 (`worknotes/timeline_proposal.md`): build on it now; the LDS is still reviewing, and stakeholder buy-in comes in the week of 10-26 | SDS + LDS, then stakeholders | `worknotes/timeline_proposal.md` |
 | OD-06 | **Lifecycle:** folder layout per entity × domain: are storage permissions actually separate per entity, and do the registered and production roots need their own structure? The sandpit data root is settled (D-136: the root is the entity's area, then use case, then layer; `roots.registered` and `roots.production` follow the same shape in M2.4) | Production paths are separate from the sandpit (D-033, D-051), and permissions are the platform's, not the framework's (D-079); the question is only how the framework lays out its own outputs per entity × domain. Ours to decide (D-073) | SDS + LDS; permission facts from the platform / MLOps team | `components/lifecycle.md` |
 | OD-08 | **Lifecycle:** MLflow for the registry and experiment tracking in Phase 2: is it available inside the bank? | The shape is settled (D-111): M2.4's own records map one-to-one onto MLflow; MLflow goes in with the other integrations in M4 once confirmed; `production.json` stays the pointer through major version 1, MLflow a store beside the own records. Its default flavors pickle, which is fine in the sandpit but not for what is promoted (D-051). Confirm availability at the platform learn session (by 11-06). MLflow fits the registry and experiment tracking better than monitoring (OD-13) | SDS + LDS, with the platform / MLOps team (D-079, OD-23) | `components/lifecycle.md` |
 | OD-12 | **Reporting:** the mandatory "core" views per task of the Evaluation report | The structure is shared by the three reports (summary page + core + extended, D-036). EDA's and Feature Checks' core views are settled with Stage 2's design (2026-11-02; `eda.md`, `feature_checks.md`, D-135); Evaluation's are needed when it is built (M2.3); proposal for binary in `evaluation.md` → Open questions | SDS + LDS | `components/evaluation.md` |
@@ -236,7 +341,7 @@ the team, or he asked to see it. Results are shown at check-ins.
 | Feature store integration: a use case on the feature store, on other sources, and on both | The work stream has a design | D-021, OD-26 |
 | Data observability: reduced to pointing a production model's source tables at it at deploy, since it checks tables and consumes no model outputs (information item) | Next check-in | D-021 |
 | Retraining in production; models without pickle | Research results per model family | OD-27, D-051 |
-| The Phase 2 plan: the December pre-release, release 1.0 and the dates | After the LDS's review and the stakeholder buy-in in the week of 10-26 | D-022, `worknotes/timeline_proposal.md` |
+| The Phase 2 plan, agreed 2026-11-10: the December pre-release and release 1.0 keep their dates; M2.3 – M3 moved by a week (information item) | Next check-in | D-022, [Phase 2 plan](#phase-2-plan) |
 | Automation levels (two in Phase 2), and how a use case moves between them | The config spine is built (M2.1); the mapping is D-132 | D-023, D-132 |
 | Config format: YAML, and the decision audit log, both decided (information items, with the reasoning) | Next check-in | D-043, D-125 |
 | Who builds and runs the downstream (platform / MLOps team) | If that team can't take it on | D-079, OD-23 |

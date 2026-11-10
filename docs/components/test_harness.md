@@ -2,7 +2,7 @@
 **Status:** tested (built 2026-10-17; the SDS's review applied and approved, 2026-10-19);
 reviewed and accepted by the LDS, 2026-10-21, guided by `synthetic/REVIEW.md` (D-003); version
 0.5.0 adds ten trap columns from the LDS's to-dos and a 20k `dev` preset (2026-10-25, M2.1); 0.5.1
-adds the slim `holdings` table (2026-10-26, D-129); 0.5.2 tags the holdings' months with their last day; 0.5.3 adds the feature-store extract `fs_extract` (2026-10-30); the canonical and `dev` datasets in `data/01_raw/` are written by it ·
+adds the slim `holdings` table (2026-10-26, D-129); 0.5.2 tags the holdings' months with their last day; 0.5.3 adds the feature-store extract `fs_extract` (2026-10-30); 0.6.0 adds nine trap columns and six natural-control rows, so that every Feature Checks finding has a trap that must raise it and a control that must not (2026-11-10); the canonical and `dev` datasets in `data/01_raw/` are written by it ·
 **Legacy:** `tests/smoke_test.py` (stub-based — do not copy its stubs)
 **Related:** [dataset](dataset.md) (time model) · [target factory](target_factory.md) ·
 [EDA](eda.md) · [feature checks](feature_checks.md) · [environment](environment.md) ·
@@ -23,7 +23,7 @@ Every stage, test, notebook and demo reads its output through real local PySpark
 will read real data. Stubs hid every environment bug in the crunch (T15).
 
 **What it writes** to `data/01_raw/synthetic_canonical/`, in about 6 minutes on the 8 GB Mac:
-- **The feature mart:** 100k clients × 24 months (≈ 2.5M rows), 157 columns, one row per client per
+- **The feature mart:** 100k clients × 24 months (≈ 2.5M rows), 166 columns, one row per client per
   month. It holds:
   - the client description;
   - holdings and balances, flows and logins;
@@ -62,13 +62,16 @@ will read real data. Stubs hid every environment bug in the crunch (T15).
   month ahead, null controls, constants, a redundant column, a high-cardinality code, very-low-fill
   columns, a rare level, an inverted U, a Simpson's reversal and drift. Dirty data is available on
   demand.
+- **Controls the framework must leave alone:** columns close to a check's threshold on its safe
+  side, so that every Feature Checks finding has a trap that must raise it and a control that
+  must not.
 - **A ceiling:** for each of 12 standard targets, the oracle's AUC (about 0.7–0.95) is what a
   perfect model would reach. A model that beats it by more than about two standard errors on
   positive events is leaking (D-100 (e)).
 
-**How it is trusted.** 9 check families compare 1,336 statistics with this spec, and all pass at
-100k (0.5.3, 2026-10-30). The checks are written from the spec and never call the code that
-makes the data. The notebook
+**How it is trusted.** 10 check families compare 1,373 statistics with this spec, and all pass at
+100k (0.6.0, 2026-11-10). The checks are written from the spec and never call the code that makes
+the data. The notebook
 `notebooks/00_synthetic_data.ipynb` gives a visual tour of the data, with the checks in an
 appendix.
 
@@ -190,14 +193,14 @@ What ties the products together:
     by 1.8.
 
 ### What the mart holds
-- **157 columns in groups:**
+- **166 columns in groups:**
   - keys and the client description (14);
   - holdings and states (20);
   - current/savings (13), card (11), and loans, deposit and wealth (9);
   - FX and digital (5);
   - rollups over the last 3 and 6 months (56);
   - recency (5) and ratios (4);
-  - trap columns (20).
+  - trap columns (29).
 - **Names follow one grammar**, so a name says what the column is: `spend_cc_travel_vol`,
   `casa_bal_0_5_months_avg`, `months_since_last_spend_cc`.
 - **Nulls appear only where retail data has them.** Examples: missing income, utilisation without
@@ -209,17 +212,23 @@ What ties the products together:
 ### Traps and the oracle
 - **Where the traps sit.** Traps sit on two products: credit card acquisition and personal-loan
   opening. The card, the first run-through's use case, meets every trap-column kind: the two kinds
-  that first sat on the loan alone (shifted, process leak) have card twins. A few concern no
-  product.
+  that first sat on the loan alone (shifted, process leak) have card twins. The term deposit and
+  the card spend (the regression target) carry one each; a few concern no product.
 - **Trap columns** (`trap_column` true) exist only to test the framework, and their names end in
   `_trap_<kind>`:
-  - the two leaks;
+  - the two leaks, and a U-shaped one strong only in best order;
   - the target built upstream;
-  - the leak in a missingness pattern (an offer code filled almost only for acquirers);
-  - the process leaks and the shifted columns, one each per product;
+  - the leaks in a missingness pattern (an offer code filled almost only for acquirers; a deposit
+    rate blanked for some converters, below EDA's null-share range);
+  - the process leaks and the shifted columns, one each per product, and the card application's
+    status;
+  - a spend leak for the regression target;
   - the redundant column (tenure in months beside tenure in days);
   - the null controls, the constants, the high-cardinality code, the quality and the low-fill
-    columns.
+    columns;
+  - the 0.6.0 monthly columns: an honest score, a score delivered every other month, a one-value
+    column, a wait time whose level steps up inside the example window and a contact channel
+    whose mix shifts moderately.
 - **Traps in real columns** keep their real names, since the framework meets them under those names
   in real data:
   - age's inverted U;
@@ -227,6 +236,12 @@ What ties the products together:
   - the income threshold;
   - the Simpson's reversal: logins against card uptake, by onboarding channel;
   - the login drift.
+- **Controls** sit close to a check's threshold on the safe side, and that check must leave them
+  alone, so a rule that over-fires fails the trap test as surely as one that misses. Most trap
+  columns are both a trap for one finding and a control for others; six rows on real columns
+  (`trap_column` false) are natural controls, two of them with a note of their own to raise.
+  The test, not this package, maps each row to the findings it must and must not raise
+  ([trap summary](#trap-summary), D-064).
 - **The oracle prices the truth.** For an observation at month `t` and a target window of `w`
   months, the window probability is the client's true chance of the event. It comes from the
   recorded scores, with the client's state frozen at `t`.
@@ -237,7 +252,9 @@ What ties the products together:
   - personal-loan opening next month: 0.90 and 0.95 against 0.77;
   - the 0.5.0 columns: the missingness-pattern leak 0.89 against 0.84 at card acquisition
     (`w` = 3); the card process leak 0.90 and the card shifted limit 1.00 against 0.87 at `w` = 1
-    ([trap summary](#trap-summary)).
+    ([trap summary](#trap-summary));
+  - the 0.6.0 U-shaped leak: about 0.88 by its distance from the centre against 0.84 at card
+    acquisition (`w` = 3), 0.5 in value order.
 
   The null controls score about 0.5 on every target.
 - **A regression ceiling too.** The oracle also gives the true mean and quantiles of each card
@@ -251,15 +268,17 @@ The generator is a loop over months, vectorised over clients. It starts 13 month
 3. Holdings move (adopt, open, lose, wake up, lapse), and every chance is recorded.
 4. Amounts follow the holdings: balances, the card, current/savings flows, FX and logins.
 5. Rollups, recency and ratios are updated from each client's 6-month history.
-6. The per-month trap columns are drawn (null controls, quality, constants, low-fill; the
-   redundant column follows from tenure), and each client gets a mart row and an oracle row.
+6. The per-month trap columns are drawn (null controls, quality, constants, low-fill, the five
+   control columns from this month's oracle score and the month alone; the redundant column
+   follows from tenure), and each client gets a mart row and an oracle row.
 7. The look-ahead trap columns are filled once the next 3 months exist; then the month is written.
 
 The run is deterministic from a seed:
 - Each mechanism has its own random stream, so adding a mechanism leaves the others' columns
   unchanged; the 0.5.0 columns draw from two streams appended last, `noise` for the per-month
   columns and `card_leaks` for the look-ahead draws, so every 0.4.0 column is byte-identical at the
-  same seed.
+  same seed; the 0.6.0 columns likewise draw from `controls` (per month) and `control_leaks`
+  (look-ahead), appended last, so every 0.5.3 column is byte-identical at the same seed.
 - A month never depends on later months, except the declared look-ahead trap columns.
 
 The code lives under `synthetic/src/synthetic/`, in four folders by role:
@@ -268,11 +287,11 @@ The code lives under `synthetic/src/synthetic/`, in four folders by role:
   - `holdings.step_holdings` moves every product;
   - `amounts.step_amounts` sets every amount;
   - `mart` builds names and rollups;
-  - `traps` builds the trap columns;
+  - `traps` builds the trap columns, `controls` the five monthly control columns;
   - `extract` builds the feature-store extract.
 - **`truth/`** holds the oracle (`window_probability`, the standard targets), the regression oracle
   and `truth.json`.
-- **`checks/`** holds the 9 check families.
+- **`checks/`** holds the 10 check families.
 
 At the top level:
 - `generate.py` runs the month loop;
@@ -280,8 +299,8 @@ At the top level:
 - `__main__.py` is the command line.
 
 ### How it is checked
-- **Nine families**, one table each: population, holdings, amount rules, amount levels, seasons,
-  mart, traps, oracle and the feature-store extract. Each row compares a statistic with what this spec says.
+- **Ten families**, one table each: population, holdings, amount rules, amount levels, seasons,
+  mart, traps, controls, oracle and the feature-store extract. Each row compares a statistic with what this spec says.
 - **Tolerance:** 4.5 standard errors, so a correct generator fails a family about once in a
   thousand runs. A rule that must always hold has tolerance 0.
 - **Independent of the generator.** The checks never call the code that makes the data, so a
@@ -303,7 +322,7 @@ amounts, mart, traps and oracle, then the code, the checks, the interface and th
    backward rollups. **No targets**: Target Factory builds them from the current-month columns, so
    that stage gets tested too. The one exception is a target built "upstream" (a trap).
 2. **Size:** `canonical` ≈ 100k clients × 24 months; `unit` ≈ 5k × 24 for tests. Backward windows
-   ≤ 6 months. **Width:** 157 columns, plus an off-by-default switch for many weak or noise columns.
+   ≤ 6 months. **Width:** 166 columns, plus an off-by-default switch for many weak or noise columns.
 3. **Segmented population** with a realistic mix; hidden traits correlated within each segment
    and different between segments, so pooled and within-segment relationships diverge.
 4. **Heavy-tailed, coherent amounts:** power-law tails, rank-correlated through shared traits; no
@@ -322,7 +341,8 @@ Design constraints:
 - Libraries: numpy, pandas, pyarrow, scipy (pinned, D-012). Spark doesn't generate anything; it
   reads what was written, through the environment adapter.
 - **One random stream per mechanism** (population, latents, holdings, amounts, cards, logins, traps,
-  leaks, extras, regression, attributes, noise, card_leaks), spawned from the seed and passed explicitly. A new
+  leaks, extras, regression, attributes, noise, card_leaks, extract, controls, control_leaks),
+  spawned from the seed and passed explicitly. A new
   mechanism appends a stream, leaving the earlier ones identical: a new stream never changes
   another stream's columns. Within a stream, a new draw moves every later one.
 - Vectorised over clients; the only loop is over months. Memory holds one month of clients, a
@@ -732,12 +752,13 @@ All names are lowercase and come from one grammar (`mechanisms/mart.py`):
 - **Ratio:** `{base}_0_2_vs_3_5_months_ratio` (average of months 0–2 over months 3–5).
 - **Trap columns** end in `_trap_{kind}` (D-064), kind ∈ `leak`, `upstream_target`,
   `process_leak`, `shifted`, `missing_leak`, `null_control`, `near_constant`, `all_null`,
-  `constant`, `redundant`, `low_fill`, `high_cardinality` (and `lookahead`, in the
+  `constant`, `redundant`, `low_fill`, `high_cardinality`, `spend_leak`, `honest`, `unstable`,
+  `one_value`, `drift_window`, `drift_moderate` (and `lookahead`, in the
   [extract](#feature-store-extract)); extra columns are
   `extra_{nnnn}_trap_weak` / `extra_{nnnn}_trap_noise`.
 
 #### Columns
-157 columns, in this order:
+166 columns, in this order:
 
 | Group | Columns |
 |---|---|
@@ -752,7 +773,7 @@ All names are lowercase and come from one grammar (`mechanisms/mart.py`):
 | Other 6-month aggregates (16) | `casa_bal` min / max / std; `inflow_casa_vol`, `spend_cc_vol`, `fx_vol`, `login_digital_mobile_cnt` max / std / nz; `spend_cc_travel_vol` nz |
 | Recency (5) | `months_since_last_{inflow_casa, outflow_casa_remittance, outflow_casa_cash, spend_cc, fx}` |
 | Ratios (4) | `casa_bal`, `inflow_casa_vol`, `spend_cc_vol`, `login_digital_mobile_cnt` (`_0_2_vs_3_5_months_ratio`) |
-| Trap columns (20) | [trap summary](#trap-summary). The look-ahead block: `cc_preapproval_score_trap_leak`, `cc_campaign_response_score_trap_leak`, `cc_acquire_next_3_months_flag_trap_upstream_target`, `application_loan_personal_cnt_trap_process_leak`, `loan_personal_bal_trap_shifted`, `cc_offer_code_trap_missing_leak`, `application_cc_cnt_trap_process_leak`, `cc_limit_trap_shifted`. The per-month block: the three null controls and two quality columns, then `marketing_consent_flag_trap_null_control`, `referral_branch_code_trap_high_cardinality`, `booking_country_trap_constant`, `statement_cycle_days_trap_constant`, `relationship_months_trap_redundant`, `loyalty_points_bal_trap_low_fill`, `complaint_category_trap_low_fill` |
+| Trap columns (29) | [trap summary](#trap-summary). The look-ahead block: `cc_preapproval_score_trap_leak`, `cc_campaign_response_score_trap_leak`, `cc_acquire_next_3_months_flag_trap_upstream_target`, `application_loan_personal_cnt_trap_process_leak`, `loan_personal_bal_trap_shifted`, `cc_offer_code_trap_missing_leak`, `application_cc_cnt_trap_process_leak`, `cc_limit_trap_shifted`, `cc_review_score_trap_leak`, `td_offer_rate_trap_missing_leak`, `application_cc_status_trap_process_leak`, `cc_spend_review_trap_spend_leak`. The per-month block: the three null controls and two quality columns, then `marketing_consent_flag_trap_null_control`, `referral_branch_code_trap_high_cardinality`, `booking_country_trap_constant`, `statement_cycle_days_trap_constant`, `relationship_months_trap_redundant`, `loyalty_points_bal_trap_low_fill`, `complaint_category_trap_low_fill`, `cc_propensity_score_trap_honest`, `cc_vendor_score_trap_unstable`, `statement_format_trap_one_value`, `support_wait_min_trap_drift_window`, `contact_channel_trap_drift_moderate` |
 
 #### Null rule, history and types
 - **Nulls only where the retail data has them:**
@@ -765,7 +786,8 @@ All names are lowercase and come from one grammar (`mechanisms/mart.py`):
   - ratios whose 3–5 average is 0;
   - the trap columns: the upstream target (holders, immature months), the two shifted columns
     (no next month), the all-null one, the two low-fill columns and the offer code (null by random
-    fill; the offer code also for every card holder).
+    fill; the offer code also for every card holder), the deposit rate (blanked for half the
+    converters), the one-value column and the wait time (random nulls).
 
   A null is a true null in pandas, parquet and Spark. Nullable integers display as `<NA>` in
   pandas.
@@ -841,7 +863,8 @@ framework does ([dataset](dataset.md#sources-and-joins-d-129)):
 Traps sit on **two products** (D-064): credit card acquisition (`cc_flag` 0 → 1) and personal-loan
 opening (`loan_personal_cnt` rises). The card meets every trap-column kind, since the first
 run-through is card acquisition only: the shifted and process-leak kinds, first built on the loan,
-have card twins. A few concern no product. There are two sorts:
+have card twins. The term deposit and the card spend carry one each, and a few concern no
+product. There are two sorts:
 - **Trap columns** (`trap_column` true) are added only to test the framework. Their names end in
   `_trap_<kind>`, so anyone reading the mart sees them.
 - **Traps in real columns** (`trap_column` false) are ordinary columns whose realistic behaviour is
@@ -851,7 +874,9 @@ have card twins. A few concern no product. There are two sorts:
 
 The list lives in `spec/traps.py` and in `truth.json` (`spec.traps`); the notebook shows it with
 each trap's evidence. The ten 0.5.0 columns' ≈ values are the spec's; the canonical dataset meets
-each within its check's tolerance (2026-10-25).
+each within its check's tolerance (2026-10-25). The nine 0.6.0 columns' and the natural controls'
+values are measured by Feature Checks on the `dev` preset (20k clients, seed 0, the example
+configs; the card config unless stated, 2026-11-10).
 
 | Product | Trap | Trap column? | Column | Construction | Expected behaviour |
 |---|---|---|---|---|---|
@@ -867,12 +892,18 @@ each within its check's tolerance (2026-10-25).
 | Credit card | Missingness-pattern leak | yes | `cc_offer_code_trap_missing_leak` | Look-ahead, w = 3: a random code for 80% of the non-holders who take the card within 3 months (a leaver who took it first counts, as for the leaks) and for 1% of the other non-holders; null for holders | The value carries no signal, being filled almost everything: AUC of "is filled" ≈ 0.90 for card acquisition at w = 3, above the oracle's 0.84; the leakage screen's missingness-pattern check flags it. A tell: the fill falls to the 1% floor in the panel's last 3 months as the windows truncate, so the leak fades at the inference month, like the shifted columns |
 | Credit card | As-of misalignment | yes | `cc_limit_trap_shifted` | Next month's `cc_limit`; null without a next month (the loan row below has the tells) | Beats the oracle for card acquisition at w = 1; ≈ 0.67 at w = 3 (one acquirer in three has next month's limit), below the oracle; the time-alignment check catches it |
 | Credit card | Process leak | yes | `application_cc_cnt_trap_process_leak` | A card taken at `t+1` is preceded by an application at `t` with chance 0.8; declined applications are 30% of all, among non-holders | Beats the oracle for card acquisition at w = 1, not at w = 3 |
+| Credit card | Process leak (status) | yes | `application_cc_status_trap_process_leak` | Derived from the card application count, no draw: `approved` where the client applied at `t` and holds the card at `t+1`, `declined` where it applied and does not, `none` otherwise (so everywhere in the panel's last month) | A categorical whose rare levels (1.3% of the non-holders' rows) carry 80% of next month's acquisitions, at a rate of 71.3% against `none`'s 1.9%, Cohen's h 1.74: `leakage.rare_value_leak` on the categorical path; it also raises `lagged_signal_drop`, like its numeric twin (by design, not asserted) |
+| Credit card | U-shaped leak | yes | `cc_review_score_trap_leak` | Look-ahead, w = 3: `round(500 + 100 · (ε + 1.0 · y · sign(ε)))`, `y` = acquisition in the next 3 months, `ε ~ N(0, 1)`: acquirers pushed away from the centre on their own side; holders get `ε` only | Window concordance 0.501 in value order, 0.857 in best order (the generator's AUC by the distance from the centre ≈ 0.88, above the oracle's 0.84): `leakage.too_strong` in best order only, the detail opening "best order; in bin order 0.500" |
+| Credit card | Honest score (control) | yes | `cc_propensity_score_trap_honest` | Per month, from this month's oracle `score_cc` standardised over the month's clients (`z`): `round(600 + 100 · (z + σ · ε) / √(1 + σ²))`, σ 0.3 in even calendar months and 0.9 in odd ones; standardised, so its spread is the same every month | Raises nothing. Strong and honest: pooled window concordance 0.748 (below the oracle and `too_strong`'s 0.80), 0.71–0.79 per period (even months higher), range 0.078 with heterogeneity p 0.0001, yet below half its signal (0.124), so not `concordance_unstable`; keeps 0.96 of its signal when lagged; varies within a client; PSI ≈ 0. A control for `too_strong`, `concordance_unstable`, `lagged_signal_drop` and `client_constant` |
+| Credit card | Unstable score | yes | `cc_vendor_score_trap_unstable` | Per month: `round(300 + 50 · (0.6 · z + ε) / √(0.6² + 1))` in even calendar months, `round(300 + 50 · ε)` in odd ones: a score delivered every other month, noise in between, the same spread in both | Concordance 0.63–0.65 in even months, 0.49–0.50 in odd ones, range 0.160: `stability.concordance_unstable`; weak pooled (0.566), so a control for `too_strong` |
+| Card spend | Spend leak (regression) | yes | `cc_spend_review_trap_spend_leak` | Look-ahead, no draw: 1 for a card holder at `t` whose `spend_cc_vol` over `t+1 … t+3` inside the panel exceeds 60,000 (about the 95th percentile of holders' next-3-month spend; a month it has left counts 0), else 0; 0 for non-holders. It marks 4.6% of holders | On the spend target `spend_cc_next_3_months` the rare 1 has a far higher mean, Cohen's d about 5 (threshold 0.8): `leakage.rare_value_leak` on the `unit` regression variant, asserted in `tests/test_feature_checks.py`; on the card config it is constant 0 among the non-holders, so `quality.constant` by design |
 | Personal loan | Process leak | yes | `application_loan_personal_cnt_trap_process_leak` | An opening at `t+1` is preceded by an application at `t` with chance 0.8; declined applications (never opened) are 30% of all, drawn with chance ∝ the client's opening chance at `t+1` | Beats the oracle for openings in the next month (w = 1), not at w = 3 or 6; leakage screen plus human review |
 | Personal loan | As-of misalignment | yes | `loan_personal_bal_trap_shifted` | Holds next month's `loan_personal_bal` (an upstream join on the wrong month); null where the client has no next month: it leaves, or it is the panel's last month. The real column comes from the name, so the spec's parameters are just `{"months": 1}` | Beats the oracle for openings next month (w = 1), not at w = 3 or 6; a time-alignment check (the column against its real sibling one month on) catches it. Two realistic tells: its nulls reveal next-month exits, which would leak which rows get a null target as leavers (D-029 (c)), and it is all-null in the latest month |
-| Personal loan | Rare high-rate level | no | `nationality` = Ghana (≈ 0.35% of clients) | +1.5 on the personal-loan log-odds | Stands out in event rate by level; unstable in CV |
-| Personal loan | Inverted U | no | `age` | Peak in the mid-30s | Spearman ≈ 0, mutual information high |
+| Personal loan | Rare high-rate level | no | `nationality` = Ghana (≈ 0.35% of clients) | +1.5 on the personal-loan log-odds | Stands out in event rate by level (an EDA by-level view); no example config models the loan |
+| Personal loan | Inverted U | no | `age` | Peak in the mid-30s | Rank correlation ≈ 0, strong in best order (the bins ordered by their rate) |
 | Personal loan | Hidden openings | no | `loan_personal_maturity_months` | A maturity in the same month hides an opening | Predictive under a "count at the end" rule only |
 | Personal loan | Eligibility-defining | no | `loan_personal_maturity_months` | All null under "first loan" eligibility | Flagged as all-null within the eligible population |
+| Term deposit | Missingness leak below EDA's range | yes | `td_offer_rate_trap_missing_leak` | Look-ahead, w = 3: a rate `round(2.5 + 2.5 · u, 2)` for every client, holders included; null for half the non-holders who take a deposit within 3 months inside the panel (`blank_share` 0.5, a second uniform; a field some booking flows clear). Half, because the deposit's 3-month prevalence is 0.82% of its config's rows: a blank on every conversion would sit above EDA's 0.5% lower null-share bound | Deposit config: 0.42% null, null concordance 0.751, read below EDA's null-share range: `leakage.missingness_leak`, the detail opening "read below EDA's null-share range". Card config: 0.30% null and nothing raised (the cross-config control) |
 | Any | Null controls | yes | `insurance_premium_vol_trap_null_control` (lognormal, persistent per client), `branch_visit_cnt_trap_null_control` (zero-inflated Poisson), `preferred_language_trap_null_control` (Zipf categorical, persistent) | Independent of everything | Univariate AUC ≈ 0.5 for every target |
 | Any | Quality | yes | `paper_statement_flag_trap_near_constant` (99.9% zeros), `legacy_risk_grade_trap_all_null` (all null) | | Flagged by the quality checks |
 | Any | Null control (a flag) | yes | `marketing_consent_flag_trap_null_control` | Persistent 0/1 per client, 1 with chance 0.4, independent of everything | AUC ≈ 0.5 for every target; ranked last |
@@ -882,10 +913,44 @@ each within its check's tolerance (2026-10-25).
 | Any | Low fill (numeric) | yes | `loyalty_points_bal_trap_low_fill` | 1% of clients have it, persistently; a lognormal amount (median 5,000, σ 1.0) in each of their months; null for the rest | Flagged for missingness |
 | Any | Low fill (categorical) | yes | `complaint_category_trap_low_fill` | 0.3% of rows a month, one of six levels; null otherwise | Flagged for missingness; tiny level counts suppressed in EDA's tables |
 | Any | Drift (monitoring) | no | login columns | [Time effects](#time-effects) | PSI > 0.25 after panel month 16, ≈ 0 before |
-| Any | Collinearity | no | rollups and identities | Rollups of one measure over `0_2` and `0_5`; `<product>_status == "active"` ⇔ `<product>_flag`; `product_cnt` = product flags + loan counts > 0; inflow − outflow = change in `casa_bal`; subcategories sum to their total | Correlation views and VIF flag the clusters (infinite for the identities) |
+| Any | Collinearity | no | rollups and identities | Rollups of one measure over `0_2` and `0_5`; `<product>_status == "active"` ⇔ `<product>_flag`; `product_cnt` = product flags + loan counts > 0; inflow − outflow = change in `casa_bal`; subcategories sum to their total | The redundancy check clusters them and pairs the identities (association 1); each member is explained by the others (`explained_by_others`) |
 | Any | Dirty switches, off by default | no | — | Duplicate client-months; a month with the login columns null (an outage); income × 12 from one month on (a unit change); a few `casa_bal` typos × 1,000 | Contract checks fail loud; operational monitoring flags them (tests on the `unit` preset only). Known limit: the rollups stay clean, while a real upstream mart would roll up its own bad values (stated, not built) |
-| Any | Look-ahead (in the extract) | yes | `holding_cnt_trap_lookahead` in `fs_extract` | The six holding flags held in the client's last panel month, stamped on every month | Strongly predictive of acquisitions (card AUC ≈ 0.81 at w = 3, below the oracle's 0.86; above the oracle for the term deposit; 5k clients, 2026-10-30); constant per client while the flags move; Feature Checks' `time_alignment.client_constant` flags it; its concordance sits at the `leakage.too_strong` threshold, so that flag is not asserted (Q486) |
+| Any | Look-ahead (in the extract) | yes | `holding_cnt_trap_lookahead` in `fs_extract` | The six holding flags held in the client's last panel month, stamped on every month | Strongly predictive of acquisitions (window concordance ≈ 0.78 for the card and ≈ 0.76 for the term deposit on `dev`; the generator's check: card AUC ≈ 0.81 at w = 3, below the oracle's 0.86, above the oracle for the term deposit, 5k clients, 2026-10-30); constant per client while the flags move; Feature Checks' `time_alignment.client_constant` flags it; its concordance sits at the `leakage.too_strong` threshold, so that flag is not asserted (Q486) |
+| Any | One value (control) | yes | `statement_format_trap_one_value` | Per month: `e-statement` for every client, null at random on 2% of the rows; from 2026-03 `paper` on 0.4% of the filled rows | Raises nothing: dominant share 0.981 (null counted as a value), so neither constant nor near-constant; the new level is 0.39% of the latest period, below `new_levels`' 1%; the random nulls carry no signal. A control for `constant`, `near_constant`, `high_missing`, `nulls_informative` and `new_levels` |
+| Any | Drift inside the window | yes | `support_wait_min_trap_drift_window` | Per month: null at random on 30% of the rows (no call this month: a null that stands for 0), else a lognormal wait in minutes (median 6.0, log-scale σ 0.6, to 0.1), never 0; the median × 1.6 from 2025-06, inside the example configs' window 2025-03 … 2025-08 | PSI 0.394 from the window's first period to its last (0.384 on the deposit config), 0.002 from its last to the latest; 30% missing and no zeros: `stability.psi_window_large` and `quality.nulls_may_be_zeros`; a control for `high_missing`, `nulls_informative`, `psi_latest` and `psi_latest_large` |
+| Any | Moderate drift | yes | `contact_channel_trap_drift_moderate` | Per month: branch, phone, web, app with shares 0.4 / 0.3 / 0.2 / 0.1 until 2025-06 and 0.25 / 0.3 / 0.25 / 0.2 from it; from 2026-03 a new level `chat` on 3% of the rows, taken from the others in proportion | PSI 0.157 across the window, 0.184 from the window's last period to the latest (after the validation period), the new level 3.2% of the latest period: the notes `psi_window`, `psi_latest` and `new_levels`; a control for `psi_window_large` and `psi_latest_large`. The first planted drift on the categorical PSI path |
 | Any | Extra columns, off by default | yes | `extra_{nnnn}_trap_weak` / `_trap_noise` | 10% weak (a trait plus noise, rank correlation 0.1–0.3), the rest pure noise | Scale tests; weak ones rank above noise |
+
+**Controls.** A control is a column close to a check's threshold on the safe side, which that
+check must leave alone, so a rule that over-fires fails the trap test as surely as one that
+misses. Most rows above are both a trap for one finding and a control for others; the honest
+score and the one-value column are controls only. Six rows on real columns
+(`trap_column` false, target `cc_acquire`) are controls only, or a control beside one finding of
+their own; `also` names further columns that behave the same way. The test keeps both mappings,
+the findings each row must raise and the ones it must not, so finding names have one owner and
+this package stays framework-agnostic (D-064); it asserts a forbidden finding only where it could
+fire and no trap assertion already rules it out (a note and its flag are exclusive). Measured on
+`dev`, all holding:
+
+| Kind | Columns | What it is | Must raise | Must not raise |
+|---|---|---|---|---|
+| `static_attribute` | `emirate` (`employment_status`, `salary_transfer_flag`) | Fixed within every client and drawn without the traits: concordance 0.50–0.54, below the time-alignment gate's 0.6 | — | `client_constant` |
+| `dominant_level` | `segment` (the travel roll-ups `spend_cc_travel_vol_0_5_months_avg`, `spend_cc_travel_vol_0_2_months_avg`) | One dominant value beside a real minority whose rate differs: Cohen's h ≈ 0.64 (the roll-ups ≈ 0.45), below 0.8 | — | `rare_value_leak` |
+| `shared_null_set` | `casa_bal_0_5_months_avg` (`inflow_casa_vol_0_5_months_avg`) | The six-month roll-ups' one null set: clients with fewer than six months, so new clients, who take the card more; null concordance 0.577 | `nulls_informative` | `missingness_leak` |
+| `recency_null_zero` | `months_since_last_spend_cc` | 90.6% null among the non-holders (no card spend yet), never 0 | `nulls_may_be_zeros` | `high_missing` |
+| `recency_with_zeros` | `months_since_last_fx` | 79.4% null, with zeros among the values (≈ 63%) | — | `nulls_may_be_zeros`, `high_missing` |
+| `weak_nulls` | `residence_days` (`income`) | Nulls with a cause but almost no signal for the card: null concordance 0.516 and 0.506 | — | `nulls_informative`, `missingness_leak` |
+
+**Not planted, on purpose.**
+- A lagged flip (read one period earlier, the value orders clients the other way) cannot exist
+  under a 3-month target: the windows at t−1 and t share two of their three months, so a pattern
+  that flips the lag flips the window too. Feature Checks' flip branch is unit-tested on built
+  cells.
+- A control keeping about 60% of its signal when lagged would need a transient mechanism the
+  oracle must know; the honest score (0.96 kept) and the count-free guard over every legitimate
+  column cover the lag check.
+- A rare-value minority with few events (the detail's "not significant") would sit on about 40
+  rows, seed-fragile either way; it is unit-tested both ways.
 
 Later (not in M1): an interaction-only feature.
 
@@ -1001,8 +1066,8 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
   Its only functions are two small dict builders (`_sub`, `_profile`).
 - `products.py`: `PRODUCTS` (shares, volumes, drivers) and `HOLDING_RULES`.
 - `amounts.py`: `LEVELS` (multiples, variation, card, loans, logins) and `SEASONS` (time effects).
-- `traps.py`: `TRAPS`, the trap summary (21 trap-column rows, the extract's look-ahead included,
-  and the traps in real columns).
+- `traps.py`: `TRAPS`, the trap summary (30 trap-column rows, the extract's look-ahead included,
+  and the traps and controls in real columns).
 - `extract.py`: `EXTRACT`, the feature-store extract (coverage, the six features).
 
 **`mechanisms/`: the functions that simulate**
@@ -1036,9 +1101,14 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
     (the `noise` stream);
   - the per-month trap columns: `trap_columns` and `noise_columns` (the seven 0.5.0 columns);
   - the look-ahead columns, generic over the product (`_shifted`, `_applications`) plus
-    `_offer_codes`, and `finalize_lookahead`;
+    `_offer_codes`, the U shape in `_leak`, `_blanked_on_conversion` (the deposit rate),
+    `_application_status` and `_spend_leak`, and `finalize_lookahead`;
+  - every trap column's name and written type (`TRAP_TYPES`), the 0.6.0 ones included;
   - the extra columns;
   - `apply_dirty` and `dirty_panel` (dirty data).
+- `controls.py`: `control_columns`, the five monthly control columns (the honest and vendor
+  scores, the one-value column, the wait, the contact channel) from this month's oracle scores and
+  the month alone (the `controls` stream).
 - `extract.py`: `extract_frame` (the extract of a clean panel: coverage, the six features, the
   look-ahead count) and `extract_schema` (its written types).
 
@@ -1064,7 +1134,7 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
   extract.
 - One module per family, each with `check_<family>(mart, oracle, truth)`: `population.py`,
   `holdings.py`, `amount_rules.py`, `amount_levels.py`, `seasons.py`, `mart.py`, `traps.py`,
-  `oracle.py`.
+  `controls.py` (the five monthly control columns), `oracle.py`.
 
 **Inside one month** (`advance_simulation`):
 1. `_turn_over` picks the leavers and draws the joiners (`clients.*`, `traps.start_trap_state`,
@@ -1077,7 +1147,7 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
 7. On panel months only:
    1. `regression.simulate_card_spend`;
    2. `buffer_month`, which calls `traps.trap_columns`, `traps.noise_columns`,
-      `traps.extra_columns` and `month_rows`;
+      `controls.control_columns`, `traps.extra_columns` and `month_rows`;
    3. `traps.finalize_lookahead`, once the look-ahead months exist.
 
 **Reading the code for review**, in order:
@@ -1115,16 +1185,27 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
 - **The traps family has rows for every trap column.** For the 0.5.0 columns: the constants equal
   their value; the redundant column's formula, rank correlation and AUC against its source; the
   low-fill shares and persistence; the missingness-pattern leak's fill shares, holder nulls and
-  AUC above the oracle; the card shifted and process-leak columns mirror the loan rows. The
-  extract's look-ahead column has its row in the extract family. The mart
-  family's null rule leaves the three random-fill columns to the traps family.
+  AUC above the oracle; the card shifted and process-leak columns mirror the loan rows. For the
+  0.6.0 look-ahead columns: the U leak's AUC near 0.5 in value order and above the oracle by its
+  distance from the centre; the deposit rate null only for converters, for half of them, never
+  for holders, within its range; the status's rule; the spend leak's rule and its share of 0
+  among holders. The extract's look-ahead column has its row in the extract family. The mart
+  family's null rule leaves the random-fill columns to the traps and controls families.
+- **The controls family has rows for the five monthly control columns:** the two scores'
+  correlation with the oracle's `score_cc` per even and odd month (from the spec's loading and
+  noise) and their AUCs (the honest score below the oracle and higher in the even month; the vendor
+  score 0.5 in the odd month and above 0.58 in the even one); the one-value column's rule, null
+  share and new-level share; the wait's null share, no zeros, a PSI of at least 0.25 across its
+  step and below 0.1 after it; the channel's level shares before and after its step, their PSI
+  within 0.10–0.25 and the new level's share. The drift rows compare months around the spec's
+  step dates, whatever window a config uses.
 - **Tolerances:** 4.5 standard errors, a family-wise false-failure rate of about 0.1%.
   - Standard errors are analytical where the statistic has one, on one row per client. Examples:
     binomial shares, Fisher z, Hanley–McNeil AUCs, α/√k for the Hill estimator.
   - A spec range is checked as a range.
   - A rule that must always hold has tolerance 0.
 - **Two suites:**
-  - `pytest` (≈ 3 min) runs the rule rows on the 5k preset. It also runs the column snapshot (157
+  - `pytest` (≈ 3 min) runs the rule rows on the 5k preset. It also runs the column snapshot (166
     names), prefix stability (the look-ahead columns, the three 0.5.0 ones included), the Spark
     recompute of every rollup, the written types and the off-by-default switches: dirty data and
     extra columns, in `checks/switches.py`, which is not a family.
@@ -1146,8 +1227,9 @@ standard errors below 0.55), generated from its seed in the test run. It is
 on the Mac: generation 80 s, the six Spark stage runs about 240 s), and
 `pytest -m "not slow and not traps"` skips it in a quick loop.
 - **The acceptance list is `truth.json`'s trap list.** The test maps each trap row, keyed by kind
-  **and** target, to the finding that must catch it (the mapping lives there, not in this
-  package): a row whose target is one of the run configs' (card, term deposit) is asserted on that
+  **and** target, to the findings that must catch it (`TRAP_FINDINGS`) and, for a control, the
+  findings it must not raise (`CONTROL_FINDINGS`; a row may be in both); the mappings live there,
+  not in this package (D-064). A row whose target is one of the run configs' (card, term deposit) is asserted on that
   config, an "any product" row on both; every row with the personal-loan target (`process_leak`,
   `shifted`, `inverted_u`, `rare_level`, `hidden_openings`, `eligibility_defining`) goes to
   `NOT_CHECKS`. It asserts on the window statistics (the ledger's `*_window` columns and the
@@ -1155,10 +1237,10 @@ on the Mac: generation 80 s, the six Spark stage runs about 240 s), and
 
   | Check | Trap kinds |
   |---|---|
-  | `quality` | `constant`, `near_constant`, `all_null`, `low_fill`, `high_cardinality`, `eligibility_defining` |
-  | `leakage` | `leak`, `missing_leak`, `upstream_target`, `process_leak` (`rare_value_leak`) |
+  | `quality` | `constant`, `near_constant`, `all_null`, `low_fill`, `high_cardinality`, `eligibility_defining`; `shared_null_set` (`nulls_informative`); `recency_null_zero`, `drift_window` (`nulls_may_be_zeros`) |
+  | `leakage` | `leak` (the U-shaped one in best order), `missing_leak` (the deposit's below EDA's null-share range), `upstream_target`, `process_leak` (`rare_value_leak`: the count and the status) |
   | `time_alignment` | `shifted` (`lagged_signal_drop`), `lookahead` (`client_constant`) |
-  | `stability` | `drift` (`psi_latest_large`: the latest synthetic period is after the relaunch) |
+  | `stability` | `drift` (`psi_latest_large`: the latest synthetic period is after the relaunch); `unstable` (`concordance_unstable`); `drift_window` (`psi_window_large`); `drift_moderate` (`psi_window`, `psi_latest`, `new_levels`) |
   | `redundancy` | `redundant` (paired with its source), `collinearity` |
   | kind `numeric` | `decimal_type` |
 
@@ -1170,6 +1252,17 @@ on the Mac: generation 80 s, the six Spark stage runs about 240 s), and
     drift more (0.43–0.50 on the canonical card data);
   - collinearity is asserted as the `<product>_status` ⇔ `<product>_flag` identity: each pair
     whose members are both read candidates raises `associated_pair` with each other.
+- **Controls** (`test_each_control_raises_no_forbidden_finding`): each control row asserted on
+  the config has every column read, each forbidden finding's measure computed on it (where the
+  ledger holds that measure: a check that never ran would pass vacuously) and none of those
+  findings raised ([trap summary](#trap-summary), "Controls").
+- **The cross-config control** (`test_sub_range_missing_leak_fires_on_its_target_only`):
+  the deposit rate's missing share is below EDA's null-share range on both configs; on the
+  deposit config it raises the missingness leak through the below-range path (the detail says
+  so), on the card config, where its nulls carry no signal, no missingness leak.
+- **The spend leak** (Cohen's d) is asserted on the regression variant of
+  `tests/test_feature_checks.py` (`unit` preset), not here: a third config would add EDA and
+  Feature Checks on `dev`.
 - **The look-ahead trap asserts `client_constant` only.** Its `dev` concordance (about 0.78 on
   the card config, 0.77 on the term-deposit one) sits near `leakage.too_strong`'s 0.80 threshold,
   so asserting that flag would flap.
@@ -1178,19 +1271,22 @@ on the Mac: generation 80 s, the six Spark stage runs about 240 s), and
   to assert).
 - **`NOT_CHECKS`** is an explicit dict, trap kind (and target) → reason: an EDA view (`simpson`,
   `onboarding`, `null_income_eligibility`), "no config: loan target" (the loan-target rows named
-  above), off by default (`dirty`, `extra`). A trap kind that is neither mapped, nor `null_control`
-  (asserted below), nor in `NOT_CHECKS` fails the test, so a new trap kind cannot slip past it.
+  above), the spend leak (asserted on the regression variant), off by default (`dirty`, `extra`).
+  A trap row that is neither mapped (as a trap or a control), nor `null_control` (asserted below),
+  nor in `NOT_CHECKS` fails the test, so a new trap kind cannot slip past it.
 - The D-088 counts per period are compared from `eda.json` (EDA's population counts), not from
   Target Factory's summary, which covers every row before eligibility.
 - **Bin count:** in the snapshot's cells every numeric candidate has at least
   min(distinct non-null values, `eda.bins // 2`) bins (50 at the configs' 100), and no bin but a
   singleton holds more than 5% of its non-null rows (the edges rule, T25); the failure names the
   feature and its bin count.
-- **False positives are checked on the null controls**, pure noise that must never be flagged
-  (below), and by a count-free guard (the SDS's Q545): no card-config candidate outside the
-  truth's trap list raises `too_strong`, `missingness_leak` or `lagged_signal_drop`
-  (`NEVER_ON_LEGITIMATE`), so a leakage or time-alignment check firing on genuine signal fails
-  the test. There is no bound on the count of held non-trap features (the SDS, 2026-11-09): the
+- **False positives are checked on the controls** (above), **on the null controls**, pure noise
+  that must never be flagged (below), and by a count-free guard (the SDS's Q545): no card-config
+  candidate raises `too_strong`, `missingness_leak` or `lagged_signal_drop`
+  (`NEVER_ON_LEGITIMATE`) unless a trap row allows it (a trap column, a row not asserted, or a
+  real-column row whose own findings include one), so a leakage or time-alignment check firing on
+  genuine signal fails the test; the real columns named only for a note or as a control stay
+  under the guard. There is no bound on the count of held non-trap features (the SDS, 2026-11-09): the
   legitimate features a flag holds by design (static attributes under `client_constant`, a
   genuine minority under `rare_value_leak`, a drifting roll-up under a PSI flag) are a person's
   to keep or exclude, which is why those findings stay out of the guard.
@@ -1369,13 +1465,6 @@ None. Answered in the SDS's review (2026-10-19):
 - the decisions taken during the build are confirmed.
 
 ### Deferred
-- **A trap and a control column for every Feature Checks finding** (the SDS's Q545): a control
-  sits near the threshold and must not raise the finding, so a rule that over-fires fails too.
-  Most findings have a trap today and almost none a control (the null controls only show that
-  noise raises nothing); the per-finding to-do is
-  [`worknotes/synthetic_trap_coverage.md`](../../worknotes/synthetic_trap_coverage.md).
-- An **`unstable` trap kind** (a one-month campaign flag whose link to acquisition exists in one
-  window month only) waits for M4, with Feature Checks' stability.
 - A noisy copy of a real column was considered and dropped: the redundant column covers
   redundancy.
 - A survival-coded coverage trap: an extract that covers only the clients alive at extract

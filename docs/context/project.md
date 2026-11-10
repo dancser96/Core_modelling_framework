@@ -95,15 +95,15 @@ standard where it can.
 
 **Phase 2 is done when** a DS can take a new use case, for whichever entities it applies to, from
 data to scores from a production model using only a config and the guided notebooks. Every component
-exists at least as a thin version (depth per component: OD-01), including the feature store integration (thin)
+exists at least as a thin version (depth per component: `docs/roadmap.md` → Phase 2 plan), including the feature store integration (thin)
 and the data observability step at deploy; LLM-assisted modelling comes in Phase 3 (D-021).
 The production step is met outside the bank when `deploy` runs against a production-tier path on
 synthetic data (D-021). Inside the bank, a long change freeze around the year end makes the first
 change request release 1.0, which carries only the framework, no model; a model's first deploy is
 a later, quicker change request (D-021). This definition of done is met at **release 1.0**;
 December 2026 is a pre-release that moves the code into the bank's internal repo, committed and
-demonstrated, not into production (D-021). Its content and dates are being agreed with the LDS
-(D-022; proposal in `worknotes/timeline_proposal.md`). In early
+demonstrated, not into production (D-021). Its content and dates are agreed
+(D-022). In early
 October 2026 the target was put as "within 1–2 months"; there is no hard deadline. Build order and
 milestones: `docs/roadmap.md`.
 

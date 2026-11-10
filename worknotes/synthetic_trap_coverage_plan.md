@@ -8,7 +8,7 @@ not touched: the framework stays name-blind and unchanged._
 six "natural control" rows on real columns, two random streams appended last, synthetic 0.6.0,
 both datasets regenerated. Every finding in `feature_checks/findings.py` (20) then has a trap
 that must raise it and a control close to the threshold that must not, and `tests/test_traps.py`
-asserts both from `truth.json`. Three items of the note are dropped with a reason (§8: Q547–Q549):
+asserts both from `truth.json`. Three items of the note are dropped with a reason (§8: Q559, Q548, Q549):
 the lagged flip, the ~60% lag control, the few-events minority.
 
 **Kick-off prompt for Opus (copy, then add the SDS's §8 answers):**
@@ -114,7 +114,7 @@ column), like `onboarding` or `simpson`.
 
 ## 5. Truth and test design (`tests/test_traps.py`)
 The mapping stays in the test (D-064: the synthetic package never names a Feature Checks finding;
-Q546). Changes:
+Q558). Changes:
 1. **`TRAP_FINDINGS` values become tuples of findings** (`_missed` loops over them); new keys:
    `("missing_leak", "td_acquire")` → `missingness_leak`; `("unstable", "cc_acquire")` →
    `concordance_unstable`; `("drift_window", None)` → `psi_window_large`, `nulls_may_be_zeros`;
@@ -270,7 +270,7 @@ diff of 6.1–6.4 and the `ml-correctness-auditor` on 6.1; fix or justify every 
    Level 1 and Level 3 column counts 157 → 166 and "Trap columns (29)"; the name grammar's kinds;
    the stream list; the Trap summary: nine rows, a short "Controls" paragraph defining a control
    and naming the six natural rows, and one line on what is not planted and why: a lagged flip
-   (§8 Q547)); `docs/components/feature_checks.md` ("Trap acceptance test": the controls and the
+   (§8 Q559)); `docs/components/feature_checks.md` ("Trap acceptance test": the controls and the
    cross-config test; `rare_value_leak`, `missingness_leak`, `concordance_unstable` "Catches" lines;
    the open question "no synthetic trap yet" removed); `docs/decisions.md` D-064 extended in place
    (controls as the test's second mapping, the natural rows, `unstable` built in M2.2 not M4, the
@@ -291,13 +291,13 @@ diff of 6.1–6.4 and the `ml-correctness-auditor` on 6.1; fix or justify every 
 4. The measured table of §6.3 against the targets.
 Tests beyond that are not for review (the SDS reads code, not tests).
 
-## 8. Questions for the SDS (numbered on from Q545; each with its default)
-- **Q546. Where the control mapping lives.** The note proposed a truth-row field
+## 8. Questions for the SDS (Q548–Q559; the first two were Q546 and Q547, renumbered on 2026-11-10, after a parallel session had used them; each with its default)
+- **Q558. Where the control mapping lives.** The note proposed a truth-row field
   (`must_not_raise: leakage.too_strong`). Default: in the test (`CONTROL_FINDINGS`, keyed by kind
   and target like `TRAP_FINDINGS`), so finding names have one owner and the synthetic package
   stays framework-agnostic (D-064: "the test maps each kind"); the spec row's `expected` prose says
   both sides for a reader.
-- **Q547. Drop the lagged flip trap (R54).** Under a 3-month target the lagged value cannot order
+- **Q559. Drop the lagged flip trap (R54).** Under a 3-month target the lagged value cannot order
   clients the other way while the pooled window direction stays: the windows at t−1 and t
   overlap in two of three months, so any sign pattern that flips the lag flips the window too and
   the pooled concordance falls to 0.5 (a global monthly sign flip mirrors the bins, which also

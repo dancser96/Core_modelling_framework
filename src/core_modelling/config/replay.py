@@ -64,6 +64,7 @@ LOGGABLE_SETTINGS: dict[str, str] = {
     "feature_checks.stability.psi_max": "feature_checks",
     "feature_checks.stability.heterogeneity_p_max": "feature_checks",
     "feature_checks.stability.concordance_range_min": "feature_checks",
+    "feature_checks.stability.concordance_range_floor": "feature_checks",
     "feature_checks.stability.new_level_share_max": "feature_checks",
     "feature_checks.redundancy.correlation_max": "feature_checks",
     "feature_checks.redundancy.association_max": "feature_checks",

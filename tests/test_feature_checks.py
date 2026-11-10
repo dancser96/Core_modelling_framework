@@ -1,7 +1,8 @@
 """The Feature Checks stage end to end on the unit preset (D-134, D-136, D-137): EDA then Feature
 Checks on the card config (every candidate) and on a regression variant (a narrow candidate
-list), each run once in a module fixture on this module's own data root, so its audit-log
-entries reach no other test module. What a run must leave: every file and table of
+list, with the spend leak: the rare-value leak by Cohen's d), each run once in a module fixture
+on this module's own data root, so its audit-log entries reach no other test module. What a run
+must leave: every file and table of
 `feature_checks/`, `feature_checks.json` with the keys Training and the report read, the ledger
 with every Feature Checks column, the `flag` entries written once (a rerun writes only a `run`
 entry, with the compared periods and never the validation period), a held feature released by a
@@ -49,7 +50,8 @@ HEADINGS = ["Summary", "Choices", "How to read", "EDA headline", "Warnings", "Fl
             "Per period", "Appendix",
             "Resolved config", "Decisions", "Entries written", "Timings"]  # fmt: skip
 REGRESSION_CANDIDATES = ["age", "income", "segment", "onboarding_channel", "employment_status",
-                         "cc_active_flag", "cc_bal*", "cc_limit", "spend_cc_*"]  # fmt: skip
+                         "cc_active_flag", "cc_bal*", "cc_limit", "spend_cc_*",
+                         "*_trap_spend_leak"]  # fmt: skip
 
 
 @pytest.fixture(scope="module")
@@ -151,6 +153,23 @@ def test_the_ledger_holds_every_feature_checks_column(result: StageResult) -> No
             name: set(found) for name, found in zip(read["feature"], read[column], strict=True)
         }
         assert stored == {name: raised.get(name, set()) for name in read["feature"]}, column
+
+
+def test_a_rare_spend_marker_is_a_rare_value_leak_by_cohens_d(
+    regression: StageResult, unit_output: tuple[str, dict]
+) -> None:
+    """The spend leak (1 for the holders who spend most over the next months) raises the
+    rare-value leak on the regression variant through Cohen's d, at or above its threshold."""
+    traps = unit_output[1]["spec"]["traps"]
+    column = next(t["column"] for t in traps if t["kind"] == "spend_leak")
+    findings = regression.tables["findings"]
+    leak = findings.loc[
+        (findings["feature"] == column) & (findings["finding"] == "leakage.rare_value_leak")
+    ]
+    assert len(leak) == 1, findings.loc[findings["feature"] == column].to_string()
+    assert "Cohen's d" in leak["detail"].iloc[0]
+    assert leak["threshold"].iloc[0] == 0.8
+    assert leak["value"].iloc[0] >= leak["threshold"].iloc[0]
 
 
 def test_flag_entries_are_written_once_and_a_rerun_writes_a_run_entry(

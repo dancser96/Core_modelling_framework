@@ -9,4 +9,4 @@ and reading a dataset, `truth/` the oracle and `truth.json`, `checks/` the check
 spec. Spec and code map: docs/components/test_harness.md.
 """
 
-__version__ = "0.5.3"
+__version__ = "0.6.0"

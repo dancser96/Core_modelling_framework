@@ -681,10 +681,10 @@ def test_loggable_settings_exist_and_never_touch_the_data_definition_or_decision
 
 
 def test_every_feature_checks_threshold_is_loggable() -> None:
-    """Each of the 20 threshold leaves of the five steps, nested ones included, is listed at stage
+    """Each of the 21 threshold leaves of the five steps, nested ones included, is listed at stage
     `feature_checks`, so a new parameter can't be added without deciding it (D-125)."""
     leaves = _leaves(FeatureChecks, "feature_checks")
-    assert len(leaves) == 20
+    assert len(leaves) == 21
     assert {path: LOGGABLE_SETTINGS.get(path) for path in leaves} == dict.fromkeys(
         leaves, "feature_checks"
     )

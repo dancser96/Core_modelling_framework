@@ -1,13 +1,18 @@
 """Trap spec of the synthetic retail book: every trap, as plain data.
 
 Traps sit on two products, credit-card acquisition and personal-loan opening, so a test of either
-target meets every kind (D-064); a few traps concern no product (null controls, quality: near
-constant, all null, constant, high cardinality, low fill; drift, dirty data, extra columns).
-`trap_column` tells the two sorts apart:
+target meets every kind (D-064); the term deposit and the card spend carry one each, and a few
+traps concern no product (null controls, quality: near constant, all null, constant, high
+cardinality, low fill, one value; drift, dirty data, extra columns). Most rows are also controls:
+a column close to some check's threshold on the safe side, which that check must leave alone; the
+`expected` text says what a row must and must not show, and a row of real columns may be a
+control only (a static attribute, a dominant level, null sets). `trap_column` tells the two sorts
+apart:
 - True: a trap column, added only to test the framework; its name ends in `_trap_<kind>`;
 - False: the trap sits in real columns: an ordinary column (or several, or none in particular)
   whose realistic behaviour is the trap. These keep their real names: the framework meets the
-  same columns under the same names in the real mart, and some carry two traps.
+  same columns under the same names in the real mart, and some carry two traps. `also` names
+  further columns that behave the same way.
 The Simpson's trap names the spec parameters behind it as dotted paths into the spec
 (`products.cc.traits.digital`), not copies of their numbers. `mechanisms.traps` builds the trap
 columns and the dirty data from `TRAPS`; `truth.json` carries the list in its spec, and the
@@ -64,6 +69,28 @@ TRAPS = [
          column="relationship_months_trap_redundant",
          parameters={"of": "relationship_days", "days_per_month": 30.44},
          expected="a monotone transform of relationship_days (rank correlation 1): carries the onboarding wave twice; the redundancy check flags the pair"),
+    dict(kind="leak", trap_column=True, product="cc", target="cc_acquire",
+         column="cc_review_score_trap_leak",
+         parameters={"shape": "u", "offset": 1.0, "w": 3, "centre": 500, "scale": 100},
+         expected="U-shaped: acquirers within 3 months pushed away from the centre on their own side; AUC ≈ 0.5 in value order, ≈ 0.88 by the distance from the centre: strong in best order only (0.50 and 0.86 on dev)"),
+    dict(kind="process_leak", trap_column=True, product="cc", target="cc_acquire",
+         column="application_cc_status_trap_process_leak",
+         parameters={"of": "application_cc_cnt_trap_process_leak",
+                     "levels": ["none", "approved", "declined"]},
+         expected="the card application's status: approved where the card follows next month, declined where not, none otherwise; a categorical whose rare levels (1.3% of the non-holders' rows) carry 80% of next month's acquisitions: rate 71% against the dominant none's 1.9%, Cohen's h ≈ 1.7 on dev"),
+    dict(kind="spend_leak", trap_column=True, product="cc", target="spend_cc_next_3_months",
+         column="cc_spend_review_trap_spend_leak",
+         parameters={"of": "spend_cc_vol", "w": 3, "threshold": 60_000},
+         expected="1 for a card holder whose spend over the next 3 months exceeds 60,000 (≈ 5% of holders), else 0, 0 for non-holders: the rare 1 has a far higher mean target (Cohen's d ≈ 5, the screen's threshold 0.8) on the spend target; constant among the card target's non-holders"),
+    dict(kind="honest", trap_column=True, product="cc", target="cc_acquire",
+         column="cc_propensity_score_trap_honest",
+         parameters={"loading": 1.0, "sigma": {"even": 0.3, "odd": 0.9}, "centre": 600,
+                     "scale": 100},
+         expected="a control: this month's card score plus noise, louder in odd months; strong (AUC ≈ 0.75, below the oracle and the leak screen) and honest: no leak, keeps its signal when lagged (≈ 0.96), varies within a client, and its monthly swing is real (range ≈ 0.08 across the window, heterogeneity p ≈ 0.0001 on dev) but small against its signal (half of it is 0.12)"),
+    dict(kind="unstable", trap_column=True, product="cc", target="cc_acquire",
+         column="cc_vendor_score_trap_unstable",
+         parameters={"loading": 0.6, "centre": 300, "scale": 50},
+         expected="a score delivered every other month: this month's card score plus noise in even months (AUC ≈ 0.63), noise alone in odd ones (0.50); unstable across the window's periods (range ≈ 0.16 on dev), weak pooled (≈ 0.57), so no leak"),
     # --- Personal loan: opening (`loan_personal_cnt` rises within the window) ---
     dict(kind="process_leak", trap_column=True, product="loan_personal", target="loan_personal_open",
          column="application_loan_personal_cnt_trap_process_leak",
@@ -74,16 +101,42 @@ TRAPS = [
          expected="holds next month's loan_personal_bal (an as-of misalignment): beats the oracle for openings next month; null where the client has no next month (it leaves, or the panel's last month)"),
     dict(kind="rare_level", trap_column=False, product="loan_personal", target="loan_personal_open",
          column="nationality", parameters={"level": "Ghana", "log_odds": 1.5},
-         expected="stands out in event rate by level; unstable in cross-validation"),
+         expected="stands out in event rate by level (an EDA by-level view); no example config models the loan"),
     dict(kind="inverted_u", trap_column=False, product="loan_personal", target="loan_personal_open",
          column="age", parameters={"peak": 35},
-         expected="rank correlation ≈ 0, mutual information high"),
+         expected="rank correlation ≈ 0, strong in best order (the bins ordered by their rate)"),
     dict(kind="hidden_openings", trap_column=False, product="loan_personal", target="loan_personal_open",
          column="loan_personal_maturity_months", parameters={},
          expected="predictive only under a 'count at the end' rule"),
     dict(kind="eligibility_defining", trap_column=False, product="loan_personal", target="loan_personal_open",
          column="loan_personal_maturity_months", parameters={"eligibility": "first loan"},
          expected="all null within the eligible population"),
+    # --- Credit card: controls in real columns (no trap column) ---
+    dict(kind="static_attribute", trap_column=False, product="cc", target="cc_acquire",
+         column="emirate", parameters={"also": ["employment_status", "salary_transfer_flag"]},
+         expected="a control: fixed within every client, drawn without the traits, so its AUC (0.50–0.54 on dev) is below the time-alignment screen's gate: a static attribute without signal is not a stamped value"),
+    dict(kind="dominant_level", trap_column=False, product="cc", target="cc_acquire",
+         column="segment",
+         parameters={"also": ["spend_cc_travel_vol_0_5_months_avg",
+                              "spend_cc_travel_vol_0_2_months_avg"]},
+         expected="a control: one dominant value beside a real minority whose rate differs (Cohen's h ≈ 0.64; the travel roll-ups ≈ 0.45), below the rare-value leak's 0.8"),
+    dict(kind="shared_null_set", trap_column=False, product="cc", target="cc_acquire",
+         column="casa_bal_0_5_months_avg", parameters={"also": ["inflow_casa_vol_0_5_months_avg"]},
+         expected="the six-month roll-ups' nulls (clients with fewer than six months, so new clients, who take the card more): informative nulls (null AUC ≈ 0.58), one null set of every six-month roll-up, far below a missingness leak"),
+    dict(kind="recency_null_zero", trap_column=False, product="cc", target="cc_acquire",
+         column="months_since_last_spend_cc", parameters={},
+         expected="null for ≈ 91% of non-holders (no card spend yet) and never 0 there: many nulls and no zeros, below the high-missing share"),
+    dict(kind="recency_with_zeros", trap_column=False, product="cc", target="cc_acquire",
+         column="months_since_last_fx", parameters={},
+         expected="a control: ≈ 80% null, with zeros among the values (≈ 63%): neither nulls that may be zeros nor high missing"),
+    dict(kind="weak_nulls", trap_column=False, product="cc", target="cc_acquire",
+         column="residence_days", parameters={"also": ["income"]},
+         expected="a control: nulls with a cause but almost no signal for the card (null AUC ≈ 0.51): neither informative nulls nor a missingness leak"),
+    # --- Term deposit: acquisition (`td_flag` 0 → 1 within 3 months) ---
+    dict(kind="missing_leak", trap_column=True, product="td", target="td_acquire",
+         column="td_offer_rate_trap_missing_leak",
+         parameters={"w": 3, "blank_share": 0.5, "rate_range": [2.5, 5.0]},
+         expected="a rate for every client, blanked for half of the non-holders who take a deposit within 3 months (a field some booking flows clear): null share ≈ 0.4% of the deposit's eligible rows, below EDA's 0.5% null-share range, null AUC ≈ 0.75 for the deposit on dev (the leak screen's threshold is 0.70); for the card the same tiny nulls carry no signal"),
     # --- Any product ---
     dict(kind="null_control", trap_column=True, product=None, target=None,
          column="insurance_premium_vol_trap_null_control",
@@ -139,7 +192,7 @@ TRAPS = [
                                     "product_cnt = product flags + loan counts > 0",
                                     "inflow − outflow = change in casa_bal",
                                     "subcategories sum to their total"]},
-         expected="correlation views and VIF flag the clusters (infinite for the identities)"),
+         expected="the redundancy check clusters them and pairs the identities (association 1); each member is explained by the others"),
     dict(kind="dirty", trap_column=False, product=None, target=None, column=None,
          parameters={"duplicate_share": 0.001, "outage_columns": ["login_digital_mobile_cnt",
                      "login_digital_online_cnt", "days_since_last_login_digital"],
@@ -151,7 +204,23 @@ TRAPS = [
          parameters={"table": "fs_extract", "month": "last",
                      "flags": ["casa_flag", "cc_flag", "td_flag", "wealth_digital_flag",
                                "wealth_trad_flag", "ebanking_flag"]},
-         expected="in the feature-store extract: the holding flags held in the client's last panel month, stamped on every month; strongly predictive of acquisitions (card AUC ≈ 0.81 at w = 3, below the oracle's 0.86; above it for the term deposit); Feature Checks' leakage and time-alignment screens flag it"),
+         expected="in the feature-store extract: the holding flags held in the client's last panel month, stamped on every month; strongly predictive of acquisitions (window concordance ≈ 0.78 for the card and ≈ 0.76 for the term deposit on dev, at the leak screen's 0.80, so not asserted there); constant within every client while the flags move: the time-alignment screen flags it"),
+    dict(kind="one_value", trap_column=True, product=None, target=None,
+         column="statement_format_trap_one_value",
+         parameters={"value": "e-statement", "null_share": 0.02, "new_level": "paper",
+                     "new_level_share": 0.004, "new_level_month": "2026-03"},
+         expected="a control: one value and 2% random nulls (null counted as a value, so 98%: neither constant nor near-constant); a new level on 0.4% of the filled rows from 2026-03, below the new-level share that counts; the random nulls carry no signal"),
+    dict(kind="drift_window", trap_column=True, product=None, target=None,
+         column="support_wait_min_trap_drift_window",
+         parameters={"null_share": 0.3, "median": 6.0, "sigma": 0.6, "factor": 1.6,
+                     "step_month": "2025-06"},
+         expected="30% random nulls standing for no call (a value is never 0); the wait's median × 1.6 from 2025-06, inside the example configs' window 2025-03 … 2025-08: a large PSI from the window's first to its last month (≈ 0.39 on dev), ≈ 0 from its last to the latest; random nulls, so no signal in them"),
+    dict(kind="drift_moderate", trap_column=True, product=None, target=None,
+         column="contact_channel_trap_drift_moderate",
+         parameters={"levels": ["branch", "phone", "web", "app"], "before": [0.4, 0.3, 0.2, 0.1],
+                     "after": [0.25, 0.3, 0.25, 0.2], "step_month": "2025-06",
+                     "new_level": "chat", "new_level_share": 0.03, "new_level_month": "2026-03"},
+         expected="a channel mix that shifts at 2025-06 (PSI ≈ 0.16, inside the example window: moderate, not large) and gains a new level on 3% of the rows from 2026-03 (PSI ≈ 0.18 from the window's last month to the latest, after the validation period)"),
     dict(kind="extra", trap_column=True, product=None, target=None, column=None,
          parameters={"weak_share": 0.1, "weak_rank_corr": [0.1, 0.3]},
          expected="off by default; scale tests; weak columns rank above noise"),

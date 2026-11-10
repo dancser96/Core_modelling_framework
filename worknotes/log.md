@@ -2,7 +2,65 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
-### 2026-11-07, 2026-11-09 — Stage 2 major step 3 (Feature Checks): built, then the SDS's review 1
+### 2026-11-10 — Synthetic 0.6.0: a trap and a control for every Feature Checks finding
+- Built from `worknotes/synthetic_trap_coverage_plan.md` with the SDS's defaults to Q548–Q559
+  (the plan's Q546 and Q547 renumbered to Q558 and Q559: the Feature Checks session had used
+  them). Nine trap columns, six natural-control rows on real columns, the streams `controls` and
+  `control_leaks` appended (every 0.5.3 column byte-identical, checked by the ML audit), 166
+  columns; D-064 extended in place, the roadmap's `unstable` lines updated.
+- Measured on `dev` (card config unless stated) → canonical: U leak plain 0.501 / best order
+  0.857 → 0.507 / 0.861 (`too_strong`); deposit rate 0.42% null, null concordance 0.751 read
+  below EDA's range on the deposit config → 0.44%, flagged; 0.30% and nothing on the card config;
+  status h 1.74 (`rare_value_leak`, also `lagged_signal_drop` by design); spend leak marks 4.6% of
+  holders, d about 5 on the unit regression variant; honest score 0.748 → 0.739, range 0.078,
+  p 0.0001, nothing raised (the relative bound 0.124 holds it, above the new 0.05 floor); vendor
+  0.566, range 0.160 (`concordance_unstable`); one value 0.981, new level 0.39%; wait PSI 0.394
+  → 0.405 (`psi_window_large`, `nulls_may_be_zeros`); channel PSI 0.157 / 0.184, new level 3.2%
+  (three notes). Every §3 natural control holds.
+- Deviations from the plan: the deposit's 3-month prevalence is 0.82% of its rows, not 0.2%, so
+  the rate is blanked for half the converters (`blank_share` 0.5) to sit below EDA's 0.5% range;
+  the plan's "null concordance ≥ 0.9" was not reachable together with that. Spend threshold
+  60,000 (not 30,000). The honest and vendor scores are standardised (same spread each month: the
+  first calibration's alternating noise gave the honest score PSI notes); honest σ 0.3 / 0.9,
+  wait factor 1.6. The monthly columns live in a new `mechanisms/controls.py` with a new check
+  family `checks/controls.py` (`checks/traps.py` was already 518 lines).
+- Reviews: the ML audit (xhigh) found the columns safe and three test-design gaps, all fixed:
+  vacuous controls dropped (`nulls_informative` below EDA's range, `rare_value_leak` on one
+  value, two implied by their trap's note), each control's measure now asserted computed, the
+  legitimate-columns guard narrowed to trap columns, listed rows and rows whose own findings are
+  leak or lag flags. The code review's blocking item (the rare-value control could pass
+  vacuously) fixed; its six suggestions taken (`_u_leak` split out, `sigma` as even/odd, the
+  product read from the row, one redundant check row dropped, the cross-config test renamed
+  `test_sub_range_missing_leak_fires_on_its_target_only`).
+- Verified: synthetic unit tests 17 passed; the trap test 15 passed (twice after the fixes);
+  Feature Checks regression 4 and EDA regression 10 passed; canonical regenerated with `--checks`:
+  all 1,373 rows of ten families pass; `run cc_acquisition td_acquisition --stages target_factory
+  eda feature_checks` on canonical (47 and 29 held; the deposit config's first CLI run, so its
+  audit log is new); notebook 00 re-run in place (`nbconvert` is not installed: run through
+  `jupyter_client` in a scratch script). Not run: notebooks 01–03 (Q556's default).
+- Open: Q557's backlog candidate (a saved model input does not notice new source columns; the
+  data folders were deleted and re-saved).
+- The SDS's answers: Q560 "Don't separate" → `checks/traps.py` (639 lines) and
+  `mechanisms/traps.py` (546) stay one module each. Q561 "Yes, add to it" → `nbclient>=0.10` in
+  `requirements-dev.txt` (installed: 0.11.0), so `jupyter execute --inplace <notebook>` re-runs a
+  notebook headless; `environment.md` names it.
+- Handover written: `worknotes/handovers/synthetic-0.6.0.md` (resume with `/resume synthetic-0.6.0`).
+
+### 2026-11-10 — The Phase 2 plan agreed and moved into the roadmap
+- The SDS accepted the timeline proposal: `docs/roadmap.md` → Phase 2 plan now owns the dates,
+  M2's stages and the depth per component; `worknotes/timeline_proposal.md` deleted, OD-01
+  closed into D-022. Stage 2 took one week more (to 11-13) and the fortnight 11-23 – 12-06
+  counts as one week (the SDS's leave, National Day): M2.3 11-16 – 11-24, M2.4 11-25 – 12-04, M3
+  12-07 – 12-11 (five days, its presentable-report goal already built in M2.2), the pre-release
+  12-14 – 12-18 with the slowdown's first days as buffer; M4 and release 1.0 unchanged. The
+  spikes are now due 11-16.
+
+### 2026-11-07, 2026-11-09, 2026-11-10 — Stage 2 major step 3 (Feature Checks): built, then the SDS's review 1
+- 2026-11-10, Q546 (A): `steps.py` stays one module. Q547 (B): `stability.concordance_range_floor`
+  (0.05), so `concordance_unstable` needs a range of at least max(floor, 0.5 × signal); the
+  canonical term-deposit config's two signal-less digital flags go (26 held, read from the stored
+  outputs, not re-run). Code review and compatibility check: approve, safe. The SDS plans a full
+  Fable review of the codebase before their own code review of Stage 2.
 - 2026-11-09, the answers Q539–Q545 and R57–R58 (recorded verbatim in `answers.md`): the
   rare-value effect as Cohen's h (d for an amount) from 0.8, `rare_effect_max` capped at 3; no
   check skips for support, each detail stating its support and SE and "not significant at this

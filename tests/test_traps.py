@@ -4,16 +4,19 @@ ground truth", feature_checks.md "Trap acceptance test").
 Target Factory, EDA and Feature Checks run once on the `dev` preset (20,000 clients, generated
 from its seed in the test run) for the two example configs, card and term-deposit acquisition.
 The acceptance list is `truth.json`'s trap list: each row, keyed by trap kind and target, is
-either mapped to the finding that must catch it (`TRAP_FINDINGS`, `KIND_CHECKS`), a null control
-(no signal, no flag), or listed in `NOT_CHECKS` with a reason; a row in none of them fails, so a
-new trap cannot slip past. A target-specific row is asserted on its config, an "any product" row
-on both. Assertions read the window statistics (the ledger's `*_window` columns and the findings),
-never the snapshot's. No per-period finding is asserted for the term-deposit config: about 35
-events per period leave every per-period statistic below `strata.min_events`. The false
-positives are checked on the null controls (pure noise, never flagged) and, count-free, on the
-card config's legitimate columns: none raises a leak or lag flag (`NEVER_ON_LEGITIMATE`). EDA's
-population counts per period (D-088) and the numeric bins (T25) are checked against the truth
-too. Trap columns are found from the truth, never by name.
+mapped to the findings that must catch it (`TRAP_FINDINGS`, `KIND_CHECKS`), to the findings it
+must not raise as a control close to their thresholds (`CONTROL_FINDINGS`; a row may be both), a
+null control (no signal, no flag), or listed in `NOT_CHECKS` with a reason; a row in none of them
+fails, so a new trap cannot slip past. A target-specific row is asserted on its config, an "any
+product" row on both; the deposit's sub-range missing leak is also asserted to raise no
+missingness leak on the card config, where its nulls carry no signal. Assertions read the window
+statistics (the ledger's `*_window` columns and the findings), never the snapshot's. The false
+positives are checked on the controls (each forbidden finding's measure computed, so none passes
+vacuously), on the null controls (pure noise, never flagged) and, count-free, on the card config's
+legitimate columns, the real columns named only for a note or as a control among them: none raises
+a leak or lag flag (`NEVER_ON_LEGITIMATE`). EDA's population counts per period (D-088) and the
+numeric bins (T25) are checked against the truth too. Trap columns are found from the truth, never
+by name.
 """
 
 from dataclasses import dataclass
@@ -25,6 +28,8 @@ from pyspark.sql import SparkSession
 
 from core_modelling.artifacts import read_stage
 from core_modelling.config import UseCaseConfig, load_config
+from core_modelling.eda.ranking import NULL_SHARE_RANGE
+from core_modelling.feature_checks.findings import FINDINGS
 from core_modelling.ledger import read_ledger
 from core_modelling.run import run
 from synthetic.mechanisms.mart import parse_column
@@ -39,26 +44,57 @@ CONFIGS = {
     "td_acquire": ROOT / "conf/base/td_acquisition.yml",
 }  # the truth's target → the example config modelling it
 NO_LOAN_CONFIG = "no config: loan target"
-# (trap kind, target) → the finding that must fire on the trap's column(s); None = any product
+# (trap kind, target) → the findings that must fire on the trap's column(s); None = any product
 TRAP_FINDINGS = {
-    ("leak", "cc_acquire"): "leakage.too_strong",
-    ("upstream_target", "cc_acquire"): "leakage.too_strong",
-    ("missing_leak", "cc_acquire"): "leakage.missingness_leak",
-    ("process_leak", "cc_acquire"): "leakage.rare_value_leak",
-    ("shifted", "cc_acquire"): "time_alignment.lagged_signal_drop",
-    ("redundant", "cc_acquire"): "redundancy.correlated_pair",
-    ("eligibility_defining", "cc_acquire"): "quality.constant",
-    ("constant", None): "quality.constant",
-    ("near_constant", None): "quality.near_constant",
-    ("all_null", None): "quality.all_null",
-    ("low_fill", None): "quality.high_missing",
-    ("high_cardinality", None): "quality.high_cardinality",
+    ("leak", "cc_acquire"): ("leakage.too_strong",),  # the U-shaped one in best order
+    ("upstream_target", "cc_acquire"): ("leakage.too_strong",),
+    ("missing_leak", "cc_acquire"): ("leakage.missingness_leak",),
+    ("missing_leak", "td_acquire"): ("leakage.missingness_leak",),  # below EDA's null-share range
+    ("process_leak", "cc_acquire"): ("leakage.rare_value_leak",),  # the count and the status
+    ("shifted", "cc_acquire"): ("time_alignment.lagged_signal_drop",),
+    ("redundant", "cc_acquire"): ("redundancy.correlated_pair",),
+    ("eligibility_defining", "cc_acquire"): ("quality.constant",),
+    ("unstable", "cc_acquire"): ("stability.concordance_unstable",),
+    ("shared_null_set", "cc_acquire"): ("quality.nulls_informative",),
+    ("recency_null_zero", "cc_acquire"): ("quality.nulls_may_be_zeros",),
+    ("constant", None): ("quality.constant",),
+    ("near_constant", None): ("quality.near_constant",),
+    ("all_null", None): ("quality.all_null",),
+    ("low_fill", None): ("quality.high_missing",),
+    ("high_cardinality", None): ("quality.high_cardinality",),
     # its concordance (≈ 0.78) sits at too_strong's 0.80, so only client_constant is asserted
-    ("lookahead", None): "time_alignment.client_constant",
+    ("lookahead", None): ("time_alignment.client_constant",),
     # on the column or a roll-up: 0.37–0.50 on the canonical data, against psi_max 0.25
-    ("drift", None): "stability.psi_latest_large",
-    ("collinearity", None): "redundancy.associated_pair",
-}
+    ("drift", None): ("stability.psi_latest_large",),
+    ("collinearity", None): ("redundancy.associated_pair",),
+    ("drift_window", None): ("stability.psi_window_large", "quality.nulls_may_be_zeros"),
+    ("drift_moderate", None): ("stability.psi_window", "stability.psi_latest",
+                               "stability.new_levels"),
+}  # fmt: skip
+# (trap kind, target) → the findings a control row's columns must not raise; only findings that
+# could fire there and that no trap assertion already excludes (a note and its flag are exclusive)
+CONTROL_FINDINGS = {
+    ("honest", "cc_acquire"): ("leakage.too_strong", "stability.concordance_unstable",
+                               "time_alignment.lagged_signal_drop",
+                               "time_alignment.client_constant"),
+    ("unstable", "cc_acquire"): ("leakage.too_strong",),
+    ("static_attribute", "cc_acquire"): ("time_alignment.client_constant",),
+    ("dominant_level", "cc_acquire"): ("leakage.rare_value_leak",),
+    ("recency_null_zero", "cc_acquire"): ("quality.high_missing",),
+    ("recency_with_zeros", "cc_acquire"): ("quality.nulls_may_be_zeros", "quality.high_missing"),
+    ("weak_nulls", "cc_acquire"): ("quality.nulls_informative", "leakage.missingness_leak"),
+    ("one_value", None): ("quality.constant", "quality.near_constant", "quality.high_missing",
+                          "quality.nulls_informative", "stability.new_levels"),
+    ("drift_window", None): ("quality.high_missing", "quality.nulls_informative",
+                             "stability.psi_latest_large", "stability.psi_latest"),
+}  # fmt: skip
+# a finding's measure → the ledger column it is read from, where the two names differ
+MEASURE_COLUMNS = {"concordance_window_or_best_order": "concordance_window"}
+# the rare-value effect is not in the ledger: it is computed where a filled value holds
+# `dominant_share_min`, which a window value share at that bound (null counted) guarantees
+RARE_EFFECT = "leakage.rare_value_leak"
+# the deposit's sub-range missing leak on the card config, where its nulls carry no signal
+SUB_RANGE_LEAK = ("missing_leak", "td_acquire")
 KIND_CHECKS = {("decimal_type", None): "numeric"}  # (kind, target) → the ledger's `kind`
 NOT_CHECKS = {
     ("simpson", "cc_acquire"): "an EDA view: the target by onboarding channel",
@@ -70,6 +106,8 @@ NOT_CHECKS = {
     ("inverted_u", "loan_personal_open"): NO_LOAN_CONFIG,
     ("hidden_openings", "loan_personal_open"): NO_LOAN_CONFIG,
     ("eligibility_defining", "loan_personal_open"): NO_LOAN_CONFIG,
+    ("spend_leak", "spend_cc_next_3_months"): "asserted on the regression variant in "
+    "test_feature_checks.py",
     ("dirty", None): "off by default",
     ("extra", None): "off by default",
 }
@@ -163,10 +201,21 @@ def _asserted_on(trap: dict, target: str) -> bool:
     return trap["target"] in (target, None)
 
 
+def _may_leak_by_design(trap: dict) -> bool:
+    """Whether a trap row's columns may raise a `NEVER_ON_LEGITIMATE` flag by design: a trap
+    column, a row not asserted (`NOT_CHECKS`, `KIND_CHECKS`), or a real-column row whose own
+    findings include one."""
+    key = _key(trap)
+    own = set(TRAP_FINDINGS.get(key, ()))
+    listed = key in NOT_CHECKS or key in KIND_CHECKS
+    return trap["trap_column"] or listed or bool(own & NEVER_ON_LEGITIMATE)
+
+
 def test_every_trap_row_is_mapped_or_listed(dev_output: tuple[str, dict]) -> None:
-    """Every trap row is mapped, a null control or in `NOT_CHECKS`, and every key names a row."""
+    """Every trap row is mapped, a control, a null control or in `NOT_CHECKS`, and every key
+    names a row."""
     keys = {_key(trap) for trap in _traps(dev_output[1])}
-    placed = {*TRAP_FINDINGS, *KIND_CHECKS, *NOT_CHECKS}
+    placed = {*TRAP_FINDINGS, *KIND_CHECKS, *NOT_CHECKS, *CONTROL_FINDINGS}
     unplaced = sorted(key for key in keys if key not in placed and key[0] != "null_control")
     assert not unplaced, f"trap rows neither mapped nor in NOT_CHECKS: {unplaced}"
     assert not placed - keys, f"keys naming no trap row: {sorted(placed - keys, key=str)}"
@@ -179,16 +228,85 @@ def test_each_mapped_trap_fires_its_finding(
     dev_output: tuple[str, dict],
     parsed: dict[str, dict],
 ) -> None:
-    """Each mapped trap row of the config (its target or any product) raises its finding on the
-    window statistics; the failure names every trap missed."""
+    """Each mapped trap row of the config (its target or any product) raises each of its findings
+    on the window statistics; the failure names every trap missed."""
     truth, result = dev_output[1], trap_runs[target]
-    raised = set(zip(result.findings["feature"], result.findings["finding"], strict=True))
+    raised = _raised(result)
     missed = []
     for trap in _traps(truth):
         if _key(trap) in TRAP_FINDINGS and _asserted_on(trap, target):
-            finding = TRAP_FINDINGS[_key(trap)]
-            missed += _missed(trap, finding, raised, result.ledger, parsed)
+            for finding in TRAP_FINDINGS[_key(trap)]:
+                missed += _missed(trap, finding, raised, result.ledger, parsed)
     assert not missed, f"{target}: traps not caught:\n" + "\n".join(missed)
+
+
+@pytest.mark.parametrize("target", list(CONFIGS))
+def test_each_control_raises_no_forbidden_finding(
+    target: str,
+    trap_runs: dict[str, TrapRun],
+    dev_output: tuple[str, dict],
+    configs: dict[str, UseCaseConfig],
+) -> None:
+    """Each control row of the config (its target or any product) has every column read, each
+    forbidden finding's measure computed on it (a check that never ran would pass vacuously) and
+    none of them raised; the failure names every one."""
+    result = trap_runs[target]
+    raised, read = _raised(result), set(_read_candidates(result.ledger)["feature"])
+    ledger = result.ledger.set_index("feature")
+    dominant_min = configs[target].feature_checks.leakage.dominant_share_min
+    unread, unmeasured, fired = [], [], []
+    for trap in _traps(dev_output[1]):
+        if _key(trap) not in CONTROL_FINDINGS or not _asserted_on(trap, target):
+            continue
+        unread += [column for column in _columns(trap) if column not in read]
+        pairs = [(column, finding) for finding in CONTROL_FINDINGS[_key(trap)]
+                 for column in _columns(trap) if column in read]  # fmt: skip
+        unmeasured += [pair for pair in pairs if not _measured(ledger, *pair, dominant_min)]
+        fired += [f"{trap['kind']} ({trap['target']}): {finding} on {column}"
+                  for column, finding in pairs if (column, finding) in raised]  # fmt: skip
+    assert not unread, f"{target}: control columns not read, so not asserted: {unread}"
+    assert not unmeasured, f"{target}: controls whose measure was not computed: {unmeasured}"
+    assert not fired, f"{target}: controls raised a forbidden finding:\n" + "\n".join(fired)
+
+
+def _measured(ledger: pd.DataFrame, column: str, finding: str, dominant_min: float) -> bool:
+    """Whether `finding`'s measure was computed on `column`: its ledger column is set, or, for
+    the rare-value effect, a value holds `dominant_min` of the window; raises for a measure the
+    test cannot see."""
+    if finding == RARE_EFFECT:
+        return bool(ledger.at[column, "dominant_share_window"] >= dominant_min)
+    measure = FINDINGS[finding]["measure"]
+    measure = MEASURE_COLUMNS.get(measure, measure)
+    if measure not in ledger.columns:
+        raise ValueError(f"{finding}: its measure {measure!r} is not a ledger column")
+    return bool(pd.notna(ledger.at[column, measure]))
+
+
+def test_sub_range_missing_leak_fires_on_its_target_only(
+    trap_runs: dict[str, TrapRun], dev_output: tuple[str, dict]
+) -> None:
+    """The deposit's blanked rate is read below EDA's null-share range on both configs: on its
+    own it raises the missingness leak through that path, and on the card config, where its
+    nulls carry no signal, no missingness leak."""
+    columns = [c for t in _traps(dev_output[1]) if _key(t) == SUB_RANGE_LEAK for c in _columns(t)]
+    assert columns, f"no trap row {SUB_RANGE_LEAK}"
+    for target in CONFIGS:
+        missing = trap_runs[target].ledger.set_index("feature").loc[columns, "missing_share_window"]
+        assert (missing < NULL_SHARE_RANGE[0]).all(), (target, missing.to_dict())
+    findings = trap_runs["td_acquire"].findings
+    leak = findings["feature"].isin(columns) & (findings["finding"] == "leakage.missingness_leak")
+    details = findings.loc[leak, "detail"]
+    assert len(details) == len(columns), f"td_acquire: missingness leaks {details.tolist()}"
+    assert details.str.startswith("read below EDA's null-share range").all(), details.tolist()
+    findings = trap_runs["cc_acquire"].findings
+    fired = findings.loc[findings["feature"].isin(columns)
+                         & (findings["finding"] == "leakage.missingness_leak")]  # fmt: skip
+    assert fired.empty, fired[["feature", "finding", "value", "detail"]].to_string()
+
+
+def _raised(result: TrapRun) -> set[tuple[str, str]]:
+    """The run's (feature, finding) pairs."""
+    return set(zip(result.findings["feature"], result.findings["finding"], strict=True))
 
 
 def _missed(
@@ -263,9 +381,11 @@ def test_null_controls_carry_no_signal_and_no_flag(
 def test_legitimate_columns_raise_no_leak_or_lag_flag(
     trap_runs: dict[str, TrapRun], dev_output: tuple[str, dict]
 ) -> None:
-    """No card-config candidate outside the truth's trap list raises a `NEVER_ON_LEGITIMATE`
-    flag: the checks may hold genuine features by design, but never as a leak or a lag."""
-    trap_columns = {column for trap in _traps(dev_output[1]) for column in _columns(trap)}
+    """No card-config candidate raises a `NEVER_ON_LEGITIMATE` flag unless a trap row allows it
+    (`_may_leak_by_design`): the checks may hold genuine features by design, but never as a leak
+    or a lag; real columns named only for a note or as a control stay under the guard."""
+    trap_columns = {column for trap in _traps(dev_output[1]) if _may_leak_by_design(trap)
+                    for column in _columns(trap)}  # fmt: skip
     findings = trap_runs["cc_acquire"].findings
     fired = findings.loc[
         findings["finding"].isin(NEVER_ON_LEGITIMATE) & ~findings["feature"].isin(trap_columns)

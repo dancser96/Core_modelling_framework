@@ -558,7 +558,8 @@ def test_time_alignment_on_a_shifted_column_and_client_constant_shares() -> None
 def test_cochran_q_flags_a_flipped_period_and_reads_a_thin_one() -> None:
     """A period whose direction flips reads below 0.5 in the window's direction and is flagged;
     a period below `strata.min_events` support is read too (Q540); a drifting feature fires at
-    its p-value and at its range relative to the signal, and not just past either."""
+    its p-value, at its range relative to the signal and at the range floor (Q547), and not
+    just past any of them."""
     ledger = _ledger(
         {"feature": "flips"}, {"feature": "sparse"}, {"feature": "steady"},
         {"feature": "drifts", "concordance_window": 0.65},
@@ -591,6 +592,8 @@ def test_cochran_q_flags_a_flipped_period_and_reads_a_thin_one() -> None:
         (Stability(heterogeneity_p_max=p), True), (Stability(heterogeneity_p_max=p - 1e-9), False),
         (Stability(concordance_range_min=relative * (1 - 1e-9)), True),
         (Stability(concordance_range_min=relative * (1 + 1e-9)), False),
+        (Stability(concordance_range_min=0, concordance_range_floor=spread * (1 - 1e-9)), True),
+        (Stability(concordance_range_min=0, concordance_range_floor=spread * (1 + 1e-9)), False),
     ]:  # fmt: skip
         assert (("drifts", name) in _pairs(check_stability(inputs, params).findings)) is fires
 
@@ -617,21 +620,22 @@ def _ordered(share: float, n: int = 10000) -> dict[str, tuple[int, int]]:
 
 
 def test_the_concordance_range_is_relative_to_the_signal() -> None:
-    """The same swing of 0.05 between two periods, on 10,000 events each, is half the signal of a
-    weak feature (0.58 → 0.53) and a seventh of a strong one's (0.88 → 0.83): only the weak one
-    is unstable at the default, though Cochran's Q finds both."""
+    """The same swing of 0.06 between two periods, on 10,000 events each, is the whole signal of
+    a weak feature (0.59 → 0.53) and a sixth of a strong one's (0.89 → 0.83): only the weak one
+    is unstable at the default (past the floor 0.05, which binds for it), though Cochran's Q
+    finds both."""
     ledger = _ledger(
-        {"feature": "weak", "concordance_window": 0.555},
-        {"feature": "strong", "concordance_window": 0.855},
+        {"feature": "weak", "concordance_window": 0.56},
+        {"feature": "strong", "concordance_window": 0.86},
     )  # fmt: skip
     cells = pd.concat([
-        _cells("weak", {"p1": _ordered(0.58), "p2": _ordered(0.53)}),
-        _cells("strong", {"p1": _ordered(0.88), "p2": _ordered(0.83)}),
+        _cells("weak", {"p1": _ordered(0.59), "p2": _ordered(0.53)}),
+        _cells("strong", {"p1": _ordered(0.89), "p2": _ordered(0.83)}),
     ])  # fmt: skip
     periods = {"window": ["p1", "p2"], "gap": [], "latest": []}
     result = check_stability(_inputs(ledger, cells, True, periods=periods), Stability())
     columns = result.columns.set_index("feature")
-    assert columns["concordance_range"].tolist() == pytest.approx([0.05, 0.05])
+    assert columns["concordance_range"].tolist() == pytest.approx([0.06, 0.06])
     assert (columns["heterogeneity_p"] < 0.01).all()
     assert list(result.findings["feature"]) == ["weak"]
 

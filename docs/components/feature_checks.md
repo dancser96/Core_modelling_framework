@@ -285,7 +285,9 @@ independently.
 - **`nulls_may_be_zeros`** · note · `nulls_may_be_zeros: {missing_min: 0.2, zero_share_max: 0.005}`.
   A numeric with `missing_share_window ≥ 0.2` and a zero share among its non-null values ≤ 0.005
   (the detail). "Many nulls and never a zero: if a null means 0 here, fill it upstream; the
-  framework never imputes." (D-029 (c))
+  framework never imputes." (D-029 (c)) Catches the wait time (`support_wait_min_trap_drift_window`,
+  30% null, never 0) and `months_since_last_spend_cc` (90.6% null among the non-holders, never 0);
+  leaves `months_since_last_fx` alone (79.4% null, zeros among its values).
 - **`nulls_informative`** · note · `nulls_informative_min: 0.55`. `0.55 ≤ null_concordance_window <
   leakage.null_concordance_max`, where a labelled null and a labelled non-null window row exist
   (else "not available"); with `leakage` left out of a present mapping the upper bound is
@@ -300,7 +302,10 @@ independently.
   evidence, and the rows are ordered by set, largest first, the features alone last. A shared null
   set often marks a population, such as the clients too new for a six-month roll-up: worth an
   eligibility filter (a minimum relationship length) or a model of its own, which a person decides
-  at EDA or Target Factory.
+  at EDA or Target Factory. Catches the six-month roll-ups' shared null set
+  (`casa_bal_0_5_months_avg`, null concordance 0.577 on `dev`); leaves alone the weak nulls of
+  `residence_days` and `income` (0.516 and 0.506) and the random nulls of the one-value column and
+  the wait time.
 
 #### `leakage`
 - **`too_strong`** · flag · `concordance_max: 0.80`. The higher of `concordance_window` and
@@ -310,7 +315,9 @@ independently.
   0.xxx", then the evidence. Without a window concordance, EDA's reason (the ranking's
   `unavailable`). "A single feature this strong is usually the target under another name or a
   consequence of it." Why 0.80: the oracle's ceiling for card acquisition with every feature is
-  0.84. Catches `leak` (0.97, 0.87) and `upstream_target` (1.0).
+  0.84. Catches `leak` (0.97, 0.87; the U-shaped `cc_review_score_trap_leak` in best order only,
+  0.857 against 0.501 in bin order) and `upstream_target` (1.0); leaves alone the honest score
+  (0.748) and the vendor score (0.566 pooled).
 - **`missingness_leak`** · flag · `null_concordance_max: 0.70`. `null_concordance_window ≥ 0.70`,
   where a labelled null and a labelled non-null window row exist (else "not available"). **Below
   0.5% nulls:** EDA reads the null concordance only for a missing share in `NULL_SHARE_RANGE =
@@ -319,8 +326,11 @@ independently.
   computes the null concordance from the pooled window cells with EDA's function (the same guard)
   and judges it the same way; the detail says it was read below EDA's null-share range, then the
   evidence. `nulls_informative` stays on EDA's value. "Whether the value is filled predicts the
-  target this strongly: ask how and when the field gets filled." Catches `missing_leak` (0.89);
-  legitimate informative missingness scores about 0.52–0.58.
+  target this strongly: ask how and when the field gets filled." Catches `missing_leak` (0.89)
+  and, below the range, the deposit's blanked rate (`td_offer_rate_trap_missing_leak`: 0.42% null,
+  0.751 on the deposit config; on the card config its 0.30% nulls carry no signal and raise
+  nothing); legitimate informative missingness scores about 0.52–0.58 (the shared null set 0.577,
+  the weak nulls 0.51, none held).
 - **`rare_value_leak`** · flag · `rare_effect_max: 0.8`, `dominant_share_min: 0.90`. Over the
   filled (non-null) window rows (the nulls are the null concordance's business): one value (bin)
   holding at least `dominant_share_min` of them, every other value pooled as the **minority**
@@ -340,10 +350,13 @@ independently.
   detail names the minority's share, the dominant value, both rates (means) and the effect, then
   the evidence. "Beside one dominant value, the other values' target rate (an amount: mean) is
   far above the dominant value's: a code set after the outcome?" Catches the card process leak
-  (`process_leak`: 98.7% zeros, the non-zero rows converting at about 80%), the shifted column
-  and the upstream target. Measured on the canonical card data before the change: the traps at h
-  1.77–3.14, the legitimate minorities at 0.43–0.64 (`segment` outside its main level 0.64, the
-  travel-spend roll-ups 0.43–0.48), so none of the latter is held.
+  (`process_leak`: 98.7% zeros, the non-zero rows converting at about 80%), its status on the
+  categorical path (`application_cc_status_trap_process_leak`: the rare levels 1.3% of the rows,
+  71.3% against 1.9%, h 1.74 on `dev`), the shifted column and the upstream target; on the
+  regression variant the spend leak by Cohen's d (`cc_spend_review_trap_spend_leak`, about 5).
+  Measured on the canonical card data before the change: the traps at h 1.77–3.14, the legitimate minorities at 0.43–0.64 (`segment` outside its main level 0.64, the
+  travel-spend roll-ups 0.43–0.48), so none of the latter is held; `segment` and two roll-ups are
+  the trap test's `dominant_level` control.
 - **Known limit:** the time-alignment screen on the eligibility `define` columns and the modelling
   tags (T11) is not in Stage 2; on the eligible rows every tag is 1, so it needs a design of its
   own (M4).
@@ -382,7 +395,8 @@ without signal there is nothing to lose or to stamp.
   check skip static attributes (backlog).
 
 #### `stability`
-- **`concordance_unstable`** · flag · `heterogeneity_p_max: 0.01` and `concordance_range_min: 0.5`.
+- **`concordance_unstable`** · flag · `heterogeneity_p_max: 0.01`, `concordance_range_min: 0.5`
+  and `concordance_range_floor: 0.05`.
   Over every window period with a concordance in EDA's `concordance_per_period` (a period below
   `strata.min_events` included: its `insufficient` is a display mark): weights `w_i = 1/SE_i²`
   (`steps._period_ses`): binary, Hanley–McNeil at the window's concordance, max(cw, 1 − cw), on the
@@ -391,36 +405,44 @@ without signal there is nothing to lose or to stamp.
   cannot take the SE floor and dominate Q; regression, EDA's `se` as stored (Kendall's null SE,
   halved, does not depend on the value: the per-task flag `period_se_at_window_value`; D-082). The
   pooled `c̄ = Σ w_i c_i / Σ w_i`, `Q = Σ w_i (c_i − c̄)²`, `p = 1 − χ²_{k−1}(Q)`. Flag when `p ≤
-  0.01` and the range `max c_i − min c_i ≥ 0.5 × |concordance_window − 0.5|`, relative to the
-  window's signal (the SDS's Q544: 0.06 is the whole signal of a 0.55 feature and a fifth of a 0.80
-  one's; 0.5, the periods differ by half the signal) (`heterogeneity_p`, `concordance_range`; the
-  detail gives the range, the periods tested and "support n … in the thinnest period"). Guards: no
+  0.01` and the range `max c_i − min c_i ≥ max(0.05, 0.5 × |concordance_window − 0.5|)`:
+  relative to the window's signal (the SDS's Q544: 0.06 is the whole signal of a 0.55 feature and
+  a fifth of a 0.80 one's; 0.5, the periods differ by half the signal), never below the floor
+  (Q547: near no signal the relative bound nears 0 and Q alone would decide, so on a large
+  population a signal-less feature's 0.04 wobble was held) (`heterogeneity_p`,
+  `concordance_range`; the detail gives the range, the periods tested and "support n … in the
+  thinnest period"). Guards: no
   window concordance → EDA's reason (the ranking's `unavailable`); fewer than two periods with a
   concordance → "not available"; a concordance of 1 → the SE floor. "The feature's power differs
-  across the window's periods." Catches a signal present in one period only or a flipped direction;
-  the effect-size condition stops a large sample from flagging everything. **Known limit:** the
+  across the window's periods." Catches a signal present in one period only or a flipped direction:
+  the vendor score delivered every other month (`cc_vendor_score_trap_unstable`, 0.63–0.65 in even
+  periods, 0.49–0.50 in odd ones, range 0.160). The effect-size condition stops a large sample
+  from flagging everything: the honest score's real swing (range 0.078, p 0.0001) clears the 0.05
+  floor but stays below half its signal (0.124), so it is not held. **Known limit:** the
   periods share clients, so their concordances are positively correlated and Q, which assumes them
   independent, is conservative (fewer flags than the nominal level); each per-period SE is right on
-  its own rows. **Known limit:** as the window's signal nears 0.5 the relative range nears 0, so
-  Cochran's Q alone decides: a weak feature with a real but small wobble can be held on a large
-  population (a floor on the range is the SDS's call).
+  its own rows.
 - **PSI in two tiers** (the SDS, 2026-11-09): each PSI raises a note from `psi_note_min: 0.10`
   and a flag from `psi_max: 0.25` (Monitoring's drift threshold), never both: the flag replaces
   the note. The config refuses a `psi_note_min` above `psi_max`. A PSI's "not available" reason
   applies to its flag and its note alike.
   - **`psi_window`** · note · `0.10 ≤ psi_window < 0.25`, PSI(the window's first period, the
     window's last period); "not available" for a one-period window. "The distribution moved while
-    the model's data was collected."
+    the model's data was collected." Catches the contact channel's moderate shift
+    (`contact_channel_trap_drift_moderate`, 0.157), which stays below the flag.
   - **`psi_window_large`** · flag · `psi_window ≥ 0.25`. "The distribution moved strongly while
-    the model's data was collected: find the cause before a keep."
+    the model's data was collected: find the cause before a keep." Catches the wait time's step
+    inside the window (`support_wait_min_trap_drift_window`, 0.394 card, 0.384 deposit).
   - **`psi_latest`** · note · `0.10 ≤ psi_latest < 0.25`, PSI(the window's last period, the latest
     period), whatever `eda.snapshot` says, so the finding means the same thing in every run: the
     most recent period the model's data comes from against the most recent data there is.
-    "Production will score a different distribution: expect Monitoring to see it."
+    "Production will score a different distribution: expect Monitoring to see it." Catches the
+    contact channel's new level after the validation period (0.184); the wait time, stable after
+    its step (0.002), raises nothing.
   - **`psi_latest_large`** · flag · `psi_latest ≥ 0.25`. "Production will score a strongly
     different distribution: find the cause before a keep." Catches `drift`: the four login
     roll-ups after the app relaunch (0.43–0.50 on the canonical card data; the raw login column's
-    0.23 is a note).
+    0.23 is a note); the contact channel's 0.184 stays a note.
   - On the canonical card data (42 held in all, measured 2026-11-09) the two flags hold six
     features no other flag holds: those four roll-ups,
     `inflow_casa_vol_0_2_vs_3_5_months_ratio` (window PSI 0.26) and the shifted loan trap column
@@ -429,8 +451,9 @@ without signal there is nothing to lose or to stamp.
 - **`new_levels`** · note · `new_level_share_max: 0.01`. A categorical's share, in the latest
   period, of the rows in bins holding no row in any window period ≥ 0.01 (`__new__` always, null
   only when no window period had one, N5). "Levels unseen in the window cover a share of the
-  latest period's rows." For a categorical with more than 10,000 window levels (EDA's
-  `over_ceiling` list) the note reads "not available: more than 10,000 window levels", decided
+  latest period's rows." Catches the contact channel's `chat` (3.2% of the latest period);
+  leaves the one-value column's `paper` alone (0.39%). For a categorical with more than 10,000
+  window levels (EDA's `over_ceiling` list) the note reads "not available: more than 10,000 window levels", decided
   up front (D-035).
 - PSI (`measures.period_psi`): a numeric on about ten groups merged from the expected period's
   non-null bins (`merge_bins`, a mass point its own group), the same `bin_order` ranges applied to
@@ -641,17 +664,30 @@ against the ground truth"); in short:
 
 | Step | Trap kinds it must catch |
 |---|---|
-| `quality` | `constant`, `near_constant`, `all_null`, `low_fill`, `high_cardinality`, `eligibility_defining` |
-| `leakage` | `leak`, `missing_leak`, `upstream_target`, `process_leak` (`rare_value_leak`) |
+| `quality` | `constant`, `near_constant`, `all_null`, `low_fill`, `high_cardinality`, `eligibility_defining`; `shared_null_set` (`nulls_informative`); `recency_null_zero`, `drift_window` (`nulls_may_be_zeros`) |
+| `leakage` | `leak` (the U-shaped one in best order), `missing_leak` (the deposit's below EDA's null-share range), `upstream_target`, `process_leak` (`rare_value_leak`: the count and the status) |
 | `time_alignment` | `shifted` (`lagged_signal_drop`), `lookahead` (`client_constant`) |
-| `stability` | `drift` (`psi_latest_large`, on the login column or a roll-up) |
+| `stability` | `drift` (`psi_latest_large`, on the login column or a roll-up); `unstable` (`concordance_unstable`); `drift_window` (`psi_window_large`); `drift_moderate` (`psi_window`, `psi_latest`, `new_levels`) |
 | `redundancy` | `redundant`, `collinearity` (the `<product>_status` ⇔ `<product>_flag` identity) |
 | kinds (EDA) | `decimal_type` read as numeric |
 
 - **Keyed by trap kind and target:** a card or term-deposit row runs on its config, an "any
   product" row on both; every personal-loan row goes to `NOT_CHECKS` ("no config: loan target"),
-  with the EDA views and the off-by-default kinds, so a trap row added later fails the test until
-  it is placed.
+  with the EDA views, the spend leak and the off-by-default kinds, so a trap row added later fails
+  the test until it is placed.
+- **Controls, the second mapping** (`CONTROL_FINDINGS`): the findings a row's columns must not
+  raise, for the rows close to a threshold on the safe side (the honest score, the vendor score,
+  the one-value column, the wait time, the six natural-control rows on real columns; a row may
+  be a trap and a control). `test_each_control_raises_no_forbidden_finding` asserts each control
+  column read, each forbidden finding's measure computed on it (where the ledger holds it, so no
+  check passes by never running) and none raised. Only findings that could fire there and that
+  no trap assertion already excludes are listed (a note and its flag are exclusive).
+- **The cross-config control** (`test_sub_range_missing_leak_fires_on_its_target_only`):
+  the deposit's blanked rate reads below EDA's null-share range on both configs; it raises the
+  missingness leak on the deposit config through the below-range path and no missingness leak on
+  the card config, where its nulls carry no signal.
+- **The Cohen's d trap** (the spend leak) is asserted on the regression variant in
+  `tests/test_feature_checks.py` (`unit` preset): `rare_value_leak` with a detail naming Cohen's d.
 - **Per kind:** the process leak is caught by `rare_value_leak` (and also raises
   `lagged_signal_drop`); the drift shows on the login roll-ups more than on the raw column, which
   sits just below `psi_max`'s 0.25 (a note); the look-ahead asserts `client_constant` only,
@@ -659,12 +695,14 @@ against the ground truth"); in short:
   no per-period finding is asserted on the term-deposit config (about 35 events per period).
 - **Bins (T25):** every numeric candidate has at least min(distinct values, `eda.bins // 2`)
   bins in the snapshot's cells, no non-singleton bin above 5% of its non-null rows.
-- **False positives are checked on the null controls** (pure noise): window concordance below
-  0.55 and no flag; and, count-free, no card-config column outside the truth's trap list raises
-  `too_strong`, `missingness_leak` or `lagged_signal_drop` (`NEVER_ON_LEGITIMATE`, the SDS's
-  Q545). There is no bound on the count of non-trap holds (the SDS, 2026-11-09): the legitimate
-  features a flag holds by design (`rare_value_leak`, `client_constant`, the PSI flags) are a
-  person's to keep. The D-088 counts per period come from `eda.json`.
+- **False positives are checked on the controls** (above), **on the null controls** (pure noise:
+  window concordance below 0.55 and no flag) and, count-free, on the card config's legitimate
+  columns: none raises `too_strong`, `missingness_leak` or `lagged_signal_drop`
+  (`NEVER_ON_LEGITIMATE`, the SDS's Q545) unless a trap row allows it; the real columns named only
+  for a note or as a control stay under this guard. There is no bound on the count of non-trap
+  holds (the SDS, 2026-11-09): the legitimate features a flag holds by design (`rare_value_leak`,
+  `client_constant`, the PSI flags) are a person's to keep. The D-088 counts per period come from
+  `eda.json`.
 - **Running it:** the default `pytest` runs it (about 5.5 minutes of compute on the Mac);
   `pytest -m "not slow and not traps"` skips it in a quick loop.
 
@@ -762,6 +800,7 @@ the hold-out being the stage's correctness core; then `decisions.py`; then `find
 | `time_alignment.concordance_min` | 0.6 | signal needed before either check looks |
 | `stability.heterogeneity_p_max` | 0.01 | Cochran's p for `concordance_unstable` |
 | `stability.concordance_range_min` | 0.5 | its effect-size condition: the range at least this × \|`concordance_window` − 0.5\| |
+| `stability.concordance_range_floor` | 0.05 | the range that condition never goes below, so a feature with no signal needs a real swing |
 | `stability.psi_note_min` | 0.10 | PSI from which `psi_window` and `psi_latest` note |
 | `stability.psi_max` | 0.25 | PSI from which `psi_window_large` and `psi_latest_large` flag (Monitoring's drift threshold) |
 | `stability.new_level_share_max` | 0.01 | share of unseen levels for `new_levels` |
@@ -812,7 +851,6 @@ the hold-out being the stage's correctness core; then `decisions.py`; then `find
 ## Open questions
 - **Bank-side timing:** the stage reads tables only, but a regression counts table is about twenty
   times a binary one; unverified at the bank's size.
-- **`concordance_unstable` has no synthetic trap yet:** the `unstable` trap kind arrives in M4.
 - **Grouped importance and the cluster rule for automated selection** (the top member per cluster
   unless a person kept the others, ranked inside a cluster on the train split only): M2.3's
   questions.

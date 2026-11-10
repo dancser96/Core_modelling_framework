@@ -11,10 +11,10 @@ month of its window had a card, a ratio also when its 3–5 average is 0. A "sin
 null until a first non-zero month since joining. Earlier months come from
 `events.values_at`; where the history a case needs lies before the mart's first month (the
 burn-in), only what the visible months decide is checked. Columns filled at random (missing
-income, the low-fill traps, the missing-value leak) have no null rule here: the traps family checks
-their fill shares. Rollup values are left to the Spark recompute in the tests. Every row is a rule
-(tolerance 0). The family reads every mart column (`MART_COLUMNS = None`) and only the oracle's
-keys, which it doesn't use.
+income, the low-fill traps, the two missing-value leaks, the one-value and wait controls) have no
+null rule here: the traps and controls families check their fill shares. Rollup values are left
+to the Spark recompute in the tests. Every row is a rule (tolerance 0). The family reads every mart
+column (`MART_COLUMNS = None`) and only the oracle's keys, which it doesn't use.
 """
 
 import re
@@ -58,6 +58,8 @@ STRING_COLUMNS = (
     "referral_branch_code",
     "complaint_category",
     "cc_offer_code",
+    "statement_format",
+    "contact_channel",
 )
 INTEGER_COLUMNS = (
     "age",
@@ -68,12 +70,15 @@ INTEGER_COLUMNS = (
     "relationship_months",
 )
 # Filled at random, so no null rule: income (not at random, plus a little at random) and the traps
-# whose fill shares the traps family checks.
+# whose fill shares the traps and controls families check.
 ANY_NULLS = (
     "income",
     "loyalty_points_bal_trap_low_fill",
     "complaint_category_trap_low_fill",
     "cc_offer_code_trap_missing_leak",
+    "td_offer_rate_trap_missing_leak",
+    "statement_format_trap_one_value",
+    "support_wait_min_trap_drift_window",
 )
 
 

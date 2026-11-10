@@ -20,12 +20,18 @@
   standard errors on positive events). On the `unit` preset it stays under two minutes; the
   canonical run is nightly or on request (D-100).
 - The trap acceptance test (`test_traps.py`, marker `traps`, D-064, D-137): EDA and Feature Checks
-  on the `dev` preset (20k clients, generated in the test run) for both example configs; every
-  trap in `truth.json` is caught by its finding or listed in `NOT_CHECKS` with a reason; the
-  false-positive checks are the null controls (pure noise) staying unflagged and, count-free, no
-  legitimate card column raising a leak or lag flag (`NEVER_ON_LEGITIMATE`); there is no bound on
-  the count of held non-trap features. It runs in the default suite; skip it in a quick loop
-  with `pytest -m "not slow and not traps"` (a `-m` replaces the default `not slow`).
+  on the `dev` preset (20k clients, generated in the test run) for both example configs, against
+  two mappings of `truth.json`'s trap list: every trap is caught by its findings
+  (`TRAP_FINDINGS`) or listed in `NOT_CHECKS` with a reason, and every control, a column close to
+  a check's threshold on the safe side, raises none of the findings it must not
+  (`CONTROL_FINDINGS`; a row may be both), with each forbidden finding's measure computed; the
+  deposit's sub-range missing leak is also asserted to raise no missingness leak on the card
+  config. The other false-positive checks are the null controls (pure noise) staying unflagged
+  and, count-free, no legitimate card column, the control-only real columns included, raising a
+  leak or lag flag (`NEVER_ON_LEGITIMATE`); there is no bound on the count of held non-trap
+  features. The test runs in the default suite; skip it in a quick loop with
+  `pytest -m "not slow and not traps"` (a `-m` replaces the default `not slow`). The regression
+  trap (Cohen's d) is asserted in `test_feature_checks.py`.
 
 Tests import the dev-only `synthetic` package and generate their data from its seed when they run
 (the `unit` preset, 5k clients), so they never read a stored dataset. The package goes into the

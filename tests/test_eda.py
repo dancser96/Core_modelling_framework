@@ -63,7 +63,8 @@ HEADINGS = ["Summary", "Choices", "How to read", "Headline", "Warnings", "Core",
             "Feature ledger", "Resolved config", "Decisions", "Collect log",
             "Timings"]  # fmt: skip
 REGRESSION_CANDIDATES = ["age", "income", "segment", "onboarding_channel", "employment_status",
-                         "cc_active_flag", "cc_bal*", "cc_limit", "spend_cc_*"]  # fmt: skip
+                         "cc_active_flag", "cc_bal*", "cc_limit", "spend_cc_*",
+                         "*_trap_spend_leak"]  # fmt: skip
 
 
 def _run_with_stale_checks(

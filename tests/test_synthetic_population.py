@@ -13,9 +13,13 @@ from synthetic.mechanisms.traps import (
     CAMPAIGN,
     CC_APPLICATION,
     CC_SHIFTED,
+    CC_STATUS,
     LEAK,
     OFFER_CODE,
+    REVIEW_SCORE,
     SHIFTED,
+    SPEND_REVIEW,
+    TD_RATE,
     UPSTREAM,
 )
 
@@ -28,6 +32,10 @@ LOOKAHEAD_COLUMNS = [  # the trap columns that read up to 3 months ahead
     OFFER_CODE,
     CC_APPLICATION,
     CC_SHIFTED,
+    REVIEW_SCORE,
+    TD_RATE,
+    CC_STATUS,
+    SPEND_REVIEW,
 ]
 
 

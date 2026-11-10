@@ -440,6 +440,13 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Oracle:** the hidden per-row truth beside the synthetic mart: each client's hidden traits and
   the true chance behind every event. A model that beats its AUC by more than about two standard
   errors on positive events is leaking (D-100 (e), `docs/components/test_harness.md`).
+- **Trap column / control (column) / natural control:** synthetic-data terms
+  (`docs/components/test_harness.md`, "Trap summary"; D-064). A trap column is added to the
+  synthetic mart only to test the framework, and its name ends in `_trap_<kind>`; a trap is what
+  a check must raise. A control is a column close to a check's threshold on the safe side, which
+  that check must leave alone; most trap columns are a trap for one finding and a control for
+  others. A natural control is a real column (`trap_column` false, its real name kept) whose
+  realistic behaviour already makes it a control, such as a static attribute without signal.
 - **Major step:** a new component, config section, public function or dependency, or a redesign the
   user flags. It starts with research and a holistic review (`CLAUDE.md` §1).
 - **D-nnn / OD-nn / T-nn:** identifiers for a decision (`docs/decisions.md`), an open decision

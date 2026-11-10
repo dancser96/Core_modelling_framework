@@ -1,29 +1,39 @@
 # Synthetic data — review guide
 
-The review guide for the synthetic data generator (M1, D-003), version 0.5.3. Approved by the SDS
+The review guide for the synthetic data generator (M1, D-003), version 0.6.0. Approved by the SDS
 on 2026-10-19 and accepted by the LDS on 2026-10-21 (summary on `worknotes/sync.md`); 0.5.0 adds
 the ten trap columns from the LDS's to-dos (2026-10-25); 0.5.1 also writes a slim `holdings` table
-(the client key and the six holding flags, copied from the mart) beside the mart (2026-10-26); 0.5.2 tags the holdings' months with their last day, the mart's with their first (D-129); 0.5.3 adds the feature-store extract `fs_extract` (a second feature source with its own keys, six trait proxies and a look-ahead trap column; 2026-10-30). The spec and code map are
+(the client key and the six holding flags, copied from the mart) beside the mart (2026-10-26); 0.5.2 tags the holdings' months with their last day, the mart's with their first (D-129); 0.5.3 adds the feature-store extract `fs_extract` (a second feature source with its own keys, six trait proxies and a look-ahead trap column; 2026-10-30); 0.6.0 adds nine trap columns and six natural-control rows, so that every Feature Checks finding has a trap that must raise it and a control that must not (2026-11-10). The spec and code map are
 in `docs/components/test_harness.md`; history is in `docs/UPDATES.md` and D-003, D-011, D-029, D-033, D-041, D-043, D-050, D-064, D-072, D-083.
 
 ## 1. What it is
-- A retail book of 100k clients over 24 months, written as an upstream-style feature mart: 157
+- A retail book of 100k clients over 24 months, written as an upstream-style feature mart: 166
   columns, one row per client per month.
-- The code is in four role folders under `synthetic/src/synthetic/` (32 modules, D-003):
+- The code is in four role folders under `synthetic/src/synthetic/` (37 modules, D-003):
   - `spec/`: the rules, as plain data;
   - `mechanisms/`: the functions that simulate;
   - `truth/`: the oracle, the regression oracle and `truth.json`;
-  - `checks/`: 9 check families, written from the spec and never from the generator's code.
+  - `checks/`: 10 check families, written from the spec and never from the generator's code.
 - `truth.json` (55 KB) keeps only what can't be recomputed: the spec, calibration, column kinds,
   per-target oracle metrics and the dirty-data record.
 - Traps of two kinds:
   - **Trap columns** (`trap_column` true), named `<column>_trap_<kind>`: two leaks (one strong,
-    one moderate), the upstream target, a leak in a missingness pattern (an offer code), a process
-    leak (applications) and a column shifted one month ahead for each of the two products, a
-    redundant column (tenure in months), null controls, two constants, a high-cardinality code,
-    a near-constant, an all-null and two very-low-fill columns.
+    one moderate) and a U-shaped one strong only in best order, the upstream target, two leaks in
+    a missingness pattern (an offer code; a deposit rate blanked for some converters, below EDA's
+    null-share range), a process leak (applications) and a column shifted one month ahead for
+    each of the two products, the card application's status, a spend leak for the regression
+    target, a redundant column (tenure in months), null controls, two constants, a
+    high-cardinality code, a near-constant, an all-null and two very-low-fill columns; and five
+    monthly columns (0.6.0): an honest score, a score delivered every other month, a one-value
+    column, a wait whose level steps up inside the example window, a contact channel whose mix
+    shifts moderately.
   - **Traps in real columns**, which keep their real names: age's inverted U, nationality's rare
     level, income's eligibility gap, logins' Simpson effect and drift.
+- **Controls:** a column close to a check's threshold on the safe side, which that check must
+  leave alone. Most trap columns are both a trap and a control; six rows on real columns (a static
+  attribute, a dominant level, null sets, recency nulls) are natural controls; two of them also
+  raise a note of their own. The trap acceptance test keeps the mapping of each row to the
+  findings it must and must not raise (D-064).
 - **The book is in steady state.** Monthly exits are 0.7 / 0.8 / 0.9 / 1.1% (Private → Mass),
   with entries 0.2 points above. Tenure is exponential at the entry rate, and clients join younger
   than the book's mean age by the mean tenure, so ages, tenure and shares stay flat over the panel.

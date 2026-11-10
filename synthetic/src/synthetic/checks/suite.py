@@ -19,6 +19,7 @@ import pandas as pd
 from synthetic.checks import (
     amount_levels,
     amount_rules,
+    controls,
     extract,
     holdings,
     mart,
@@ -49,6 +50,7 @@ CHECK_FAMILIES = {
     "seasons": _family(seasons, "check_seasons"),
     "mart": _family(mart, "check_mart"),
     "traps": _family(traps, "check_traps"),
+    "controls": _family(controls, "check_controls"),
     "oracle": _family(oracle, "check_oracle"),
     "extract": _family(extract, "check_extract", reads_extract=True),
 }

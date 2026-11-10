@@ -10,7 +10,8 @@ which assume independent rows, so the families take one row per client: one mont
 (`first_month`) or one pair of months (`pair_rows`). Event counts against the sum of their
 chances (`sum_row`, Poisson-binomial standard error); rules over named items (`offenders_row`,
 the first few failing ones in the stratum). Estimators: the Hill tail index, the AUC with its
-Hanley–McNeil standard error, the population stability index.
+Hanley–McNeil standard error, the population stability index (of a number on the reference's
+quantile bins, `psi`; of a categorical on its levels' shares, `categorical_psi`).
 """
 
 from datetime import date
@@ -230,6 +231,18 @@ def psi(reference: np.ndarray, current: np.ndarray, bins: int = 10) -> float:
         for x in (reference, current)
     ]
     ref, cur = (np.maximum(s, PSI_FLOOR) for s in shares)
+    return float(np.sum((cur - ref) * np.log(cur / ref)))
+
+
+def categorical_psi(reference: pd.Series, current: pd.Series) -> float:
+    """The population stability index of `current` against `reference` on their levels' shares
+    (nulls left out); a level one side lacks counts as a share of 1e-6."""
+    shares = pd.concat(
+        [reference.value_counts(normalize=True), current.value_counts(normalize=True)],
+        axis=1,
+        keys=["reference", "current"],
+    ).fillna(0)
+    ref, cur = (np.maximum(shares[side].to_numpy(), PSI_FLOOR) for side in shares)
     return float(np.sum((cur - ref) * np.log(cur / ref)))
 
 

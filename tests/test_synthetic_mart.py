@@ -69,6 +69,10 @@ TRAP_SPARK_TYPES = {
     "cc_offer_code_trap_missing_leak": "string",
     "application_cc_cnt_trap_process_leak": "bigint",
     "cc_limit_trap_shifted": "double",
+    "cc_review_score_trap_leak": "bigint",
+    "td_offer_rate_trap_missing_leak": "double",
+    "application_cc_status_trap_process_leak": "string",
+    "cc_spend_review_trap_spend_leak": "int",
     "insurance_premium_vol_trap_null_control": "double",
     "branch_visit_cnt_trap_null_control": "bigint",
     "preferred_language_trap_null_control": "string",
@@ -81,6 +85,11 @@ TRAP_SPARK_TYPES = {
     "relationship_months_trap_redundant": "bigint",
     "loyalty_points_bal_trap_low_fill": "double",
     "complaint_category_trap_low_fill": "string",
+    "cc_propensity_score_trap_honest": "bigint",
+    "cc_vendor_score_trap_unstable": "bigint",
+    "statement_format_trap_one_value": "string",
+    "support_wait_min_trap_drift_window": "double",
+    "contact_channel_trap_drift_moderate": "string",
 }
 
 

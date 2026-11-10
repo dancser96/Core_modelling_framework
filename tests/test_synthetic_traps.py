@@ -1,5 +1,6 @@
-"""Synthetic data: the traps (`checks.traps`, which needs the oracle's window probabilities), the
-off-by-default switches (dirty data, extra columns) and the trap list in truth."""
+"""Synthetic data: the traps (`checks.traps`) and the monthly control columns (`checks.controls`),
+both of which need the oracle's window probabilities, the off-by-default switches (dirty data,
+extra columns) and the trap list in truth."""
 
 from collections.abc import Callable
 from pathlib import Path
@@ -15,20 +16,25 @@ from synthetic.output import read_output, write_mart
 from synthetic.spec.traps import TRAPS
 
 DEFECT_COLUMNS = ["income", "casa_bal", *OUTAGE_COLUMNS]
+FAMILIES = ["traps", "controls"]
 
 
-def test_trap_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
-    """On the unit preset, every rule row of the trap family passes."""
-    checks = run_checks(unit_output[0], ["traps"])["traps"]
+@pytest.mark.parametrize("family", FAMILIES)
+def test_trap_rules_hold_on_unit(unit_output: tuple[str, dict], family: str) -> None:
+    """On the unit preset, every rule row of the family passes."""
+    checks = run_checks(unit_output[0], [family])[family]
     rules = checks[checks["rule"]]
-    assert len(rules) > 0, "the trap family has no rule rows"
+    assert len(rules) > 0, f"{family} has no rule rows"
     assert rules["passed"].all(), rules[~rules["passed"]].to_string()
 
 
 @pytest.mark.slow
-def test_trap_checks_pass_on_canonical(canonical_checks: Callable[..., pd.DataFrame]) -> None:
-    """Every row of the trap family passes at the canonical size."""
-    checks = canonical_checks("traps")
+@pytest.mark.parametrize("family", FAMILIES)
+def test_trap_checks_pass_on_canonical(
+    canonical_checks: Callable[..., pd.DataFrame], family: str
+) -> None:
+    """Every row of the family passes at the canonical size."""
+    checks = canonical_checks(family)
     assert checks["passed"].all(), checks[~checks["passed"]].to_string()
 
 

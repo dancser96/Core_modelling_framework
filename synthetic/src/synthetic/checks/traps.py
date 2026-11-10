@@ -1,14 +1,16 @@
 """Trap checks: every trap in the trap summary meets its expected behaviour.
 
-`check_traps` builds one table: the traps on the two trap products (credit card: the leaks, the
-missing-value leak, the upstream target, Simpson's reversal; personal loan: the rare level; both:
-a process leak and a shifted column) and the traps on any product (null controls, the
+`check_traps` builds one table: the traps on the two trap products (credit card: the leaks, one
+U-shaped, the missing-value leak, the upstream target, the application status, Simpson's reversal;
+personal loan: the rare level; both: a process leak and a shifted column), the deposit rate's
+missing-value leak, the card spend leak and the traps on any product (null controls, the
 high-cardinality code, constants, the redundant column, low-fill columns, quality columns, login
 drift). Targets come from `events.realised_target`, the checks' own; the oracle enters through its
 window probabilities (the ceiling a leak must beat, on its own window) and its monthly opening
 chances (the rare level). AUC and correlation rows, which carry a standard error, use one row per
 client (the panel's middle month); rules comparing two columns, event shares and Simpson's signs
-use every row. The off-by-default switches are checked in `switches`.
+use every row. The monthly control columns are checked in `controls`, the off-by-default switches
+in `switches`.
 """
 
 import numpy as np
@@ -30,6 +32,7 @@ from synthetic.checks.table import (
     hanley_se,
     profile_of,
     psi,
+    range_row,
     rank_corr,
     row,
     share_row,
@@ -53,11 +56,16 @@ LEAK = "cc_preapproval_score_trap_leak"
 CAMPAIGN = "cc_campaign_response_score_trap_leak"
 MISSING_LEAK = "cc_offer_code_trap_missing_leak"
 UPSTREAM = "cc_acquire_next_3_months_flag_trap_upstream_target"
+REVIEW_SCORE = "cc_review_score_trap_leak"  # the U-shaped leak
+TD_RATE = "td_offer_rate_trap_missing_leak"
+CC_APPLICATION = "application_cc_cnt_trap_process_leak"
+CC_STATUS = "application_cc_status_trap_process_leak"  # the status of a CC_APPLICATION
+SPEND_REVIEW = "cc_spend_review_trap_spend_leak"
 # Process leaks: trap column → (the target of its product, the flag whose holders never apply);
 # shifted columns, each with the target of its product.
 PROCESS_LEAKS = {
     "application_loan_personal_cnt_trap_process_leak": ("loan_personal_open", None),
-    "application_cc_cnt_trap_process_leak": ("cc_acquire", "cc_flag"),
+    CC_APPLICATION: ("cc_acquire", "cc_flag"),
 }
 SHIFTED_COLUMNS = {  # trap column → (the real column it holds one month on, the target)
     "loan_personal_bal_trap_shifted": ("loan_personal_bal", "loan_personal_open"),
@@ -87,19 +95,30 @@ COMPLAINT_LEVELS = ["fees", "card", "service", "digital", "branch", "other"]
 DRIFT_FIRST_MONTH = 4  # panel month where the drift reference starts (months 4–15)
 DRIFT_PSI_MIN, STABLE_PSI_MAX = 0.25, 0.1
 HASH_KEY = "trap-null-halves"  # 16 characters, as pandas' hash needs: splits clients in halves
+# Acquirers sit offset 1 further from the centre on their own side: the value orders them at 0.5,
+# the distance at P(|ε₁| + 1 > |ε₂|) for standard normals.
+REVIEW_CENTRE, REVIEW_DISTANCE_AUC = 500, 0.885
+# Hanley's SE at 0.5 assumes one distribution for both groups; the U shape's is about 1.5× it.
+REVIEW_VALUE_AUC_RANGE = (0.45, 0.55)
+TD_RATE_WINDOW, TD_RATE_BLANK_SHARE, TD_RATE_RANGE = 3, 0.5, (2.5, 5.0)
+STATUS_LEVELS = ("none", "approved", "declined")
+SPEND_WINDOW, SPEND_THRESHOLD, SPEND_ZERO_SHARE_MIN = 3, 60_000, 0.90
 
 TRAP_COLUMNS = [*NUMERIC_NULL_CONTROLS, *CATEGORICAL_NULL_CONTROLS, NEAR_CONSTANT, ALL_NULL]
 TRAP_COLUMNS += [*CONSTANTS, REDUNDANT, LOW_FILL_CLIENTS, LOW_FILL_ROWS, MISSING_LEAK]
 TRAP_COLUMNS += [LEAK, CAMPAIGN, UPSTREAM, *PROCESS_LEAKS, *SHIFTED_COLUMNS]
+TRAP_COLUMNS += [REVIEW_SCORE, TD_RATE, CC_STATUS, SPEND_REVIEW]
 TARGET_COLUMNS = [c for name in BINARY_TARGETS for c in STANDARD_TARGETS[name]["eligible"]]
 TARGET_COLUMNS += [STANDARD_TARGETS[name]["column"] for name in BINARY_TARGETS]
-# Tenure (`relationship_days`) and the profile feed the oracle's chances.
+# Tenure (`relationship_days`) and the profile feed the oracle's chances; the card spend feeds
+# the spend leak.
 OWN_COLUMNS = [
     "subsegment",
     "onboarding_channel",
     "nationality",
     "relationship_days",
     "loan_personal_maturity_months",
+    "spend_cc_vol",
 ]
 OWN_COLUMNS += [LOGINS, LOGINS_AVG, *[real for real, _ in SHIFTED_COLUMNS.values()]]
 MART_COLUMNS = list(dict.fromkeys([*KEYS, *OWN_COLUMNS, *TARGET_COLUMNS, *TRAP_COLUMNS]))
@@ -123,9 +142,13 @@ def check_traps(mart: pd.DataFrame, oracle: pd.DataFrame, truth: dict) -> pd.Dat
     }
     rows = (
         _check_leak(panel, card, card_chance, at_obs)
+        + _check_u_leak(panel, card, card_chance, at_obs)
         + _check_missing_leak(panel, card, card_chance, at_obs)
+        + _check_deposit_rate(panel)
         + _check_upstream(panel, card, month)
         + _check_process_leak(panel, next_chance)
+        + _check_status(panel)
+        + _check_spend_leak(panel, at_obs)
         + _check_shifted(panel, next_chance)
         + _check_rare_level(truth["spec"], panel)
         + _check_simpson(truth["spec"], panel, card_chance)
@@ -176,6 +199,38 @@ def _check_leak(
     return rows
 
 
+def _check_u_leak(
+    panel: pd.DataFrame, target: pd.Series, chance: pd.Series, at_obs: np.ndarray
+) -> list[dict]:
+    """The U-shaped leak: for card acquisition in 3 months its value orders clients at AUC 0.5
+    (within 0.45–0.55) and its distance from the centre at 0.885, above the oracle's AUC on that
+    window (one month)."""
+    use = at_obs & target.notna().to_numpy()
+    y = target[use].to_numpy() == 1
+    value = panel.loc[use, REVIEW_SCORE].to_numpy(dtype=float)
+    distance_auc = auc(np.abs(value - REVIEW_CENTRE), y)
+    stratum, n = f"w={LEAK_WINDOW}, one month", use.sum()
+    check = f"U leak {REVIEW_SCORE}: AUC for cc_acquire"
+    return [
+        range_row(f"{check} in value order", stratum, n, *REVIEW_VALUE_AUC_RANGE, auc(value, y)),
+        row(
+            f"{check} by the distance from {REVIEW_CENTRE}",
+            stratum,
+            n,
+            REVIEW_DISTANCE_AUC,
+            distance_auc,
+            Z_TOL * hanley_se(REVIEW_DISTANCE_AUC, y.sum(), (~y).sum()),
+        ),
+        side_row(
+            f"U leak {REVIEW_SCORE}: AUC by the distance above the oracle's",
+            stratum,
+            n,
+            auc(chance[use], y),
+            distance_auc,
+        ),
+    ]
+
+
 def _check_missing_leak(
     panel: pd.DataFrame, target: pd.Series, chance: pd.Series, at_obs: np.ndarray
 ) -> list[dict]:
@@ -217,6 +272,36 @@ def _check_missing_leak(
         ),
     ]
     return rows
+
+
+def _check_deposit_rate(panel: pd.DataFrame) -> list[dict]:
+    """The deposit rate's missing-value leak: a rate in [2.5, 5.0], null only for non-holders who
+    take a deposit within 3 months inside the panel (so never for holders), and for half of them.
+
+    The share pools every such row: the blank is drawn row by row.
+    """
+    rate = panel[TD_RATE].to_numpy(dtype=float)
+    null = np.isnan(rate)
+    holder = panel["td_flag"].to_numpy() == 1
+    ahead = values_at(panel, "td_flag", range(1, TD_RATE_WINDOW + 1))
+    takes = ~holder & (ahead == 1).any(axis=1)
+    low, high = TD_RATE_RANGE
+    check = f"deposit rate {TD_RATE}"
+    taker = f"non-holders taking a deposit within {TD_RATE_WINDOW} months"
+    return [
+        violations_row(f"{check}: null only for {taker}", pd.Series(null & ~takes)),
+        share_row(
+            f"{check}: null among {taker}",
+            "all",
+            TD_RATE_BLANK_SHARE,
+            null[takes].sum(),
+            takes.sum(),
+        ),
+        violations_row(
+            f"{check}: values within [{low}, {high}]",
+            pd.Series((rate[~null] < low) | (rate[~null] > high)),
+        ),
+    ]
 
 
 def _check_upstream(panel: pd.DataFrame, target: pd.Series, month: pd.Series) -> list[dict]:
@@ -290,6 +375,41 @@ def _check_process_leak(panel: pd.DataFrame, next_chance: dict[str, pd.Series]) 
             ),
         ]
     return rows
+
+
+def _check_status(panel: pd.DataFrame) -> list[dict]:
+    """The card application's status: approved where the client applied and holds the card next
+    month, declined where it applied and does not (or has left), none without an application."""
+    applied = panel[CC_APPLICATION].to_numpy() > 0
+    card_next = values_at(panel, "cc_flag", [1])[:, 0] == 1
+    none, approved, declined = STATUS_LEVELS
+    expected = np.where(applied, np.where(card_next, approved, declined), none)
+    check = f"status {CC_STATUS}: {approved} ⇔ applied and the card next month, {declined} ⇔"
+    check += f" applied and not, else {none}"
+    return [violations_row(check, panel[CC_STATUS] != expected)]
+
+
+def _check_spend_leak(panel: pd.DataFrame, at_obs: np.ndarray) -> list[dict]:
+    """The spend leak: 1 exactly for card holders whose card spend over the next 3 months (a
+    month without a row counts 0) exceeds 60,000, else 0; 0 for more than 90% of the holders
+    (one month)."""
+    holder = panel["cc_flag"].to_numpy() == 1
+    ahead = values_at(panel, "spend_cc_vol", range(1, SPEND_WINDOW + 1))
+    expected = holder & (np.nansum(ahead, axis=1) > SPEND_THRESHOLD)
+    leak = panel[SPEND_REVIEW].to_numpy()
+    held = at_obs & holder
+    check = f"spend leak {SPEND_REVIEW}"
+    spending = f"a holder spending over {SPEND_THRESHOLD:,} in the next {SPEND_WINDOW} months"
+    return [
+        violations_row(f"{check}: 1 ⇔ {spending}", pd.Series(leak != expected)),
+        side_row(
+            f"{check}: share of 0 among holders",
+            "one month",
+            held.sum(),
+            SPEND_ZERO_SHARE_MIN,
+            float((leak[held] == 0).mean()),
+        ),
+    ]
 
 
 def _check_shifted(panel: pd.DataFrame, next_chance: dict[str, pd.Series]) -> list[dict]:

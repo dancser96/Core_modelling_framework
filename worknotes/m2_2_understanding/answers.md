@@ -2806,3 +2806,24 @@ The SDS's answers to review 1's follow-up questions, verbatim, with the outcome 
   do today whereas there must be trap and check columns for every single test" → the count-free
   guard in the trap test; `worknotes/synthetic_trap_coverage.md` lists, per finding, the trap
   column that must fire and the control column that must not, what exists and what is missing.
+
+# Feature Checks review 1, last answers (2026-11-10): Q546–Q547; the plan agreed
+The SDS's answers, verbatim, with the outcome of each.
+- Q546. "Option (A)" → `steps.py` stays one module, as built.
+- Q547. "Option (B)" → the leaf `stability.concordance_range_floor` (default 0.05):
+  `concordance_unstable` needs a range of at least max(floor, `concordance_range_min` ×
+  |`concordance_window` − 0.5|). On the canonical term-deposit config the two signal-less digital
+  flags (ranges 0.043 and 0.046) no longer fire: 26 held instead of 28 (read from the stored
+  outputs, not re-run).
+- The plan. "as the timeline_proposal is accepted, please combine that with the roadmap factoring
+  in the extra week I’m spending now with Stage 2, the fact that I’ll be out of office for a few
+  days and there’s the national day, so treat the two weeks from Nov 23 to Dec 6 as one week
+  essentially." → `docs/roadmap.md` → Phase 2 plan owns the dates and the depth per component;
+  `worknotes/timeline_proposal.md` is deleted, OD-01 closed into D-022. Stage 2 ends 11-13; M2.3
+  11-16 – 11-24, M2.4 11-25 – 12-04, M3 12-07 – 12-11; the pre-release (12-18) and release 1.0
+  (02-19) keep their dates.
+- The full-codebase review. "Before I try to go through the Stage 2 code (again) properly using
+  the helper notebook, I’ll want the best Fable model to do one full review of the codebase to
+  suggest improvements and refactoring. For this, I’d like to clean up markdowns a bit to ensure
+  optimal token usage and guidance, what can I delete?" → a list of deletion candidates in chat,
+  for the SDS to pick.

@@ -143,10 +143,11 @@ feature_checks:
   # time alignment: signal lost when lagged one period; constant within the client and predictive (flags)
   time_alignment: {signal_kept_min: 0.5, constant_clients_min: 0.99, concordance_min: 0.6}
   # stability: power unstable across the window (flag; the range at least concordance_range_min
-  # × |concordance_window − 0.5|); PSI a note from psi_note_min, a flag from psi_max
-  # (Monitoring's drift threshold); new levels (note)
+  # × |concordance_window − 0.5| and at least concordance_range_floor); PSI a note from
+  # psi_note_min, a flag from psi_max (Monitoring's drift threshold); new levels (note)
   stability:      {psi_note_min: 0.10, psi_max: 0.25, heterogeneity_p_max: 0.01,
-                   concordance_range_min: 0.5, new_level_share_max: 0.01}
+                   concordance_range_min: 0.5, concordance_range_floor: 0.05,
+                   new_level_share_max: 0.01}
   # redundancy: correlated and associated pairs, shown as clusters (notes)
   redundancy:     {correlation_max: 0.90, association_max: 0.90}
 
@@ -825,7 +826,8 @@ functions)); the CLI command `decide` in `core_modelling/__main__.py`.
   0.5, `psi_note_min` and `psi_max` above 0, `rare_effect_max` in (0, 3] (Cohen's h tops out
   at π and a d above 3 is implausible, so a ratio-era 5 fails at load instead of never firing),
   `leakage.dominant_share_min` in (0.5, 1), `stability.concordance_range_min` in [0, 2] (a
-  multiple of the window's signal), `max_levels` at least 2), and `stability.psi_note_min`
+  multiple of the window's signal) and `stability.concordance_range_floor` in [0, 1] (an
+  absolute range), `max_levels` at least 2), and `stability.psi_note_min`
   above `stability.psi_max` is refused naming both (a `model_validator` on `Stability`: the PSI
   note fires between the two); a step left out of a
   present mapping is `None` (not run), and the section left out is `EVERY_CHECK`, all five with

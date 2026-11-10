@@ -166,9 +166,11 @@ feature_checks:
     # flag concordance_unstable: power differs across the window's periods, when Cochran's p is at
     # most heterogeneity_p_max and the concordance's range at least concordance_range_min × the
     # signal (concordance_window − 0.5; 0.5: half the signal), which stops a large population from
-    # flagging every wobble
+    # flagging every wobble; never below concordance_range_floor, so a feature with no signal
+    # needs a real swing
     heterogeneity_p_max: 0.01
     concordance_range_min: 0.5
+    concordance_range_floor: 0.05
     new_level_share_max: 0.01            # note: unseen levels on this share of the latest rows
   redundancy:                            # notes, shown as clusters; a person decides what to keep
     correlation_max: 0.90                # |Spearman| of a numeric pair; also the cluster cut

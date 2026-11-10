@@ -36,6 +36,7 @@ from synthetic.mechanisms.clients import (
     step_latents,
     subsegment_medians,
 )
+from synthetic.mechanisms.controls import control_columns
 from synthetic.mechanisms.extract import extract_frame
 from synthetic.mechanisms.holdings import calibrate, holding_columns, start_holdings, step_holdings
 from synthetic.mechanisms.mart import advance_history, history_columns, start_history
@@ -69,6 +70,8 @@ STREAMS = (
     "noise",  # the noise, high-cardinality and low-fill trap columns (0.5.0)
     "card_leaks",  # the card twins' and the offer code's look-ahead draws (0.5.0)
     "extract",  # the feature-store extract, drawn after the panel (`generate_extract`, 0.5.3)
+    "controls",  # the monthly control columns (0.6.0)
+    "control_leaks",  # the U-shaped leak's and the deposit rate's look-ahead draws (0.6.0)
 )
 WEALTH = LATENTS.index("wealth")
 DESCRIPTION_COLUMNS = [
@@ -243,9 +246,9 @@ def finish_simulation(sim: dict) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
     """The months still buffered when the panel ends, oldest first, their look-ahead columns
     from the months that follow inside the panel (truncated windows)."""
     spec, buffer, rngs = sim["spec"], sim["buffer"], sim["rngs"]
-    leaks, card = rngs["leaks"], rngs["card_leaks"]
+    draws = rngs["leaks"], rngs["card_leaks"], rngs["control_leaks"]
     return [
-        (finalize_lookahead(spec, buffer[start:], leaks, card), buffer[start][1])
+        (finalize_lookahead(spec, buffer[start:], *draws), buffer[start][1])
         for start in range(len(buffer))
     ]
 
@@ -331,11 +334,13 @@ def buffer_month(
     traps = trap_columns(spec, state, rngs["traps"])
     days = relationship_days(sim["clients"], sim["month"])
     traps |= noise_columns(spec, state, days, rngs["noise"])
+    traps |= control_columns(spec, oracle_values, sim["month"], rngs["controls"])
     traps |= extra_columns(spec, sim["n_extra_columns"], sim["z"], rngs["extras"])
     buffer = [*sim["buffer"], month_rows(sim, chances, mart_amounts, oracle_values, traps)]
     if len(buffer) <= lookahead_months(spec):
         return sim | {"buffer": buffer}, []
-    final = (finalize_lookahead(spec, buffer, rngs["leaks"], rngs["card_leaks"]), buffer[0][1])
+    draws = rngs["leaks"], rngs["card_leaks"], rngs["control_leaks"]
+    final = (finalize_lookahead(spec, buffer, *draws), buffer[0][1])
     return sim | {"buffer": buffer[1:]}, [final]
 
 
@@ -351,7 +356,8 @@ def month_rows(
     `mart_amounts` are the month's mart amounts (`amounts.step_amounts`), `oracle_values` its
     other oracle columns (scores and lapse chances from `holdings.step_holdings`, the amounts'
     hidden columns, the regression oracle), `traps` its trap and extra columns
-    (`traps.trap_columns`, `traps.noise_columns`, `traps.extra_columns`).
+    (`traps.trap_columns`, `traps.noise_columns`, `controls.control_columns`,
+    `traps.extra_columns`).
     """
     clients, month = sim["clients"], sim["month"]
     month_end = (month + 1).astype("datetime64[D]").astype(int) - 1

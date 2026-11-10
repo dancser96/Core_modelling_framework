@@ -55,9 +55,11 @@ plotly and jinja2 are already pinned):**
 | plotly | 6.3.1 | Report charts (D-036) |
 | jinja2 | 3.1.6 | Required by pandas Styler for styled HTML tables (pinned 2026-11-04, the EDA report) |
 
-**Dev-only tools** (`requirements-dev.txt`, never needed inside the bank): pytest, ruff, ipykernel
-and nbformat. plotly renders charts in a notebook only with nbformat; Jupyter installs it inside the
-bank, but `ipykernel` alone doesn't locally (D-013).
+**Dev-only tools** (`requirements-dev.txt`, never needed inside the bank): pytest, ruff,
+ipykernel, nbformat and nbclient. plotly renders charts in a notebook only with nbformat; Jupyter
+installs it inside the bank, but `ipykernel` alone doesn't locally (D-013). nbclient re-runs a
+notebook headless and in place (`jupyter execute --inplace <notebook>`; the SDS, Q561,
+2026-11-10).
 
 A package that other packages pull in must be pinned even before our code uses it: without the
 pins, pip resolved scipy 1.17.1 and plotly 7.1.0 locally (2026-10-14).

@@ -632,7 +632,8 @@ def _lagged_values(inputs: CheckInputs) -> pd.DataFrame:
 def check_stability(inputs: CheckInputs, params: Stability) -> StepResult:
     """The `stability` findings: a concordance whose power differs across the window's periods
     (Cochran's Q with an effect-size condition relative to the signal, the range at least
-    `concordance_range_min` × |`concordance_window` − 0.5|, a flag); PSI on named periods, from
+    `concordance_range_min` × |`concordance_window` − 0.5| and never below
+    `concordance_range_floor`, a flag); PSI on named periods, from
     the window's first to its last period and from the window's last to the latest period
     (whatever `eda.snapshot` says), each a flag from `psi_max` and else a note from
     `psi_note_min`, so a feature raises one of the two; and a categorical's latest share of
@@ -641,7 +642,8 @@ def check_stability(inputs: CheckInputs, params: Stability) -> StepResult:
     q = _heterogeneity(inputs)
     signal = (ledger["concordance_window"] - 0.5).abs()
     unstable = q["heterogeneity_p"] <= params.heterogeneity_p_max
-    unstable &= q["concordance_range"] >= params.concordance_range_min * signal
+    needed = (params.concordance_range_min * signal).clip(lower=params.concordance_range_floor)
+    unstable &= q["concordance_range"] >= needed
     noun = TASK_SPECS[inputs.task]["support_name"]
     tested = (
         q["concordance_range"].map(lambda r: f"range {r:.3f}") + " over " + q["tested"]
