@@ -1,18 +1,12 @@
 """How a numeric is binned and how two distributions are compared (T25, D-135).
 
-`quantile_edges` gives the split points the counts table bins a numeric on: the mass points
-(values holding at least `1 / bins` of the rows, such as 0) each get a singleton bin and the
-quantile edges are taken over the remaining values, so no bin but a singleton holds more than
-about `2 / bins` of the rows. Plain quantile edges collapse on a zero-inflated or discrete column
-(ninety of a hundred edges land on 0 and one bucket takes the rest), and fixed-width edges put a
-skewed column into its first bucket (T25). `bin_labels` names the bins the edges define, and is
-the `bin` column of the counts table; `range_label` names a run of them by its outer range.
-`merge_bins` merges cells into the groups a chart shows, by cumulative row share, a mass point
-its own group (chart rule 4). `psi`, `new_level_share` and `standardised_difference` compare
-two periods' distributions for Feature Checks. `cohens_h` and `cohens_d` compare two sides'
-labelled cells (the per-task spec's rare effect) and `variance_from_sums` gives the one-pass
-variance the cells' sums allow. Everything is pure: numpy and pandas in, numbers and frames out,
-no Spark.
+`quantile_edges` gives the split points the counts table bins a numeric on, a mass point (such
+as 0) its own singleton bin: plain quantile edges collapse on a zero-inflated or discrete column
+and fixed-width edges put a skewed one into its first bin (T25). `bin_labels` names the bins
+(the counts table's `bin`) and `range_label` a run of them; `merge_bins` merges cells into a
+chart's groups (chart rule 4). `psi`, `new_level_share` and `standardised_difference` compare
+two periods for Feature Checks; `cohens_h` and `cohens_d` are the per-task rare effect, with
+`variance_from_sums` the one-pass variance the cells' sums allow. Pure numpy and pandas.
 
 A bin is `(-inf, e_1)`, `[e_i, e_{i+1})` or `[e_m, +inf)` over the interior edges `e_1 < … <
 e_m`, exactly what `pyspark.ml.feature.Bucketizer` does with `splits = [-inf, *edges, +inf]`
@@ -28,12 +22,12 @@ PSI_FLOOR = 1e-4  # a share below this is raised to it before the log, so an emp
 
 
 def quantile_edges(values: np.ndarray, bins: int) -> np.ndarray:
-    """The interior split points that cut the non-null `values` into about `bins` bins.
+    """The interior split points that cut the non-null `values` into about `bins` bins: a
+    singleton bin per mass point (a value holding at least `1 / bins` of the values), the rest
+    cut into `bins - n_mass` equal-share bins by quantiles.
 
-    Every mass point (a value holding at least `1 / bins` of the values) gets a singleton bin and
-    the remaining values are cut into `bins - n_mass` equal-share bins by quantiles; with at most
-    `bins` distinct values every value is a singleton. ±inf take no edge and land in the outer
-    bins.
+    With at most `bins` distinct values every value is a singleton. ±inf take no edge and land
+    in the outer bins. Refused for NaN values: drop the nulls first.
     """
     if bins < 1:
         raise ValueError(f"quantile_edges: bins must be at least 1, got {bins}")
@@ -183,8 +177,8 @@ def _group_keys(n: np.ndarray, groups: int) -> np.ndarray:
 
 
 def psi(expected_shares: np.ndarray, actual_shares: np.ndarray) -> float:
-    """The population stability index over aligned bins, `sum((a − e) · ln(a / e))`, each share
-    floored at `PSI_FLOOR` before the log and not renormalised."""
+    """The population stability index over aligned bins, `Σ (a − e) · ln(a / e)`, each share
+    floored at `PSI_FLOOR` first and not renormalised."""
     expected = np.asarray(expected_shares, dtype=float)
     actual = np.asarray(actual_shares, dtype=float)
     if expected.shape != actual.shape:
@@ -220,14 +214,10 @@ def new_level_share(cells: pd.DataFrame, window_levels: list[str], period: str) 
 
 
 def standardised_difference(a: np.ndarray, b: np.ndarray) -> float:
-    """Cohen's d of `a` against `b` on their non-null values; never NaN.
-
-    `(mean_a − mean_b) / sqrt((sd_a² + sd_b²) / 2)` with sample standard deviations, averaged
-    unweighted as a balance check does, so a small group's spread counts as a large one's
-    (`cohens_d` pools by degrees of freedom, as its SE assumes). When both sides are constant
-    it is 0 for equal constants and ±inf (the sign of the difference) for different ones, so a
-    report can say "differs".
-    """
+    """The standardised difference of `a` and `b`'s non-null values,
+    `(mean_a − mean_b) / sqrt((sd_a² + sd_b²) / 2)` with sample SDs averaged unweighted, as a
+    balance check does (`cohens_d` pools by degrees of freedom). Never NaN: two constant sides
+    read 0 when equal, else ±inf, so a report can say "differs"."""
     a, b = _validated_sample(a, "a"), _validated_sample(b, "b")
     if a.min() == a.max() and b.min() == b.max():
         return 0.0 if a[0] == b[0] else float(np.copysign(np.inf, a[0] - b[0]))
@@ -251,11 +241,10 @@ def _validated_sample(values: np.ndarray, name: str) -> np.ndarray:
 def cohens_h(
     minority: pd.DataFrame, dominant: pd.DataFrame, sizes: tuple[float, float]
 ) -> tuple[float, float]:
-    """The rare effect: Cohen's h of the minority's rate against the dominant value's,
-    `2·asin√p₁ − 2·asin√p₂` (signed), from both sides' labelled cells, and its SE
-    `√(1/n₁ + 1/n₂)`, `sizes` the sides' rows in effective clients. Defined for any two rates:
-    the arcsine-square-root scale keeps a proportion's variance independent of the proportion.
-    Call only when `h_unavailable` says '' (D-035)."""
+    """The rare effect on rates: Cohen's h of the minority against the dominant value,
+    `2·asin√p₁ − 2·asin√p₂` (signed) from both sides' labelled cells, and its SE
+    `√(1/n₁ + 1/n₂)`, `sizes` the sides' rows in effective clients. Call only when
+    `h_unavailable` says '' (D-035)."""
     reason = h_unavailable(minority, dominant)
     if reason:
         raise ValueError(f'rare_effect: {reason}; decide "not available" before calling')
@@ -266,11 +255,10 @@ def cohens_h(
 def cohens_d(
     minority: pd.DataFrame, dominant: pd.DataFrame, sizes: tuple[float, float]
 ) -> tuple[float, float]:
-    """The rare effect: Cohen's d, the minority's mean minus the dominant value's over their
-    pooled standard deviation (from the cells' `sum_y2`, on the rows), and its SE
-    `√((n₁ + n₂)/(n₁n₂) + d²/(2(n₁ + n₂)))`, `sizes` the sides' rows in effective clients. Call
-    only when `d_unavailable` says '' (D-035). The SD is pooled by degrees of freedom, Cohen's
-    own, which that SE assumes (`standardised_difference` averages the two variances instead)."""
+    """The rare effect on means: Cohen's d of the minority against the dominant value,
+    `(mean₁ − mean₂) / s` with `s` pooled by degrees of freedom from the cells' sums (on the
+    rows), and its SE `√((n₁ + n₂)/(n₁n₂) + d²/(2(n₁ + n₂)))`, `sizes` the sides' rows in
+    effective clients. Call only when `d_unavailable` says '' (D-035)."""
     reason = d_unavailable(minority, dominant)
     if reason:
         raise ValueError(f'rare_effect: {reason}; decide "not available" before calling')
@@ -291,12 +279,9 @@ def _pooled_variance(minority: pd.DataFrame, dominant: pd.DataFrame) -> float:
 
 
 def variance_from_sums(n: np.ndarray, sum_y: np.ndarray, sum_y2: np.ndarray) -> np.ndarray:
-    """The pooled variance of the k samples along the first axis from their sums, the one-pass
-    `Σ(Σy² − (Σy)²/n) / (Σn − k)` (one sample: its variance), floored at 0.
-
-    The sums are all the cells hold: the one-pass formula loses precision when the mean is far
-    above the spread, and rounding can take it below 0.
-    """
+    """The pooled variance of the k samples along the first axis from their sums,
+    `Σ(Σy² − (Σy)²/n) / (Σn − k)` (one sample: its variance), floored at 0, which this
+    one-pass formula's rounding can cross."""
     squares = (sum_y2 - sum_y**2 / n).sum(axis=0)
     return np.maximum(squares / (n.sum(axis=0) - n.shape[0]), 0)
 

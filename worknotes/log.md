@@ -2,9 +2,78 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-11-11 — M2.2 closed; the worknotes cleaned up
+- The EDS closed M2.2 after the second round of answers. Q587 (the sources' digest covers every
+  source the config names) and the warning beside Training's held list (Q576) stand as built.
+- Deleted on the EDS's instruction: `m2_1_foundation/`, `m2_2_understanding/` (the answers
+  record, what was left of the plan, both review guides), `codebase_review_answers.md` and the
+  handover `m2-2-major-step-3.md`. Kept: the synthetic handover, this log, the sync page, the
+  LDS's run guide.
+- Before deleting, two Opus agents swept the record against the docs (about 95 items already
+  held). What was missing went to the owner docs:
+  - `docs/guides/eda_fc_faq.md` (new): the EDS's review questions and the method questions of
+    the design rounds, each a short answer naming its owner doc;
+  - `docs/context/lessons.md`: a "Build-process lessons (Stage 2)" section, the AUC's null
+    standard error (`1 / sqrt(12 · events)`), why stability is a test and not a range, why the
+    backward-label check fails on acquisition targets, the crunch's statistics bugs, the
+    window's size in T24;
+  - open questions: `training.md` (ordered categoricals, another use case's lineage, monotone
+    constraints against `non_monotone`), `evaluation.md` (importance per cluster), `eda.md` (the
+    two-part ranking, the comparison across data definitions, the occurrences echo, the
+    time-dimension views left out, the untested one-period run), `feature_checks.md` (the
+    thresholds on real data), `target_factory.md` (rewritten whole against incremental builds),
+    `run_modes.md` (the setup cell in a use-case repo), `test_harness.md` (four failing check
+    rows on `dev`), `dataset.md` (the split's hash checked on structured ids, its two limits),
+    the roadmap's Phase 3 wishlist (the concordance for later task families);
+  - `conf/base/TEMPLATE.yml`: the comment on forward-looking columns (a comment only).
+- Rules: D-072 (n) and `CLAUDE.md` §9 (the EDS decides; nothing waits for the LDS); §1 rule 9
+  (a docstring's length follows how hard the function is to read); §8 (Q-, R-, A- and V-numbers
+  resolve in git history). SDS became EDS in every file (a Sonnet agent).
+- `lds_run_guide.md`: the latest `main` instead of a commit, and five things to look out for.
+- Not run: any test (markdown and comments only). The sync page is still the one of 11-03 apart
+  from its pointers and the role; `/brief` refreshes it.
+- Decisions / open decisions: D-072 (n)
+
+### 2026-11-11 — Codebase review: the EDS's remarks (R59–R73) and Q575–Q586, built
+- The EDS committed the review (`0a6961c`) and sent fifteen remarks and four answers. All are
+  recorded verbatim with the answer and the outcome in `worknotes/codebase_review_answers.md`,
+  which replaces the review guide (deleted at M2.2's close the same day).
+- Built (R70): the key features are shown listed first, then the top-N, each by rank
+  (`eda/ranking.py` → `list_key_features`, used by the deep dives, the slices, the heatmap, the
+  strata pivots and `eda.json`). The skip rules were already as asked. 58 EDA tests pass on the
+  previous example config.
+- Q575: `__version__` stays 0.3.0. Q578: `synthetic_trap_coverage_plan.md`, the two question
+  stubs and `eda_gaps_spec.md` deleted (Q525–Q530 moved into `answers.md`, D-138 repointed);
+  `plan.md` cut to §1, §3, §4, §7a and §9.
+- Finding: the committed `conf/base/cc_acquisition.yml` carries two try-outs (an
+  `established_client` filter, three listed key features). Six tests pinned to the example fail
+  on them, with or without today's change (Q579).
+- Finding (R66): a finding's `value` prints a p of 1.8e-126 as 130 digits (`plain_number`)
+  (Q581).
+- Open for the EDS: Q576 and Q577 (explained again), Q579–Q586 (the example config, the active
+  folder shown in the notebooks, the p-value's floor, `strata.max_levels` for the deep dives'
+  groups, `support` in the glossary, the first period's lagged cells, a docstring pass, a
+  leftover model-input folder). No edit follows before the EDS's go. Nothing committed.
+- Files: `eda/ranking.py`, `report.py`, `run.py`, `slices.py`, two test files, `eda.md`,
+  `decisions.md` (D-138's pointer), `UPDATES.md` (two pointers), the worknotes named above.
+- Second round (Q576–Q586 answered; all defaults except Q576 and Q577): the sources' digest in
+  each stage's identity (Q577: another path or table is other data; stage json schema 3; the
+  folder and the audit log stay); Training's gate does not refuse a revert of Feature Checks'
+  flags but opens with the feature set in force beside that run's held count (Q576);
+  `list_data_definitions` in notebooks 02, 03 and the helper; `finding_number`;
+  `strata.max_levels` for the deep dives' groups; no first-period lagged cells; `support` in the
+  glossary; tests on frozen config copies in `tests/conf/` (the example restored, the EDS's
+  try-out copied to `conf/local/`); the leftover `data/05_model_input/cc_acquisition/` deleted;
+  a docstring pass by two Opus builders on isolated copies, checked AST-equal apart from
+  docstrings.
+- Reviews: code review (one doc line, the sources' scope put to the EDS as Q587, small fixes
+  applied); compatibility check (safe as 0.x, the doc rows listed and fixed).
+- Open: Q587 (the sources' digest covers the feature sources also for a model-input config).
+  Nothing committed.
+
 ### 2026-11-10 — Codebase review: ten clusters of findings, planned and executed
 - Full review of the committed state `0083989` (architecture, refactoring, simplification,
-  performance), asked for by the SDS: eleven read-only reviewers on disjoint areas (ten Opus, one
+  performance), asked for by the EDS: eleven read-only reviewers on disjoint areas (ten Opus, one
   Sonnet for the docs check), the main thread verifying the main findings in the code. No code
   changed.
 - Verdict: sound. No blocking defect, no import cycle, no cross-module private import, no
@@ -23,15 +92,15 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   was deleted in `0083989` and is still cited in six places.
 - Files: `worknotes/codebase_review_plan.md` (the plan, since replaced by the review guide: clusters A–J, each with its execution plan,
   models and effort; the waves; what is not recommended), `worknotes/README.md` (one row).
-- 2026-11-10, the SDS's selection: all ten clusters with every item. Q563–Q572 take their
-  defaults, except Q570: one review by the SDS at the end and no commits by Claude. The golden
+- 2026-11-10, the EDS's selection: all ten clusters with every item. Q563–Q572 take their
+  defaults, except Q570: one review by the EDS at the end and no commits by Claude. The golden
   manifest stays, as the before-and-after check of the refactors (nothing of it enters the repo).
-- 2026-11-10, routing readjusted to the SDS's allowance (6–9M tokens, Fable up to 25–35% where
+- 2026-11-10, routing readjusted to the EDS's allowance (6–9M tokens, Fable up to 25–35% where
   the task requires it): A at Opus `xhigh`; C in two builders, its core at Opus `xhigh` from a
   rule the main thread reconciles first; D with its own builder; E and F on Opus; a second ML
   audit after wave 2. Estimate about 7.5M tokens: Opus 58%, Sonnet 15%, Fable 27% (the main
   thread and the two audits; no Fable builder, C's core as the one reserve).
-- 2026-11-10, executed on the SDS's go, all ten clusters. Each builder worked in its own copy of
+- 2026-11-10, executed on the EDS's go, all ten clusters. Each builder worked in its own copy of
   the tree (no commit between clusters, Q570) and the main thread merged each as a patch. From
   wave 2 on no builder ran Spark: waiting on the one Spark slot made an agent re-write its whole
   context each time (cluster B cost 2.16M tokens that way, cluster D 0.41M without).
@@ -60,13 +129,13 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
 - Files: `worknotes/codebase_review_guide.md` (replaces the plan), the two Stage 2 review
   guides rewritten with the helper notebook's sections, `notebooks/00_eda_fc_helper.ipynb`,
   `docs/UPDATES.md`, D-029, D-030, D-117, D-136, D-137, D-138, the roadmap backlog.
-- Still open: the SDS's review of the whole change (nothing is committed); Q575 (the version
+- Still open: the EDS's review of the whole change (nothing is committed); Q575 (the version
   stamp), Q576 and Q577 (Training's gate: the Feature Checks run still in force; the
   environment's sources in no hash), Q578 (worknotes to delete); `sync.md` still lists OD-01
   (closed into D-022) and this log's entries of 10-27 to 10-30 leave at the next `/brief`.
 
 ### 2026-11-10 — Synthetic 0.6.0: a trap and a control for every Feature Checks finding
-- Built from `worknotes/synthetic_trap_coverage_plan.md` with the SDS's defaults to Q548–Q559
+- Built from `worknotes/synthetic_trap_coverage_plan.md` with the EDS's defaults to Q548–Q559
   (the plan's Q546 and Q547 renumbered to Q558 and Q559: the Feature Checks session had used
   them). Nine trap columns, six natural-control rows on real columns, the streams `controls` and
   `control_leaks` appended (every 0.5.3 column byte-identical, checked by the ML audit), 166
@@ -103,26 +172,26 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   `jupyter_client` in a scratch script). Not run: notebooks 01–03 (Q556's default).
 - Open: Q557's backlog candidate (a saved model input does not notice new source columns; the
   data folders were deleted and re-saved).
-- The SDS's answers: Q560 "Don't separate" → `checks/traps.py` (639 lines) and
+- The EDS's answers: Q560 "Don't separate" → `checks/traps.py` (639 lines) and
   `mechanisms/traps.py` (546) stay one module each. Q561 "Yes, add to it" → `nbclient>=0.10` in
   `requirements-dev.txt` (installed: 0.11.0), so `jupyter execute --inplace <notebook>` re-runs a
   notebook headless; `environment.md` names it.
 - Handover written: `worknotes/handovers/synthetic-0.6.0.md` (resume with `/resume synthetic-0.6.0`).
 
 ### 2026-11-10 — The Phase 2 plan agreed and moved into the roadmap
-- The SDS accepted the timeline proposal: `docs/roadmap.md` → Phase 2 plan now owns the dates,
+- The EDS accepted the timeline proposal: `docs/roadmap.md` → Phase 2 plan now owns the dates,
   M2's stages and the depth per component; `worknotes/timeline_proposal.md` deleted, OD-01
   closed into D-022. Stage 2 took one week more (to 11-13) and the fortnight 11-23 – 12-06
-  counts as one week (the SDS's leave, National Day): M2.3 11-16 – 11-24, M2.4 11-25 – 12-04, M3
+  counts as one week (the EDS's leave, National Day): M2.3 11-16 – 11-24, M2.4 11-25 – 12-04, M3
   12-07 – 12-11 (five days, its presentable-report goal already built in M2.2), the pre-release
   12-14 – 12-18 with the slowdown's first days as buffer; M4 and release 1.0 unchanged. The
   spikes are now due 11-16.
 
-### 2026-11-07, 2026-11-09, 2026-11-10 — Stage 2 major step 3 (Feature Checks): built, then the SDS's review 1
+### 2026-11-07, 2026-11-09, 2026-11-10 — Stage 2 major step 3 (Feature Checks): built, then the EDS's review 1
 - 2026-11-10, Q546 (A): `steps.py` stays one module. Q547 (B): `stability.concordance_range_floor`
   (0.05), so `concordance_unstable` needs a range of at least max(floor, 0.5 × signal); the
   canonical term-deposit config's two signal-less digital flags go (26 held, read from the stored
-  outputs, not re-run). Code review and compatibility check: approve, safe. The SDS plans a full
+  outputs, not re-run). Code review and compatibility check: approve, safe. The EDS plans a full
   Fable review of the codebase before their own code review of Stage 2.
 - 2026-11-09, the answers Q539–Q545 and R57–R58 (recorded verbatim in `answers.md`): the
   rare-value effect as Cohen's h (d for an amount) from 0.8, `rare_effect_max` capped at 3; no
@@ -142,7 +211,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   trap test alone. A duplicate session (the chat reopened) ran part of the round in parallel; it
   stood down and its changes are reconciled. Open: Q546 (split `steps.py`), Q547 (a floor on the
   relative range).
-- 2026-11-09, review 1 (the SDS read the notebook, the report, the questions and the vetoes; the
+- 2026-11-09, review 1 (the EDS read the notebook, the report, the questions and the vetoes; the
   code is round 2): remarks R42–R55 and answers Q532–Q538 recorded verbatim in `answers.md`.
   Applied: PSI a note from 0.10 and a flag from 0.25 (`psi_note_min`, `psi_max`; the flags
   `psi_window_large`, `psi_latest_large` hold); the held table's `flag_values` (a `measure` per
@@ -152,13 +221,13 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   inside the tables (both notebooks) and larger report headings; notebook 03 loads the rows
   (`build_frames`) and checks a finding in a new step 8, its walk-through splitting
   `client_constant`; the trap test's count bound removed (it came from the plan's V7, not from
-  the SDS). V91 rewritten, V92–V97 added; D-134 extended; T36 (a background run needs a deadline).
+  the EDS). V91 rewritten, V92–V97 added; D-134 extended; T36 (a background run needs a deadline).
 - Measured: the canonical card config holds 46 (was 40: the four login roll-ups of the drift
   trap, the shifted loan trap column, one legitimate ratio at window PSI 0.26). Tests: the touched
   pure tests, the stage, `run` and EDA tests, the trap test alone, EDA's module tests and notebook
   03 end to end on a scratch copy, all green. Reviews: code review (one blocker, two stale step
   numbers in the notebook, fixed), compatibility "safe" (0.3.0 absorbs it), ML audit "safe".
-- Build time (the SDS asked why the build took 27 h): 5 h 45 min a hung background test (a dead
+- Build time (the EDS asked why the build took 27 h): 5 h 45 min a hung background test (a dead
   Spark JVM, nothing watching: T36), about 9 h for the trap test and the notebook run one after
   the other with an 18-minute trap loop, long Opus agents at xhigh, four fix rounds. Review 1's
   round took under an hour.
@@ -173,7 +242,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   the compatibility check ("safe"), four fix rounds. Output tokens: Opus 95%, Fable 5%, Sonnet <1%.
 - Findings that changed the design: measured on the canonical artifacts, the spec's
   `rare_value_leak` text ("a cell below 1% of the rows") held 51 legitimate top quantile bins and
-  missed the process leak (T35): the build restored the rule the SDS approved (Q441: a dominant
+  missed the process leak (T35): the build restored the rule the EDS approved (Q441: a dominant
   value on ≥ 90% of the filled rows, the others pooled against it) with `strata.min_events`
   effective events in the minority (V74, V75); the lagged pool leaves out the window's first
   period, whose lagged cells are null by construction (V76); below EDA's 0.5% null share Feature
@@ -188,7 +257,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   (it named `feature_checks` as an unbuilt stage); after the final fixes every touched file reran
   green (a first rerun lost its Spark JVM to memory pressure: the trap test now runs in its own
   process when others ran before it).
-- Open for the SDS: Q532–Q538 (`m2_2_understanding/feature_checks_questions.md`), V74–V91
+- Open for the EDS: Q532–Q538 (`m2_2_understanding/feature_checks_questions.md`), V74–V91
   (`plan.md` §9); review guide `m2_2_understanding/feature_checks_review_guide.md`. Nothing
   committed.
 
@@ -202,7 +271,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
 - `review_guide.md` rewritten for the LDS (the notebooks first, six key points, about 1.5 h);
   handover `worknotes/handovers/m2-2-major-step-3.md` written for Feature Checks in a new chat,
   with every formatting rule of EDA's reviews.
-- The SDS's review-3 remarks (R29–R37, Q523–Q524, verbatim in `m2_2_understanding/answers.md`)
+- The EDS's review-3 remarks (R29–R37, Q523–Q524, verbatim in `m2_2_understanding/answers.md`)
   merged with `eda_gaps_spec.md`; built on Opus in waves on disjoint files (slices + profile ∥
   sources ∥ chart changes → Target Factory → the EDA wiring → notebook 02), each step reviewed.
 - Findings that changed the design: the ML audit showed the decision view's categorical order
@@ -215,10 +284,10 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   window reaches the validation period's outcomes).
 - Results: the touched modules green after each step; full suite 533 passed (9 slow deselected, 8:49);
   notebooks 01 and 02 on the 100k data with no cell error (`run_eda` 200 s, report 5.8 MB).
-- Open for the SDS: V55–V73 (`plan.md` §9). Nothing committed.
+- Open for the EDS: V55–V73 (`plan.md` §9). Nothing committed.
 
 ### 2026-11-06 — An independent look at EDA: what key element might be missing (brainstorm, nothing built)
-- Asked by the SDS as a brainstorm. Inputs: the spec, the code, notebook 02, a legacy comparison
+- Asked by the EDS as a brainstorm. Inputs: the spec, the code, notebook 02, a legacy comparison
   and an outside survey (EBA GL/2017/16, the ECB internal-models guide, scorecard practice, the
   profilers), both by subagents and checked on the main thread.
 - Ranked first: EDA never uses the declared decision (`decision.type`, `n`) beyond listing it in
@@ -236,7 +305,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
 - Adjacent, not EDA's: where in the forward window the events fall (Target Factory's summary);
   null-indicator clusters (Feature Checks); an exposure stratum (guidance, needs campaign data).
   Not raised: WoE/IV and a quick multivariate model, settled or against `CLAUDE.md` §4.4.
-- The SDS answered Q525–Q530 the same day: the decision view, on the evaluation slices (the top
+- The EDS answered Q525–Q530 the same day: the decision view, on the evaluation slices (the top
   decile the reading that matters); the value profile in Extended, lean; the time dimension
   skipped; the source column and the sources table; the histogram sentences deleted; the target
   view in Target Factory. On the way the proposed offset distribution turned out flat by
@@ -264,9 +333,9 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
 - Results: full suite 510 passed (9 slow deselected, 8:49) after the fix round, the touched
   modules green after the last small round; `ruff check .` clean; notebook 02 on the 100k data:
   `run_eda` 132 s, 1.2 GB peak, report 5.6 MB; notebook words 02 4,009 → 2,046, 01 796 → 581.
-- Open for the SDS: V29–V54 (`plan.md` §9), Q523 (percent rate axes), Q524 (thin strata levels
+- Open for the EDS: V29–V54 (`plan.md` §9), Q523 (percent rate axes), Q524 (thin strata levels
   setting the strata chart's axis); the review guide is rewritten for review 3. Nothing committed.
-- Earlier the same day: the SDS reviewed through notebook 02 and set a three-stage review
+- Earlier the same day: the EDS reviewed through notebook 02 and set a three-stage review
   (remarks and brainstorming questions, an exact build plan, then the build and a comprehensive
   review); remarks R10–R28 and the answers Q494–Q522 are in `m2_2_understanding/answers.md`.
 
@@ -314,22 +383,22 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   in `window_clients`); a sparse feature's scaled support fell below one row (floored at one);
   the fold only on the window's cells (the table grows on the window only); clear refusals for
   an empty `read` and one fold; the run-wide ratio's error directions documented. Open, for the
-  SDS (question 14): the cross-fitted value spreads about 1.4× its SE (the folds' orders share
-  fitted noise), so a null code cleared `direction`'s 0.5 + 2 SE in about 12% of runs. The SDS
+  EDS (question 14): the cross-fitted value spreads about 1.4× its SE (the folds' orders share
+  fitted noise), so a null code cleared `direction`'s 0.5 + 2 SE in about 12% of runs. The EDS
   chose a fixed factor: `CROSS_FIT_SE_INFLATION = 1.5` (the measured upper end), with a Phase 3
   wishlist item to check it and possibly replace it with a permutation null.
 - Tests run: `test_statistics.py` (33), `test_counts.py` (19), `test_code_rules.py`. Docs:
   eda.md, dataset.md, D-135, T33, reporting.md's ranking row, plan V16.
 
-### 2026-11-04 — The SDS's review 1 remarks: answers in chat, routing reset
+### 2026-11-04 — The EDS's review 1 remarks: answers in chat, routing reset
 - Answered the review-1 questions in chat (margin and SE, the encoding's bias, cells, edges, the
   pairwise cap, clustering, the level ceiling, binning, client-constant, overlapping flags); the
-  fixes wait for the SDS's go, in one batch.
+  fixes wait for the EDS's go, in one batch.
 - PySpark 3.4.3's own deprecation warnings (typing.io, distutils) filtered in `pyproject.toml`.
 - Routing for major steps 2–3 reset (`plan.md` §3): Opus main thread, no Fable builders, one
   combined review per minor step, one fix round per major step, Fable only for the final audit;
   D-072 (l) and `CLAUDE.md` §1: Fable at most 25–30%.
-- The SDS's answers (Q6 default, Q8–Q11 yes) applied: `PAIRWISE_ROWS` 50,000 and
+- The EDS's answers (Q6 default, Q8–Q11 yes) applied: `PAIRWISE_ROWS` 50,000 and
   `MIN_SHARED_ROWS` 500 (`spearman_matrix` 6.1 s → 3.3 s with 8 null masks, 22.7 s with 76 at
   50,000 rows); `client_constant`'s flagged features shown as one table in notebook 03, the
   feature store's static metadata on the backlog; the log keeps 7 working days (pruned: 2,209 →
@@ -341,7 +410,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   300- to 5,000-level codes read 0.50–0.51 by period. The same panel effect hits the numerics'
   margin: the window SE counts a client's persisting label once per period, so a null numeric is
   marked `non_monotone` 12–18% of the time (0% with the SE on distinct clients). Both fixes wait
-  for the SDS (questions 12–13).
+  for the EDS (questions 12–13).
 
 ### 2026-11-03 — Major step 1 done: m1.3 and m1.4b built, reviewed and fixed; full suite 443 passed
 - **m1.4b (Opus, 59 tests at build):** `statistics/cells.py`, `concordance.py`, `intervals.py`,
@@ -375,7 +444,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   `plan.md` (§2 signatures as built, V2 margin, V16–V17), `lessons.md` T33 and T26's measurement,
   `training.md` (notes for Training's D-088 and kinds checks), `review_guide.md` (ready).
 - **Verification:** `ruff check .` and `ruff format --check .` clean; the full suite 443 passed
-  (9 slow deselected) in 6 min 16 s. Nothing committed. Major step 1 goes to the SDS's review.
+  (9 slow deselected) in 6 min 16 s. Nothing committed. Major step 1 goes to the EDS's review.
 
 ### 2026-11-03 — Major step 1, build round 2: the fix rounds landed; m1.3 and m1.4b restarted
 - **Fix rounds (Opus `xhigh`, every one green and ruff clean):** m1.1 (127 tests: `feature_checks:
@@ -444,14 +513,14 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   NaN as a bare JSON token, unknown excluded/held names silently ignored, the ledger sidecar
   without the data-definition hash, no write-order rule, list cells NaN in memory vs None on
   disk. The usage limit stopped m1.3, m1.4b and m1.2's reviewers (7 of 19 agents).
-- **Decisions taken on the main thread (open to the SDS's veto, listed in the review guide):**
+- **Decisions taken on the main thread (open to the EDS's veto, listed in the review guide):**
   `feature_checks: {}` refused; the `nulls_informative_min < null_concordance_max` validator;
   `set time.validation_period` to null refused; a `keep` naming a finding open on none of its
   features refused; `quantile_edges` cuts the rest into `bins − n_mass` bins (exactly `bins` for a
   continuous column); `merge_bins` gives "about `groups`" groups; the ledger is saved first and the
   stage json last; `_ledger.json` carries the data-definition hash and the stage digest;
   `resolve_features` refuses unknown names; `__version__ = 0.3.0.dev0` during the build; the
-  exact pairwise-complete Spearman grouped by null mask (T28). jinja2's pin is asked of the SDS.
+  exact pairwise-complete Spearman grouped by null mask (T28). jinja2's pin is asked of the EDS.
 - **Round 2 launched (background):** m1.3 and m1.4b (Fable `xhigh`), the m1.2 reviewers (Opus),
   and four fix agents (Opus `xhigh`): m1.1's findings, m1.4a's findings, m1.5's findings, and the
   null-`v` readers (`target_factory.py`, `panel.py`, `contract.py`, `model_input.py`, with
@@ -467,22 +536,22 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
 - Review list: a new first item, the Stage 2 design's summary levels (input before the build is
   cheapest); Stage 1 kept (not reported finished). A new open question: whether OD-01's
   stakeholder buy-in, planned for the week of 10-26, happened (nothing records it).
-- Flagged for the SDS: Q464 puts version 0.3.0 at Stage 1's sign-off, `plan.md` §1 at Stage 2's
+- Flagged for the EDS: Q464 puts version 0.3.0 at Stage 1's sign-off, `plan.md` §1 at Stage 2's
   end; M2 (to 11-20) is tight with Stage 2 ending about 11-12.
-- Then the SDS's remarks on the page: summarise the essence of the updates and the SDS's key
+- Then the EDS's remarks on the page: summarise the essence of the updates and the EDS's key
   decisions, not the rounds; give the key decisions as much room as the open ones; no timelines.
   `sync.md` rewritten around the decisions (flags act at both levels, notes inform; no sampling,
   one counts table and one engine; the lag check and the look-ahead flag; the layout and no bumps
   in 0.x), each a "Decision: …" review item; dates removed. Rules extended in
   `worknotes/README.md` and `.claude/commands/brief.md`.
-- Then (the SDS): each review item names the doc's Level 1 plus the sections and tables that
-  carry the decision, by heading (as the SDS reviewed EDA and Feature Checks); the four decision
+- Then (the EDS): each review item names the doc's Level 1 plus the sections and tables that
+  carry the decision, by heading (as the EDS reviewed EDA and Feature Checks); the four decision
   items and the Stage 1 item rewritten so; the rule added to `worknotes/README.md`.
 - The LDS's answers: no other example modes needed for now (`run_modes.md`, item 5); the model
   documentation question dropped (`roadmap.md`, Phase 3 wishlist).
 
-### 2026-11-03 — Stage 2 plan revised after the SDS's remarks (R1–R9); the build waits
-- The SDS read the plan and the spec and sent nine remarks (recorded verbatim with what was done at
+### 2026-11-03 — Stage 2 plan revised after the EDS's remarks (R1–R9); the build waits
+- The EDS read the plan and the spec and sent nine remarks (recorded verbatim with what was done at
   the end of `worknotes/m2_2_understanding/answers.md`); the build does not start yet. Their 09:24
   commit ("Stage 2 initial plan") took the doc edits below with it; the plan and record revisions
   are uncommitted.
@@ -493,7 +562,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   `xhigh`; the notebooks to Opus `xhigh`. D-072 (l) and `CLAUDE.md` §1 extended.
 - **Notebook guides (R8):** the guide text is the notebooks' main deliverable; rule extended in
   `notebooks/README.md`; m2.4/m3.4 content and the done criteria name it.
-- **Tests (R7):** the SDS reads code, not tests; the review guide marks at most two "read this
+- **Tests (R7):** the EDS reads code, not tests; the review guide marks at most two "read this
   test" per major step (`plan.md` §4 item 6).
 - **`lag_drop` → `lagged_signal_drop` (R3)** in `feature_checks.md` and `test_harness.md`.
 - **`psi_latest` (R4, V13):** pinned to the window's last period against the latest period,
@@ -511,8 +580,8 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
 - **V1 confirmed (R9)** with the wording "for Training, a held feature acts as an excluded feature
   without a final decision" in `feature_checks.md`, `feature_ledger.md`, `training.md`, the glossary,
   `notebooks/README.md`, D-134 and the plan's notebook 03 step.
-- Timeline shifted one day (`plan.md` §8); SDS reviews 11-06, 11-10, 11-12. Nothing coded.
-- **The SDS approved the plan ("let's go, start working on major step 1")** and committed the
+- Timeline shifted one day (`plan.md` §8); EDS reviews 11-06, 11-10, 11-12. Nothing coded.
+- **The EDS approved the plan ("let's go, start working on major step 1")** and committed the
   revisions (`b694961`). The build of major step 1 started as one background workflow: the facts
   spike (Sonnet), m1.1 the schema (Opus `xhigh`) and m1.4a the distribution statistics (Fable
   `xhigh`; split off m1.4 because the counts passes need `quantile_edges` first) run first; m1.2
@@ -523,7 +592,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   findings next. Status rows moved to "building" in `docs/UPDATES.md` and `docs/README.md`.
 
 ### 2026-11-02 — Stage 2 design settled: round 4 answered, the spec written, the plan drafted
-- The SDS answered round 4 (Q490 at the default with 100 bins and an `eda.bins` switch that turns
+- The EDS answered round 4 (Q490 at the default with 100 bins and an `eda.bins` switch that turns
   the binning off for small populations; Q491–Q493 at the defaults; Q477 confirmed by silence) and
   asked for the spec, the holistic review and the plan with a routing table that keeps the main
   thread on Fable. Recorded at the end of `worknotes/m2_2_understanding/answers.md`;
@@ -560,7 +629,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   routing table (Opus for every §4 path, Sonnet for reporting, notebooks, the facts spike and the
   doc propagation, Fable only for the plan, the briefs, the diffs, the integration and the ML
   audit), the order and parallelism, the done criteria, the risks, a timeline estimate
-  (SDS reviews 11-05, 11-09, 11-11). Waiting for the SDS's approval.
+  (EDS reviews 11-05, 11-09, 11-11). Waiting for the EDS's approval.
 - **The holistic review** (Opus, fresh context, read-only; verdict "proceed with changes") found
   ten contradictions between the freshly written docs, four knock-on effects on docs not updated
   (`environment.md`'s paths, `architecture.md` §4/§9/§10, `evaluation.md`'s support rule,
@@ -578,14 +647,14 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   tests/test_code_rules.py` → 64 passed (the configs and the code are unchanged until the build).
 
 ### 2026-11-02 — Stage 2 round 3 answered; no sampled EDA: the window stays in Spark; round 4 opened
-- The SDS answered Q478–Q489 (Q477 not listed: taken as its default (A), confirmation asked),
+- The EDS answered Q478–Q489 (Q477 not listed: taken as its default (A), confirmation asked),
   mostly at the defaults: the finding table, the folder order, guidance only for forward-looking
   names, mixed pairs now, the `dev`-preset trap test, local paths until M2.4, `feature_checks` as
   a typed mapping. Two departures: **no schema bumps in 0.x** (Q483: the `feature_checks` shape,
   the `keep` rename and the new entry fields change in place; the first bump when user testing is
   under way) and **no sampled EDA** (Q482 rejected: "that defeats the purpose of some reports").
   Recorded verbatim with the outcomes at the end of `worknotes/m2_2_understanding/answers.md`.
-- The SDS's rule replaces Q482: the window's statistics are computed in Spark and only aggregated
+- The EDS's rule replaces Q482: the window's statistics are computed in Spark and only aggregated
   tables come to pandas; the snapshot analysis runs on every client in pandas; the Mac's
   100,000-client snapshot stands for the bank's full retail snapshot. Round 4's Q490 is the design:
   one counts table (feature, period, bin, target bin, lagged, n, sum of target) from a
@@ -598,13 +667,13 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   periods, `psi_gap` dropped, `concordance_unstable` keeps every window period.
 - Q489 was not understood; Q492 explains it in plain words (the inverted-U age; the concordance a
   ten-leaf tree would reach) and renames it `concordance_best_order`.
-- On A31 the SDS asked to keep track of every null-value assumption: a numbered register (N1–N18)
+- On A31 the EDS asked to keep track of every null-value assumption: a numbered register (N1–N18)
   now closes `answers.md` and moves into the spec's "Nulls" sections later. The facts to check are
   mine (the plan's first spike); the list in `questions.md` carries their status, with the Q490
   items added.
 
 ### 2026-11-02 — Stage 2 round 2 answered; the flags must act; round 3 opened
-- The SDS answered Q466–Q476, mostly at the defaults: EDA on one snapshot by default
+- The EDS answered Q466–Q476, mostly at the defaults: EDA on one snapshot by default
   (`eda.snapshot: last`), N = 10 key features with the correlation skip, the loggable
   `features.kinds`, the notebooks shipped in the wheel with an `init` command (M2.4), the
   redundancy clusters with `explained_by_others`, the `client_constant` finding for the 0.5.3
@@ -637,7 +706,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   then proceeds).
 
 ### 2026-11-02 — Stage 2 round 1 answered; the record file; round 2 opened
-- The SDS answered Q418–Q462: mostly the defaults. Settled: the in-between depth and the longer
+- The EDS answered Q418–Q462: mostly the defaults. Settled: the in-between depth and the longer
   stage (Q418, Q419: M2.3 from about 11-12); real regression functions on a variant config;
   `statistics/` and `reporting/` as subfolders of reusable functions that every stage imports,
   the stage modules orchestrating only (Q421); the stage function resolves the config itself; one
@@ -645,7 +714,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   no imputation; Wilson intervals, 20 events per bin; the lag check for time alignment; PSI 0.10
   and Cochran's Q; Feature Checks requiring EDA's artifact; the SE lesson corrected; the wide
   ledger; two reports; two notebooks; the trap acceptance test.
-- Changed by the SDS: N = 10 key features at both levels with a correlation skip (Q436); the
+- Changed by the EDS: N = 10 key features at both levels with a correlation skip (Q436); the
   proposed-decisions table without a suggested operation and a simpler decision model (Q448,
   Q449); every default explained in the template (Q446); the folder order root (entity) → use
   case → layer (Q424); column kinds displayed, validated and overridable (Q426).
@@ -655,7 +724,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   below the oracle's AUC) needs a finding of its own; "nulls that mean zero" as a quality
   finding; another use case's label as a candidate (a §4.1 caveat raised).
 - The record: `worknotes/m2_2_understanding/answers.md` holds every round-1 question verbatim
-  with the SDS's answer verbatim and the outcome for the plan (the SDS asked for it before
+  with the EDS's answer verbatim and the outcome for the plan (the EDS asked for it before
   compacting the chat); `questions.md` is rewritten for round 2 (Q466–Q476; Q463–Q465 were the
   other chat's) with the explanations asked for (the ledger, concordance as Somers' D, the
   flag / exclude / keep model, the drift frame, `missingness_leak`).
@@ -667,7 +736,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   with the routing table.
 
 ### 2026-10-30 — Stage 2 (M2.2 Understanding) design opened: four surveys and Q418–Q462
-- The SDS asked to start Stage 2 (EDA, Feature Checks, the feature ledger, Reporting) between
+- The EDS asked to start Stage 2 (EDA, Feature Checks, the feature ledger, Reporting) between
   thin and deep with every key component in, and to name every check and view explicitly. The
   brainstorming path is architectural (four new components); step 0 (research, critique) ran
   before the questions; the holistic review runs with the plan once the questions are answered.
@@ -752,13 +821,13 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   synthetic files, disjoint from Stage 2's, so they can run beside it (Q419).
 
 ### 2026-10-30 — Integration news: data observability narrowed, feature store leaning, synthetic to-do
-- The SDS's news, routed by firmness:
+- The EDS's news, routed by firmness:
   - **Data observability (firm, "pretty much sure"):** it is a Great Expectations-style suite of
     data checks on production (maybe sandpit) tables. The framework's only contact: every deploy
     points the model's source tables at it. Recorded: D-021 (b) replaced in place; D-040 and
     D-079 lose the monitoring feed; OD-13 narrowed to tooling; the Chief DS topic became an
     information item; the learn session is no longer needed before M3.
-  - **Feature store (a leaning, an update may follow):** little build outside the bank; the SDS
+  - **Feature store (a leaning, an update may follow):** little build outside the bank; the EDS
     adds an example notebook inside the bank that loads features, applies the format fixes and
     saves a dataset that Target Factory joins like any other source. Recorded in OD-26; D-021 (a)
     marked under review. The config comments and the refused `feature_store` format stay until
@@ -789,7 +858,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   `dataset.md` (join print), `docs/architecture.md`, `docs/context/project.md`,
   `docs/glossary.md`, `docs/UPDATES.md`, `CLAUDE.md` (integrations line),
   `worknotes/timeline_proposal.md`.
-- Then (the SDS's answers, 2026-10-30): Q411, Q413 kept; Q412 `deploy` prints and records the
+- Then (the EDS's answers, 2026-10-30): Q411, Q413 kept; Q412 `deploy` prints and records the
   physical source tables (D-021 (b), `lifecycle.md`); Q414 the extract written by an upstream
   job, else a framework function (OD-26 (ii)); Q417 the to-do's table and timing (after Stage
   1's sign-off, before EDA). Q416: close the gaps after Q415, but no coverage check on joined
@@ -798,7 +867,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   back: what per-source key names cost (the spine keeps `data.keys`, another source may name
   its own, the list taking `{source, keys}`); estimated in the chat (`dataset.md` → Open
   questions).
-- Then built (the SDS accepted Q415: "build all above as needed"), in parallel:
+- Then built (the EDS accepted Q415: "build all above as needed"), in parallel:
   - per-source key names (`SourceKeys`, `SourceEntry`; `sources.source_name`, `source_keys`,
     `feature_source_names`, `feature_sources_dump`; `read_keyed_source` takes the entry); a
     plain-name config's hashes and sidecar unchanged (the old example digest is reproduced by
@@ -824,8 +893,8 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   inference on a lagging extract → `inference.md`, a target lag check → `target_factory.md`;
   for M2.2: the look-ahead trap needs a tell in Feature Checks; a survival-coded coverage trap
   deferred).
-- Then (the SDS, 2026-11-02): Q463 notebook 00 is not re-run (the EDA notebook replaces it in
-  M2.2); Q464 the version goes to 0.3.0 at Stage 1's sign-off; Q465 (a): the SDS carries the
+- Then (the EDS, 2026-11-02): Q463 notebook 00 is not re-run (the EDA notebook replaces it in
+  M2.2); Q464 the version goes to 0.3.0 at Stage 1's sign-off; Q465 (a): the EDS carries the
   look-ahead finding to the Stage 2 chat.
 - A slip of mine: the mistake-test brief's wait loop (`pgrep -f pytest`) matched its own shell,
   so the agent waited about an hour; stopped and re-briefed.
@@ -833,12 +902,12 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   extended; D-129 extended (per-source keys); OD-13 narrowed; OD-26 leaning.
 
 ### 2026-10-29 — New working rules: Fable routing, the LDS's reading, stage folders, targeted tests
-- The SDS set four generic rules: (1) on a Fable session, a major task starts with a routing plan
+- The EDS set four generic rules: (1) on a Fable session, a major task starts with a routing plan
   (each subagent piece's agent, model, effort and why) so the tokens don't all go to Fable; strong
   subagent pieces now run on Opus, Fable keeps the main thread and the ML-correctness auditor
-  (the SDS, Q409); (2) the LDS reads the important
+  (the EDS, Q409); (2) the LDS reads the important
   parts of the code, not all of it, and tries the functionality and the notebooks; (3) a stage's
-  worknotes folder is written for the SDS, an LDS review only on request; (4) small, targeted
+  worknotes folder is written for the EDS, an LDS review only on request; (4) small, targeted
   fixes run the touched modules' tests only; the full suite runs once, on the main thread, when a
   major step or a multi-module build is finished, and never per agent.
 - Why: Fable sessions spent nearly every token on Fable; the LDS's 30–60 minutes are better spent
@@ -851,12 +920,12 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   sync template ("Demo next" becomes "To try"); `worknotes/README.md`;
   `docs/guides/claude_code_workflow.md`; `worknotes/timeline_proposal.md`. The live sync page
   was left as it was.
-- Then (Q410, the SDS): `sync.md` is refreshed only by `/brief` or on request; `log.md`
+- Then (Q410, the EDS): `sync.md` is refreshed only by `/brief` or on request; `log.md`
   keeps the every-turn trigger (`CLAUDE.md` §1 step 4 and §8, `doc-sync`, `worknotes/README.md`).
 - Decisions / open decisions: D-072 (i) replaced, (l) and (m) added, (h) extended.
 
 ### 2026-10-29 — Questions answered; source column names; the name rule; two example use cases
-- 2026-10-29, the SDS's second message: Q407 relax the name rule; the Target Factory notebook
+- 2026-10-29, the EDS's second message: Q407 relax the name rule; the Target Factory notebook
   must show several targets ("that was the main point"): a second config for another product;
   then clean the worknotes folder of stale notes and drain the sync page's review list to the
   one real to-do, starting the Stage 1 review.
@@ -892,7 +961,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   (checked by hand). The notebook on the dev data: 34 s; one earlier run failed on the first
   frame collect with a Spark execution error right after another local Spark session, and
   passed alone; the cause is not pinned.
-- The SDS's seven points: the sidecar sentence (explained: the schema number stayed 3 after two
+- The EDS's seven points: the sidecar sentence (explained: the schema number stayed 3 after two
   keys were added on 10-28, since no earlier schema-3 file survives), the window written
   `2025-03-01 … 2025-08-31` (fine; checked by loading it), `task` in the hashes (binary or
   regression, not the use case), `revert` 14 → 8 then 15, 16 (effective 1–8, 15, 16; checked in
@@ -931,7 +1000,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   looks like, the 10-29 round).
 
 ### 2026-10-28 — The Stage 1 addendum: periods, one model input for several use cases, revert
-- The SDS's third round accepted everything (the hash answer; Q400 as reworked; Q405
+- The EDS's third round accepted everything (the hash answer; Q400 as reworked; Q405
   `target_<use_case>`; Q406 one shape) and asked for the build with subagents and one continuous
   review guide, noting that the Q401/Q403 proposals had been shortened out of the worknotes
   (lesson recorded: a to-do keeps its full proposal). `addendum_spec.md` written as the one spec
@@ -974,8 +1043,8 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   component doc; `UPDATES.md`; `roadmap.md`'s addendum item removed; `review_guide.md` rewritten
   as one continuous guide; `review_answers.md` third round.
 
-### 2026-10-28 — The SDS's review of Stage 1's steps 2 and 3, applied
-- 2026-10-28, the SDS's remarks (`worknotes/m2_1_foundation/review_answers.md`, one row per
+### 2026-10-28 — The EDS's review of Stage 1's steps 2 and 3, applied
+- 2026-10-28, the EDS's remarks (`worknotes/m2_1_foundation/review_answers.md`, one row per
   remark): Q395–Q398 at their defaults; Q399 refused ("the Target Factory must produce the labels
   for the whole time window"; the framework doesn't police a DS); `null_as` and `leavers`
   questioned; the two month-coverage functions questioned; `split.py` to be explained;
@@ -1006,7 +1075,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   notebook's guide cell, `UPDATES.md`, the roadmap backlog (the Stage 1 addendum), the plan's
   status; `review_guide.md` → Major steps 2 and 3 rewritten for the LDS (the reviewers' findings
   condensed); `review_answers.md` holds this round only.
-- Open with the SDS (`review_answers.md`): Q400 one model input for several use cases (the list
+- Open with the EDS (`review_answers.md`): Q400 one model input for several use cases (the list
   form of the two public functions, one block of columns per use case), Q401 the unit of
   analysis as a parameter (`time.period`, the key column `period`, the `time` fields renamed),
   Q402 the list names, Q403 a `revert` operation in the audit log, Q404 the summary's display
@@ -1033,7 +1102,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   non-holders, the model input saved at `schema_version` 2, the window frame 116,998 rows ×
   160 columns, ≈ 0.47 GB at the peak).
 
-- 2026-10-28, the SDS's second round (no code changed, as asked): Q401 approved as proposed,
+- 2026-10-28, the EDS's second round (no code changed, as asked): Q401 approved as proposed,
   Q402 and Q404 at their defaults, Q403's `revert` approved for M2.2; Q400 pushed back ("one
   loop through the configs, add every target to the merged frame, filter nothing, save one
   table every config refers to") and reworked to that shape: Target Factory builds the sources
@@ -1048,7 +1117,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   `review_answers.md` (the hash check, Q400 reworked, the to-do list), `sync.md` and the
   roadmap's addendum item.
 ### 2026-10-27 — Stage 1, major step 3 built: the dataset, `run`, the notebook (version 0.2.0)
-- 2026-10-27, the SDS: build step 3 now and review steps 2 and 3 together; the review guide
+- 2026-10-27, the EDS: build step 3 now and review steps 2 and 3 together; the review guide
   combines both. Built on the main thread (the pieces depend on each other; one Spark job at a
   time on the 8 GB machine), the four reviews delegated in parallel.
 - Code: `dataset/panel.py` (`load_panel`: every source through `read_keyed_source`, the spine
@@ -1111,8 +1180,8 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   input saved under `data/05_model_input/`, the window frame 116,998 rows × 160 columns
   (≈ 0.47 GB at the peak against the 1.5 GB budget).
 
-### 2026-10-27 — Stage 1, major step 2 reworked after the SDS's review: the rule, nulls, two kinds of eligibility
-- 2026-10-27, the SDS's answers: eligibility filters split into pre-EDA (rows dropped) and
+### 2026-10-27 — Stage 1, major step 2 reworked after the EDS's review: the rule, nulls, two kinds of eligibility
+- 2026-10-27, the EDS's answers: eligibility filters split into pre-EDA (rows dropped) and
   pre-model (rows tagged; the tag columns serve as strata, e.g. holders vs non-holders), which
   answers Q394; the rule compares the current month with any forward month, so `[0, null, 1, 1]`
   is 1 and `[1, 0, 1, 1]` is 0; Q392 yes, named `flag_goes_up`, with count and amount rules kept
@@ -1126,14 +1195,14 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   `null_value_share`; `EligibilityStep.before: eda | model` (a filter needs it, a define takes
   none); `cc_acquisition.yml` shows one filter of each kind; the template explains both and
   `null_as`; golden digests re-pinned (both change: eligibility and target gained fields). Tests:
-  one parametrized test over the SDS's series, forward_sum with nulls, the refusals, a hand-made
+  one parametrized test over the EDS's series, forward_sum with nulls, the refusals, a hand-made
   summary with `null_value_share` ≠ `null_share`, three schema tests; the precondition and
   strict-null tests removed. The oracle comparison holds on the non-holders (`cc_flag == 0`).
 - Docs on the main thread: `config.md` (layout, requirement 6: the two kinds), `dataset.md`
   (purpose, frames, model input, requirement 1), `eda.md` (funnel, reference groups), the
   glossary, `target_factory.md` (requirements 3 and 5, Interface), D-029 (c), D-129, D-131,
   `UPDATES.md`, the plan (3.1 `apply_eligibility` tags or drops; 3.3 on `eligible = 1`; 3.4
-  frames; the precondition items removed), `review_guide.md` (reverted findings, the SDS's
+  frames; the precondition items removed), `review_guide.md` (reverted findings, the EDS's
   review), `review_answers.md` rewritten to the current review.
 - Verified: full suite 163 passed, 9 deselected (3 min 14 s), `ruff check .` clean. Code review
   (strong, high): approved; four suggestions taken (the unused `w` dropped from the rule
@@ -1148,7 +1217,7 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   month; tags and helper columns out of the candidates; join misses logged; a contract callout
   when `null_value_share` > 0 without `null_as` (would-be negatives dropped as nulls). For M2.2:
   the time-alignment screen on define and tag columns (`feature_checks.md`), a label-free
-  comparison for a tag that is the rule's precondition (`eda.md`). The SDS committed the rework
+  comparison for a tag that is the rule's precondition (`eda.md`). The EDS committed the rework
   as `81df5dd` before these last edits.
 - Verified after the ML audit's guard: Target Factory and code-rule tests 37 passed, `ruff check .`
   clean, every file formatted.

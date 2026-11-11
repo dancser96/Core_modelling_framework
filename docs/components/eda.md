@@ -5,7 +5,8 @@ decision slices, the value profile and the sources added 2026-11-06; Feature Che
 artifacts since 2026-11-06 (major step 3), and EDA computes the window's best order and its
 concordance per period for it since 2026-11-09 (Q541, Q542) · **Legacy:**
 `src/feature_stats.py`, `src/plots.py`, `notebooks/EDA.ipynb`
-**Related:** [dataset](dataset.md) (the frames) · [feature checks](feature_checks.md) (reads
+**Related:** [questions and answers](../guides/eda_fc_faq.md) · [dataset](dataset.md) (the frames) ·
+[feature checks](feature_checks.md) (reads
 EDA's artifacts; owns the flag and hold-out rule) · [feature ledger](feature_ledger.md) (the
 ledger's columns) · [reporting](reporting.md) (the renderer, chart rules) · [config](config.md)
 (fields, audit-log mechanics) · [test harness](test_harness.md) (the traps) · D-023, D-029,
@@ -236,7 +237,9 @@ aggregation collapses the exploded rows inside each partition, so the shuffle ca
 features × bins × target bins rows per partition.
 
 **Pass 2:** the same rows over `Window.partitionBy(unit_id).orderBy(period)`: `F.lag` values on
-the same edges become `lagged = true` cells with the current period's target; `min == max` per
+the same edges become `lagged = true` cells with the current period's target, for the window
+periods after the first (the first has no previous period in the rows; a one-period window has
+no lagged cells); `min == max` per
 client and feature gives the **client-constant table** (`feature, constant_share, clients`: the
 share of clients with at least two non-null values whose values never change; a NaN counts as
 null, N2; the aggregates run in chunks of 50 columns, T27).
@@ -335,7 +338,7 @@ definitions; Feature Checks uses the ones marked FC.
   folds' noise, which the SE (noise for a fixed order) leaves out: a null code cleared 0.5 + 2
   SE, the line below which `direction` reads none, in about 12% of runs instead of 2% (measured
   2026-11-04; 1.3–1.4× on independent rows). So a cross-fitted value's SE is the task's SE on
-  the same support times `CROSS_FIT_SE_INFLATION = 1.5`, the measured upper end (the SDS,
+  the same support times `CROSS_FIT_SE_INFLATION = 1.5`, the measured upper end (the EDS,
   2026-11-04). A fixed factor is an approximation; a permutation null per feature is on the
   Phase 3 wishlist. The best-order value is not computed for a categorical: in its encoding order it
   equals the plain value by definition.
@@ -549,7 +552,8 @@ embedded once.
      `high`).
   2. **The group chart** beside **the first strata chart**, one figure of two panels
      (`side_by_side`). The group chart: lift by group with intervals in lift units, support as
-     bar text, `null` last (a numeric's bins merged into about ten groups by `merge_bins`, a mass
+     bar text, `null` last (a numeric's bins merged into about `strata.max_levels` groups by
+     `merge_bins`, a mass
      point such as 0 its own bar; a numeric shown by level reads its values, `0`, `1`, `2`,
      everywhere, `deep_dives.value_labels`, while ranges and a mass point among them keep
      `[a, b)` and `= v`); the estimate's bars only when no lift exists (a non-positive
@@ -610,8 +614,8 @@ shown in the choices block.
 
 **The exploration functions** (`eda/explore.py`) read a `StageResult` only and change nothing.
 They cut groups by the deep dive's rules on the snapshot's eligible rows (a numeric by level when
-it has at most `strata.max_levels` values, else merged into about ten groups over the stage's
-edges, `deep_dives.dive_group_count`; a categorical's most frequent levels, the rest
+it has at most `strata.max_levels` values, else merged into about `strata.max_levels` groups over
+the stage's edges, `deep_dives.dive_group_count`; a categorical's most frequent levels, the rest
 `__other__`; null its own group, last), read every label statistic
 on the snapshot's eligible rows with a known target and draw with the report's chart builders.
 - `pivot_target(result, rows, columns=None, where=None)`: the group summary (estimate, lift,
@@ -700,12 +704,13 @@ and the hashes.
   stratum and reference groups, from `Frames.log`, the population counts and the snapshot.
 - `eda/ranking.py`: `count_levels`, `feature_statistics` (on `statistics/scope.py`'s
   `scope_statistics`), `rank_features` (the ranking table from the cells) and
-  `select_key_features(ranking, association, rule)`.
+  `select_key_features(ranking, association, rule)`; `list_key_features(ranking)` is the order
+  every view shows the key features in: the listed ones first, then the top-N, each by rank.
 - `eda/deep_dives.py`: `MIN_BIN_SUPPORT = 20`; one deep dive per key feature (`group_table`,
   quartiles, `target_quartiles_by_group`, the per-period concordance);
   `concordance_per_period` (every ranked candidate's, stored); `strata_pivots`
   (every key feature × each stratum variable but itself); `dive_group_count` (by level or about
-  ten groups), `numeric_groups`, `merged_groups`, `value_labels`, `box_table`.
+  `strata.max_levels` groups), `numeric_groups`, `merged_groups`, `value_labels`, `box_table`.
 - `eda/slices.py`: `slice_shares`, `skipped_slices`, `ordered_numeric_bins`,
   `ordered_categorical_bins`, `slice_tables` (the decision slices over the key features, cut by
   `statistics/capture.py`).
@@ -761,14 +766,17 @@ Call flow: Level 2's numbered list. Reading order for review: `statistics/concor
   fresh sidecar) and the stage folder written last, `report.html` passed as one of
   `write_stage`'s `texts` so the rename commits it with the rest; `eda.json` is the commit
   marker:
-  - `eda.json` (`schema_version: 2`, since the json carries its `run_token`; an older one is refused
-    by `read_stage`, "rerun the eda stage"; `stage`, `tables`, plus the stamped framework version
-    and time): `artifacts.stage_identity(resolved, "eda")`, that is `entity`, `config_hash`,
-    `data_definition_hash`, `resolved_input_hash`, `hash_version`, `replayed_to`, `settings_digest`
+  - `eda.json` (`schema_version: 3`, since the json carries the sources' digest; an older one is
+    refused by `read_stage`, "rerun the eda stage"; `stage`, `tables`, plus the stamped framework
+    version and time): `artifacts.stage_identity(resolved, "eda", env)`, that is `entity`,
+    `config_hash`, `data_definition_hash`, `resolved_input_hash`, `hash_version`, `replayed_to`, `settings_digest`
     and `settings` (the digested values at `SETTINGS_PATHS_BY_STAGE["eda"]`: `features.kinds`,
     `strata`, `eda`, `time.validation_period`, `decision`, `evaluation.slices`; the validation
     period decides the compared periods and the D-088 counts yet sits outside the data-definition
-    hash, so a changed one makes EDA stale for Feature Checks); `run_token`
+    hash, so a changed one makes EDA stale for Feature Checks); `sources_digest` and `sources`
+    (each logical source the config reads for the entity, with its environment entry: format and
+    path or table; the data-definition hash names sources by logical name only, so pointing one
+    at other data makes EDA stale for Feature Checks, naming the source); `run_token`
     (`artifacts.new_run_token`, also in the ledger's sidecar), `snapshot_period`, `compared_periods`
     (`window`, `gap`, `latest`), `population` (the counts per period), `window_levels`,
     `over_ceiling`, `clients`, `key_features` (`{feature: top_n | listed}`), `represented_by`,
@@ -803,3 +811,12 @@ Call flow: Level 2's numbered list. Reading order for review: `statistics/concor
 - Whether the per-feature pandas work (quartiles, strata pivots, reference groups) at 300 features
   × a 5M-row snapshot needs a cap beyond the 50,000-row pairwise cap: measure in the bank.
 - The theme file from `conf/local/` (M4).
+- For M4, noted and not built: a two-part ranking for zero-inflated amounts (the concordance
+  of zero against non-zero, then the concordance on the non-zero rows); views that compare two
+  data definitions of one use case (eligibility variants).
+- Waiting: EDA repeating Target Factory's occurrences per period for a framework-built
+  target (agreed at review 3; only Target Factory's part is built).
+- Considered at review 3 and left out, all four: strata by compared period, stored counts for
+  the gap and latest periods, entries and exits, unlabelled rows per period.
+- **Not tested end to end:** `run_eda` on a one-period window, which the schema allows. The
+  lagged pass's refusal and Feature Checks' "not available" for it are tested separately.

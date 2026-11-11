@@ -206,7 +206,7 @@ def get_spark_session(env: EnvironmentConfig) -> SparkSession:
     return session
 
 
-def _find_source(env: EnvironmentConfig, entity: str, name: str) -> Source:
+def find_source(env: EnvironmentConfig, entity: str, name: str) -> Source:
     """`env.sources[entity][name]`; an unknown entity or name fails naming the known ones."""
     if entity not in env.sources:
         raise ValueError(
@@ -220,7 +220,7 @@ def _find_source(env: EnvironmentConfig, entity: str, name: str) -> Source:
 
 def read_source(spark: SparkSession, env: EnvironmentConfig, entity: str, name: str) -> DataFrame:
     """The logical source `name` of `entity` as a Spark DataFrame, as the environment maps it."""
-    source = _find_source(env, entity, name)
+    source = find_source(env, entity, name)
     if source.format == "parquet":
         return spark.read.parquet(source.path)
     return spark.table(source.table)

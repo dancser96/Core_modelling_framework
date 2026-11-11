@@ -15,12 +15,12 @@ Status values: `legacy-only` (exists only in legacy) · `designing` · `stub` (i
 | Repo bootstrap (docs, skills, agents, requirements, package skeleton) | built | |
 | Design baseline (docs rebuilt after three review rounds + Lead DS notes) | built | 2026-10-12; milestone M0 |
 | Environment adapter (Spark session, compat shim, transport, paths, sources) | built (partial) | Stage 1 (2026-10-26): the environment file, `load_environment`, `get_spark_session`, sources per entity, local paths; the `hdfs dfs` transport and the tier roots in M2.4. Traps T1–T5, T18 |
-| Config spine (single file, automation levels, decision, entities, data-definition hash, migrations) | built | `components/config.md`. Settled 2026-10-20: YAML (D-043), two automation levels in the `automation_level` field (D-023), identities with a worked example (D-088), the shared-table rule (D-007), extension code in use-case repos (D-006); the decision audit log (D-125, 2026-10-22). Stage 1 (D-129–D-133) built 2026-10-26: the schema and template, levels, migrations machinery, hashes, the audit log with `decide`; reviewed by the SDS on 10-26 (Q388–Q390 applied). A feature decision checks its names against the saved model input's candidates (10-27). From the SDS's review of 10-28: eligibility as two lists (`analysis`, `modelling`), the target spec without `null_as` and `leavers`, the template's comment rule. The use case's name: letters, digits, `_` and `-`, any case (10-29, D-128 replaced). Stage 1 addendum (10-28): the unit of analysis as `time.period` (month, week, day) with the key column `period` and the `time` fields renamed (`observation_window`, `target_window`, `validation_period`), one `periods.PERIODS` dict for the arithmetic; `revert` in the audit log |
-| Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | tested | M1: steps 0–7 built (2026-10-17); the SDS's review round 1 applied (2026-10-19): role folders, slimmer `truth.json`, two new traps, exit rates, top-down spec with a code map. Feature mart (157 columns from 0.5.0), traps on two products, oracle and `truth.json`, CLI, source mapping; every independent check row passes at 100k; approved by the SDS (2026-10-19); reviewed and accepted by the LDS (2026-10-21). Its to-dos (noise and very-low-fill columns, named like the traps) became 0.5.0's ten trap columns (2026-10-25, Stage 1; `unstable` waits for M4); the `dev` (20k) and canonical datasets and the notebook are at 0.5.0, all 1,309 check rows passing at 100k; the package goes into the bank as code, never as data (D-041). 0.5.3 (2026-10-30): a feature-store extract stand-in (`fs_extract`: own key names, a string id, 85% of the clients, six trait proxies and a `lookahead` trap column) that the example use cases join, with its own check family; the mart, oracle and holdings byte-identical to 0.5.2; mistake tests for every source guardrail (`test_harness.md` → Merges and mistake tests). 0.6.0 (2026-11-10): a trap and a control for every Feature Checks finding: nine trap columns (166 in the mart; the `unstable` kind among them) and six natural controls on real columns, the test's second mapping (`CONTROL_FINDINGS`), every 0.5.3 column byte-identical; both datasets regenerated, all 1,374 check rows of ten families passing at 100k (1,373 before the codebase review of 2026-11-10 added the oracle's target-table row). D-003, D-029, D-041, D-064 |
-| Target Factory (targets only, optional) | built (thin; the occurrences per period and `TargetSummary` added 2026-11-06) | Stage 1 major step 2 (2026-10-26; reworked after the SDS's reviews of 10-27 and 10-28): `flag_goes_up` and `forward_sum` through the per-task spec (the rule compares t with the forward months; nulls under SQL semantics, filled upstream when they mean a value), the keyed source reader (periods at their last day, the id cast to string, D-129), the target-column check and the one period-coverage check shared with the dataset, `run_target_factory` per config; every period with a complete forward window is labelled, on month, week or day data through the period spec (addendum, 10-28); `null_in_window` null where the window is incomplete, its share stored per use case; tested against the oracle on the `unit` preset. `components/target_factory.md` |
-| Dataset: observation window, client-grouped split, OOT validation, sampling | built (thin) | Stage 1 major step 3 (2026-10-27; the SDS's review of 10-28 applied): the panel (sources joined, eligibility as two ordered lists, `analysis` dropping rows before EDA and `modelling` tagging them until Feature Checks, the candidates), the client split and the two sampling options as one salted hash draw, the contract checks with the null callout, the frames with the collect printout (EDA the window, Feature Checks its eligible rows), labels in every period that has them (D-131, D-133). Stage 1 addendum (10-28): the model input is the sources joined plus one target column per use case (`target_<use_case>`), saved for one config or a list (`save_model_input(cfgs)`, `run a.yml b.yml --stages target_factory`); eligibility, candidates, contract and split are derived on read from the reader's config, so a changed eligibility no longer forces a rebuild; sidecar schema 4 (3 since 2026-10-28; 4 since 2026-11-06: the join entries' `columns`), keyed by the shared sources, keys and period plus each use case's target-spec hash. A source column named like one the framework adds is read as `source_<name>`, never refused, and the own upstream target column is dropped on read (10-29). Per-source key names (`{source, keys}`; the spine keeps `data.keys`), the column-clash check ignoring case, a finer-period hint on duplicate keys; a joined feature source needs no coverage (10-30, D-129). Advanced sampling in Phase 3 (D-117); window ablation OD-17. `components/dataset.md` |
-| EDA (worth running first; low-prevalence aware) | built (2026-11-04, Stage 2 major step 2); reviews 2–4 applied 2026-11-05/06 with the decision slices, the value profile and the sources (D-138); with the LDS for review; 2026-11-09 (the SDS's Feature Checks answers Q541–Q542): the window's best-order concordance in the ranking table and the concordance per period stored and shown for every candidate | Stage 2 (M2.2 Understanding) design settled 2026-11-02 after four question rounds (Q418–Q493, recorded in `worknotes/m2_2_understanding/answers.md`): one snapshot period collected whole, the window and the later periods as one Spark counts table, one statistics engine on counts (concordance, best-order concordance, shares, PSI), the view catalogue, N = 10 key features, `eda.bins` (D-135, D-136, D-137). Spec: `components/eda.md`; plan: `worknotes/m2_2_understanding/plan.md`; build from 11-03 |
-| Feature Checks (correctness and quality only) | built (2026-11-06/07, Stage 2 major step 3); the SDS's review 1 applied 2026-11-09 (the code review still to come) | Stage 2 design settled 2026-11-02: five steps in a fixed order over EDA's artifacts (no Spark pass of its own), the finding table with flags and notes, an open flag holds the feature out of training at both levels until a person keeps or excludes it (D-134), the compared periods as audit-log run entries, the trap acceptance test on the `dev` preset. Spec: `components/feature_checks.md`. Built 2026-11-06/07: the five steps on EDA's artifacts (`feature_checks/`: findings as plain data, measures, steps, decisions, report, run), the `flag` and `run` entries, the held set, the proposed decisions with the call texts, the report, `run --stages feature_checks`, notebook 03 with a reverted walk-through, the trap acceptance test on the `dev` preset; `rare_value_leak` follows the approved Q441 rule (V74), support guards in effective clients (V75). Review 1 (2026-11-09): PSI a note from 0.10 and a flag from 0.25, the held features' `flag_values`, the cluster summary first, the proposed calls split per feature, notebook 03's data checks, no count bound in the trap test. Answers Q539–Q545 applied the same day: the rare-value effect as Cohen's h (d for an amount), no check skipping for support (each detail states its support and significance), `too_strong` on the best-order window value too, the per-period concordance from EDA, the null sets named, the instability range relative to the signal; the helper notebook `00_eda_fc_helper`. Vetoes V74–V100 |
+| Config spine (single file, automation levels, decision, entities, data-definition hash, migrations) | built | `components/config.md`. Settled 2026-10-20: YAML (D-043), two automation levels in the `automation_level` field (D-023), identities with a worked example (D-088), the shared-table rule (D-007), extension code in use-case repos (D-006); the decision audit log (D-125, 2026-10-22). Stage 1 (D-129–D-133) built 2026-10-26: the schema and template, levels, migrations machinery, hashes, the audit log with `decide`; reviewed by the EDS on 10-26 (Q388–Q390 applied). A feature decision checks its names against the saved model input's candidates (10-27). From the EDS's review of 10-28: eligibility as two lists (`analysis`, `modelling`), the target spec without `null_as` and `leavers`, the template's comment rule. The use case's name: letters, digits, `_` and `-`, any case (10-29, D-128 replaced). Stage 1 addendum (10-28): the unit of analysis as `time.period` (month, week, day) with the key column `period` and the `time` fields renamed (`observation_window`, `target_window`, `validation_period`), one `periods.PERIODS` dict for the arithmetic; `revert` in the audit log |
+| Synthetic data (`synthetic/`, ~100k × 24 months) + local-Spark harness | tested | M1: steps 0–7 built (2026-10-17); the EDS's review round 1 applied (2026-10-19): role folders, slimmer `truth.json`, two new traps, exit rates, top-down spec with a code map. Feature mart (157 columns from 0.5.0), traps on two products, oracle and `truth.json`, CLI, source mapping; every independent check row passes at 100k; approved by the EDS (2026-10-19); reviewed and accepted by the LDS (2026-10-21). Its to-dos (noise and very-low-fill columns, named like the traps) became 0.5.0's ten trap columns (2026-10-25, Stage 1; `unstable` waits for M4); the `dev` (20k) and canonical datasets and the notebook are at 0.5.0, all 1,309 check rows passing at 100k; the package goes into the bank as code, never as data (D-041). 0.5.3 (2026-10-30): a feature-store extract stand-in (`fs_extract`: own key names, a string id, 85% of the clients, six trait proxies and a `lookahead` trap column) that the example use cases join, with its own check family; the mart, oracle and holdings byte-identical to 0.5.2; mistake tests for every source guardrail (`test_harness.md` → Merges and mistake tests). 0.6.0 (2026-11-10): a trap and a control for every Feature Checks finding: nine trap columns (166 in the mart; the `unstable` kind among them) and six natural controls on real columns, the test's second mapping (`CONTROL_FINDINGS`), every 0.5.3 column byte-identical; both datasets regenerated, all 1,374 check rows of ten families passing at 100k (1,373 before the codebase review of 2026-11-10 added the oracle's target-table row). D-003, D-029, D-041, D-064 |
+| Target Factory (targets only, optional) | built (thin; the occurrences per period and `TargetSummary` added 2026-11-06) | Stage 1 major step 2 (2026-10-26; reworked after the EDS's reviews of 10-27 and 10-28): `flag_goes_up` and `forward_sum` through the per-task spec (the rule compares t with the forward months; nulls under SQL semantics, filled upstream when they mean a value), the keyed source reader (periods at their last day, the id cast to string, D-129), the target-column check and the one period-coverage check shared with the dataset, `run_target_factory` per config; every period with a complete forward window is labelled, on month, week or day data through the period spec (addendum, 10-28); `null_in_window` null where the window is incomplete, its share stored per use case; tested against the oracle on the `unit` preset. `components/target_factory.md` |
+| Dataset: observation window, client-grouped split, OOT validation, sampling | built (thin) | Stage 1 major step 3 (2026-10-27; the EDS's review of 10-28 applied): the panel (sources joined, eligibility as two ordered lists, `analysis` dropping rows before EDA and `modelling` tagging them until Feature Checks, the candidates), the client split and the two sampling options as one salted hash draw, the contract checks with the null callout, the frames with the collect printout (EDA the window, Feature Checks its eligible rows), labels in every period that has them (D-131, D-133). Stage 1 addendum (10-28): the model input is the sources joined plus one target column per use case (`target_<use_case>`), saved for one config or a list (`save_model_input(cfgs)`, `run a.yml b.yml --stages target_factory`); eligibility, candidates, contract and split are derived on read from the reader's config, so a changed eligibility no longer forces a rebuild; sidecar schema 4 (3 since 2026-10-28; 4 since 2026-11-06: the join entries' `columns`), keyed by the shared sources, keys and period plus each use case's target-spec hash. A source column named like one the framework adds is read as `source_<name>`, never refused, and the own upstream target column is dropped on read (10-29). Per-source key names (`{source, keys}`; the spine keeps `data.keys`), the column-clash check ignoring case, a finer-period hint on duplicate keys; a joined feature source needs no coverage (10-30, D-129). Advanced sampling in Phase 3 (D-117); window ablation OD-17. `components/dataset.md` |
+| EDA (worth running first; low-prevalence aware) | built (2026-11-04, Stage 2 major step 2); reviews 2–4 applied 2026-11-05/06 with the decision slices, the value profile and the sources (D-138); with the LDS for review; 2026-11-09 (the EDS's Feature Checks answers Q541–Q542): the window's best-order concordance in the ranking table and the concordance per period stored and shown for every candidate | Stage 2 (M2.2 Understanding) design settled 2026-11-02 after four question rounds (Q418–Q493): one snapshot period collected whole, the window and the later periods as one Spark counts table, one statistics engine on counts (concordance, best-order concordance, shares, PSI), the view catalogue, N = 10 key features, `eda.bins` (D-135, D-136, D-137). Spec: `components/eda.md`; questions and answers: `guides/eda_fc_faq.md`; M2.2 closed 2026-11-11 |
+| Feature Checks (correctness and quality only) | built (2026-11-06/07, Stage 2 major step 3); the EDS's review 1 applied 2026-11-09 ; the codebase review and the remarks on it applied 2026-11-10/11; M2.2 closed 2026-11-11 | Stage 2 design settled 2026-11-02: five steps in a fixed order over EDA's artifacts (no Spark pass of its own), the finding table with flags and notes, an open flag holds the feature out of training at both levels until a person keeps or excludes it (D-134), the compared periods as audit-log run entries, the trap acceptance test on the `dev` preset. Spec: `components/feature_checks.md`. Built 2026-11-06/07: the five steps on EDA's artifacts (`feature_checks/`: findings as plain data, measures, steps, decisions, report, run), the `flag` and `run` entries, the held set, the proposed decisions with the call texts, the report, `run --stages feature_checks`, notebook 03 with a reverted walk-through, the trap acceptance test on the `dev` preset; `rare_value_leak` follows the approved Q441 rule (V74), support guards in effective clients (V75). Review 1 (2026-11-09): PSI a note from 0.10 and a flag from 0.25, the held features' `flag_values`, the cluster summary first, the proposed calls split per feature, notebook 03's data checks, no count bound in the trap test. Answers Q539–Q545 applied the same day: the rare-value effect as Cohen's h (d for an amount), no check skipping for support (each detail states its support and significance), `too_strong` on the best-order window value too, the per-period concordance from EDA, the null sets named, the instability range relative to the signal; the helper notebook `00_eda_fc_helper`. Vetoes V74–V100 |
 | Feature ledger | built (the identity and EDA columns written by EDA, 2026-11-04; `source` and schema 2 on 2026-11-06; Feature Checks' columns since 2026-11-06, a skipped step's as null; the sidecar's run tokens and schema 3 on 2026-11-10) | One wide row per candidate per data definition, statistics and flags stored, held / kept / excluded derived from the audit log at render time; the per-run part joins in M2.3 (settles OD-11, 2026-11-02). Spec: `components/feature_ledger.md` |
 | Training (FLAML path; predefined + Optuna in Phase 3; selection, encoding, calibration) | designing | FLAML only in Phase 2, predefined + Optuna in Phase 3 (D-020); no pickle for what is promoted, lossless formats per family (D-051); M2 builds `lgbm`, `xgboost` and `catboost` with their round trips (D-037); own encoding before FLAML, the calibration chain and `model_hash` over parts (D-094) |
 | Evaluation (stratified metrics, compatibility table, comparison) | designing | Core views OD-12 |
@@ -28,8 +28,8 @@ Status values: `legacy-only` (exists only in legacy) · `designing` · `stub` (i
 | Lifecycle: register / promote / deploy, registry tables, inventory | designing | Evolves as built (D-073); "registered" settled (D-033); `recipe_hash`, and production retraining on the same data definition as the default deploy path (D-052); MLflow in Phase 2 is the goal (OD-08); OD-06, OD-14; retraining in production OD-27; who builds it OD-23, with the platform / MLOps team (D-079) |
 | Inference (batch-scoped, manifest, reinference) | designing | Output ends at the framework's own scores table, the master layer; consumable tables are built outside (D-016); calibration a release requirement (D-049); path layout OD-18 |
 | Monitoring (four layers: frame deep, content light) | designing | Renamed from Tracking; frame vs content (D-040); no data observability feed (D-021, 2026-10-30); tooling and dashboards are the platform / MLOps team's (D-079); downstream design still largely open |
-| Feature store integration (upstream) | designing | First release, limited to Stage 1 (M2.1 Foundation) in Phase 2 (D-021). Leaning (the SDS, 2026-10-30): an example notebook inside the bank loads features and saves them as a dataset joined like any other source, with little build outside (OD-26) |
-| Data observability (at deploy) | designing | Nothing to build (the SDS, 2026-10-30): every deploy points the model's source tables at that framework, a step of the change request (D-021) |
+| Feature store integration (upstream) | designing | First release, limited to Stage 1 (M2.1 Foundation) in Phase 2 (D-021). Leaning (the EDS, 2026-10-30): an example notebook inside the bank loads features and saves them as a dataset joined like any other source, with little build outside (OD-26) |
+| Data observability (at deploy) | designing | Nothing to build (the EDS, 2026-10-30): every deploy points the model's source tables at that framework, a step of the change request (D-021) |
 | CLI / Python API / guided notebooks / experiment sweeps | built (thin) | Stage 1 (2026-10-27): `run` with its one stage, the CLI `run` and `decide`, the guided notebook `01_target_factory`, which since 10-29 builds two example use cases (`cc_acquisition`, `td_acquisition`) into one model input; `run` takes several configs; experiment sweeps later. Stage 2 (2026-11-04): `run --stages eda` and the guided notebook `02_eda`; 2026-11-06/07: `run --stages feature_checks` (the asked stages run in `STAGES` order) and the guided notebook `03_feature_checks`. D-024, D-039 |
 | Second task type: regression | built for EDA and Feature Checks (Stage 2) | D-020; the per-task spec entries for EDA and Feature Checks (target bins, group summaries, rare effect, standard errors) are designed with Stage 2 (2026-11-02, D-050) and built there on the test-only variant config (EDA's 2026-11-04; Feature Checks' rare effect and its run on the regression variant 2026-11-06, Cohen's d since 2026-11-09); Training's and Evaluation's entries with M2.3 |
 | LLM-assisted modelling branch | designing | Phase 3 (D-017) |
@@ -42,9 +42,45 @@ together with the topics to raise with the Chief DS.
 
 ## Log (major changes only, newest first)
 
+- 2026-11-11 — **M2.2 (Understanding) closed by the EDS.** EDA, Feature Checks, the feature
+  ledger and the two reports are built, reviewed and at 0.3.0; M2.3 (Training, Evaluation)
+  starts on 2026-11-16.
+  - The last two points stand as built: the sources' digest covers every source the config
+    names, the feature and target sources included (Q587), and Training will warn, never
+    refuse, when fewer features are held than Feature Checks' run held (Q576).
+  - The stage's working notes are deleted (both stage folders, the review answers, the M2.2
+    handover). What lasts moved first: the questions and answers to
+    `docs/guides/eda_fc_faq.md`; the process lessons, the corrected AUC standard error and the
+    crunch's statistics lessons to `docs/context/lessons.md`; the forward-looking notes to the
+    open questions of `training.md`, `evaluation.md`, `eda.md`, `feature_checks.md`,
+    `target_factory.md`, `run_modes.md`, `test_harness.md` and the Phase 3 wishlist. Q-, R-, A-
+    and V-numbers in the docs and the code now resolve in git history only (`CLAUDE.md` §8).
+  - Working rules: the EDS is the decision-maker and nothing waits for the LDS's review
+    (D-072 (n)); the builder's role is the Expert DS, EDS, in every doc (was SDS).
+- 2026-11-11 — The EDS's review of the codebase review: remarks R59–R73 and Q575–Q586 answered
+  (the questions worth keeping: `docs/guides/eda_fc_faq.md`). Built:
+  - **Where the data physically is** joins each stage's identity (Q577, D-137): `eda.json` and
+    `feature_checks.json` record the environment entries of the sources the config reads, and a
+    later stage refuses one read from a source now mapped to another path or table. Stage json
+    `schema_version` 3: **rerun EDA, then Feature Checks, once per use case.**
+  - The notebooks show which data-definition folder a run uses, beside the use case's others
+    (`list_data_definitions`, public).
+  - EDA: key features listed by the config come first in every view; a numeric deep dive merges
+    into about `strata.max_levels` groups (`DEEP_DIVE_GROUPS` removed; 10 by default, as before);
+    no lagged cells for the window's first period (they were null by construction).
+  - A finding's value below 0.0001 reads `< 0.0001`; `support` defined in the glossary.
+  - Training's gate (Q576, `training.md` requirement 1): no refusal when a revert undid Feature
+    Checks' flags; Training opens with the feature set in force beside the count that run held,
+    and warns when they differ.
+  - The tests read frozen copies of the example configs (`tests/conf/`); the shipped example
+    `cc_acquisition.yml` is back to its committed form.
+  - A docstring pass over `statistics/`, `feature_checks/`, `reporting/`, `eda/`, `dataset/` and
+    the stage plumbing: short for textbook statistics, grain in and out for frame-shaping
+    functions (R73).
 - 2026-11-10 — Codebase review, executed in full: ten clusters of findings, all chosen by the
-  SDS, built in four waves, each reviewed, with two ML audits and a compatibility check at the
-  end. Not committed yet; the SDS's review guide is `worknotes/codebase_review_guide.md`.
+  EDS, built in four waves, each reviewed, with two ML audits and a compatibility check at the
+  end. Committed as `0a6961c`; the EDS's review remarks and their answers are in the
+  entry above.
   - **The seams M2.3 builds on.** `build_frames` takes the stage's feature set, and Training
     gets train and test only: it cannot receive the validation period or a held or excluded
     feature (D-030). `artifacts.py` owns the stage identity, the settings each stage's digest
@@ -83,9 +119,8 @@ together with the topics to raise with the Chief DS.
   mapping (each forbidden finding's measure computed, so none passes vacuously), a cross-config
   test, and a guard that keeps the real columns named only for a note. Both datasets
   regenerated, every check passing at 100k; the example configs re-run, now holding 47 (card) and
-  29 (term deposit) features. Plan and review order: `worknotes/synthetic_trap_coverage_plan.md`
-  §7. D-064.
-- 2026-11-09 — Feature Checks review 1 applied (the SDS read the notebook, the report and the
+  29 (term deposit) features. D-064 (the plan file was deleted on 2026-11-11, once built).
+- 2026-11-09 — Feature Checks review 1 applied (the EDS read the notebook, the report and the
   questions; the code review follows): PSI is a note from 0.10 and a flag from 0.25, which holds
   the feature; the held table shows each open flag's value; the redundancy step leads with one row
   per cluster; the proposed calls take any subset of a finding's features (the exclude names its
@@ -107,7 +142,7 @@ together with the topics to raise with the Chief DS.
   acceptance test on the `dev` preset; `rare_value_leak` restored to the approved Q441 rule after
   the spec text drifted (T35), support guards in effective clients; version 0.3.0. Whole-stage ML
   audit (Fable) and compatibility check: safe. Decisions to veto: `plan.md` §9 V74–V91; questions
-  Q532–Q538; review guide `worknotes/m2_2_understanding/feature_checks_review_guide.md`.
+  Q532–Q538; review guide `worknotes/m2_2_understanding/feature_checks_review_guide.md` (deleted 2026-11-11).
 
 - 2026-11-06 — Reviews 3 and 4 of Stage 2 major step 2 and the EDA gaps spec built (D-138): the decision
   slices (each key feature alone at `evaluation.slices`, in sample, never a baseline), the value
@@ -131,7 +166,8 @@ together with the topics to raise with the Chief DS.
   primitives, blocks, theme; jinja2 pinned), the EDA modules (ranking, population tables, deep
   dives, `pivot_target`), `run_eda` with its report and `run --stages eda`, notebook 02; the
   settings digest gains `time.validation_period`, collected frames are sorted by the keys (T34).
-  Full suite: 491 passed. Review guide: `worknotes/m2_2_understanding/review_guide.md`; decisions
+  Full suite: 491 passed. Review guide: `worknotes/m2_2_understanding/review_guide.md` (deleted
+  2026-11-11); decisions
   to veto: `plan.md` §9 V18–V28; questions Q494–Q500.
 - 2026-11-03 — Stage 2 major step 1 built (foundations): the Stage 2 config fields and the audit
   log's `keep` with `findings`, `flag`, `run`, the held set in the resolved config, the per-feature
@@ -143,8 +179,9 @@ together with the topics to raise with the Chief DS.
   ledger; a null `time.validation_period` accepted end to end (EDA-only configs); version
   `0.3.0.dev0`. Six builders, fifteen reviews, seven fix rounds; the facts spike settled the
   Spark passes and seven traps (T26–T33). Full suite: 443 passed. Review guide:
-  `worknotes/m2_2_understanding/review_guide.md`; decisions to veto: `plan.md` §9 V16–V17.
-- 2026-11-03 — Stage 2 plan approved after the SDS's remarks (routing budget: Fable a third to
+  `worknotes/m2_2_understanding/review_guide.md` (deleted 2026-11-11); decisions to veto:
+  `plan.md` §9 V16–V17.
+- 2026-11-03 — Stage 2 plan approved after the EDS's remarks (routing budget: Fable a third to
   half of the tokens and the hardest code pieces, D-072 (l); `lagged_signal_drop`; `psi_latest`
   pinned to the window's last period; the edges rule with mass points, T25; no client-level
   chart; the notebooks' guide cells as the deliverable). Major step 1 (the config fields and the
@@ -155,30 +192,31 @@ together with the topics to raise with the Chief DS.
   `reporting.md`, `config.md` and `dataset.md`, decisions D-134–D-137 (flags hold features out of
   training at both levels; the window stays in Spark as one counts table and the snapshot is
   collected whole; the folder order root → use case → layer; the Stage 2 engineering shape), the
-  build plan with its routing table in `worknotes/m2_2_understanding/plan.md`.
+  build plan with its routing table in `worknotes/m2_2_understanding/plan.md` (deleted 2026-11-11;
+  what the routing taught: `docs/context/lessons.md` → Build-process lessons).
 - 2026-10-30 — Stage 2 (M2.2 Understanding: EDA, Feature Checks, feature ledger, Reporting)
-  design opened, aimed between thin and deep with every key component in (the SDS): four
+  design opened, aimed between thin and deep with every key component in (the EDS): four
   research surveys (the crunch's EDA and checks, best practice with sources, the synthetic
   traps measured on the dev data, the package's interfaces) and the design questions Q418–Q462
   with an explicit catalogue of every view, step and finding (recorded in
-  `worknotes/m2_2_understanding/answers.md`). Findings that change settled text once
+  `worknotes/m2_2_understanding/answers.md`, deleted at the stage's close on 2026-11-11). Findings that change settled text once
   answered: the AUC standard-error rule in `lessons.md` is 1.7× too conservative (the null SE is
   1/√(12·events)); the shifted and process-leak traps fall below the oracle's AUC under a
   three-month target, so the time-alignment step is proposed as a lag check (D-029 (d)'s
   wording would change).
-- 2026-10-30 — The integrations narrowed (the SDS): the data observability framework checks
+- 2026-10-30 — The integrations narrowed (the EDS): the data observability framework checks
   production tables and consumes no model outputs, so every deploy points the model's source
   tables at it and nothing is built (D-021 (b) replaced; monitoring's tables no longer wait on
   it, D-040; OD-13 narrowed to tooling). The feature store leans towards an example notebook
   that saves a dataset joined like any other source (D-021 (a) under review, OD-26). Built the
-  same day (the SDS's Q415–Q417): per-source key names in `entities.<e>.sources` (D-129; a
+  same day (the EDS's Q415–Q417): per-source key names in `entities.<e>.sources` (D-129; a
   plain-name config's hashes unchanged), the case-insensitive column-clash check and the
   finer-period hint; synthetic 0.5.3 with a feature-store extract stand-in that both example use
   cases join (0.x, loud: a 0.5.2 dataset is refused by `load_truth` and regenerated, a
   `conf/local` without `retail_fs_extract` fails at read, and the example's saved model input
   and audit-log folders are refused by their changed sources and digest, so they are re-saved
   and re-recorded); mistake tests for every source guardrail.
-- 2026-10-28 — The SDS's review of Stage 1's steps 2 and 3 applied: labels kept in every month
+- 2026-10-28 — The EDS's review of Stage 1's steps 2 and 3 applied: labels kept in every month
   Target Factory can build (an upstream target would look the same; the framework doesn't
   police a DS); `data.target.null_as` and `leavers` removed (nulls are filled upstream);
   eligibility as two ordered lists, `analysis` (rows dropped before EDA) and `modelling` (rows
@@ -190,7 +228,7 @@ together with the topics to raise with the Chief DS.
   migration (0.x, D-007 (c)): configs, resolved configs, model inputs and audit-log folders from
   before 10-28 are stale and are rebuilt or re-recorded, none exists inside the bank. The
   version was 0.2.0 until Stage 2's build started; it reads 0.3.0.dev0 during the build and 0.3.0 at the end of Stage 2 (D-137).
-- 2026-10-28 — Stage 1 addendum built from the SDS's second-round answers (Q400–Q406): the
+- 2026-10-28 — Stage 1 addendum built from the EDS's second-round answers (Q400–Q406): the
   unit of analysis as `time.period` (month, week or day; the key column `period`, the `time`
   fields `observation_window`, `target_window`, `validation_period`; one `periods.PERIODS`
   dict for the arithmetic in Python and Spark; `unit_id` cast to string at load so the split's
@@ -210,22 +248,22 @@ together with the topics to raise with the Chief DS.
   source refused, another use case's upstream target column dropped on read, the audit
   log's `include` judged over the effective entries so a `revert` cannot launder a rule's
   exclude, eligibility in its own module. D-088, D-125, D-129, D-131 extended.
-- 2026-10-27 — Stage 1 built end to end (version 0.2.0), for the SDS's review of major steps 2
+- 2026-10-27 — Stage 1 built end to end (version 0.2.0), for the EDS's review of major steps 2
   and 3 together: the dataset (the panel from the joined sources with eligibility in two kinds,
   the client split and declared sampling, the contract checks with the null callout, the frames
   with the collect printout, the model input saved and read back, D-131, D-133), `run` with the
   CLI `run`, and the guided notebook `01_target_factory`. Two traps found and ruled (T20, T21).
 - 2026-10-26 — Stage 1, major step 2 built and reviewed: Target Factory (the flag and forward-sum
   rules, the target summary), one keyed reader for every source that holds months at their last
-  day (D-129, from the SDS's review of step 1), and the synthetic holdings on last-day months
+  day (D-129, from the EDS's review of step 1), and the synthetic holdings on last-day months
   (0.5.2, both datasets regenerated). Four reviewers found label risks (a holder at t, nulls in
   the window, label rates after the window, bad column types, time-zone shifts), all fixed.
-  Also from the SDS's review: more settings loggable (D-125), D-088's pre-release carve-out.
+  Also from the EDS's review: more settings loggable (D-125), D-088's pre-release carve-out.
 - 2026-10-26 — Stage 1, major step 1 built: the config spine (schema, template, levels,
   migrations, hashes, the decision audit log, `decide`) and the environment adapter (the
   environment file, `get_spark_session`, sources per entity, local paths), reviewed by three
   reviewers and fixed; the synthetic package writes a slim `holdings` table (0.5.1). Under the
-  SDS's review; the plan was `worknotes/m2_1_foundation/plan.md` (deleted 2026-10-29).
+  EDS's review; the plan was `worknotes/m2_1_foundation/plan.md` (deleted 2026-10-29).
 - 2026-10-26 — Stage 1 (M2.1 Foundation) design settled and the build started: the config layout,
   the environment file, the model input, the automation-level mapping (OD-25 closed) and the collect
   printout (D-129–D-133); the plan in three major steps was `worknotes/m2_1_foundation/plan.md` (deleted 2026-10-29).
@@ -244,7 +282,7 @@ together with the topics to raise with the Chief DS.
   settled, in M4 once confirmed (D-111). Two Phase 3 wishlist questions added. The review's one
   question (Q374) was answered on 10-25: Phase 2 relies on the per-family check of the plain-data
   model, a per-model check is a Phase 3 question (D-051); the questions file is deleted.
-- 2026-10-23 — The SDS answered the inconsistency questions; the rest took their defaults. Main
+- 2026-10-23 — The EDS answered the inconsistency questions; the rest took their defaults. Main
   changes: production retraining on the same data definition is the default deploy path, not
   retraining is allowed (D-033, D-052); the sandpit may hold any format, pickle only matters for the
   move to production (D-051); all three FLAML families in M2 (D-037); one sign-off gate after
@@ -269,18 +307,18 @@ together with the topics to raise with the Chief DS.
   with advanced sampling and recency weighting moved to Phase 3; FLAML gets the client groups; a
   Phase 3 wishlist in the roadmap). OD-07 closed, OD-17 narrowed to the window ablation. Timeline
   adjusted for the lost week of 11-30 and the year-end slowdown.
-- 2026-10-21 — Third round of answers (the SDS and the LDS): D-103–D-109 (scores end at the
+- 2026-10-21 — Third round of answers (the EDS and the LDS): D-103–D-109 (scores end at the
   master layer; calibration a release requirement; reports self-contained; the train/test client
   split as Phase 2's validation inside training; compatibility is about outputs, `CLAUDE.md` §2;
   upstream data facts aren't ours; the plan is milestones per stage, December a pre-release).
   Timeline reshaped into two build rounds with a run-through after each (pre-release by 12-18,
   release 1.0 by 02-19), awaiting the LDS. Synthetic data accepted by the LDS (M1). OD-28 opened.
-- 2026-10-21 — The SDS's second answers: D-098–D-102 (test metrics per month first and named
+- 2026-10-21 — The EDS's second answers: D-098–D-102 (test metrics per month first and named
   denominators; reproducible runs on a trial budget; the M2 engineering shape; pickle only for
   saved and moved artifacts; doc upkeep). One doc-hygiene pass across `docs/`, `CLAUDE.md`,
   `conf/base/` and `notebooks/README.md` fixed the review's inconsistencies and glossary gaps.
   Questions round 3 were in `worknotes/holistic_review_questions.md` (since deleted).
-- 2026-10-20 — The SDS answered the holistic review: D-082–D-097 (positive events; choices weigh
+- 2026-10-20 — The EDS answered the holistic review: D-082–D-097 (positive events; choices weigh
   train and test only and `CLAUDE.md` §4.4 is reworded; working rules round 3; the speed claim;
   YAML; two automation levels; identities; the shared-table rule; extension code in use-case
   repos; M2 defaults; the sign-off view; M2 never lesser than the crunch; training under FLAML;
@@ -294,13 +332,13 @@ together with the topics to raise with the Chief DS.
 - 2026-10-20 — Phase 2 modelling scope settled: binary and regression, FLAML only; the predefined
   path + Optuna moves to Phase 3 (D-080). Task order after the first release (D-081).
 - 2026-10-20 — Chief DS design meeting (2026-10-15) outcomes integrated, D-073–D-079: the CDS
-  leaves the design to the SDS and LDS; the package ships in the base image; the first release
+  leaves the design to the EDS and LDS; the package ships in the base image; the first release
   adds feature store and data observability integration (no LLM until Phase 3); a person signs off every feature; profiles become
   automation levels (soft); no pickle; downstream operations go to the platform / MLOps team.
   Research questions opened: OD-24–OD-27, OD-10 widened. Meeting folder removed.
-- 2026-10-19 — Synthetic data generator approved by the SDS and passed to the LDS for review
+- 2026-10-19 — Synthetic data generator approved by the EDS and passed to the LDS for review
   (`synthetic/REVIEW.md`); M1 still needs OD-15.
-- 2026-10-19 — Synthetic data, the SDS's review round 1 applied (D-070): code in role folders
+- 2026-10-19 — Synthetic data, the EDS's review round 1 applied (D-070): code in role folders
   (`spec/`, `mechanisms/`, `truth/`, `checks/`; 46 modules → 32), relevance rankings and the
   `separation` knob cut, `truth.json` 234 → 55 KB, a moderate leak and a shifted column added,
   exits 0.7–1.1% a month, the starting book's tenure from the turnover's steady state;

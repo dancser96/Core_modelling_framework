@@ -89,11 +89,12 @@ def create_ledger(
     unsupported: list[str],
     sources: dict[str, str],
 ) -> pd.DataFrame:
-    """A new ledger, one row per candidate with its identity columns. An unsupported column's kind
-    is `unsupported`; a lineage column EDA did not read may have none; every other candidate
-    needs `numeric` or `categorical`, since Training's encoder reads it. `sources` maps a column
-    to the source it comes from (the frames' `meta["column_sources"]`): every candidate has one, a
-    lineage column in no source (an upstream target's) none."""
+    """A new ledger, one row per candidate in order, with the identity columns `feature, kind,
+    source, lineage, unsupported`. An unsupported column's kind is `unsupported`; a lineage
+    column EDA did not read may have none; every other candidate needs `numeric` or
+    `categorical`, since Training's encoder reads it. `sources` maps a column to the source it
+    comes from (the frames' `meta["column_sources"]`): every candidate has one, a lineage column
+    in no source (an upstream target's) none."""
     _check_identity(candidates, kinds, lineage, unsupported, sources)
     return pd.DataFrame(
         {
@@ -139,10 +140,12 @@ def _check_stage_columns(ledger: pd.DataFrame, columns: pd.DataFrame, stage: str
 
 
 def add_columns(ledger: pd.DataFrame, columns: pd.DataFrame, stage: str) -> pd.DataFrame:
-    """The ledger with a stage's columns joined on `feature`. Every column the stage wrote before
-    is dropped first, so a rerun leaves none of its earlier columns (a skipped step's included);
-    another stage's columns are never touched. The rows the stage has no value for (lineage and
-    unsupported) hold None in its object and list columns, as the saved ledger reads back."""
+    """The ledger with a stage's columns left-joined on `feature` (`columns`: one row per
+    candidate the stage read, `feature` plus the stage's own columns; the ledger keeps its rows
+    and order). Every column the stage wrote before is dropped first, so a rerun leaves none of
+    its earlier columns (a skipped step's included); another stage's columns are never touched.
+    The rows the stage has no value for (lineage and unsupported) hold None in its object and
+    list columns, as the saved ledger reads back."""
     _check_stage_columns(ledger, columns, stage)
     earlier = [c for c in COLUMNS_BY_STAGE[stage] if c in ledger]
     merged = ledger.drop(columns=earlier).merge(

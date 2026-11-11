@@ -17,7 +17,7 @@ from core_modelling.config.identities import (
 )
 from core_modelling.config.replay import set_at
 
-EXAMPLE = Path(__file__).resolve().parents[1] / "conf/base/cc_acquisition.yml"
+EXAMPLE = Path(__file__).resolve().parents[1] / "tests/conf/cc_acquisition.yml"
 ENTITY = "entity_a"
 # The example's digests under HASH_VERSION 1 (re-pinned 2026-10-28 when the unit of analysis
 # became `time.period`, the `time` fields and `data.keys.period` were renamed and `task` joined

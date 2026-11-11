@@ -23,6 +23,7 @@ import pandas as pd
 
 from core_modelling.config import UseCaseConfig
 from core_modelling.eda.deep_dives import MIN_BIN_SUPPORT
+from core_modelling.eda.ranking import list_key_features
 from core_modelling.statistics.capture import SUMMED, capture_curve, capture_table
 from core_modelling.statistics.cells import pool_periods, population_cells, support_by_bin
 from core_modelling.statistics.concordance import fold_encodings
@@ -68,8 +69,9 @@ def slice_shares(resolved: UseCaseConfig, rows: int) -> dict[str, float]:
 
 
 def _snapshot_bins(cells: pd.DataFrame, snapshot: str) -> pd.DataFrame:
-    """The snapshot's bins holding labelled rows: `bin`, `bin_order`, `is_null` and `SUMMED`,
-    pooled over the target bins."""
+    """One feature's snapshot-period bins that hold labelled rows, one row per bin (the cells'
+    folds pooled): `bin, bin_order, is_null`, then `SUMMED`: `n, sum_y, sum_y2` summed over the
+    labelled target bins and `support` from `support_by_bin`."""
     pooled = pool_periods(cells, [snapshot])
     labelled = pooled.loc[pooled["target_bin"].notna()]
     keys = ["bin", "bin_order", "is_null"]
@@ -79,7 +81,8 @@ def _snapshot_bins(cells: pd.DataFrame, snapshot: str) -> pd.DataFrame:
 
 
 def _in_list_order(bins: pd.DataFrame) -> pd.DataFrame:
-    """`fold`, `bin` and `SUMMED` of the bins, each fold by `key` ascending, the null bin last."""
+    """The bins in list order, `fold, bin` and `SUMMED`: per fold, the non-null bins by `key`
+    ascending (ties by `bin_order`), then the null bin."""
     ordered = bins.sort_values(["fold", "is_null", "key", "bin_order"])
     return ordered[["fold", "bin", *SUMMED]].reset_index(drop=True)
 
@@ -132,13 +135,18 @@ def slice_tables(
     window: list[str],
     prior_rows: float,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """The key features' `slices` (`SLICE_COLUMNS`; a feature without a snapshot concordance,
-    `raw_sign` 0, one row with the ranking's `unavailable`) and `capture_curve` (`CURVE_COLUMNS`,
-    plus the `RANDOM` diagonal) in rank order, from the counts table's cells, the ranking with
-    its key features, `meta`'s `snapshot_period`, `snapshot_base` and `slices` (the shares,
-    `slice_shares`), the window periods' labels and the level encoding's prior (both the
-    ranking's); both keep their columns when empty."""
-    keys = ranking.loc[ranking["key_feature"] != ""].sort_values("rank")
+    """Two stacked tables over the key features, in `list_key_features`' order; both keep their
+    columns when empty:
+    - `slices` (`SLICE_COLUMNS`): one row per key feature and slice of `meta["slices"]`,
+      `insufficient` below `MIN_BIN_SUPPORT`; a feature without a snapshot concordance
+      (`raw_sign` 0) gets one row with the ranking's `unavailable`;
+    - `capture_curve` (`CURVE_COLUMNS`): one row per key feature and `SLICE_GRID` share, plus the
+      `RANDOM` diagonal; empty when capture is not available.
+
+    `meta` gives `snapshot_period`, `snapshot_base` and `slices` (`slice_shares`); `window` and
+    `prior_rows` are the ranking's.
+    """
+    keys = list_key_features(ranking)
     if keys.empty:
         return _stack([], SLICE_COLUMNS), _stack([], CURVE_COLUMNS)
     snapshot, base, task = meta["snapshot_period"], meta["snapshot_base"], resolved.task

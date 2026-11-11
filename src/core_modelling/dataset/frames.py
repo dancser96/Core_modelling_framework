@@ -1,24 +1,18 @@
 """Frames: what a stage works on, from the prepared panel (D-030, D-133, D-135).
 
 `build_frames` takes the prepared panel (`panel.build_panel` in memory, or the saved model
-input prepared for the config by `model_input.read_model_input` when the config names one:
-sources joined, the own target as `target`, eligibility, the candidates, the contract checked,
-the split assigned) and builds what the stage asks for. For EDA, the **snapshot**: the
-`eda.snapshot` period collected whole (every row after the analysis filters, the modelling tags,
-`eligible`, `target` and `split`, the supported candidates only), and **`rows`**: the Spark frame
-of the eligible rows of the compared periods (`counts.compared_periods`), the label kept in the
-window only, never collected: a lazy plan, which the EDA stage persists for its counts passes.
-The kinds come from the Spark schema (`detect_kinds`, with the `features.kinds` overrides) and
-the unsupported columns are dropped before anything is collected; the D-088 population counts
-join the meta, since only the frames hold the panel. For Training: train and test; for
-Evaluation also validation (`STAGE_PARTS`): the eligible rows with a known target, train sampled
-when declared, with the keys, the features the stage passes (`resolve_features`), `target` and
-`split` only, selected in Spark before the collect. Both need a validation period; Training's
-modelling rows stop at the window, so it never gets the validation period (§4.4). Every stage's
-meta names each candidate's and lineage column's source
-(`sources`, from the join entries' `columns`). Before a frame leaves Spark, `collect_frame`
-prints its rows, columns and estimated size, and above the collect budget the callout worded
-for the frame; it never stops.
+input through `model_input.read_model_input`) and builds the stage's parts (`STAGE_PARTS`). EDA
+gets the **snapshot**, the `eda.snapshot` period collected whole (every row after the analysis
+filters: the keys, the supported candidates, the modelling tags, `eligible`, `target`, `split`),
+and **`rows`**, the Spark frame of the eligible rows of the compared periods with the label kept
+in the window only, never collected. Training gets train and test, Evaluation also validation:
+the eligible rows with a known target, train sampled when declared, selected in Spark to the
+keys, the stage's features, `target` and `split` before the collect; Training's rows stop at the
+window, so it never gets the validation period (§4.4). The kinds come from the Spark schema
+(`detect_kinds`) and the unsupported columns are dropped before anything is collected. The meta
+also carries the D-088 population counts (only the frames hold the panel) and each column's
+source. `collect_frame` prints every collect's size and, above the collect budget, the callout
+worded for the frame; it never stops.
 """
 
 from dataclasses import dataclass
@@ -183,11 +177,16 @@ def _column_sources(log: list[dict], candidates: list[str], lineage: list[str]) 
 def _eda_frames(
     panel: DataFrame, cfg: UseCaseConfig, env: EnvironmentConfig, log: list[dict], meta: dict
 ) -> tuple[pd.DataFrame, DataFrame]:
-    """The snapshot collected and `rows` left in Spark (a lazy plan, which the EDA stage
-    persists for its passes), the unsupported candidates dropped from both; the kinds, the
-    unsupported columns, the snapshot period and the population counts join the meta, the
-    compared periods and the collect the log. A snapshot period without a row fails loud before
-    the collect."""
+    """EDA's two frames from the prepared panel, the unsupported candidates dropped from both:
+    - the snapshot, collected: every panel row of the snapshot period with every remaining column;
+    - `rows`, a lazy Spark plan the EDA stage persists for its passes: the eligible rows of the
+      compared periods with `unit_id, period`, the supported candidates and `target` (null
+      outside the window).
+
+    The kinds, the unsupported columns, the snapshot period and the population counts join the
+    meta, the compared periods' and the collect's entries the log. The distinct periods are
+    collected first, and a snapshot period without a row fails loud before the collect.
+    """
     spec = period_spec(cfg)
     supported = _supported_candidates(panel, cfg, meta)
     panel = panel.drop(*meta["unsupported"])
@@ -263,10 +262,12 @@ def _modelling_frames(
     features: list[str],
     parts: list[str],
 ) -> dict[str, pd.DataFrame]:
-    """The `parts` collected (train, sampled when declared, test and, for Evaluation,
-    validation), with the keys, `features`, `target` and `split` only, selected in Spark before
-    the collect; the null-target, sampling and collect entries join the log, the sampling record
-    the meta. A feature that is no candidate of the panel fails loud."""
+    """The `parts` by name, each collected with one row per unit and period and the columns
+    `unit_id, period`, `features`, `target`, `split` (selected in Spark before the collect):
+    `train` (the window's train split, sampled when declared), `test` (the window's test split)
+    and `validation` (the validation period, both splits). Only eligible rows with a known target
+    (`_modelling_rows`). The null-target, sampling and collect entries join the log, the sampling
+    record the meta. A feature that is no candidate of the panel fails loud."""
     unknown = [name for name in features if name not in meta["candidates"]]
     if unknown:
         raise ValueError(

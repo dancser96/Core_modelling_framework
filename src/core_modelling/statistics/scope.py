@@ -1,14 +1,11 @@
 """A feature's concordance read from its cells over a scope, the rules every stage shares (D-135).
 
 A scope is one feature's current cells over some periods: the snapshot period, the window
-pooled, one window period. `scope_statistics` reads a scope's shares, null concordance and
-concordance (a categorical's cross-fitted) with its SE and direction, after deciding up front
-whether the concordance can exist (D-035). Its parts are the rules EDA's ranking and Feature
-Checks both read, written once: `feature_se`, the SE of a feature's concordance;
-`concordance_direction`, the sign it is read in; the availability guards
-(`unavailable_reason`, `cross_fit_unavailable`), which Feature Checks also reads on the lagged
-rows; and `null_concordance`. `encoding_prior_rows` gives the level encoding's prior on the
-window. Pure pandas and numpy.
+pooled, one window period. `scope_statistics` reads a scope's statistics, deciding up front
+whether the concordance can exist (D-035); its parts (`feature_se`, `concordance_direction`, the
+guards `unavailable_reason` and `cross_fit_unavailable`, `null_concordance`) are written once
+for EDA's ranking and Feature Checks, which also reads the guards on the lagged rows.
+`encoding_prior_rows` gives the level encoding's prior on the window. Pure pandas and numpy.
 """
 
 import numpy as np
@@ -34,11 +31,10 @@ NULL_SHARE_RANGE = (0.005, 0.995)  # the missing shares for which EDA reads the 
 def encoding_prior_rows(
     cells: pd.DataFrame, task: str, min_events: int, window_periods: list[str]
 ) -> float:
-    """The level encoding's prior weight in rows: `strata.min_events` pseudo-events at the
-    window's base rate (regression: `min_events` rows), through
-    `TASK_SPECS[task]["shrinkage_rows"]`; a level's rate is `(events + prior · base) / (rows +
-    prior)`. The base is the window's mean target from the population's labelled cells
-    (`population_cells`)."""
+    """The level encoding's prior weight in rows, the task's `shrinkage_rows`: `min_events`
+    (`strata.min_events`) pseudo-events at the window's base rate (regression: `min_events`
+    rows). `cells` is the counts table; the base is the mean target of the population's
+    labelled cells over `window_periods` (`population_cells`)."""
     labelled = pool_periods(population_cells(cells), window_periods).dropna(subset=["target_bin"])
     base = labelled["sum_y"].sum() / labelled["n"].sum()
     return TASK_SPECS[task]["shrinkage_rows"](min_events, base)
@@ -54,12 +50,22 @@ def scope_statistics(
     exact: bool,
     clients: dict[str, float] | None,
 ) -> dict:
-    """One feature's current cells over the `read` periods: the shares, the null concordance,
-    the concordance (direction taken out; a categorical's cross-fitted, in its encoding's
-    direction) with `signed` (read with sign +1), its SE and sign (`concordance_direction`),
-    the events and non-events, the pooled cells and `reason`, why no concordance exists ('' when
-    it does). `clients` given: a window, its SE on effective clients; else one period, its SE on
-    its own rows (one per client)."""
+    """One feature's statistics over the `read` periods of its `cells` (the feature's counts
+    table rows), as a dict:
+
+    - `pooled`: the current cells pooled over `read` (`pool_periods`);
+    - `missing_share`, `zero_share`, `dominant_share`, `events`, `non_events`: from `shares`;
+    - `null_concordance`: NaN outside `NULL_SHARE_RANGE`;
+    - `concordance`: direction taken out (a categorical's cross-fitted over `window_periods`,
+      in its encoding's direction), and `signed`, the value read with sign +1;
+    - `se` and `sign` (`concordance_direction`);
+    - `reason`: why no concordance exists, decided before computing ('' when it does); the
+      concordance keys are then NaN and `sign` 0.
+
+    `clients` given, `read` is a window and the SE is on effective clients; None, `read` is one
+    period and the SE is on its own rows (one per client). `exact`: `eda.bins` is null;
+    `prior_rows`: `encoding_prior_rows`.
+    """
     spec = TASK_SPECS[task]
     pooled = pool_periods(cells, read)
     counts = shares(pooled)
@@ -97,10 +103,10 @@ def feature_se(
     clients: dict[str, float] | None = None,
 ) -> float:
     """The SE of a feature's concordance `value` (D-082): the task's `concordance_se` on the
-    events and non-events it reads, a window's (`clients` given: `counts.window_clients`) in
-    effective clients through the task's `client_support`, a categorical's times
-    `CROSS_FIT_SE_INFLATION`. `target_bin_shares` are the read rows' target-bin shares, which
-    Kendall's SE reads; Hanley–McNeil reads none, so a binary caller without them passes None."""
+    events and non-events it reads, in effective clients when `clients`
+    (`counts.window_clients`) is given, a categorical's times `CROSS_FIT_SE_INFLATION`.
+    `target_bin_shares` are the read rows' target-bin shares, which Kendall's SE reads;
+    Hanley–McNeil reads none, so a binary caller without them passes None."""
     spec = TASK_SPECS[task]
     if clients is not None:
         events, non_events = spec["client_support"](events, non_events, clients)

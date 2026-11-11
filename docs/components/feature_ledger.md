@@ -56,7 +56,7 @@ This spec settles OD-11 (the ledger's shape).
    run starts from a fresh ledger, so **an EDA rerun removes Feature Checks' columns** (and EDA
    removes the `feature_checks/` folder, A22).
 3. Feature Checks reads `eda/` with `read_upstream` (refused when EDA's settings digest differs from
-   the current resolved config's) and the ledger with `read_ledger(folder, data_definition_hash,
+   the current resolved config's, or a source moved in the environment file) and the ledger with `read_ledger(folder, data_definition_hash,
    expect={"eda": <eda.json's run_token>})` (another data definition, or a ledger from another EDA
    run than `eda/`, is refused), refuses one without EDA's columns, runs its steps and adds its
    columns with `add_columns(..., stage="feature_checks")`, a skipped step's as null. A Feature

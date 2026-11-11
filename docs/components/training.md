@@ -12,7 +12,15 @@ model results report comes from [evaluation](evaluation.md) (D-036).
 
 ## Phase 2 requirements
 1. **Due-diligence gate:** refuse to train unless EDA and Feature Checks artifacts exist for the same
-   data-definition hash and EDA's settings digest matches the current resolved config (A22). The `autonomous` level runs them first (D-031). After training, a person
+   data-definition hash, their settings digests match the current resolved config (A22) and their
+   sources' digests the environment file (`check_upstream`: a source pointed at another path or
+   table is other data, Q577). The `autonomous` level runs them first (D-031). Training opens, in
+   the notebook and in the run's log at both levels, with the resolved config's choices and the
+   feature set in force: the held, excluded and kept features with the audit-log entries that
+   set them, beside the count Feature Checks' run held (`feature_checks.json` → `held`). When the
+   two differ (a `revert` undid that run's flags), a warning says so and that `rerun
+   feature_checks` restores them; it does not refuse (Q576: a revert is a person's explicit act,
+   and at `autonomous` Feature Checks runs right before Training). After training, a person
    signs off the model's final feature list before register, in one gate at every level (D-031,
    [feature checks](feature_checks.md)).
 2. **One small model interface:** the function triple per family (`fit`, `predict`, `describe`,
@@ -140,13 +148,15 @@ model results report comes from [evaluation](evaluation.md) (D-036).
 A named model family (e.g. LightGBM, CatBoost, XGBoost) tuned with Optuna (D-020), behind the same
 interface:
 - bounded, regularisation-friendly search spaces per family; early stopping; pruning;
+- a monotone constraint (or a scorecard) loses the shape of a feature EDA marked
+  `non_monotone`: such an option must exempt those features or warn on them;
 - an optional two-objective search (in-time metric vs overfitting gap), shown as a **trade-off
   chart**. The user (or a level's rule) picks a point, and the pick is recorded. The chart weighs
   train and test metrics; the validation period never chooses (D-083).
 - nulls: Phase 2's tree families take nulls natively, which the `nulls_informative` advice
   ("keep them as their own group", [feature checks](feature_checks.md)) relies on; a family
   that imputes must impute outside the value range with a missing indicator, never the median
-  (N17 of the Stage 2 record; decided when this path is built).
+  (decided when this path is built).
 
 ## Lessons from the crunch
 T9, T14; downsampling, calibration and FLAML-search lessons in `docs/context/lessons.md`.
@@ -155,21 +165,16 @@ T9, T14; downsampling, calibration and FLAML-search lessons in `docs/context/les
 *(fill when built)*
 
 ## Open questions
-- **The gate must also check that the Feature Checks run is still in force** (the ML audit of
-  the codebase review, 2026-11-10; to build with the gate, M2.3). `check_upstream` compares the
-  data definition and the settings only, and `resolve_features` trusts the resolved config's
-  `held` list. So a held feature reaches Training with every check green whenever the resolved
-  config does not carry the run's flags: after a person's `revert` to before or inside them,
-  with `resolve_config(upto=…)`, or with a resolved config saved before the run. Measured on a
-  stored run: after `revert_to=0` the gate passes 170 features, all 48 held ones among them.
-  The check: the run's own `run` entry (`feature_checks.json` → `entries_written`, the last
-  one's `seq`) is among the effective entries of the log the config was resolved from; else
-  "rerun feature_checks", which rewrites the undone flags. Not a regression: no code trains yet.
-- Two smaller gaps the same audit found in the gate's inputs, to settle with it: the
-  environment's physical sources are in no hash and no digest, so pointing the sources at other
-  data under the same root leaves EDA's and Feature Checks' artifacts passing as current; and
-  `build_frames(…, "evaluation", features)` accepts a config that was only loaded and any
-  candidate, so Evaluation must check its feature list against the model bundle's.
+- Evaluation's frames: `build_frames(…, "evaluation", features)` accepts a config that was only
+  loaded and any candidate (the ML audit of the codebase review, 2026-11-10), so Evaluation must
+  check its feature list against the model bundle's.
+- On a shared model input, the columns another use case's target was built from (its
+  `data.target.lineage`) are ordinary candidates here: only the config's own lineage is
+  excluded, and Feature Checks' leakage step is the guard (the codebase review, 2026-11-10).
+  Decide with Training's design whether that is enough.
+- An ordered-categorical kind for a string that is really ordered ("low / mid / high") belongs
+  to Training's encoder. The encoder reads the kinds EDA decided (`meta["kinds"]`, after the
+  `features.kinds` overrides), so a numeric overridden to `categorical` is encoded as levels.
 - Training's D-088 count check against EDA's `population` table compares `eligible_rows`,
   `known_target` and `positive_rows`, never `rows` (which counts ineligible rows after the analysis
   filters too); its due-diligence check also compares EDA's recorded kinds (`meta["kinds"]`, from

@@ -36,7 +36,6 @@ from core_modelling.dataset import Frames
 from core_modelling.dataset.counts import bin_edges
 from core_modelling.eda import compare_sides, lift_by_group, pivot_target, rate_by_period
 from core_modelling.eda.deep_dives import (
-    DEEP_DIVE_GROUPS,
     dive_group_count,
     group_table,
     strata_pivots,
@@ -89,7 +88,9 @@ def test_the_folder_holds_every_file_and_table(result: StageResult) -> None:
     assert not (folder.parent / "feature_checks").exists()  # the stale judgement is gone
 
 
-def test_eda_json_carries_the_population_counts_and_the_digest(result: StageResult) -> None:
+def test_eda_json_carries_the_population_counts_and_the_digest(
+    result: StageResult, eda_env: EnvironmentConfig
+) -> None:
     """The D-088 counts per compared period, the digest Feature Checks recomputes (its upstream
     check passes on the same resolved config) and the key features with why."""
     meta = json.loads(Path(result.paths["eda.json"]).read_text())
@@ -102,7 +103,7 @@ def test_eda_json_carries_the_population_counts_and_the_digest(result: StageResu
     window = [row for row in meta["population"] if row["period"] in periods["window"]]
     assert all(row["known_target"] is not None and row["eligible_rows"] > 0 for row in window)
     assert meta["settings_digest"] == settings_digest(result.config, SETTINGS)
-    check_upstream(meta, result.config)
+    check_upstream(meta, result.config, eda_env)
     assert set(meta["key_features"].values()) <= {"top_n", "listed"}
     assert len(meta["key_features"]) == result.config.eda.key_features.top_n
     assert list(meta["slices"]) == list(dict.fromkeys(result.tables["slices"]["slice"].dropna()))
@@ -183,7 +184,9 @@ def test_a_stratum_named_like_a_framework_column_is_refused(
         _check_frame_names(cfg, eda_frames)
 
 
-def test_a_changed_validation_period_makes_eda_stale(eda_card: StageResult) -> None:
+def test_a_changed_validation_period_makes_eda_stale(
+    eda_card: StageResult, eda_env: EnvironmentConfig
+) -> None:
     """The validation period decides the compared periods and the population counts yet is
     outside the data-definition hash (D-088): Feature Checks' upstream check refuses EDA's meta
     once it changes, naming it."""
@@ -193,7 +196,7 @@ def test_a_changed_validation_period_makes_eda_stale(eda_card: StageResult) -> N
     # as the changed config resolved again: its hash is its content's
     moved.housekeeping = {**moved.housekeeping, "resolved_input_hash": resolved_input_hash(moved)}
     with pytest.raises(ValueError, match=r"eda ran with time\.validation_period"):
-        check_upstream(meta, moved)
+        check_upstream(meta, moved, eda_env)
 
 
 def test_a_numeric_stratum_outside_the_candidates_is_checked(eda_regression: StageResult) -> None:
@@ -228,8 +231,10 @@ def test_dive_tables_keep_their_columns(result: StageResult) -> None:
     assert every.columns.tolist() == columns["per_period"]
     assert len(every) == len(result.tables["ranking"]) * len(periods["window"])
     keys = every.loc[every["feature"].isin(list(result.meta["key_features"]))]
-    keys = keys.reset_index(drop=True)
-    pd.testing.assert_frame_equal(keys, result.tables["per_period"], check_like=True)
+    by_row = ["feature", "period"]  # the dives follow the key features' order, listed first
+    dives = result.tables["per_period"].sort_values(by_row).reset_index(drop=True)
+    keys = keys.sort_values(by_row).reset_index(drop=True)
+    pd.testing.assert_frame_equal(keys, dives, check_like=True)
     empty = _dive_tables([], result.config.task)
     assert set(empty) == set(columns)
     assert all(table.empty and table.columns.tolist() == columns[name]
@@ -296,7 +301,7 @@ def test_estimate_axes_take_the_task_format_and_lift_axes_stay_plain(result: Sta
 def test_the_correlation_overview_shows_the_key_features_and_whom_they_represent(
     eda_card: StageResult,
 ) -> None:
-    """The heatmap's names are the key features with a compared pair among them, in rank order;
+    """The heatmap's names are the key features with a compared pair among them, in their order;
     the table beneath lists the candidates the key-feature rule skipped, each above
     max_correlation with the key feature that represents it."""
     heatmap, represented = eda_card.views["correlation"]
@@ -340,13 +345,14 @@ def test_the_exploration_functions_cut_the_deep_dives_groups(eda_card: StageResu
 
 
 def test_a_numeric_is_cut_by_level_up_to_strata_max_levels(eda_card: StageResult) -> None:
-    """One rule (`dive_group_count`) decides a numeric's deep-dive groups: with `strata.max_levels`
+    """One rule (`dive_group_count`) decides a numeric's deep-dive groups, `strata.max_levels`
+    of them when it has more distinct values: with `strata.max_levels`
     raised to a binned key feature's distinct values, `lift_by_group`, `rate_by_period` and the
     strata pivots cut it by level, one group per bucket as `group_table` gives it; a few-valued
     numeric reads its values (`1`, not `= 1`), as a feature and as a `by`."""
     feature = eda_card.tables["bins"]["feature"].iloc[0]
     levels = int(eda_card.tables["ranking"].set_index("feature").loc[feature, "levels"])
-    assert dive_group_count("numeric", levels, levels - 1) == DEEP_DIVE_GROUPS
+    assert dive_group_count("numeric", levels, levels - 1) == levels - 1  # strata.max_levels
     assert dive_group_count("numeric", levels, levels) is None
     assert dive_group_count("categorical", levels, 2) is None
     strata = eda_card.config.strata.model_copy(update={"max_levels": levels})

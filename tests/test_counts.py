@@ -191,7 +191,8 @@ def test_lagged_cells_equal_a_shift_by_client(
 ) -> None:
     """Pass 2 equals the pandas shift by client on the same rows: the previous row's value where
     its period index is the current one minus one, binned alike and counted against the current
-    period's target in the window periods; the window's first period has only null lagged cells."""
+    period's target in the window periods after the first, which has none; a one-period window
+    is refused."""
     rows = eda_frames.rows.select("unit_id", "period", *FEATURES, "target")
     cells = count_lagged_cells(rows, edges, levels, [], None, window, MONTH)
     ordered = collected.sort_values(["unit_id", "period"]).reset_index(drop=True)
@@ -199,14 +200,16 @@ def test_lagged_cells_equal_a_shift_by_client(
     adjacent = ordered["unit_id"].eq(ordered["unit_id"].shift()) & index.eq(index.shift() + 1)
     shifted = ordered[FEATURES].shift().where(adjacent)
     oracle = pd.concat([ordered[["unit_id", "period", "target", "fold"]], shifted], axis=1)
-    _same_cells(cells, _expected_cells(oracle[oracle["period"].isin(window)], edges, levels, True))
-    assert cells["lagged"].all()
-    assert cells.loc[cells["period"] == MONTH.label(window[0]), "is_null"].all()
+    later = oracle[oracle["period"].isin(window[1:])]
+    _same_cells(cells, _expected_cells(later, edges, levels, True))
+    assert cells["lagged"].all() and MONTH.label(window[0]) not in set(cells["period"])
     assert not cells.loc[cells["period"] == MONTH.label(window[1]), "is_null"].all()
+    with pytest.raises(ValueError, match="a one-period window has no lagged value"):
+        count_lagged_cells(rows, edges, levels, [], None, window[:1], MONTH)
 
 
 def test_lag_by_period_index_and_client_constant_shares(spark: SparkSession) -> None:
-    """On a hand-made frame: the window's first period has null lagged cells; a client missing
+    """On a hand-made frame: the window's first period has no lagged cells; a client missing
     the previous period gets a null lagged value, not the one two periods back; a static column's
     constant share is 1 (a NaN counts as null, N2, so it changes nothing) and a changing one's
     below 1, among clients with two or more values."""
@@ -223,7 +226,7 @@ def test_lag_by_period_index_and_client_constant_shares(spark: SparkSession) -> 
     edges = {"x": quantile_edges(np.array([1.0, 2.0, 3.0, 5.0, 8.0]), 10)}  # every value a bin
     lagged = count_lagged_cells(frame, edges, {}, [], None, MONTHS[:3], MONTH)
     by_bin = lagged.groupby(["period", "bin"])["n"].sum()
-    assert by_bin[MONTH.label(m0)].to_dict() == {NULL_BIN: 3}
+    assert MONTH.label(m0) not in by_bin.index.get_level_values("period")
     assert by_bin[MONTH.label(m1)].to_dict() == {"= 1": 1, "= 5": 1, NULL_BIN: 1}
     assert by_bin[MONTH.label(m2)].to_dict() == {"= 2": 1, "= 5": 1, NULL_BIN: 1}
     constant = client_constant_shares(frame, ["x", "y"], MONTHS[:3]).set_index("feature")
@@ -486,7 +489,7 @@ def test_passes_refuse_an_empty_window_nothing_to_count_and_a_non_binary_flag(
         with pytest.raises(ValueError, match="window_periods is empty"):
             count(frame, edges, {}, [], None, [], MONTH)
         with pytest.raises(ValueError, match="nothing to count"):
-            count(frame, {}, {}, [], None, [m0], MONTH)
+            count(frame, {}, {}, [], None, MONTHS[:2], MONTH)
     with pytest.raises(ValueError, match=r"the binary target holds the values \['2'\]"):
         count_cells(frame, edges, {}, [], None, [m0], MONTH)
 

@@ -111,9 +111,10 @@ def unit_env(
 
 @pytest.fixture(scope="session")
 def cc_config() -> UseCaseConfig:
-    """The walking skeleton's config, `conf/base/cc_acquisition.yml`, loaded; tests derive
-    variants from its dump, re-validated, and never change it."""
-    return load_config(Path(__file__).resolve().parents[1] / "conf/base/cc_acquisition.yml")
+    """The walking skeleton's config, `tests/conf/cc_acquisition.yml` (a frozen copy of the
+    shipped example, so a try-out in `conf/base/` changes no test), loaded; tests derive variants
+    from its dump, re-validated, and never change it."""
+    return load_config(Path(__file__).resolve().parents[1] / "tests/conf/cc_acquisition.yml")
 
 
 @pytest.fixture(scope="session")

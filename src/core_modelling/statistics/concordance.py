@@ -1,39 +1,21 @@
-"""The concordance, its standard error and the shrunk level encoding, from cells (D-082, D-135).
+"""The concordance, its standard errors, the level encoding and the best order, from cells
+(D-082, D-135).
 
 The concordance is the one ranking statistic of both tasks (Q427): Somers' D of the feature with
-respect to the target, `(concordant − discordant pairs) / pairs in different target bins`,
-rescaled to [0.5, 1] after the direction is taken out. For a 0/1 target it is exactly the AUC of
-the binned feature, a pair inside one feature bin counting half; for a regression target the
-pairs inside one target bin are left out. `concordance_from_table` reads it from a two-way table
-(`cells.two_way_table`) in a few cumulative sums: exact on the binned data, within 0.0001 of the
-raw AUC at 100 bins and about 0.01 from the raw rows' value against a 20-bin regression target
-(T32). `concordance_exact` is the `eda.bins: null` regression path, where both sides keep their
-values and a dense table would be too large: Kendall's τ-b on the rows the cells expand to
-(O(n log n)), turned into Somers' D through the tie counts.
+respect to the target, rescaled to [0.5, 1] after the direction is taken out; for a 0/1 target
+it is the AUC of the binned feature. `concordance_from_table` reads it from a two-way table
+(`cells.two_way_table`): exact on the binned data, within 0.0001 of the raw AUC at 100 bins and
+about 0.01 from the raw rows' value against a 20-bin regression target (T32).
+`concordance_exact` is the `eda.bins: null` regression path, without the dense table. The SEs
+follow D-082, a window's support counted in effective clients (`effective_count`), since the
+same client is labelled in every period, mostly with the same label (T33); `cochran_q` tests
+whether per-period values differ.
 
-The standard errors follow D-082 (Hanley–McNeil in events; Kendall's null SE in units, halved
-and scaled for the target's ties), floored at `SE_FLOOR`; `cochran_q` tests whether per-period
-values differ. A window's events are counted in effective clients (`effective_count`, through
-the per-task `client_support`): the same client is labelled in every period and, with
-overlapping target windows, mostly with the same label, so the pooled rows overstate what the
-window knows (a null numeric was marked `non_monotone` 12–18% of the time on the rows' SE, 0% on
-the clients', 2026-11-04).
-
-A categorical has no order, so `encode_levels` scores its levels by their shrunk target mean
-(Micci-Barreca) and the levels are read in that order. Read on the rows it was fitted on, that
-order flatters noise, and so does an order fitted on the same clients' other periods: on a panel
-a null 50-level code reads 0.60 in sample and 0.57 cross-fitted by period. So a categorical's
-concordance is cross-fitted by client fold (`cross_fitted_concordance`): each fold's levels are
-ordered by the encoding fitted on the other folds' clients, and only pairs inside a fold count,
-so no client informs its own order and the null code reads 0.5 on average; `fold_encodings`
-gives those encodings, which EDA's slices order a categorical's list by too. Its spread is wider
-than its SE says (about 1.4×: each fold's order is fitted partly on the others' noise), so its
-SE is multiplied by `CROSS_FIT_SE_INFLATION`.
-
-`best_order_concordance` merges a numeric's bins into ten groups and orders them by their
-in-sample rate, what a ten-leaf tree on the feature would reach, and `ranking_value` takes it
-only when it beats the plain value by `max(NON_MONOTONE_MARGIN, NON_MONOTONE_SE_MULTIPLE · SE)`
-(V2).
+A categorical has no order: `encode_levels` scores its levels by their shrunk target mean, and
+its concordance is cross-fitted by client fold (`cross_fitted_concordance`, `fold_encodings`,
+which EDA's slices order a categorical's list by too), since an order read on the rows or the
+clients it was fitted on flatters noise (T33). `best_order_concordance` is what a ten-leaf tree
+on a numeric would reach, and `ranking_value` takes it only past `is_non_monotone`'s margin (V2).
 """
 
 import math
@@ -54,18 +36,15 @@ NON_MONOTONE_SE_MULTIPLE = 4
 # effective clients: each fold's order is fitted partly on the other folds' level noise, so the
 # five folds' values move together, which the SE (noise for a fixed order) leaves out. Measured
 # 2026-11-04 (SD 0.020 against 0.013 on a 500-event-client panel; 1.3–1.4× on independent rows);
-# the upper end, so a null code clears 0.5 + 2 SE about as rarely as a numeric does (the SDS).
+# the upper end, so a null code clears 0.5 + 2 SE about as rarely as a numeric does (the EDS).
 CROSS_FIT_SE_INFLATION = 1.5
 BEST_ORDER_GROUPS = 10  # the leaves of the tree the best-order concordance stands for
 
 
 def concordance_from_table(table: np.ndarray, sign: int | None = None) -> float:
-    """The concordance of a two-way table (feature bins in order × target bins in order).
-
-    Without `sign` the direction is taken out, `(1 + |D|) / 2`; with `sign` (+1 or −1, the
-    window's direction) the value is read in that direction, `(1 + sign · D) / 2`, so a flipped
-    period reads below 0.5.
-    """
+    """The concordance of a two-way table (feature bins × target bins, both in order),
+    `(1 + |D|) / 2` with D Somers' D; with `sign` (±1, the window's direction)
+    `(1 + sign · D) / 2`, so a flipped period reads below 0.5."""
     return _rescale(_somers_d(table), sign)
 
 
@@ -87,13 +66,13 @@ def concordance_se(value: float, events: float, non_events: float) -> float:
 
 
 def effective_count(count: float, rows: float, effective: float) -> float:
-    """`count` of a window's labelled rows in effective clients: scaled by the class's
-    `effective / rows` from `counts.window_clients`, so a client's near-copy rows count about
-    once; never below one row's worth, since `count` rows hold at least one client.
+    """`count` of a window's labelled rows in effective clients, `count · effective / rows` (the
+    class's ratio from `counts.window_clients`), never below `min(count, 1)`.
 
-    One ratio per run: a feature filled only on clients present in few periods gets too small a
-    count (a conservative SE), one filled only on clients present in every period while others
-    come and go too large (about 1.3× too small an SE with half the clients in one period of six).
+    Known limit: one ratio per run, so a feature filled only on clients present in few periods
+    gets too small a count (a conservative SE), one filled only on clients present in every
+    period while others come and go too large (about 1.3× too small an SE with half the clients
+    in one period of six).
     """
     if rows < 1:
         raise ValueError(f"effective_count: the window has no labelled rows of this class: {rows}")
@@ -101,16 +80,11 @@ def effective_count(count: float, rows: float, effective: float) -> float:
 
 
 def kendall_null_se(units: float, target_shares: np.ndarray) -> float:
-    """The null standard error of a regression concordance over `units` (D-082), floored at
-    `SE_FLOOR` after the tie factor.
+    """The null SE of a regression concordance over `units` (D-082): Kendall's
+    `sqrt(2(2n + 5) / (9n(n − 1))) / 2` times `sqrt(1 − Σp³) / (1 − Σp²)` for the target's ties
+    (`p`: `cells.target_shares`), floored at `SE_FLOOR`.
 
-    Kendall's null SE of τ, `sqrt(2(2n + 5) / (9n(n − 1)))`, is halved for the concordance
-    scale and multiplied by `sqrt(1 − Σp³) / (1 − Σp²)`, `p` the target bins' shares of the rows
-    the concordance reads (`cells.target_shares`): Somers' D divides by the pairs untied on the
-    target only, so a zero-inflated target's value spreads wider than τ's (1.6× at 70% zeros).
-    The factor is 1 without target ties (to 1/n), and the shares are scale-free, so they hold on
-    effective units too. The feature's ties are left out: they only narrow the null spread, so
-    the SE errs large, as Hanley–McNeil's does on a binned feature.
+    The feature's ties are left out, so the SE errs large.
     """
     p = np.asarray(target_shares, dtype=float)
     if (p < 0).any() or (p > 0).sum() < 2 or not math.isclose(p.sum(), 1.0):
@@ -126,9 +100,9 @@ def kendall_null_se(units: float, target_shares: np.ndarray) -> float:
 
 
 def cochran_q(values: np.ndarray, ses: np.ndarray) -> float:
-    """The p-value of Cochran's Q that the values differ: weights `1 / se²`, Q around the
-    weighted mean, χ² with k − 1 degrees of freedom. Fewer than two values are refused; the
-    caller reports "not available"."""
+    """The p-value of Cochran's Q that the values differ, `Q = Σ (v − v̄)² / se²` around the
+    `1 / se²`-weighted mean, against χ² with k − 1 degrees of freedom. Fewer than two values are
+    refused; the caller reports "not available"."""
     values, ses = np.asarray(values, dtype=float), np.asarray(ses, dtype=float)
     if values.size < 2 or values.shape != ses.shape:
         raise ValueError(
@@ -144,12 +118,10 @@ def cochran_q(values: np.ndarray, ses: np.ndarray) -> float:
 
 
 def encode_levels(cells: pd.DataFrame, k_rows: float) -> dict[str, float]:
-    """Every non-null level of one feature's pooled cells scored by its shrunk target mean,
-    `(sum_y + k · base) / (n + k)` over the labelled rows, `base` their mean (Micci-Barreca).
-
-    `k_rows` comes from the per-task spec (`shrinkage_rows`). The null level is left out (N7); a
-    level without labelled rows scores `base`.
-    """
+    """Level → shrunk target mean (Micci-Barreca) for every non-null level of one feature's
+    pooled cells, `(sum_y + k · base) / (n + k)` over the labelled rows, `base` their mean and
+    `k` = `k_rows` (the task's `shrinkage_rows`). The null level is left out (N7); a level
+    without labelled rows scores `base`."""
     if k_rows <= 0:
         raise ValueError(f"encode_levels: k_rows must be positive, got {k_rows}")
     values = cells.loc[~cells["is_null"]]
@@ -165,10 +137,14 @@ def encode_levels(cells: pd.DataFrame, k_rows: float) -> dict[str, float]:
 def fold_encodings(
     cells: pd.DataFrame, periods: list[str], k_rows: float
 ) -> dict[int, tuple[dict[str, float], float]]:
-    """Per client fold of `cells`, in fold order: the level encoding fitted on the other folds'
-    current cells over `periods` (`encode_levels` with `k_rows`), and that fit's labelled
-    non-null mean, a level unseen there scoring it. Every fold the cells hold is fitted, so a
-    fold whose clients sit only in periods outside `periods` gets the fit on all of them."""
+    """Fold → (level encoding, base) per client fold of one feature's `cells`, in fold order:
+    `encode_levels` fitted on the other folds' current cells over `periods`, and that fit's
+    labelled non-null mean, which a level unseen there scores.
+
+    Every fold the cells hold is fitted, so a fold whose clients sit only in periods outside
+    `periods` gets the fit on all of them. Refused for cells without a fold (a numeric's, or
+    outside the window) or with fewer than two folds.
+    """
     if "fold" not in cells or cells["fold"].isna().any():
         raise ValueError(
             "fold_encodings: every cell needs a client fold; a numeric's cells and the cells "
@@ -193,21 +169,17 @@ def cross_fitted_concordance(
     lagged: bool = False,
 ) -> float:
     """A categorical's concordance with its levels ordered by an encoding its own clients never
-    informed (but for the prior's weight `k_rows`, one number from the window's base rate over
-    every fold; simulated, it moves a null code's concordance by nothing): per client fold,
-    `encode_levels` fitted on the other folds' current cells over
-    `periods`, and the fold's cells over `read` (`periods` by default; lagged ones with `lagged`)
-    ordered by it. Somers' D sums the pairs inside each fold only, since two folds' orders come
-    from different fits, and is read in the encoding's direction: below 0.5 means the order does
-    not carry over, which `(1 + |D|) / 2` would fold upwards.
+    informed: per client fold, `fold_encodings` fitted on the other folds' current cells over
+    `periods`, applied to the fold's cells over `read` (`periods` by default; the lagged cells
+    with `lagged`).
 
-    The cells carry `fold` (the counts table's, for a categorical's window cells). A level unseen
-    in the other folds scores their base; a fold without labelled rows in `read` is skipped. The
-    snapshot's value is `read=[snapshot period]`, a period's `read=[period]`, the lagged value
-    `lagged=True`, always with the window as `periods`. Its SE is the task's SE on the same
-    support times `CROSS_FIT_SE_INFLATION`: its spread under no signal is about 1.4× the
-    Hanley–McNeil SE (the folds' orders share fitted noise). The encodings are
-    `fold_encodings` of the cells over `periods` and `read`.
+    Somers' D sums the pairs inside each fold only (two folds' orders come from different fits)
+    and is read in the encoding's direction, so below 0.5 means the order does not carry over.
+    `cells` are one feature's, with the counts table's `fold`. A fold without labelled rows in
+    `read` is skipped. The snapshot reads `read=[snapshot period]`, a period `read=[period]`,
+    the lagged value `lagged=True`, always with the window as `periods`. Known limit: the
+    prior's weight `k_rows` comes from every fold's base rate (simulated, it moves a null code's
+    concordance by nothing). Its SE is the task's times `CROSS_FIT_SE_INFLATION`.
     """
     read = list(periods) if read is None else read
     if not read:
@@ -232,13 +204,13 @@ def cross_fitted_concordance(
 
 
 def best_order_concordance(cells: pd.DataFrame, k_rows: float) -> float:
-    """The concordance of a numeric's bins merged into ten groups (`merge_bins`, a mass point its
-    own group) and ordered by their shrunk target mean: what a ten-leaf tree would reach.
+    """The concordance of a numeric's labelled non-null bins merged into `BEST_ORDER_GROUPS`
+    groups (`merge_bins`, a mass point its own group) and ordered by their shrunk target mean:
+    what a ten-leaf tree would reach.
 
-    The merge comes first because ordering a hundred bins by their own in-sample rates would
-    reward noise; even with ten groups a null control gains about 2 SE (0.014 at 2,000 events,
-    0.028 at 500), hence the SE-scaled margin of `is_non_monotone`. Not computed for a
-    categorical: in its encoding order its best-order value is its plain value by definition.
+    Merging first keeps the order from rewarding a hundred bins' noise; a null control still
+    gains about 2 SE, hence `is_non_monotone`'s SE-scaled margin. A categorical needs none: in
+    its encoding order its best order is its plain value.
     """
     values = _labelled_values(cells)
     if values["n"].sum() == 0:

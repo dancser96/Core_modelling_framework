@@ -1,5 +1,5 @@
 # Config spine
-**Status:** built (M2.1, 2026-10-26; for the SDS's review); the Stage 2 fields and audit-log changes
+**Status:** built (M2.1, 2026-10-26; for the EDS's review); the Stage 2 fields and audit-log changes
 specified 2026-11-02; the schema's Stage 2 fields, the template, the example configs and the
 `keep` rename built 2026-11-03 (Stage 2 m1.1), the audit log's `findings`, `flag`, `run`, the
 held set and the paths built 2026-11-03 (m1.2), m1.1's and m1.2's review fixes applied
@@ -117,7 +117,7 @@ features:
 
 strata:
   variables: [segment, onboarding_channel]
-  max_levels: 10                         # the rest pooled as `__other__`
+  max_levels: 10                         # the rest pooled as `__other__`; a numeric deep dive's groups
   min_events: 50                         # fewer positive events in a stratum (regression: units with a non-zero target): shown as insufficient (D-082); also the shrinkage weight of the level encoding
 
 eda:
@@ -331,7 +331,7 @@ What it holds, what its reader refuses and when it is written: [dataset](dataset
     deprecation warning.
 
 ## Decision audit log (D-125)
-**Decided (settles the audit-log design; amends D-043 and D-088); built in Stage 1's major step 1.** The SDS
+**Decided (settles the audit-log design; amends D-043 and D-088); built in Stage 1's major step 1.** The EDS
 and LDS build from this section.
 
 **The model.** The config is the intent. Its **data part** (sources, keys, period, target spec,
@@ -817,7 +817,7 @@ were its best ideas. They now become candidates + decisions + the feature ledger
 time checks.
 
 ## Interface
-Built in Stage 1's major step 1 (2026-10-26; under the SDS's review); the items marked "Stage 2
+Built in Stage 1's major step 1 (2026-10-26; under the EDS's review); the items marked "Stage 2
 step 1" change in Stage 2's first step, in place (no schema or log bump, D-136): the schema's
 fields, the template, the examples and the `keep` rename are built (m1.1, 2026-11-03), the audit
 log's `findings`, `flag`, `run`, the held set and the paths too (m1.2, 2026-11-03). Package:

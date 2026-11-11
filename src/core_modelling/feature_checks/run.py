@@ -1,20 +1,23 @@
 """`run_feature_checks`: the Feature Checks stage for one entity, in the order of
 docs/components/feature_checks.md "How one run flows".
 
-It resolves the config (the audit log replayed, D-125), reads EDA's artifacts and the ledger for
-the data definition (refusing a missing or stale EDA, whose settings digest no longer matches,
-and a ledger whose EDA run token is not `eda.json`'s),
-runs the five steps of `steps.py` in their fixed order, a step left out of a present
-`feature_checks` mapping skipped, and stacks their findings. It then writes the audit log: the
-`flag` entries `decisions.flag_entries` decides (changed feature sets only, so a rerun on
-unchanged data writes none) and one `run` entry with the compared periods (D-088). The log read
-again gives the held set and the proposed decisions; Feature Checks' ledger columns are
-appended, a skipped step's as null so readers always find the column set; the views and the
-report (`report.py`) are built before anything is saved; then the ledger is saved and
-`feature_checks/` written with `report.html` in it, `feature_checks.json` being the commit
-marker (D-136). It orchestrates only: every statistic is in `steps.py` and `measures.py`, and
-it reads EDA's artifacts alone, so `spark` is never used. A flag holds a feature out of training
-at both automation levels until a person keeps or excludes it; a note never does (D-134).
+1. Resolve the config (the audit log replayed, D-125); read EDA's artifacts and the ledger of
+   the data definition, refusing a missing or stale EDA (its settings digest no longer matches)
+   and a ledger whose EDA run token is not `eda.json`'s.
+2. Run the five steps of `steps.py` in their fixed order, a step left out of a present
+   `feature_checks` mapping skipped, and stack their findings.
+3. Write the audit log: the `flag` entries `decisions.flag_entries` decides (changed feature
+   sets only, so a rerun on unchanged data writes none), then one `run` entry with the compared
+   periods (D-088).
+4. Read the log again for the held set and the proposed decisions; append Feature Checks'
+   ledger columns (a skipped step's as null, so readers always find the column set); build the
+   views and render the report (`report.py`) before anything is saved.
+5. Save the ledger, then write `feature_checks/` with `report.html` in it,
+   `feature_checks.json` being the commit marker (D-136).
+
+It orchestrates only: every statistic is in `steps.py` and `measures.py`, and it reads EDA's
+artifacts alone, so `spark` is never used. A flag holds a feature out of training at both
+automation levels until a person keeps or excludes it; a note never does (D-134).
 """
 
 import time
@@ -110,7 +113,7 @@ def run_feature_checks(
     columns = _ledger_columns(inputs.ledger, outputs, findings)
     ledger = add_columns(ledger, columns, "feature_checks")
     held = held_summary(ledger, flags, findings)
-    meta = _stage_meta(resolved, eda_meta, list(outputs), findings, held, written)
+    meta = _stage_meta(resolved, env, eda_meta, list(outputs), findings, held, written)
     meta["timings"] = {"seconds": seconds}
     decided = render_decisions(ledger, after, entries)
     views = build_views(tables, eda_tables["concordance_per_period"], meta, after, decided,
@@ -160,9 +163,10 @@ def _clusters(outputs: dict[str, StepResult]) -> pd.DataFrame:
 def _ledger_columns(
     read: pd.DataFrame, outputs: dict[str, StepResult], findings: pd.DataFrame
 ) -> pd.DataFrame:
-    """Feature Checks' ledger columns for every read candidate, in `COLUMNS_BY_STAGE` order:
-    `flags` and `notes` (the full names this run raised, in table order, empty lists when none),
-    each step's columns, and a skipped step's as null."""
+    """One row per read candidate (`read`: `CheckInputs.ledger`): `feature` and Feature Checks'
+    ledger columns in `COLUMNS_BY_STAGE` order: `flags` and `notes` (the full names this run
+    raised, in table order, empty lists when none), the columns of each step that ran, and a
+    skipped step's as null (typed by `NULL_DTYPES`, else float)."""
     columns = read[["feature"]].copy()
     position = {name: i for i, name in enumerate(FINDINGS)}
     raised = findings.assign(position=findings["finding"].map(position))
@@ -209,8 +213,8 @@ def _write_entries(
 
 
 def _raised_summary(findings: pd.DataFrame, ran: list[str]) -> dict[str, dict]:
-    """Per finding of the steps that ran, in table order: its kind, how many features raised it
-    and which (the values stay in `tables/findings`)."""
+    """Finding → `{kind, count, features}` for every finding of the steps that ran, in table
+    order, a finding nobody raised with count 0 (the values stay in `tables/findings`)."""
     summary = {}
     for step in ran:
         for name in step_findings(step):
@@ -222,6 +226,7 @@ def _raised_summary(findings: pd.DataFrame, ran: list[str]) -> dict[str, dict]:
 
 def _stage_meta(
     resolved: UseCaseConfig,
+    env: EnvironmentConfig,
     eda_meta: dict,
     ran: list[str],
     findings: pd.DataFrame,
@@ -230,10 +235,10 @@ def _stage_meta(
 ) -> dict:
     """`feature_checks.json` without the timings: the hashes, `replayed_to` and the settings
     digest Training checks of the run's input (`stage_identity`: the thresholds the steps ran
-    with), the run token, the compared periods, the steps run and skipped, the findings raised,
-    the held features, the entries written and EDA's headline."""
+    with, and the sources' entries), the run token, the compared periods, the steps run and
+    skipped, the findings raised, the held features, the entries written and EDA's headline."""
     return {
-        **stage_identity(resolved, "feature_checks"),
+        **stage_identity(resolved, "feature_checks", env),
         "run_token": new_run_token(),
         "snapshot_period": eda_meta["snapshot_period"],
         "compared_periods": eda_meta["compared_periods"],

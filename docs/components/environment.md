@@ -16,7 +16,10 @@ by logical name, the collect budget and the theme. An unknown key fails loud, so
 field can't hide there. The use-case config never holds a physical name, and there is **no merge**
 of the environment file over the config: it is loaded beside the config, by a path argument or
 the `CORE_MODELLING_ENVIRONMENT` variable, never from the working directory (T5). The hashes
-exclude it (D-088); the resolved config's housekeeping block records the values a run used. The
+exclude it (D-088); the resolved config's housekeeping block records the values a run used. Each
+stage's json records the entries of the sources the config reads (`sources`, `sources_digest`),
+so a later stage refuses one read from a source that has since moved: another path or table is
+other data, though the data definition is the same (Q577, D-137). The
 laptop's file points at the synthetic `dev` dataset; the bank fills its own. The example, with
 placeholders, is `conf/base/environment.example.yml`:
 
@@ -106,7 +109,7 @@ T1–T5 (`docs/context/lessons.md`).
 Built: `core_modelling/_compat.py`, the `np.NaN` alias applied on package import (T1; verified
 2026-10-14: without it, `import pyspark.pandas` fails on the pinned numpy 2.3.5 + PySpark 3.4.3).
 
-Built in Stage 1's major step 1 (2026-10-26; under the SDS's review), in
+Built in Stage 1's major step 1 (2026-10-26; under the EDS's review), in
 `core_modelling/environment.py` (the paths changed in Stage 2's m1.2, 2026-11-03). They replace
 the M1 private session and source functions and their YAML source mapping.
 - `EnvironmentConfig` (Pydantic, `extra="forbid"`): `spark: SparkSettings` (master,

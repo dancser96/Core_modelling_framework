@@ -148,7 +148,15 @@ Whether this glossary is also published to the wider unit is part of the open do
   Reports show both counts. Wherever a count of positives decides something (minimum support,
   a standard error, the AUC floor, a per-period statistic) it counts events, i.e. distinct
   converting clients in that slice, and bootstraps and CV folds resample clients (D-082).
-- **Data definition / data-definition hash:** the task, entity, sources, eligibility, target
+- **Support:** the count an estimate's precision rests on, the `support` column of EDA's and
+  Feature Checks' tables. Named per task (`tasks.py`): positive events for a binary target, units
+  with a non-zero target for an amount. On one period it equals the positive rows; pooled over
+  the window it counts each client once (a window's SE takes it in effective clients), so it is
+  below `positive_rows` there. A group or period below its floor (`strata.min_events`; 20 in a
+  deep dive's groups) is greyed as insufficient.
+- **Data definition / data-definition hash:** the task, entity, sources (by logical name; where
+  each physically is, its path or table in the environment file, is each stage's sources digest
+  instead, which a later stage checks), eligibility, target
   spec, the period, the observation window, the target window and candidates (D-088). Its hash keys the
   EDA and Feature Checks artifacts that training requires; the validation period sits outside
   it: EDA never reads it, and Feature Checks reads it only to leave it out of its comparisons.
@@ -458,5 +466,5 @@ Whether this glossary is also published to the wider unit is part of the open do
   (`docs/roadmap.md`) and a trap (`docs/context/lessons.md`).
 - **Bank parity:** matching the internal environment's versions and behaviour. **One-way code
   flow:** code goes into the bank; nothing comes out.
-- **Worknotes:** committed notes in `worknotes/`, written for the SDS and the LDS: the sync
+- **Worknotes:** committed notes in `worknotes/`, written for the EDS and the LDS: the sync
   page (what to review, shared open questions), the verbose log, and per-topic chat handovers.

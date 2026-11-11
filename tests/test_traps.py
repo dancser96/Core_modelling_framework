@@ -40,9 +40,9 @@ pytestmark = pytest.mark.traps
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGS = {
-    "cc_acquire": ROOT / "conf/base/cc_acquisition.yml",
-    "td_acquire": ROOT / "conf/base/td_acquisition.yml",
-}  # the truth's target → the example config modelling it
+    "cc_acquire": ROOT / "tests/conf/cc_acquisition.yml",
+    "td_acquire": ROOT / "tests/conf/td_acquisition.yml",
+}  # the truth's target → the config modelling it (frozen copies of the shipped examples)
 NO_LOAN_CONFIG = "no config: loan target"
 # (trap kind, target) → the findings that must fire on the trap's column(s); None = any product
 TRAP_FINDINGS = {

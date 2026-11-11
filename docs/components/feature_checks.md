@@ -1,8 +1,9 @@
 # Feature Checks
-**Status:** built (2026-11-06, Stage 2 major step 3; spec settled 2026-11-02; the SDS's review 1 and its answers Q539–Q545 applied 2026-11-09) · **Legacy:** `src/leakage.py`, `src/feature_stats.py` (`signal_persistence`), `notebooks/Feature_Checks.ipynb`
+**Status:** built (2026-11-06, Stage 2 major step 3; spec settled 2026-11-02; the EDS's review 1 and its answers Q539–Q545 applied 2026-11-09) · **Legacy:** `src/leakage.py`, `src/feature_stats.py` (`signal_persistence`), `notebooks/Feature_Checks.ipynb`
 **Related:** [feature ledger](feature_ledger.md) · [EDA](eda.md) · [training](training.md) ·
 [target factory](target_factory.md) (lineage) · [dataset](dataset.md) · [config](config.md) (the
-audit log) · [reporting](reporting.md) · [lifecycle](lifecycle.md) (register) · D-023, D-028,
+audit log) · [reporting](reporting.md) · [lifecycle](lifecycle.md) (register) ·
+[questions and answers](../guides/eda_fc_faq.md) · D-023, D-028,
 D-029, D-030, D-031, D-050, D-082, D-088, D-125, D-132, D-134, D-135, D-136, D-137 · OD-12 (its
 Feature Checks part is settled by this spec)
 
@@ -207,8 +208,10 @@ are owned by [EDA](eda.md) and the [feature ledger](feature_ledger.md).
   candidate without rows in `cells`, `client_constant`, `ranking` or `concordance_per_period`.
 - **The digest check:** Feature Checks recomputes the digest of `features.kinds`, `strata`, `eda`,
   `time.validation_period`, `decision` and `evaluation.slices` (`SETTINGS_PATHS_BY_STAGE["eda"]`)
-  from the current resolved config and refuses on a difference, naming the changed path; an
-  `eda.json` lacking `stage`, the digest or `run_token` is refused naming the stage ("rerun eda").
+  from the current resolved config and refuses on a difference, naming the changed path; it
+  refuses as well when the environment file now maps one of the sources elsewhere (the sources'
+  digest, naming the source and both entries); an `eda.json` lacking `stage`, a digest or
+  `run_token` is refused naming the stage ("rerun eda").
   An EDA run removes `feature_checks/` and Feature Checks' ledger columns, so a stale judgement
   cannot survive it.
 - **One EDA run:** a ledger whose sidecar's EDA run token is not `eda.json`'s `run_token` is
@@ -233,7 +236,7 @@ columns). A concordance per period or lagged is taken in the window's direction
 (`raw_sign_window`), so a flip reads below 0.5. Every default below is also a template leaf
 (D-137). How each statistic is computed: [EDA](eda.md).
 
-**Support never skips a check** (the SDS's Q540). Every check computes on the support there is;
+**Support never skips a check** (the EDS's Q540). Every check computes on the support there is;
 only a value that cannot exist (no labelled row on a side, no events, one target value) is "not
 available". A finding with a standard error ends its detail with `support n effective <support
 name>, SE s` (the support name the task's: positive events, or units with a non-zero target; the
@@ -297,7 +300,7 @@ independently.
   `Leakage()`'s default (0.70), and the config refuses a `nulls_informative_min` at or above the
   bound in use (the note could never fire). "Whether the value is filled carries information; keep
   the nulls as their own group; a family that imputes must impute outside the value range, never the
-  median." **Null sets** (the SDS's Q543): the noted features with the same null counts in every
+  median." **Null sets** (the EDS's Q543): the noted features with the same null counts in every
   current cell of EDA's table (every target bin of the window, labelled or not, and the gap and
   latest periods: in practice the same null rows; the unlabelled and later counts tell apart two
   sets that coincide on the labelled ones) share a null set, numbered 1… by size; the detail opens
@@ -312,7 +315,7 @@ independently.
 
 #### `leakage`
 - **`too_strong`** · flag · `concordance_max: 0.80`. The higher of `concordance_window` and
-  `concordance_best_order_window` ≥ 0.80 (the SDS's Q541: a U-shaped leak, both ends filled because
+  `concordance_best_order_window` ≥ 0.80 (the EDS's Q541: a U-shaped leak, both ends filled because
   of the outcome, is strong only in best order; a categorical's cross-fitted value is in its best
   order already); when the best order is the higher, the detail opens "best order; in bin order
   0.xxx", then the evidence. Without a window concordance, EDA's reason (the ranking's
@@ -338,7 +341,7 @@ independently.
   filled (non-null) window rows (the nulls are the null concordance's business): one value (bin)
   holding at least `dominant_share_min` of them, every other value pooled as the **minority**
   (Q441, A28). The effect is the task's `rare_effect` of the minority's labelled rows against the
-  dominant value's (the SDS's Q539), signed, so a minority below the dominant value reads
+  dominant value's (the EDS's Q539), signed, so a minority below the dominant value reads
   negative and never fires:
   - binary, **Cohen's h**, 2·asin√p₁ − 2·asin√p₂ on the two rates: the arcsine-square-root scale,
     on which a proportion's variance no longer depends on the proportion, so a small rate must
@@ -370,8 +373,8 @@ without signal there is nothing to lose or to stamp.
 - **`lagged_signal_drop`** · flag · `signal_kept_min: 0.5`. `signal_kept = (lagged_concordance −
   0.5) / (concordance_window − 0.5) < 0.5`, the lagged concordance (each row's value one period
   earlier against its current target, in the window's direction, so `signal_kept` may go negative)
-  read on the **lagged pool**: the window's periods after the first (the first period's lagged cells
-  are null by construction: its previous period is not in EDA's rows), on whatever support it holds;
+  read on the **lagged pool**: the window's periods after the first (the first period has no lagged
+  cells: its previous period is not in EDA's rows), on whatever support it holds;
   "not available" for a one-period window (no lagged value), when the pool has no events or one
   target value, without a window direction, or when a categorical's cross-fit lacks two client
   folds. The detail gives the share of the pool's rows without a lagged value (N11), "read one
@@ -393,7 +396,7 @@ without signal there is nothing to lose or to stamp.
   attributes with signal are flagged too: no statistic on the counts tells a static attribute
   from one date's value stamped onto every period, only lineage does. The step's findings table
   shows each flagged feature's constant share and window concordance side by side, so one `keep`
-  settles the static ones once per use case and an `exclude` the stamped one (the SDS,
+  settles the static ones once per use case and an `exclude` the stamped one (the EDS,
   2026-11-04); the feature store's static/time-varying metadata, once available, would let the
   check skip static attributes (backlog).
 
@@ -409,7 +412,7 @@ without signal there is nothing to lose or to stamp.
   halved, does not depend on the value: the per-task flag `period_se_at_window_value`; D-082). The
   pooled `c̄ = Σ w_i c_i / Σ w_i`, `Q = Σ w_i (c_i − c̄)²`, `p = 1 − χ²_{k−1}(Q)`. Flag when `p ≤
   0.01` and the range `max c_i − min c_i ≥ max(0.05, 0.5 × |concordance_window − 0.5|)`:
-  relative to the window's signal (the SDS's Q544: 0.06 is the whole signal of a 0.55 feature and
+  relative to the window's signal (the EDS's Q544: 0.06 is the whole signal of a 0.55 feature and
   a fifth of a 0.80 one's; 0.5, the periods differ by half the signal), never below the floor
   (Q547: near no signal the relative bound nears 0 and Q alone would decide, so on a large
   population a signal-less feature's 0.04 wobble was held) (`heterogeneity_p`,
@@ -425,7 +428,7 @@ without signal there is nothing to lose or to stamp.
   periods share clients, so their concordances are positively correlated and Q, which assumes them
   independent, is conservative (fewer flags than the nominal level); each per-period SE is right on
   its own rows.
-- **PSI in two tiers** (the SDS, 2026-11-09): each PSI raises a note from `psi_note_min: 0.10`
+- **PSI in two tiers** (the EDS, 2026-11-09): each PSI raises a note from `psi_note_min: 0.10`
   and a flag from `psi_max: 0.25` (Monitoring's drift threshold), never both: the flag replaces
   the note. The config refuses a `psi_note_min` above `psi_max`. A PSI's "not available" reason
   applies to its flag and its note alike.
@@ -502,7 +505,7 @@ Feature Checks relies on:
   one value and no nulls is `constant`, every value null is `all_null`.
 - **N5** Null is its own bin for every feature: PSI includes it, and a null share that appears in
   the latest period but in no window period counts towards `new_levels` (a field stopped being
-  filled). Status: assumption, open to the SDS's veto.
+  filled). Status: assumption, open to the EDS's veto.
 - **N6** Every concordance (window, per period, lagged) is on the feature's non-null rows and its
   support counts those rows only; the nulls' own signal is `null_concordance`.
 - **N11** A lagged value is null when the client has no row in the previous period or that value
@@ -526,7 +529,7 @@ Feature Checks relies on:
   still in the ledger, every report, Training's log, the sign-off view and the model card. In
   effect, for Training, a held feature is an excluded feature without a final decision: the model
   is built without it until a person keeps or excludes it. The report, Training's log, the
-  ledger's `held` column and notebook 03's guide say so in those words (the SDS, 2026-11-03).
+  ledger's `held` column and notebook 03's guide say so in those words (the EDS, 2026-11-03).
 - **Settling a flag.**
   - `keep`: the finding is accepted; the feature returns to the next training run and is
     protected from Training's automated pruning. The entry carries `findings`, the flags it
@@ -701,9 +704,9 @@ against the ground truth"); in short:
 - **False positives are checked on the controls** (above), **on the null controls** (pure noise:
   window concordance below 0.55 and no flag) and, count-free, on the card config's legitimate
   columns: none raises `too_strong`, `missingness_leak` or `lagged_signal_drop`
-  (`NEVER_ON_LEGITIMATE`, the SDS's Q545) unless a trap row allows it; the real columns named only
+  (`NEVER_ON_LEGITIMATE`, the EDS's Q545) unless a trap row allows it; the real columns named only
   for a note or as a control stay under this guard. There is no bound on the count of non-trap
-  holds (the SDS, 2026-11-09): the legitimate features a flag holds by design (`rare_value_leak`,
+  holds (the EDS, 2026-11-09): the legitimate features a flag holds by design (`rare_value_leak`,
   `client_constant`, the PSI flags) are a person's to keep. The D-088 counts per period come from
   `eda.json`.
 - **Running it:** the default `pytest` runs it (about 5.5 minutes of compute on the Mac);
@@ -822,12 +825,12 @@ the hold-out being the stage's correctness core; then `decisions.py`; then `find
   `finding`; the features may be empty) and the stage `run` entry (with `periods`); reads `keep`
   (with `findings`), `exclude`, `include`, `set` and `revert` through the replay.
 - **Artifacts** (`<use_case>/04_feature/<ddh>/feature_checks/`, D-136):
-  - `feature_checks.json`: the stamp (`schema_version: 2`, since the json carries its `run_token`;
+  - `feature_checks.json`: the stamp (`schema_version: 3`, since the json carries the sources' digest;
     an older one is refused by `read_stage`; `stage`, `framework_version`, `written_at`, `tables`);
     `entity`, `config_hash`, `data_definition_hash`, `resolved_input_hash`, `hash_version`,
     `replayed_to` of the run's input; `settings_digest` and `settings` over EDA's paths plus
-    `feature_checks`, the values the steps ran with (`stage_identity(resolved, "feature_checks")`;
-    Training checks it); `run_token` (the ledger's sidecar records it beside EDA's);
+    `feature_checks`, the values the steps ran with, and `sources_digest` and `sources`, as in
+    `eda.json` (`stage_identity(resolved, "feature_checks", env)`; Training checks them); `run_token` (the ledger's sidecar records it beside EDA's);
     `snapshot_period`, `compared_periods`, `steps_run`, `steps_skipped`; `findings` (per finding of
     the steps that ran: `kind`, `count`, `features`; the values stay in the table); `held`;
     `entries_written` (`seq`, `op`, `finding` of each entry this run wrote); `eda_headline`;
@@ -865,6 +868,9 @@ the hold-out being the stage's correctness core; then `decisions.py`; then `find
   [training](training.md).
 
 ## Open questions
+- **The thresholds on real data:** the defaults start sensitive, with too many flags rather
+  than too few, and a fixed threshold behaves differently on a strong and on a weak target.
+  Review the flag counts per finding and adjust the defaults at the December pre-release.
 - **Bank-side timing:** the stage reads tables only, but a regression counts table is about twenty
   times a binary one; unverified at the bank's size.
 - **Grouped importance and the cluster rule for automated selection** (the top member per cluster

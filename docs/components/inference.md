@@ -79,7 +79,7 @@ T2–T7; the per-use-case run-pin dict; reinference worked without local runs.
 ## Open questions
 - A joined feature source that lacks the inference period (a lagging extract) would score every
   client with its columns null. Refuse, or print loudly? Training accepts missing periods by
-  design (the SDS, 2026-10-30, `dataset.md`); inference is where it matters most (ML audit,
+  design (the EDS, 2026-10-30, `dataset.md`); inference is where it matters most (ML audit,
   2026-10-30). Decided when Inference is built (M2.4).
 - Scoring in Spark vs driver-side chunks for the largest populations (decide by measurement).
 - Spark ships a broadcast model to executors serialised in memory (cloudpickle). That is fine:

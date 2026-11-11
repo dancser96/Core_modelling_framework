@@ -24,8 +24,8 @@ RESOLUTION = 1_000_000  # the hash is folded into this many equal buckets, then 
 
 
 def _hash_uniform(columns: list[Column], salt: str, seed: int) -> Column:
-    """A number in [0, 1), a fixed function of the columns, the salt and the seed, spread evenly:
-    `xxhash64` of them all, folded into `RESOLUTION` buckets and scaled."""
+    """A uniform number in [0, 1): `pmod(xxhash64(salt, *columns, seed), RESOLUTION) /
+    RESOLUTION`."""
     bucket = F.pmod(F.xxhash64(F.lit(salt), *columns, F.lit(seed)), F.lit(RESOLUTION))
     return bucket / RESOLUTION
 
@@ -39,9 +39,10 @@ def assign_split(panel: DataFrame, cfg: UseCaseConfig) -> DataFrame:
 
 
 def sample_train(train: DataFrame, cfg: UseCaseConfig) -> tuple[DataFrame, dict]:
-    """The train split thinned as `training.sampling` declares, with the record: the method and
-    its parameter, the rows and the target's mean (binary: the positive rate) before and after;
-    the identity, recorded, without sampling."""
+    """The train split thinned as `training.sampling` declares (lazy; same columns, fewer rows),
+    with the record: the method, its parameter and seed, the rows and the target's mean (binary:
+    the positive rate) before and after, from two collected aggregates. Without sampling, the
+    split as it is and a record with `method` None. An empty result fails loud."""
     sampling = cfg.training.sampling
     if sampling is None:
         return train, {"step": "sampling", "method": None}

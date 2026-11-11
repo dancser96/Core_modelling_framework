@@ -222,7 +222,7 @@ def test_missing_validation_period_is_accepted_with_nulls_there_only(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """By design (the SDS, 2026-10-30) the left join takes an extract without the validation
+    """By design (the EDS, 2026-10-30) the left join takes an extract without the validation
     period: its columns are null in that period and only there, and the missing period is
     printed by name."""
     env = _planted_env(unit_output, unit_env, tmp_path, _without_validation)

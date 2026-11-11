@@ -78,7 +78,9 @@ Built in Stage 1 (2026-10-27), in `core_modelling/run.py`, `core_modelling/__mai
 ## Open questions
 - Where use cases live and how users get the notebooks (OD-02). Leaning: one repo per entity ×
   domain, with a use case branching into its own repo as it grows; not one shared repo with code
-  folders.
+  folders. The notebooks' setup cell finds the configs from the package's location, which works
+  on an editable install only: run from a use-case repo with the wheel installed, the setup
+  cell must name that repo's own config and environment paths.
 - The package ships in the base image through Nexus, which sets each use case's default framework
   version; the use case pins it (D-024, D-047). A use case can also take a newer framework version within its base image's
   year, as a newer package in the same image (D-047). Still open: the release mechanics (OD-04).

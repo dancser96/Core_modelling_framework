@@ -7,7 +7,7 @@ when_to_use: Trigger phrases include "delegate", "in parallel", "subagents", "sp
 # Delegation
 
 Work runs in parallel by default (D-072, `CLAUDE.md` §1 workflow). The main thread's context is
-the scarce resource: it holds the plan, the SDS's decisions and the integration. Everything that
+the scarce resource: it holds the plan, the EDS's decisions and the integration. Everything that
 doesn't need the whole picture goes to a subagent. Only mechanical, fully checked pieces go to a
 cheaper model; judgement stays on a strong one. A subagent starts with no context, so the brief
 is its whole job description.
@@ -21,26 +21,26 @@ List the pieces before touching anything. A piece qualifies for delegation when 
   merge them or run them in sequence.
 
 Stays on the main thread: the plan and its approval, anything that needs the whole picture,
-integration, and the conversation with the SDS. Don't do the pieces yourself after planning
+integration, and the conversation with the EDS. Don't do the pieces yourself after planning
 them; that is the usual failure.
 
 ## 2. Research is not design
 
 Research gathers and checks evidence: what is true, which options exist, what others do and with
 what results, each with a source. Design decides what this repo does: it weighs that evidence
-against the goals, the decision log, the constraints and the SDS's view. Brainstorming, the plan
+against the goals, the decision log, the constraints and the EDS's view. Brainstorming, the plan
 and every choice between options are design, and design never leaves the main thread.
 
 - A research brief asks "what is true?" or "what are the options and their evidence?", never
   "what should we do?".
-- A researcher may add a leaning, labelled as one. The main thread decides, with the SDS.
+- A researcher may add a leaning, labelled as one. The main thread decides, with the EDS.
 - Inside `brainstorming`, the research step can be delegated; the critique and the design can't.
 
 ## 3. Route
 
 Route by the cost of a wrong answer and how cheaply it can be checked, not by how small the piece
 looks. A cheaper model takes only mechanical work that a test, a command or the main thread
-reading the whole diff checks in full. Anything that feeds a decision, anything the SDS or LDS
+reading the whole diff checks in full. Anything that feeds a decision, anything the EDS or LDS
 reads as the record, and anything touching §4 runs on a strong model.
 
 - **Strong** means Opus: the session model when it is Opus, otherwise pass `model: opus`. On a
@@ -71,14 +71,14 @@ reads as the record, and anything touching §4 runs on a strong model.
 | Tests for a specified function | `general-purpose` | sonnet, high |
 | Tests for a §4 invariant or a §2 migration path | `general-purpose` | strong, high |
 
-**Docs.** They are how the SDS and the LDS see the work, so the cheaper model only propagates
+**Docs.** They are how the EDS and the LDS see the work, so the cheaper model only propagates
 text whose substance is already settled.
 
 | Piece | Agent type | Model, effort |
 |---|---|---|
 | Propagation: a renamed term, cross-references, index and inventory rows, text the main thread wrote | `general-purpose` | sonnet, medium |
 | Component doc content: a design section or a three-level rewrite, from substance given in the brief | `general-purpose` | strong, high |
-| `worknotes/sync.md` and `log.md`, `docs/decisions.md` rows, OD rows, `docs/UPDATES.md`, review guides, the report to the SDS | main thread | session |
+| `worknotes/sync.md` and `log.md`, `docs/decisions.md` rows, OD rows, `docs/UPDATES.md`, review guides, the report to the EDS | main thread | session |
 
 **Reviews and design**
 
@@ -92,7 +92,7 @@ Escalate a piece to a strong model when it turns out to need judgement, or when 
 failed once. Never retry the same brief on the same model. A cheaper model's output isn't done
 until the main thread has read it in full and a strong reviewer has seen it (step 6).
 
-**Routing plan on a Fable session** (D-072 (l)). Before a major task, show the SDS, with the plan
+**Routing plan on a Fable session** (D-072 (l)). Before a major task, show the EDS, with the plan
 and before spawning, one table: piece, agent type, model and effort, why. Nearly all of the
 subagent work goes to Opus, Sonnet and Haiku per the tables above. The point is balance: without
 the plan, almost every token goes to Fable.
@@ -121,7 +121,7 @@ Two variants:
   pinned version to check against, and where to look first. The report gives the evidence with
   sources, conflicts between sources, what is unverified, and at most a labelled leaning.
 - **Doc brief**: carries the substance: what changed and why, the D-nnn and OD-nn involved, the
-  reader (the SDS, the LDS or a future user), and the §8 style (verdict first, one owner per fact,
+  reader (the EDS, the LDS or a future user), and the §8 style (verdict first, one owner per fact,
   edit in place, roles only, no flowcharts). The agent writes; it doesn't decide what is true.
 
 ## 5. Spawn
@@ -143,12 +143,12 @@ Two variants:
    multi-module build is finished, on the main thread in the background (D-072 (m)).
 3. Run the reviewers in parallel: `code-reviewer` always, the §10 specialists whose trigger
    applies, and `simplicity-review` on code. Fix or explicitly justify every finding.
-4. Read every doc diff in full against §8 before the SDS sees it: verdict first, one owner per
-   fact, edited in place, nothing restated, roles only. A doc the SDS has to rewrite cost more
+4. Read every doc diff in full against §8 before the EDS sees it: verdict first, one owner per
+   fact, edited in place, nothing restated, roles only. A doc the EDS has to rewrite cost more
    than it saved.
 5. Docs per §8 (`doc-sync`).
 
-## 7. Report to the SDS
+## 7. Report to the EDS
 
 One line per piece: what was delegated to which agent, model and effort, what came back, what the
 main thread changed. Then what to review first and the open risks.
@@ -157,7 +157,7 @@ main thread changed. Then what to review first and the open risks.
 
 - Planning the pieces and then doing them yourself.
 - A design question sent out as research ("which sampling method should we use?").
-- A cheaper model writing what the SDS or LDS reads as the record.
+- A cheaper model writing what the EDS or LDS reads as the record.
 - Omitting `effort`, so the agent runs at a level nobody chose.
 - Vague briefs ("improve the tests", "clean this up").
 - Two agents on one file.

@@ -23,8 +23,9 @@ from core_modelling.config.migrations import MIGRATIONS
 from core_modelling.config.schema import EVERY_CHECK, snapshot_period
 
 ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE = ROOT / "conf/base/cc_acquisition.yml"
+EXAMPLE = ROOT / "tests/conf/cc_acquisition.yml"
 TEMPLATE = ROOT / "conf/base/TEMPLATE.yml"
+NOT_EXAMPLES = ("TEMPLATE.yml", "environment.example.yml")
 PLACEHOLDERS = {
     "<use_case>": "cc_acquisition",
     "<domain>": "retail",
@@ -49,6 +50,17 @@ REPLAY_ONLY = {"features.excluded", "features.kept", "features.held", "housekeep
 def raw() -> dict:
     """The example config as a fresh raw dict, for one test to mutate."""
     return yaml.safe_load(EXAMPLE.read_text())
+
+
+@pytest.mark.parametrize(
+    "example",
+    [p.name for p in sorted((ROOT / "conf/base").glob("*.yml")) if p.name not in NOT_EXAMPLES],
+)
+def test_the_shipped_examples_load(example: str) -> None:
+    """Every example in `conf/base/`, which the notebooks and the docs use, loads; the tests read
+    frozen copies in `tests/conf/`, so a try-out in an example fails only here, and only when it
+    no longer validates."""
+    assert load_config(ROOT / "conf/base" / example).use_case == example.removesuffix(".yml")
 
 
 def _load(tmp_path: Path, raw: dict) -> UseCaseConfig:

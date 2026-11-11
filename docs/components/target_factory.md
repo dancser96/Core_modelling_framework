@@ -81,6 +81,8 @@ behind the environment adapter; nothing is written back (D-021, OD-26).
 7. **Partial and incremental builds** (later, M4): build per source, per entity and per period
    without touching other sources' or periods' outputs (partitioned, idempotent writes). Domains
    arrive at different times with different schemas, and the spec names columns per source.
+   Today the model input's folder is rewritten whole, so that a rerun never leaves periods of
+   an earlier definition behind; per-period builds have to keep that guarantee another way.
 8. **The sanctioned extension point** for custom target builders.
 9. **Labels for scored periods** (D-054, M4): once a scored period's forward window has matured,
    build its targets from the model's frozen target spec, so monitoring can join them to the
@@ -100,7 +102,7 @@ behind the environment adapter; nothing is written back (D-021, OD-26).
 T8, T11, T12, T13, T19, T22.
 
 ## Interface
-Built in Stage 1's major step 2 (2026-10-26; under the SDS's review), in
+Built in Stage 1's major step 2 (2026-10-26; under the EDS's review), in
 `core_modelling/target_factory.py`, `core_modelling/tasks.py` and `core_modelling/sources.py`.
 - `TASK_SPECS` (`tasks.py`): the per-task spec dict; per task a rule, a target-column check
   (`(source, column, name)`, the source's name for the error) and a summary; the contract checks

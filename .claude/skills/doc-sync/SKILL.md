@@ -34,7 +34,7 @@ a doc); this skill applies them.
 6. **Worknotes (shared with the Lead DS).** Add to `worknotes/log.md`, merging into the existing
    entry when the same topic was updated the same or a neighbouring day (each update keeps its
    date). This happens every time, not only for big changes. Don't touch `worknotes/sync.md`:
-   only `/brief` or the SDS's request refreshes it (D-072 (h)).
+   only `/brief` or the EDS's request refreshes it (D-072 (h)).
 7. **Docs guide.** If a doc was added, renamed or deleted, update `docs/README.md` (reading order,
    stage → component map).
 8. **Report** the doc files touched, one line each on what changed.

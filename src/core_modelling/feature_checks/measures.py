@@ -1,18 +1,10 @@
 """The numbers Feature Checks reads from EDA's cells that EDA does not store (D-135).
 
-EDA's ledger and tables hold the snapshot's and the window's statistics, the window's concordance
-per period among them (`concordance_per_period`); the numbers here come from the same cells through
-the same functions, so they differ from EDA's by data, never by method. `effective_se` is a window
-concordance's SE as EDA computes it: its support in effective clients (a client labelled in several
-periods counts about once) and the task's SE. `lagged_concordance` is a feature's window
-concordance on each row's value one period earlier against its current target, read in the window's
-direction, so a flip reads below 0.5 (N11), over the window after its first period: the first
-period's previous one is not in EDA's rows, so its lagged values are null by construction. It is
-computed on whatever support there is (Q540) and returns the counts its SE is computed from.
-`period_psi` compares two named periods: a numeric on ten groups merged from the first period's
-bins plus the null bin, a categorical on its bins as they are. `per_period_table` gives every
-candidate in every compared period against the snapshot, label-free: rows, missing share and PSI. A
-value that cannot exist is decided before computing and named (D-035). Pure pandas; no Spark.
+A window concordance's SE as EDA computes it (`effective_se`), the lagged concordance
+(`lagged_concordance`, N11), PSI between two named periods (`period_psi`) and the label-free
+per-period table (`per_period_table`). They come from the same cells through the same
+`statistics` functions as EDA's numbers, so they differ from EDA's by data, never by method. A
+value that cannot exist is decided before computing and named (D-035). Pure pandas.
 """
 
 import numpy as np
@@ -60,19 +52,20 @@ def lagged_concordance(
     exact: bool,
     sign: int,
 ) -> dict:
-    """One feature's concordance on its lagged cells over `window[1:]`, read in the window's
-    direction, with the counts its SE is computed from.
+    """One feature's concordance on each row's value one period earlier against its current
+    target, over `window[1:]`, read in the window's direction so a flip reads below 0.5 (N11);
+    computed on whatever support there is (Q540).
 
-    The window's first period is left out: its previous period is not in EDA's rows, so its
-    lagged cells are null by construction and would only inflate the share with no lagged value.
-    A numeric's pooled lagged cells through the task's `cells_concordance` with `sign` (the
-    ranking's `raw_sign_window`); a categorical's `cross_fitted_concordance(read=window[1:],
-    lagged=True)`, its encoding fitted on the whole window's current cells, in that encoding's
-    direction. `cells` holds the feature's current and lagged cells. Returns `value`, `events`,
-    `non_events` and `target_bin_shares` of the non-null lagged rows (what `effective_se` reads
-    at whichever value a judgement needs; NaN and None when `reason`), `missing_share` (the
-    lagged rows with no value: no row in the previous period or a null there, N11; NaN for a
-    one-period window) and `reason`: '' or "not available: …" when no value exists.
+    `cells` holds the feature's current and lagged cells. The window's first period is left
+    out: its previous period is not in EDA's rows, so it has no lagged cells.
+    A numeric's pooled lagged cells go through the task's `cells_concordance` with `sign` (the
+    ranking's `raw_sign_window`); a categorical's through `cross_fitted_concordance` with
+    `read=window[1:]` and `lagged=True`, its encoding fitted on the whole window's current cells.
+
+    Returns a dict: `value`; `events`, `non_events` and `target_bin_shares` of the non-null
+    lagged rows, what `effective_se` reads (NaN and None when `reason`); `missing_share`, the
+    lagged rows with no value (no row in the previous period or a null there; NaN for a
+    one-period window); `reason`, '' or "not available: …".
     """
     nan = float("nan")
     out = {"value": nan, "missing_share": nan, "reason": ONE_PERIOD, "events": nan,
@@ -171,10 +164,14 @@ def per_period_table(
     periods: dict[str, list[str]],
     snapshot_period: str,
 ) -> pd.DataFrame:
-    """Every feature of `kinds` in every compared period (`PER_PERIOD_COLUMNS`, never the
-    validation period, which the cells do not hold), label-free: `group` (window, gap or
-    latest), `rows` (all of the period's rows), `missing_share` and `psi` against the snapshot
-    period (`period_psi`). The window's concordance per period is EDA's `concordance_per_period`.
+    """One row per feature of `kinds` and compared period (`periods`: group → labels), from the
+    counts table's current cells, label-free; never the validation period, which the cells do
+    not hold.
+
+    Columns `PER_PERIOD_COLUMNS`: `group` (window, gap or latest), `rows` (all of the period's
+    rows), `missing_share` and `psi` against `snapshot_period` (`period_psi`). Refused when a
+    feature has no cells in a compared period. The window's concordance per period is EDA's
+    `concordance_per_period`.
     """
     compared = [(group, period) for group in PERIOD_GROUPS for period in periods[group]]
     chosen = cells["feature"].isin(list(kinds)) & cells["period"].isin([p for _, p in compared])
@@ -198,8 +195,8 @@ def per_period_table(
 
 
 def _period_rows(current: pd.DataFrame) -> pd.DataFrame:
-    """Per feature and period of the current cells, in one groupby: `rows` (all of the period's
-    rows) and `missing_share` (null rows / rows)."""
+    """One row per (`feature`, `period`) index of the current cells: `rows` (all of the
+    period's rows) and `missing_share` (null rows / rows)."""
     filled = current["n"].where(~current["is_null"], 0)
     counts = current.assign(filled=filled).groupby(["feature", "period"])[["n", "filled"]].sum()
     return pd.DataFrame({"rows": counts["n"], "missing_share": 1 - counts["filled"] / counts["n"]})

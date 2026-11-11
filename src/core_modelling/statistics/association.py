@@ -1,19 +1,13 @@
-"""How strongly features go together, on the snapshot, and the clusters cut from it (D-135).
+"""How strongly features go together on the snapshot, and the redundancy clusters cut from it
+(D-135).
 
-`association_table` measures every pair of candidates on a seeded cap of `PAIRWISE_ROWS` rows of
-the snapshot (the one place the framework caps rows, stated in the report): Spearman for two
-numerics, Cramér's V (plain, not bias-corrected) for two categoricals, and the correlation ratio
-η on the numeric's ranks for a mixed pair; null is a level for the last two (N8). The Spearman
-is the exact pairwise-complete one: a pair is ranked on the rows where both are filled, and a
-pair with fewer than `MIN_SHARED_ROWS` such rows is "not compared" (NaN). Ranking each column
-once over its own rows is not that statistic when two null masks differ (0.23 apart on the
-synthetic data) and pandas' own pairwise Spearman takes two minutes at 139 × 200,000 rows (T28), so
-`spearman_matrix` groups the columns by null mask: inside a group every pair shares its rows and
-one ranking serves them all; across two groups, one ranking per group pair.
-
-Feature Checks cuts the redundancy clusters from the long table (`cluster_features`, average
-linkage as Q472 settled) and scores each numeric member by `explained_by_others`, the share of it
-the other numeric members carry, from the table's Spearman pairs alone, with no rows (V4).
+`association_table` measures every pair of candidates on a seeded cap of `PAIRWISE_ROWS`
+snapshot rows (the one place the framework caps rows, stated in the report): Spearman for two
+numerics, Cramér's V (plain, not bias-corrected) for two categoricals, the correlation ratio η on
+the numeric's ranks for a mixed pair; null is a level for the last two (N8). A pair that cannot
+be measured is "not compared" (NaN). Feature Checks cuts the clusters from that long table
+(`cluster_features`, average linkage, Q472) and scores each numeric member by
+`explained_by_others`, from the table's Spearman pairs alone, with no rows (V4).
 """
 
 import numpy as np
@@ -23,7 +17,7 @@ from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import squareform
 from scipy.stats import contingency
 
-PAIRWISE_ROWS = 50_000  # the seeded cap of snapshot rows; a ρ's noise there is ~0.004 (SDS)
+PAIRWISE_ROWS = 50_000  # the seeded cap of snapshot rows; a ρ's noise there is ~0.004 (EDS)
 PAIRWISE_SEED = 0  # the cap's sample: the same rows on every run
 MIN_SHARED_ROWS = 500  # fewer shared filled rows: "not compared" (ρ's noise ~0.01 near 0.9)
 TABLE_COLUMNS = ["a", "b", "statistic", "method", "rows"]
@@ -31,8 +25,14 @@ R2_TOLERANCE = 1e-9  # rounding room around [0, 1] for `explained_by_others`' R�
 
 
 def spearman_matrix(frame: pd.DataFrame) -> pd.DataFrame:
-    """The pairwise-complete Spearman correlation of every pair of numeric columns; NaN for a
-    pair with fewer than `MIN_SHARED_ROWS` shared filled rows or a constant side."""
+    """The pairwise-complete Spearman correlation of every pair of numeric columns, each pair
+    ranked on the rows where both are filled; NaN for fewer than `MIN_SHARED_ROWS` such rows or
+    a constant side.
+
+    The columns are grouped by null mask, so one ranking serves every pair inside a group and
+    one per group pair across groups: ranking each column once over its own rows is not this
+    statistic when two masks differ, and pandas' pairwise Spearman is too slow (T28).
+    """
     values = frame.to_numpy(dtype=float, na_value=np.nan)
     present = ~np.isnan(values)
     groups = _null_mask_groups(present)
@@ -58,9 +58,14 @@ def pairwise_sample(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def association_table(frame: pd.DataFrame, kinds: dict[str, str]) -> pd.DataFrame:
-    """Every pair of the `kinds` features once, on `pairwise_sample`'s rows (a no-op on a frame it
-    capped already): columns `a, b, statistic, method (spearman | cramers_v | eta), rows` (the
-    rows the pair used; a mixed pair has its numeric as `a`)."""
+    """The long association table: one row per pair of the `kinds` features (name → numeric or
+    categorical), measured on `pairwise_sample`'s rows of `frame` (a no-op on a frame it capped
+    already).
+
+    Columns `a, b, statistic, method (spearman | cramers_v | eta), rows` (the rows the pair
+    used); a mixed pair has its numeric as `a`. Refused for a feature not in `frame` or of
+    another kind.
+    """
     unknown = sorted(set(kinds) - set(frame.columns))
     odd = sorted(f for f, kind in kinds.items() if kind not in ("numeric", "categorical"))
     if unknown or odd:
@@ -89,12 +94,12 @@ def association_table(frame: pd.DataFrame, kinds: dict[str, str]) -> pd.DataFram
 
 
 def cluster_features(table: pd.DataFrame, max_assoc: float) -> dict[str, int]:
-    """The redundancy clusters: average linkage on `1 − |statistic|`, cut at `1 − max_assoc`.
+    """The redundancy clusters of the long `table`: average linkage on `1 − |statistic|`, cut at
+    `1 − max_assoc`; feature → cluster number for clusters of two or more, numbered 1, 2, … by
+    their first member, singletons left out.
 
     A "not compared" pair sits at distance 1, so it links only when the rest of a cluster
-    outweighs it (ten or more near-identical members at the default 0.9). Returns the members of
-    clusters with at least two features, numbered 1, 2, … by their first member; singletons get
-    no cluster.
+    outweighs it (ten or more near-identical members at the default 0.9).
     """
     features = list(pd.unique(pd.concat([table["a"], table["b"]])))
     if len(features) < 2:
@@ -180,7 +185,8 @@ def _codes(values: pd.Series) -> np.ndarray:
 
 
 def _cramers_v(a: np.ndarray, b: np.ndarray) -> float:
-    """Cramér's V from two code arrays; every code occurs, so no marginal is empty (T29)."""
+    """Cramér's V (no bias correction) of two code arrays, NaN with fewer than two levels a
+    side; every code occurs, so no marginal is empty (T29)."""
     levels_a, levels_b = a.max(initial=-1) + 1, b.max(initial=-1) + 1
     if levels_a < 2 or levels_b < 2:
         return float("nan")
@@ -190,13 +196,12 @@ def _cramers_v(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def _r_squared(corr: np.ndarray, i: int) -> float:
-    """The R² of column `i` of a correlation matrix on the other columns; NaN outside [0, 1].
+    """The R² of column `i` of a correlation matrix on the other columns, `r'R⁻¹r` by least
+    squares; NaN outside [0, 1] (beyond `R2_TOLERANCE`).
 
-    R² = r'R⁻¹r stays in [0, 1] only for a positive semi-definite matrix. Pairwise-complete
-    correlations are each measured on their own rows, so the matrix need not be one, and R² can
-    then exceed 1 or fall below 0: no share at all. It is then "not available: inconsistent
-    correlations" (NaN, which the report shows with that reason), never clipped to look like
-    an identity, and never an error that stops the run over a property of the data.
+    Pairwise-complete correlations need not form a positive semi-definite matrix, so R² can
+    leave [0, 1]: it is then "not available: inconsistent correlations", never clipped and never
+    an error.
     """
     others = np.arange(corr.shape[0]) != i
     target = corr[i, others]
@@ -208,7 +213,9 @@ def _r_squared(corr: np.ndarray, i: int) -> float:
 
 
 def _eta(ranks: np.ndarray, codes: np.ndarray) -> float:
-    """η of `ranks` (NaN where unfilled) on the level `codes`."""
+    """The correlation ratio η of `ranks` (NaN where unfilled) on the level `codes`,
+    `√(between-level / total sum of squares)`; NaN under `MIN_SHARED_ROWS` filled rows, with one
+    occupied level or no spread."""
     filled = ~np.isnan(ranks)
     if filled.sum() < MIN_SHARED_ROWS:
         return float("nan")

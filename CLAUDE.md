@@ -82,7 +82,9 @@ complete or "future-proof" code. When in doubt, write less.
    available: reason". That is decided before running, never by catching an error (D-035).
 9. **Comments say why, not what.** A module docstring explains what the module is for and how it
    fits (a short paragraph). A function docstring is one summary line, plus arguments only when
-   not obvious. No commented-out code, no dead code, no TODOs without a row in `docs/UPDATES.md`
+   not obvious. Its length follows how hard the function is to read: a textbook statistic gets
+   one line with its formula; a function that reshapes frames states the grain it receives, the
+   grain it returns and the columns. No commented-out code, no dead code, no TODOs without a row in `docs/UPDATES.md`
    or `docs/roadmap.md`.
 10. **Every function has type hints and a docstring**: public, private and test functions alike.
     Hints stay simple (`pd.DataFrame`, `dict[str, float]`). Enforced by ruff (`ANN`, `D1`) and,
@@ -92,8 +94,8 @@ complete or "future-proof" code. When in doubt, write less.
 12. **No new dependency without asking.** It must also be installable inside the bank (see §5).
 13. **Small, reviewable steps.** One logical change per step, roughly ≤ 300–400 changed lines
     unless agreed. Stop, summarise, let the user review. A larger agreed build ships with a review
-    guide for the SDS that says what to read, in which order, and what "right" looks like (D-003);
-    an LDS review is written only when the SDS asks for one (D-072 (i)).
+    guide for the EDS that says what to read, in which order, and what "right" looks like (D-003);
+    an LDS review is written only when the EDS asks for one (D-072 (i)).
 
 **Workflow for any non-trivial task**
 
@@ -121,7 +123,7 @@ which model takes which piece, the brief template, integration); in short:
    **Never tunnel:** no component, and no legacy port, is extended in isolation. Outcomes go to
    `docs/decisions.md` with sources; there is no research folder.
 1. Propose a plan in two tiers (D-072):
-   - **major steps**, each ending in the SDS's review;
+   - **major steps**, each ending in the EDS's review;
    - **minor steps** inside them, each ending in the review skills and subagents of step 3.
 
    Per step: the files to touch, the function names and signatures, and what is deliberately left
@@ -129,12 +131,12 @@ which model takes which piece, the brief template, integration); in short:
 2. Implement minor step by minor step. After each, run the tests of the modules it touched and
    `ruff check` on the touched files, then step 3's reviews. The full suite runs once, on the main
    thread in the background, when a major step or a multi-module build is finished: never for
-   small, targeted fixes and never by subagents (D-072 (m)). Stop for the SDS at the end of each
+   small, targeted fixes and never by subagents (D-072 (m)). Stop for the EDS at the end of each
    major step.
 3. Run the **code-reviewer** subagent on each minor step's diff, plus the specialised subagents in
    §10 when their trigger applies (and `simplicity-review` on code). Fix or explicitly justify every
    finding.
-4. Update docs per §8, including `worknotes/log.md` (`sync.md` only via `/brief` or when the SDS
+4. Update docs per §8, including `worknotes/log.md` (`sync.md` only via `/brief` or when the EDS
    asks). Report: what changed, why, what to review
    first, open risks.
 
@@ -319,7 +321,7 @@ Each fact has **one owner doc**; every other doc links to it instead of repeatin
 | `docs/components/<c>.md` | One component or versioned artifact, in three levels: summary (≈ 4%), how it fits together (with the summary ≈ 20%), details; template in `docs/components/README.md` | committed | Working on it |
 | `docs/context/lessons.md` | Traps (T-nn) and lessons | committed | Before related code |
 | `docs/context/environment.md` | Versions and bank behaviour | committed | IO / dependencies |
-| `docs/guides/*.md` | How-tos: setup, Claude Code workflow, skills & agents | committed | As needed |
+| `docs/guides/*.md` | How-tos: setup, Claude Code workflow, skills & agents; a closed stage's questions and answers (`eda_fc_faq.md`) | committed | As needed |
 | `worknotes/sync.md` | Sync page for the builder and the Lead DS: what to review, open questions for both, recent developments | committed | Before each sync; `/brief` |
 | `worknotes/log.md` | Verbose trail behind the sync page | committed | When detail is needed |
 | `worknotes/handovers/<topic>.md` | One chat handover per topic (several in parallel) | committed | Only via `/resume <topic>` |
@@ -329,7 +331,7 @@ Each fact has **one owner doc**; every other doc links to it instead of repeatin
 | Trigger | Update |
 |---|---|
 | A turn that settled something or produced a finding | Append to `worknotes/log.md`, clear and short. The log keeps the last 7 working days; `/brief` deletes older entries (git keeps them) |
-| `/brief`, or the SDS asks | Refresh `worknotes/sync.md` (rules: `worknotes/README.md` → "Writing `sync.md` for the LDS"); never otherwise (D-072 (h)) |
+| `/brief`, or the EDS asks | Refresh `worknotes/sync.md` (rules: `worknotes/README.md` → "Writing `sync.md` for the LDS"); never otherwise (D-072 (h)) |
 | A component's behaviour, interface or design changes | `docs/components/<component>.md` (Status, requirements, Interface, Open questions) |
 | A config field is added, changed or removed | `docs/components/config.md` + example in `conf/base/`; §2 procedure if breaking |
 | An artifact format changes (card, manifest, scores, ledger, registry, monitoring tables) | The owning component doc + the §2 procedure; run compat-guardian |
@@ -346,14 +348,14 @@ Each fact has **one owner doc**; every other doc links to it instead of repeatin
 | Scope, goals, priorities or roles change | `docs/context/project.md` (+ `docs/roadmap.md` if phasing changes) |
 
 **Small prompt, small diff.** A remark round, a question round or a rename changes the code and
-the owner doc of each fact, little else; answers go in chat first and the edits follow the SDS's
+the owner doc of each fact, little else; answers go in chat first and the edits follow the EDS's
 go in one batch. Above about eight files for a small prompt, stop and say which and why. The
 secondary docs (UPDATES status, architecture inventory, README map, glossary wording) are synced
 once at a major step's end. Large builds are exempt.
 
 **When to create a new doc.** Only when the content has a reader and a lifecycle no existing doc owns:
 - a new component or versioned artifact → `docs/components/<name>.md` from the template;
-- a how-to people will follow → `docs/guides/<name>.md`;
+- a how-to people will follow, or a closed stage's questions and answers → `docs/guides/<name>.md`;
 - a cross-cutting design topic that three or more components depend on → a component-style doc,
   linked from `docs/architecture.md`.
 
@@ -368,7 +370,9 @@ copies of a decision: those go to `worknotes/log.md`, `docs/decisions.md` or the
 - When renaming or deleting, grep for every reference and fix them in the same change.
 
 **References.** Relative paths; D-nnn (decisions), OD-nn (open decisions), T-nn (traps), §n (this
-file).
+file). Q-, R-, A- and V-numbers cite a stage's question, remark and plan-default rounds. Those
+records are deleted when the stage closes (git keeps them), so a sentence that cites one must
+stand without it; N-numbers are the null-value assumptions in `docs/components/eda.md` → Nulls.
 
 **Style.** Verdict first, concise, integrated: edit text in place, don't append "update" sections.
 Flag anything unverified. No flowcharts or ASCII diagrams: they don't wrap on small screens. Use a
@@ -379,16 +383,19 @@ numbered list for a flow, nested bullets for a tree and a narrow table for a map
 
 ## 9. Working with the user
 
-- **Roles.** The user is the senior DS who builds the framework and owns every decision; all design
-  flows through them. The Lead DS reviews in a daily ~1h sync (prepare with `/brief`): they read
-  the design and the important parts of the code, not all of it, and try the functionality and
-  the notebooks (D-072 (i)). The Chief DS
-  sets direction and leaves the design to the SDS and LDS; topics for the CDS go to
+- **Roles.** The user is the Expert DS (EDS) who builds the framework and owns every decision; all
+  design flows through them. The Lead DS reviews in a daily ~1h sync (prepare with `/brief`): they
+  read the design and the important parts of the code, not all of it, and try the functionality
+  and the notebooks (D-072 (i)). **The EDS is the decision-maker, also where the LDS signs
+  something off:** the LDS's review is input that arrives late, so nothing waits for it. A stage
+  closes, a question is settled and working notes are deleted on the EDS's word (D-072 (n)). The
+  Chief DS
+  sets direction and leaves the design to the EDS and LDS; topics for the CDS go to
   `docs/roadmap.md` → Chief DS topics (D-073). Downstream operation questions go to the platform /
   MLOps team (D-079). Refer to people by role only.
 - **Ask first** before: a new dependency, a public API or schema change, a large refactor, deleting
   anything, or anything that touches the lifecycle tiers.
-- **Git.** Commit only when the SDS asks, even locally, and always with a message. Commits go
+- **Git.** Commit only when the EDS asks, even locally, and always with a message. Commits go
   straight to main (no branches); push only when asked (D-072).
 - **Consult well.**
   - Ask numbered questions (continue the numbering across rounds), each with your proposed default.
@@ -459,6 +466,6 @@ docs/context/              project.md, environment.md, lessons.md
 docs/architecture.md       target design
 docs/decisions.md          decision log
 docs/components/           one doc per component or versioned artifact
-docs/guides/               setup (WSL2 / macOS), Claude Code workflow, skills & agents
+docs/guides/               setup (WSL2 / macOS), Claude Code workflow, skills & agents, EDA + Feature Checks FAQ
 .claude/                   project skills, subagents and commands
 ```

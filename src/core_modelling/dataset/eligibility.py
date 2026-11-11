@@ -43,12 +43,12 @@ UNSAFE_SQL = {
 def apply_eligibility(
     panel: DataFrame, eligibility: Eligibility, spec: Period
 ) -> tuple[DataFrame, list[dict]]:
-    """The analysis steps then the modelling steps, applied to every period alike: a define
-    adds its column for later steps (dropped at the end), an analysis filter drops its rows, a
-    modelling filter tags them 0/1 under its name; `eligible` is 1 where every tag is. The log
-    has one entry per filter (`step: eligibility`, the step's `name` and `kind`) with its rows
-    per period (keyed by the spec's label) and the rows whose condition was null (counted as not
-    passing)."""
+    """The panel, lazily, after the analysis steps then the modelling steps, applied to every
+    period alike: a define adds its column for later steps (dropped at the end), an analysis
+    filter drops its rows, a modelling filter tags them 0/1 under its name; `eligible` is 1 where
+    every tag is. The log has one entry per filter (`step: eligibility`, the step's `name` and
+    `kind`) with its rows per period (keyed by the spec's label, one collected count per filter)
+    and the rows whose condition was null (counted as not passing)."""
     allowed = [c for c in panel.columns if c not in KEYS and c not in HELPER_COLUMNS]
     defines, tags, log = [], [], []
     steps = [(step, "analysis") for step in eligibility.analysis]

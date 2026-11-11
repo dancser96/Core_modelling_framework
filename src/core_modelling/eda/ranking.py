@@ -10,8 +10,9 @@ clients (`client_support`). A categorical's value is cross-fitted by client fold
 inflated by `CROSS_FIT_SE_INFLATION`; it has no best order. A statistic that cannot exist (no
 events, one target value, too few folds) is decided before computing and named in
 `unavailable` (D-035).
-`rank_features` orders by the ranking value (V2) and `select_key_features` walks that order with
-the correlation skip. The ledger's `levels` come from the snapshot (`count_levels`), not the
+`rank_features` orders by the ranking value (V2), `select_key_features` walks that order with
+the correlation skip and `list_key_features` gives the order every view shows them in (the
+listed ones first). The ledger's `levels` come from the snapshot (`count_levels`), not the
 cells, since the counts table caps a categorical's levels.
 """
 
@@ -171,6 +172,14 @@ def select_key_features(
         key_feature=ordered["feature"].map(chosen).fillna(""),
         represented_by=ordered["feature"].map(represented).fillna(""),
     )
+
+
+def list_key_features(ranking: pd.DataFrame) -> pd.DataFrame:
+    """The key features' rows in the order every view shows them: the `listed` ones (a person's
+    choice) first, then the ranking's `top_n`, each by rank."""
+    keys = ranking.loc[ranking["key_feature"] != ""].sort_values("rank")
+    listed = keys["key_feature"] == "listed"
+    return pd.concat([keys.loc[listed], keys.loc[~listed]])
 
 
 def _represented_by(

@@ -216,7 +216,7 @@ columns and wording: [feature checks](feature_checks.md) "The report".
    below `MIN_BIN_SUPPORT = 20` in the deep dives, periods below `strata.min_events` in
    per-period lines. The interval is still drawn.
 4. **Quantile groups** for numeric features, merged from the cells by cumulative row share
-   (`merge_bins`: about ten groups); a bin holding at least
+   (`merge_bins`: about `strata.max_levels` groups in a deep dive, 10 by default); a bin holding at least
    `1 / groups` of the rows (0 and the dominant value whenever they reach it) stays its own bar,
    never widened into a neighbour, so the count can exceed the target by such interior bars;
    never equal-width bins (T25). A group is labelled by its outer range (`[374, 419)`, `= 0`,
@@ -347,4 +347,4 @@ folder, name, texts={"report.html": page})`.
   the report is about 6 MB, so no live cell duplicates it in a shipped notebook).
   Unverified in the bank's JupyterLab: whether the charts run under "Trust HTML" or in `srcdoc`.
 - Unverified: whether plotly renders in the bank's JupyterLab and how fast a report opens there;
-  both show in the SDS's JupyterLab test inside the bank (D-036).
+  both show in the EDS's JupyterLab test inside the bank (D-036).

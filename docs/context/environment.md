@@ -58,7 +58,7 @@ plotly and jinja2 are already pinned):**
 **Dev-only tools** (`requirements-dev.txt`, never needed inside the bank): pytest, ruff,
 ipykernel, nbformat and nbclient. plotly renders charts in a notebook only with nbformat; Jupyter
 installs it inside the bank, but `ipykernel` alone doesn't locally (D-013). nbclient re-runs a
-notebook headless and in place (`jupyter execute --inplace <notebook>`; the SDS, Q561,
+notebook headless and in place (`jupyter execute --inplace <notebook>`; the EDS, Q561,
 2026-11-10).
 
 A package that other packages pull in must be pinned even before our code uses it: without the
@@ -109,7 +109,7 @@ multi-objective studies and pruning against 5.0 before relying on them.
   predictions (D-051; list in `docs/components/training.md`).
 - **Assumed, unverified:** no internet access from the bank's notebooks, so reports embed plotly.js
   instead of loading it from a CDN (~4–5 MB per report, not optimised in Phase 2, D-036). Plotly
-  rendering and report opening time inside the bank's JupyterLab are also unverified; the SDS's
+  rendering and report opening time inside the bank's JupyterLab are also unverified; the EDS's
   JupyterLab test inside the bank shows both.
 
 ## Change requests
@@ -141,7 +141,7 @@ decides.
 
 - Marts usually hold 24 months of history. A use case starts from 100–300 candidate features,
   often pre-filtered from thousands (especially with the feature store), so the framework's
-  candidate lists and patterns are a second filter, not the first (the SDS, 2026-10-20).
+  candidate lists and patterns are a second filter, not the first (the EDS, 2026-10-20).
 - Retail scale is ~2M rows per period × ~50 columns per model (ceiling ~5M × 400).
   Single-node pandas and FLAML are fine **if** columns and rows are pruned in Spark first. With
   multi-period observation windows this becomes e.g. ~24M unit-periods for 12 periods, beyond the row

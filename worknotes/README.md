@@ -6,12 +6,11 @@ are **never loaded at session start**; they are read only when asked (`CLAUDE.md
 
 | File | Purpose | Written | Read |
 |---|---|---|---|
-| `sync.md` | The sync page: what happened in short, what the LDS should review and decide, questions, what changed in the last 2 and 7 working days | Refreshed only by `/brief` or when the SDS asks (D-072 (h)) | Before each sync; `/brief` |
+| `sync.md` | The sync page: what happened in short, what the LDS should review and weigh in on, questions, what changed in the last 2 and 7 working days | Refreshed only by `/brief` or when the EDS asks (D-072 (h)) | Before each sync; `/brief` |
 | `log.md` | The verbose trail, newest first: what changed, why, files, decisions | Appended when a turn settles something or produces a finding; the last 7 working days only, older entries deleted at each `/brief` (git keeps them) | When the detail behind a sync item is needed |
 | `handovers/<topic>.md` | A chat handover, one file per topic, so several topics can run in parallel | `/handover <topic>` (overwrites that topic's file) | Only via `/resume <topic>` |
-| `<stage>/` (now `m2_1_foundation/` under the LDS's review; `m2_2_understanding/` built, EDA with the LDS and Feature Checks' code review by the SDS next) | The folder of the stage being built: its design questions with defaults, the agreed build plan, the review guide; files leave once settled, so a stage under review holds its review guide alone (2026-10-29); `m2_2_understanding/` still holds its answers record and `plan.md` §9, which define the Q and V numbers the docs and the code cite. Written for the SDS, the active developer; an LDS review joins it only when the SDS asks for one (D-072 (i)). One stage is built at a time; the previous stage's folder stays until its sign-off, then is deleted (the SDS, 2026-10-23) | At the start of each stage, updated through it | The SDS answers the questions, approves the plan and reviews with the guide |
-| `codebase_review_guide.md` | The codebase review of 2026-11-10 as executed: per cluster what to read, what right looks like and what deviates from the plan; the checks run; the questions Q563–Q575 | Written once, when the clusters were executed | The SDS reviews the whole change with it; deleted once that review is done |
-| `lds_run_guide.md` | The steps for the LDS to run EDA and Feature Checks locally at the commit under review | Written once (2026-11-10) | The LDS; deleted when the LDS has finished trying |
+| `<stage>/` (none now: M2.2 closed on 2026-11-11, M2.3's folder opens with its questions) | The folder of the stage being built: its design questions with defaults, the answers record, the agreed build plan, the review guide. Written for the EDS, the active developer and the decision-maker; an LDS review joins it only when the EDS asks for one (D-072 (i)). One stage is built at a time. When the EDS closes the stage the folder is deleted whole, without waiting for the LDS (D-072 (n)): what lasts has moved to the owner docs, the lessons and the stage's FAQ (`docs/guides/eda_fc_faq.md` for M2.2), and git keeps the rest | At the start of each stage, updated through it | The EDS answers the questions, approves the plan and reviews with the guide |
+| `lds_run_guide.md` | The steps for the LDS to run EDA and Feature Checks locally on the latest `main`, and the five things to look out for | Written 2026-11-10, updated at M2.2's close (2026-11-11) | The LDS; deleted when the LDS has finished trying |
 
 **Rules**
 - These files are visible to the Lead DS. No bank data, no internal identifiers, no people's names
@@ -20,7 +19,7 @@ are **never loaded at session start**; they are read only when asked (`CLAUDE.md
   `docs/roadmap.md` (OD-nn), and status to `docs/UPDATES.md`. The notes link to them by number.
 - Keep `sync.md` short enough to read in five minutes. Detail goes to `log.md`.
 
-**Writing `sync.md` for the LDS.** The SDS works on the framework about 6 hours a day; the LDS spends
+**Writing `sync.md` for the LDS.** The EDS works on the framework about 6 hours a day; the LDS spends
 30–60 minutes. The LDS reads the design and the important parts of the code, not all of it, tries
 the functionality and the notebooks, and reviews; they never write code (D-072 (i)).
 - **Windows count working days (Monday to Friday).** The 2-day window opens at the start of the
@@ -28,23 +27,24 @@ the functionality and the notebooks, and reviews; they never write code (D-072 (
   (on a Monday: Friday to Monday). The 7-day window opens at the seventh-to-last working day.
   Each section heading carries its dates.
 - **The essence, not the process.** "In short" and the 2-day bullets summarise what the updates
-  and the SDS's key decisions are (how flags behave, whether the analysis is sampled, …), never
+  and the EDS's key decisions are (how flags behave, whether the analysis is sampled, …), never
   how many question or review rounds it took. No timelines, dates of future reviews or estimates
   on the page; those live in the stage's plan and `docs/roadmap.md`.
 - **"In short" first: what actually happened, in plain words.** Three to eight lines on the 2-day
   window: what was settled, built or found, and what it means for the LDS. Context only: no D-,
   OD- or Q-numbers and no paths; the references sit in the bullets below.
 - **Review list: most important first, then newest, without tags.** One bold line above the list
-  points to the decisions the LDS must take: the short-term open decisions in `docs/roadmap.md`,
-  by OD-number. The SDS's key decisions get as much room as the open ones: each recent key
+  points to the open decisions the EDS wants the LDS's view on (the EDS decides them, D-072 (n)):
+  the short-term open decisions in `docs/roadmap.md`,
+  by OD-number. The EDS's key decisions get as much room as the open ones: each recent key
   decision is a review item ("Decision: …", its D-number and owner doc, the feedback wanted). An
   open decision never appears as a review item or a tag; the items are things to read,
   each short (about three lines): what, where, the feedback wanted. "Where" is precise: the
   doc's Level 1 plus the few sections and tables that carry the decision (by heading), never a
   whole doc. A code item names the few
   functions that carry the ML logic (`path` → `function`), never a whole module or "the code in
-  full". An item stays until the SDS says the LDS has finished it (that news usually arrives a day
-  later), or the SDS drains the list.
+  full". An item stays until the EDS says the LDS has finished it (that news usually arrives a day
+  later), or the EDS drains the list.
 - **"To try": what the LDS can run themselves.** A notebook or a command, and what to look for.
 - **The two recent-changes sections focus on what matters.** Only important changes and updates
   that change the LDS's picture (design, scope, findings, something ready to review, a blocker),
@@ -60,18 +60,18 @@ the functionality and the notebooks, and reviews; they never write code (D-072 (
 **Writing `log.md`.** Verbose and log-like, newest first. Updates on the same topic from the same
 or neighbouring days share one entry: the title carries the date range, each update keeps its date
 as a sub-bullet, and the entry sits where its latest update falls.
-- The notes go into the same commit as the work they describe (commits only when the SDS asks).
+- The notes go into the same commit as the work they describe (commits only when the EDS asks).
 
 ## `sync.md` template
 
 ~~~markdown
 # Sync page
-_For the SDS and the LDS · last updated: YYYY-MM-DD · last sync: YYYY-MM-DD_
+_For the EDS and the LDS · last updated: YYYY-MM-DD · last sync: YYYY-MM-DD_
 
 **In short (MM-DD to MM-DD):** <three to eight lines in plain words: what happened, what it means for the LDS; no references>
 
 ## For the LDS: to review (most important first, then newest)
-**Decisions needed from you: the short-term open decisions** in `docs/roadmap.md` → Open decisions (OD-nn, OD-nn, …)
+**Your view wanted on: the short-term open decisions** in `docs/roadmap.md` → Open decisions (OD-nn, OD-nn, …)
 - [ ] **<what to review>** — <path> — feedback wanted: <the specific question>
 
 ## Questions for the LDS

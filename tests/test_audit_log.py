@@ -50,7 +50,7 @@ from core_modelling.environment import EnvironmentConfig, Roots, audit_log_dir
 from core_modelling.periods import PERIODS
 
 ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE = ROOT / "conf/base/cc_acquisition.yml"
+EXAMPLE = ROOT / "tests/conf/cc_acquisition.yml"
 ENTITY = "entity_a"
 LEAKS = ["cc_preapproval_score_trap_leak", "cc_campaign_response_score_trap_leak"]
 QUALITY = ["legacy_risk_grade_trap_all_null", "paper_statement_flag_trap_near_constant"]

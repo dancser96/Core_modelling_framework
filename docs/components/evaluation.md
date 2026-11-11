@@ -69,5 +69,8 @@ with raw-string categoricals. SHAP failed across the original estimator set and 
   one feature-effects slot (SHAP's tree explainer, which covers all three M2 families); extended
   = PDP / ICE, per-level categorical tables. In M2 the compatibility table is a dict of view →
   function with "not available: reason" entries (D-100).
+- Permutation importance per redundancy cluster (grouped permutation importance, the ledger's
+  `cluster`) beside the per-feature one, so importance is not split among near-duplicates:
+  noted at Feature Checks' design for M2.3's questions.
 - Parked proposal: store all results as tidy tables, with bootstrap intervals by default. Revisit when
   evaluation is designed in depth.

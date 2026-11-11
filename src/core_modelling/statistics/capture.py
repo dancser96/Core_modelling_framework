@@ -1,14 +1,12 @@
 """What an ordered list achieves at shares of its rows: counts, the estimate, lift and capture.
 
-An ordered list is one frame of bins in list order with `fold`, `n`, `sum_y`, `sum_y2` and
-`support` (`SUMMED`), each fold cut on its own since each fold's list has its own order (a
-categorical ordered per client fold, D-135). `capture_table` cuts each fold's cumulative counts
-at a slice's share, linearly inside the boundary bin (V57), sums them over the folds and gives
-the task's estimate with its interval (`period_estimate`), the lift over a base and the capture,
-the share of `sum_y` (the positives, or the amount); `capture_curve` gives the capture on a
-grid of shares. EDA's decision view cuts one feature's list (`eda/slices.py`); Evaluation cuts
-a model's at the same `evaluation.slices`. Whether a capture can exist is the caller's to
-decide up front and hand in as a reason (D-035). Pure pandas and numpy.
+An ordered list is one frame of bins in list order with `fold` and `SUMMED`; each fold is cut on
+its own, since each fold's list has its own order (a categorical ordered per client fold,
+D-135), linearly inside the boundary bin (V57), and the cuts are summed over the folds. The
+capture is the share of `sum_y` (the positives, or the amount). EDA's decision view cuts one
+feature's list (`eda/slices.py`); Evaluation cuts a model's at the same `evaluation.slices`.
+Whether a capture can exist is the caller's to decide up front and hand in as a reason (D-035).
+Pure pandas and numpy.
 """
 
 import numpy as np
@@ -48,10 +46,14 @@ def _captured(sum_y: np.ndarray, ordered: pd.DataFrame) -> np.ndarray:
 def capture_table(
     ordered: pd.DataFrame, shares: dict[str, float], base: float, task: str, reason: str
 ) -> pd.DataFrame:
-    """One row per slice (`slice`, `share`, `rows`, `support`, `estimate`, `low`, `high`, `lift`,
-    `capture`, `unavailable`): the counts at its share (`_counts_at`); the task's estimate with
-    its interval; `lift` over `base` when `lift_available(base)`; `capture`, NaN with `reason` in
-    `unavailable` when the caller has one."""
+    """One row per slice of `shares` (name → share of rows), cut from `ordered` (one row per bin
+    in each fold's list order, with `fold` and `SUMMED`) by `_counts_at`.
+
+    Columns: `slice`, `share`, `rows` (the share of all rows), `support`, the task's `estimate`,
+    `low` and `high` (`period_estimate`), `lift` over `base` (NaN unless the task's
+    `lift_available(base)`), `capture` (NaN when the caller gives a `reason`) and `unavailable`
+    (`reason`, '' when the capture exists).
+    """
     spec = TASK_SPECS[task]
     share = np.array(list(shares.values()), dtype=float)
     rows, at = share * ordered["n"].sum(), _counts_at(ordered, share)

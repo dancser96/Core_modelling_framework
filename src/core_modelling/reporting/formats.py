@@ -1,12 +1,9 @@
 """How numbers read in a report's tables: one format per known column, shared by every report.
 
-`format_of` is the one place a column name gets its format, and `column_formats` gives
-`style_table` the format of each column it knows by name: counts with
-thousands separators, the estimate as the task prints it (`TASK_SPECS[task]["estimate_format"]`),
-shares as percentages, concordances, PSI and R² to three decimals, lifts and differences to two,
-a p-value through `p_value` and a finding's value and threshold through `plain_number`, which
-never falls into scientific notation. The column lists are the statistics' shared vocabulary (the
-ledger's and the stages' tables), so a column keeps its format in every report that shows it.
+`format_of` is the one place a column name gets its format, and `column_formats` hands
+`style_table` the formats of a frame's known columns. The column lists are the statistics'
+shared vocabulary (the ledger's and the stages' tables), so a column keeps its format in every
+report that shows it.
 """
 
 from collections.abc import Callable
@@ -31,6 +28,12 @@ def p_value(x: float) -> str:
     return "< 0.0001" if x < 0.0001 else plain_number(x)
 
 
+def finding_number(x: float) -> str:
+    """A finding's value or threshold (a share, a ratio or a p): `plain_number`, a positive
+    value below 0.0001 as "< 0.0001" instead of its zeros."""
+    return "< 0.0001" if 0 < x < 0.0001 else plain_number(x)
+
+
 COUNT, SHARE = "{:,.0f}", "{:.1%}"
 CONCORDANCES = ["concordance", "concordance_plain", "concordance_se", "concordance_best_order",
                 "concordance_window", "null_concordance", "null_concordance_window",
@@ -53,15 +56,15 @@ PREFIXES = {"rows_": COUNT, "share_": SHARE, "median_": plain_number, "p10_": pl
 def format_of(name: str, task: str) -> str | Callable[[float], str] | None:
     """A column's format by its name: counts with separators, the estimate as the task prints
     it, shares as percentages, concordances, PSI and R² to three decimals, lift and differences
-    to two, a p-value as `p_value` gives it and a finding's value and threshold as plain
-    numbers; a known prefix's format otherwise, None for any other."""
+    to two, a p-value as `p_value` gives it and a finding's value and threshold through
+    `finding_number`; a known prefix's format otherwise, None for any other."""
     rules = {
         **dict.fromkeys(["rows", "support", "positive_rows", "levels", "rank", "n", "size"], COUNT),
         **dict.fromkeys(ESTIMATES, TASK_SPECS[task]["estimate_format"]),
         **dict.fromkeys(SHARES, SHARE),
         **dict.fromkeys([*CONCORDANCES, *THREE_DECIMALS], "{:.3f}"),
         **dict.fromkeys(["lift", "smd", "skew"], "{:.2f}"),
-        **dict.fromkeys(PLAIN, plain_number),
+        **dict.fromkeys(PLAIN, finding_number),
         **dict.fromkeys(P_VALUES, p_value),
     }
     if name in rules:

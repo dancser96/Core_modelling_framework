@@ -222,8 +222,9 @@ def _minority_details(inputs: CheckInputs, marked: pd.Series) -> pd.Series:
 
 
 def _null_rows_exist(inputs: CheckInputs) -> pd.Series:
-    """Per read candidate, whether its window holds a labelled null row and a labelled non-null
-    row: without both a null concordance cannot exist (N15)."""
+    """Per read candidate (a boolean Series on the ledger's index), whether its window's current
+    cells hold a labelled null row and a labelled non-null row: without both a null concordance
+    cannot exist (N15)."""
     cells = inputs.cells
     window = cells["period"].isin(inputs.periods["window"])
     labelled = cells.loc[~cells["lagged"] & window & cells["target_bin"].notna()]
@@ -318,9 +319,9 @@ def _eda_unavailable(name: str, inputs: CheckInputs, marked: pd.Series) -> pd.Da
 
 
 def _rare_value_leaks(inputs: CheckInputs, threshold: float) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """`rare_value_leak` over every read candidate: the finding's rows (a minority effect at or
-    above `threshold`, its detail with the effect's `_evidence`) and the dominated features
-    whose effect is not available."""
+    """`rare_value_leak` over every read candidate: its finding rows (`FINDING_COLUMNS`; a
+    minority effect at or above `threshold`, its detail with the effect's `_evidence`) and its
+    `unavailable` rows (the dominated features whose effect is not available)."""
     noun = TASK_SPECS[inputs.task]["support_name"]
     found, reasons = [], []
     for name, pooled in _window_pools(inputs, inputs.ledger["feature"]).items():
@@ -341,7 +342,8 @@ def _rare_value_leaks(inputs: CheckInputs, threshold: float) -> tuple[pd.DataFra
 
 
 def _window_pools(inputs: CheckInputs, features: pd.Series) -> dict[str, pd.DataFrame]:
-    """Each of `features`' current cells pooled over the window periods, in `features`' order."""
+    """Feature → its current cells pooled over the window periods (`pool_periods`: one row per
+    bin and target bin), in `features`' order."""
     cells = inputs.cells
     current = cells.loc[~cells["lagged"] & cells["feature"].isin(features)]
     by_feature = dict(tuple(current.groupby("feature")))
@@ -491,8 +493,9 @@ def _lagged_se(
 
 
 def _lagged_values(inputs: CheckInputs) -> pd.DataFrame:
-    """Per read candidate, `measures.lagged_concordance` (`value`, `missing_share`, `reason`,
-    `events`, `non_events`, `target_bin_shares`)."""
+    """One row per read candidate (the ledger's index) with `measures.lagged_concordance`'s keys
+    as columns (`value`, `missing_share`, `reason`, `events`, `non_events`,
+    `target_bin_shares`), a numeric read in its window's raw sign (`_window_signs`)."""
     by_feature = dict(tuple(inputs.cells.groupby("feature")))
     signs = _window_signs(inputs.ranking)
     ledger = inputs.ledger
@@ -561,12 +564,15 @@ def check_stability(inputs: CheckInputs, params: Stability) -> StepResult:
 
 
 def _heterogeneity(inputs: CheckInputs) -> pd.DataFrame:
-    """Per read candidate over every window period with a concordance in EDA's
-    `concordance_per_period` (below `strata.min_events` support included: its `insufficient` is
-    a display mark, Q540): Cochran's Q p-value (weights `_period_ses`), the concordances' range,
-    the periods tested and the thinnest one's support; NaN and '' with fewer than two such
-    periods. The periods share clients, so their concordances are positively correlated and Q,
-    which assumes them independent, is conservative: fewer flags than the nominal level."""
+    """One row per read candidate (the ledger's index), over the window periods with a
+    concordance in EDA's `concordance_per_period` (below `strata.min_events` support included:
+    its `insufficient` is a display mark, Q540): `heterogeneity_p` (Cochran's Q, weights
+    `_period_ses`), `concordance_range`, `tested` (the periods, comma-separated) and
+    `least_support` (the thinnest period's); NaN and '' with fewer than two such periods.
+
+    Known limit: the periods share clients, so their concordances are positively correlated and
+    Q, which assumes them independent, is conservative: fewer flags than the nominal level.
+    """
     table = inputs.concordance_per_period
     available = table.loc[(table["unavailable"] == "") & table["concordance"].notna()]
     by_feature = dict(tuple(available.groupby("feature")))
@@ -607,10 +613,12 @@ def _period_ses(rows: pd.DataFrame, window: float, kind: str, task: str) -> np.n
 
 
 def _drift(inputs: CheckInputs) -> tuple[pd.DataFrame, list[pd.DataFrame]]:
-    """Per read candidate: `psi_window`, `psi_latest` and a categorical's `new_level_share`, NaN
-    where not available, and the reasons, decided before computing (D-035): for each PSI's flag
-    and note alike a one-period window or no latest period; for `new_levels` also a categorical
-    over the level ceiling (seen and unseen levels cannot be told apart there)."""
+    """One row per read candidate (the ledger's index) with `psi_window` (the window's first →
+    last period), `psi_latest` (the window's last → the latest period) and a categorical's
+    `new_level_share`, NaN where not available; and the `unavailable` frames with the reasons,
+    decided before computing (D-035): for each PSI's flag and note alike a one-period window or
+    no latest period; for `new_levels` also a categorical over the level ceiling (seen and
+    unseen levels cannot be told apart there)."""
     ledger, window, latest = inputs.ledger, inputs.periods["window"], inputs.periods["latest"]
     by_feature = dict(tuple(inputs.cells.loc[~inputs.cells["lagged"]].groupby("feature")))
     features, categorical = ledger["feature"], ledger["kind"] == "categorical"
@@ -777,7 +785,8 @@ def _result(
     columns: dict | None = None,
     tables: dict[str, pd.DataFrame] | None = None,
 ) -> StepResult:
-    """A step's `StepResult`: the parts stacked, its `columns` beside `feature` for every read
+    """A step's `StepResult`: the finding and unavailable parts stacked, and its ledger
+    `columns` (name → values on the ledger's index) beside `feature`, one row per read
     candidate."""
     frame = ledger[["feature"]].copy()
     for column, values in (columns or {}).items():

@@ -105,7 +105,7 @@ Promote-on-inference coupling; hash verification; manifest reproduction; T2–T4
 - The lifecycle evolves as it is built; the CDS doesn't want a blank-slate redesign (D-073).
   OD-06 and OD-08 are the open pieces; D-111 sets the Phase 2 records, which MLflow joins beside
   rather than replaces. Downstream operation questions are the platform / MLOps team's
-  (D-079); the SDS won't design the registry and deployment alone if they are to become the unit's
+  (D-079); the EDS won't design the registry and deployment alone if they are to become the unit's
   new registry type. The proposals below are straw men. Who builds them, and when: OD-23.
 - The exact CR steps (who runs what, windows, approvals) are not known in detail yet; the current
   design assumes the CR process runs the framework's `deploy` command. Confirm with the platform
@@ -140,7 +140,7 @@ Promote-on-inference coupling; hash verification; manifest reproduction; T2–T4
 - **Q298** Strict JSON, or any non-executable plain data, JSON preferred? This decides CatBoost.
   Default: plain data, as D-051 reads now.
 - **Q299** Who confirms with security that `.cbm`, LightGBM's text model and, if ever used,
-  MLflow's models from code are acceptable? Default: the SDS raises it through the CDS before the
+  MLflow's models from code are acceptable? Default: the EDS raises it through the CDS before the
   pre-release.
 - OD-27: retraining in production. The shape is settled (D-052): the bundle carries the recipe,
   and production retrains it and passes the production retrain check against the parent before

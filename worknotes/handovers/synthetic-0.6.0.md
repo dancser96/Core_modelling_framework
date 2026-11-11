@@ -1,13 +1,13 @@
 # Handover: synthetic-0.6.0
-_Written: 2026-11-10 (build done, the SDS's answers Q560–Q561 applied) · branch: main · last
+_Written: 2026-11-10 (build done, the EDS's answers Q560–Q561 applied) · branch: main · last
 commit: 42e8db0 (Run guide); everything below is uncommitted on top of it_
 
 ## Goal
 Build synthetic 0.6.0 from `worknotes/synthetic_trap_coverage_plan.md` (§6): every Feature Checks
 finding gets a trap that must raise it and a control close to its threshold that must not. The
-SDS: "Using the defined plan in synthetic_trap_coverage_plan, please build the new version of the
+EDS: "Using the defined plan in synthetic_trap_coverage_plan, please build the new version of the
 synthetic data generation. I am accepting your default answer to every question you raised."
-The build is one major step: it ends in the SDS's review, then a commit when they ask.
+The build is one major step: it ends in the EDS's review, then a commit when they ask.
 
 ## State
 - **Done:** all of §6.1–6.5. Generator 0.6.0 (nine trap columns, six natural-control rows, the
@@ -18,7 +18,7 @@ The build is one major step: it ends in the SDS's review, then a commit when the
   The measured table and every deviation are in `worknotes/log.md` (2026-11-10 entry).
 - **Verified:** full suite 621 passed (17 min); trap test 15 passed; canonical 1,373 of 1,373
   check rows in ten families; `ruff check .` clean.
-- **Not started:** the SDS's review of the build; the commit (only when the SDS asks).
+- **Not started:** the EDS's review of the build; the commit (only when the EDS asks).
 - **Uncommitted, this topic's files:** `synthetic/src/synthetic/{__init__,generate}.py`,
   `spec/traps.py`, `mechanisms/{traps,controls}.py` (controls new), `checks/{traps,controls,
   table,mart,suite}.py` (controls new); `tests/{test_traps,test_synthetic_traps,
@@ -54,7 +54,7 @@ The build is one major step: it ends in the SDS's review, then a commit when the
     `dominant_share_window ≥ dominant_share_min`) and raises on a measure the ledger lacks;
   - the legitimate-columns guard exempts only trap columns, listed rows and rows whose own
     findings are leak or lag flags (`_may_leak_by_design`).
-- The SDS's answers: Q560 "Don't separate" (the trap modules stay whole); Q561 "Yes, add to it"
+- The EDS's answers: Q560 "Don't separate" (the trap modules stay whole); Q561 "Yes, add to it"
   (`nbclient>=0.10` in `requirements-dev.txt`, installed 0.11.0).
 - Question numbers: the plan's Q546 and Q547 became Q558 and Q559 (a parallel session used them);
   Q560–Q561 were this chat's; the Feature Checks session was told to start at Q562.
@@ -64,14 +64,14 @@ The build is one major step: it ends in the SDS's review, then a commit when the
   columns) is a backlog line in `docs/roadmap.md`, not decided.
 
 ## Next steps
-1. Take the SDS's review of the build. Their review order is in the plan's §7: `spec/traps.py`
+1. Take the EDS's review of the build. Their review order is in the plan's §7: `spec/traps.py`
    (the fifteen rows), then `mechanisms/controls.py` and `_u_leak`, `_blanked_on_conversion`,
    `_application_status`, `_spend_leak` in `mechanisms/traps.py`, then `tests/test_traps.py`
    (`TRAP_FINDINGS`, `CONTROL_FINDINGS`, `_measured`,
    `test_sub_range_missing_leak_fires_on_its_target_only`, `_may_leak_by_design`).
 2. Apply the review's fixes; rerun the touched tests (the trap test runs in its own process, about
    5–6 minutes); regenerate the datasets only if a spec value changes.
-3. Commit when the SDS asks, this topic's files only (see State).
+3. Commit when the EDS asks, this topic's files only (see State).
 
 ## Gotchas
 - `python -m synthetic --out` refuses a non-empty folder: delete `data/01_raw/synthetic_*` first.

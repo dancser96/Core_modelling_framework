@@ -20,8 +20,8 @@ from core_modelling.ledger import COLUMNS_BY_STAGE, read_ledger
 from core_modelling.run import run
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIG = ROOT / "conf/base/cc_acquisition.yml"
-SECOND_CONFIG = ROOT / "conf/base/td_acquisition.yml"
+CONFIG = ROOT / "tests/conf/cc_acquisition.yml"
+SECOND_CONFIG = ROOT / "tests/conf/td_acquisition.yml"
 MODEL_INPUT = "05_model_input/retail_acquisition"
 NOTEBOOK = ROOT / "notebooks/01_target_factory.ipynb"
 NOTEBOOKS = [
@@ -44,7 +44,7 @@ PUBLIC_API = {
     "core_modelling.target_factory": {"run_target_factory", "TargetSummary"},
     "core_modelling.dataset": {"build_frames", "save_model_input", "Frames"},
     "core_modelling.run": {"run"},
-    "core_modelling.artifacts": {"StageResult", "read_stage"},
+    "core_modelling.artifacts": {"StageResult", "read_stage", "list_data_definitions"},
     "core_modelling.ledger": {"read_ledger"},
     "core_modelling.eda": {
         "run_eda",
@@ -172,5 +172,5 @@ def test_example_configs_share_one_model_input() -> None:
     assert features[0] == features[1]
     assert first.data.keys == second.data.keys and first.time.period == second.time.period
     notebook = NOTEBOOK.read_text()
-    assert "conf/base/cc_acquisition.yml" in notebook
+    assert "conf/base/cc_acquisition.yml" in notebook  # the notebooks name the shipped examples
     assert "conf/base/td_acquisition.yml" in notebook

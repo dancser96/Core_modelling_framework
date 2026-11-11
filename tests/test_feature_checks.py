@@ -96,7 +96,7 @@ def _files(cfg: UseCaseConfig, env: EnvironmentConfig, folder: Path) -> tuple[st
     return str(config_path), str(env_path)
 
 
-def test_the_folder_holds_every_file_and_table(result: StageResult) -> None:
+def test_the_folder_holds_every_file_and_table(result: StageResult, env: EnvironmentConfig) -> None:
     """`feature_checks/` holds the json, the log, the resolved config, the report and every
     table, and reads back whole; its digest passes the check Training runs, and every step ran."""
     folder = Path(result.paths["folder"])
@@ -104,7 +104,7 @@ def test_the_folder_holds_every_file_and_table(result: StageResult) -> None:
         assert (folder / name).is_file(), name
     meta, tables = read_stage(str(folder), "feature_checks")
     assert set(tables) == TABLES and META_KEYS <= set(meta) and meta["stage"] == "feature_checks"
-    check_upstream(meta, result.config)
+    check_upstream(meta, result.config, env)
     assert meta["steps_run"] == STEP_ORDER and meta["steps_skipped"] == []
     assert meta["held"] == result.config.features.held
 

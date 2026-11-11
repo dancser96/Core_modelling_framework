@@ -1,7 +1,7 @@
 # Sync page
-_For the SDS and the LDS · last updated: 2026-11-03 (Stage 2's key decisions: flags that act, no sampling, one statistics engine) · last sync: 2026-11-03_
+_For the EDS and the LDS · last updated: 2026-11-03 (Stage 2's key decisions: flags that act, no sampling, one statistics engine) · last sync: 2026-11-03_
 
-**In short (11-02 to 11-03):** The SDS settled how Stage 2 (EDA, Feature Checks, the feature
+**In short (11-02 to 11-03):** The EDS settled how Stage 2 (EDA, Feature Checks, the feature
 ledger and the reports) behaves; nothing of it is coded yet. A flag now has teeth: a flagged
 feature is held out of training at every automation level, including autonomous, until a person
 keeps or excludes it; signals that are only worth a look (drift, near-duplicate features, odd
@@ -16,7 +16,7 @@ one bucket. No config format versions are bumped while the framework is pre-rele
 Detail behind each item: `worknotes/log.md`. How this page is written: `worknotes/README.md`.
 
 ## For the LDS: to review (most important first, then newest)
-**Decisions needed from you: the short-term open decisions** in `docs/roadmap.md` → Open decisions (OD-01, OD-06, OD-08, OD-12, OD-18, OD-23)
+**Your view wanted on: the short-term open decisions** in `docs/roadmap.md` → Open decisions (OD-01, OD-06, OD-08, OD-12, OD-18, OD-23)
 - [ ] **Decision: an open flag holds the feature out of training at both levels** — D-134;
       `docs/components/feature_checks.md` → Level 1, then "Flags act: the hold-out" and "The two
       automation levels and the review"; `docs/components/feature_ledger.md` → Level 1 and the
@@ -49,8 +49,8 @@ None open.
 
 | Question | Context | Current leaning | Needs |
 |---|---|---|---|
-| Is MLflow available inside the bank (OD-08)? | MLflow in Phase 2 is the goal; its shape is settled (D-111): M2.4's records map onto it, it goes in with the integrations in M4 | Ask at the platform learn session | SDS + LDS, with the platform / MLOps team |
-| Has the Phase 2 plan been agreed with stakeholders (OD-01)? | Stages and depth per component are a working assumption; nothing in the repo records the buy-in | Confirm, then move the plan into the roadmap | SDS + LDS, then stakeholders |
+| Is MLflow available inside the bank (OD-08)? | MLflow in Phase 2 is the goal; its shape is settled (D-111): M2.4's records map onto it, it goes in with the integrations in M4 | Ask at the platform learn session | EDS + LDS, with the platform / MLOps team |
+| Has the Phase 2 plan been agreed with stakeholders (OD-01)? | Stages and depth per component are a working assumption; nothing in the repo records the buy-in | Confirm, then move the plan into the roadmap | EDS + LDS, then stakeholders |
 
 ## Last 2 working days (11-02 to 11-03)
 - **Flags act; notes inform (11-02 → 11-03).** An open flag holds the feature out of training at
@@ -81,7 +81,7 @@ None open.
 - **What Stage 2 ships (11-03).** EDA and Feature Checks with their reports, the feature ledger
   (one wide row per candidate), notebooks 02 and 03 whose guide text is a main deliverable,
   regression handled for real on a variant config, the synthetic traps as an acceptance test.
-  The plan waits for the SDS's approval. — look at: D-137; `worknotes/m2_2_understanding/plan.md` §1
+  The plan waits for the EDS's approval. — look at: D-137
 
 ## To try
 - Nothing of Stage 2 runs yet. Walk through the summary level of `docs/components/eda.md` and
@@ -106,10 +106,10 @@ None open.
 - 10-29 — **Two example use cases in one model input**; a source column named like a framework
   column read as `source_<name>`; the use case name rule freed — D-128, D-129
 - 10-29 — **Working rules**: the LDS reads the important code and tries the notebooks; stage
-  notes are written for the SDS — D-072 (i)
+  notes are written for the EDS — D-072 (i)
 - 10-28 — **Stage 1 addendum**: the unit of analysis as `time.period` (month, week, day); the
   model input as sources plus one target per use case, eligibility and split derived on read;
-  `revert` in the audit log — D-129, D-131, `worknotes/m2_1_foundation/review_guide.md`
+  `revert` in the audit log — D-129, D-131
 - 10-28 — **Stage 1 review applied**: two eligibility lists, the null-handling knobs removed, the
   split and sampling as one hash draw — D-029, D-030, D-131
 - 10-26 → 10-27 — **Stage 1 (M2.1 Foundation) built end to end, version 0.2.0** — D-129–D-133,

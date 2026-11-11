@@ -16,7 +16,7 @@ full, current picture, and the map from canonical stages to component docs. Keep
 | 6 | [decisions.md](decisions.md) | Why things are the way they are (D-nnn) | Before designing; when something looks odd |
 | 7 | Component docs (map below) | Requirements, interface and open questions per stage | When working on that stage |
 | 8 | [context/lessons.md](context/lessons.md), [context/environment.md](context/environment.md) | Traps (T-nn), crunch lessons, bank versions and behaviour | Before related code, IO or dependencies |
-| 9 | [guides/](guides/) | Machine setup, the Claude Code workflow, skills and agents | Setting up; changing how we work |
+| 9 | [guides/](guides/) | Machine setup, the Claude Code workflow, skills and agents, the [EDA and Feature Checks questions and answers](guides/eda_fc_faq.md) | Setting up; changing how we work; a question on how EDA or Feature Checks behaves |
 | — | [`../worknotes/sync.md`](../worknotes/sync.md) | What the Lead DS should review now, open questions for both of us | Before each daily sync |
 
 **Shortest path for a newcomer:** 2 → 3 → 5 → the stage map below → 4. Then [UPDATES.md](UPDATES.md)
@@ -31,7 +31,7 @@ listed alongside.
 |---|---|---|---|---|
 | 1 | Target Factory (optional) | [target_factory](components/target_factory.md) | config, dataset | built (thin) |
 | 2 | EDA | [eda](components/eda.md) | dataset, feature ledger, reporting, config | built 2026-11-04 (reviews 2–4 applied 2026-11-05/06; with the LDS for review) |
-| 3 | Feature Checks | [feature_checks](components/feature_checks.md) | feature ledger, config (the audit log), reporting | built 2026-11-06 (Stage 2 major step 3; the SDS's review 1 applied 2026-11-09) |
+| 3 | Feature Checks | [feature_checks](components/feature_checks.md) | feature ledger, config (the audit log), reporting | built 2026-11-06 (Stage 2 major step 3; the EDS's review 1 applied 2026-11-09) |
 | 4 | Training | [training](components/training.md) | dataset, feature ledger, config | designing |
 | 5 | Evaluation | [evaluation](components/evaluation.md) | reporting, dataset | designing |
 | 6 | register → promote → deploy | [lifecycle](components/lifecycle.md) | reporting (model card), environment | designing |

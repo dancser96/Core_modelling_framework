@@ -1,23 +1,19 @@
 """The panel: the sources joined with one target column per use case, and its preparation for
 one use case (D-129, D-131; the Stage 1 addendum, section B).
 
-`load_panel` takes a list of configs sharing one data definition (the same feature sources,
-keys, model input and period) and reads every source of an entity through `read_keyed_source`
-(keys renamed, periods at their last day), left-joins the other feature sources to the
-governing spine on the keys, then each config's targets (`load_targets`, built over the whole
-target source, never a window of it) as `target_<use_case>`, and keeps the periods from the
-earliest observation window's first to the spine's last. That panel, the sources plus the
-target columns and nothing else, is what the model input saves: one table serves several use
-cases, and a changed eligibility never forces a rebuild. `prepare_panel` is the read side, run
-from the reader's own config on the saved or the in-memory panel, its columns planned by
-`read_side_columns` (the saved table's candidate list follows the same plan without Spark): the
-other use cases' target columns are dropped, and every upstream target's source column that is
-in the panel as a label (its target source is a feature source): another use case's, being
-forward-looking, the own one, its values being `target`'s; a source column named like one the
-dataset adds (`target`, `split`, `eligible`) is renamed `source_<name>`, and the own target
-column becomes `target`, each drop and rename printed and logged. Then the eligibility steps
-and the candidates (`eligibility.py`), the contract check and the split. `build_panel` is both
-for one config, the in-memory path.
+`load_panel` takes configs sharing one data definition (the same feature sources, keys, model
+input and period). It reads every source of the entity through `read_keyed_source`, left-joins
+the other feature sources to the spine on the keys, then each config's targets (`load_targets`,
+built over the whole target source, never a window of it) as `target_<use_case>`, and keeps the
+periods from the earliest observation window's first to the spine's last. That panel, the
+sources plus the target columns and nothing else, is what the model input saves, so one table
+serves several use cases and a changed eligibility never forces a rebuild. `prepare_panel` is
+the read side, run from the reader's own config on the saved or the in-memory panel:
+`read_side_columns` plans the drops (the other use cases' target columns, and an upstream
+target's label column that came in with a feature source) and the renames (a source column
+named `target`, `split` or `eligible` becomes `source_<name>`, the own target column `target`),
+each printed and logged; then come the eligibility steps and the candidates (`eligibility.py`),
+the contract check and the split. `build_panel` is both for one config, the in-memory path.
 """
 
 from dataclasses import dataclass
@@ -78,10 +74,15 @@ def join_definition(cfg: UseCaseConfig, entity: str) -> dict:
 def load_panel(
     cfgs: list[UseCaseConfig], entity: str, env: EnvironmentConfig, spark: SparkSession
 ) -> tuple[DataFrame, list[dict], dict]:
-    """The governing spine with the other feature sources and every config's targets
-    left-joined on the keys, from the earliest window's first period to the spine's last; the
-    join log, one entry per source; the meta: the definition the panel was built from and, per
-    use case, its target's column, spec hash, lineage, source, windows and null share."""
+    """Three results:
+    - the panel, a lazy Spark frame with one row per spine row (`unit_id, period`) from the
+      earliest window's first period to the spine's last: the spine's columns, the other feature
+      sources' and one `target_<use_case>` per config, all left-joined on the keys;
+    - the join log, one entry per source (`_join_log`, from one collected rollup);
+    - the meta: `hash_version`, the join definition, the periods' first and last labels, and per
+      use case (`targets`) its target's column, spec hash, lineage, source, windows and null
+      share.
+    """
     _check_shared_definition(cfgs, entity)
     spec = period_spec(cfgs[0])
     panel, joined = _join_sources(cfgs, entity, env, spark)
@@ -145,8 +146,10 @@ def _join_sources(
     cfgs: list[UseCaseConfig], entity: str, env: EnvironmentConfig, spark: SparkSession
 ) -> tuple[DataFrame, list[JoinedSource]]:
     """The spine, checked to cover the earliest window's first period to the latest of the
-    configs' last labelled periods (`last_labelled_period`), with the other feature sources
-    left-joined and marked; the joined sources, the spine first."""
+    configs' last labelled periods (`last_labelled_period`), with each other feature source
+    left-joined on the keys and its `_from_<source>` marker column (True where it matched); and
+    the joined sources in order, the spine first. A column two feature sources share fails
+    loud."""
     cfg = cfgs[0]
     entries = cfg.entities[entity].sources.features
     panel, spine_log = read_keyed_source(cfg, entity, entries[0], env, spark)
@@ -187,9 +190,11 @@ def _join_targets(
     env: EnvironmentConfig,
     spark: SparkSession,
 ) -> tuple[DataFrame, list[JoinedSource], dict]:
-    """Each config's targets left-joined as `target_<use_case>`, `null_in_window` as the
-    transient `_null_<column>`, marked; the joined list extended; per use case the target's
-    meta (`_target_meta`)."""
+    """The panel with each config's targets left-joined on the keys: `target_<use_case>`, its
+    `null_in_window` as the transient `_null_<column>` and a `_from_<column>` marker; the joined
+    list extended with one `targets` entry per config; per use case the target's meta
+    (`_target_meta`). A target column named like a source column, or a lineage entry naming no
+    column, fails loud."""
     targets = {}
     feature_columns = panel.columns
     for cfg in cfgs:
@@ -300,9 +305,10 @@ def _join_log(
 def _rollup(
     panel: DataFrame, joined: list[JoinedSource], cfgs: list[UseCaseConfig]
 ) -> tuple[dict, object]:
-    """The panel's rows, the rows each marker matched, per target the known values and the
-    null share, per period (the rows keyed by the period) and over every period (the last
-    row), from one rollup."""
+    """One `rollup("period")` over the panel, collected: per period and over every period,
+    `rows`, each marker's matched rows (under the marker's name) and per use case `_known_<u>`
+    (known targets), `_nulls_<u>` (the null-in-window share) and `_share_<u>` (that share over
+    its observation window). Returns the period rows keyed by period, and the total row."""
     markers = [source.marker for source in joined if source.marker]
     use_cases = [cfg.use_case for cfg in cfgs]
     counts = [F.count(marker).alias(marker) for marker in markers]
@@ -429,11 +435,12 @@ def read_side_columns(
 def prepare_panel(
     panel: DataFrame, cfg: UseCaseConfig, entity: str, targets: dict
 ) -> tuple[DataFrame, list[dict], dict]:
-    """The panel of `load_panel` (or the saved model input) prepared for `cfg`: its columns
-    dropped and renamed by `read_side_columns`, eligibility applied, the candidates resolved,
-    the contract checked, the split assigned; the keys, the candidates, the tags, `eligible`,
-    `target` and `split`, with the log and the meta (the hashes, the lineage under its read
-    names, the candidates, the tags)."""
+    """The panel of `load_panel` (or the saved model input) prepared for `cfg`, lazily: the
+    read-side drops and renames (`read_side_columns`), eligibility applied (the analysis filters
+    drop rows; one row per unit and period that passes them), the candidates resolved, the
+    contract checked, the split assigned. Columns: the keys, the candidates, the modelling tags,
+    `eligible`, `target` and `split`. Also the log (read side, eligibility, contract) and the
+    meta (the hashes, the lineage under its read names, the candidates, the tags)."""
     if cfg.use_case not in targets:
         raise ValueError(
             f"the panel has no target for use case {cfg.use_case!r}; its use cases: "

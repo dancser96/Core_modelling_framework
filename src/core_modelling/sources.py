@@ -1,24 +1,21 @@
 """Keyed sources: a logical source read with its keys renamed and its periods at their last day.
 
-Every stage that reads a use case's data reads it through `read_keyed_source`: Target Factory,
-the dataset's join and, later, Inference. Reading every source the same way is what lets a source
-tagged on a period's first day join one tagged on its last (D-129): the `data.keys` columns become
-`unit_id` (cast to string, so a draw on it survives an upstream change of the id column's type)
-and `period`, and `period` moves to its period's last day, the framework's one convention, through
-the period spec (`periods.py`). A source names its key columns as in `data.keys`, or, written
-as `{source, keys}` in `entities.<e>.sources`, its own (`source_keys`); the spine always uses
-`data.keys`. A source whose period is not a date or timestamp, whose timestamp
-periods are not at midnight in the session time zone (they may shift a period), or whose keys
-repeat after the move, fails loud here, before any target or join is built on it. A non-key
-column named like a key (`unit_id`, `period`) is read as `source_<name>` (`rename_reserved`),
-refused when a column of that name exists already; a column named like one the dataset adds
-keeps its name here and is renamed or, as a label, dropped on the read side
-(`dataset/panel.py`), so `data.target.column` names an upstream column as the source does.
-The log says how the source tagged its periods, what was renamed and which non-key columns it
-brings (`columns`, under their read names), for the join log
-(docs/components/dataset.md, "Sources and joins"), and `check_periods_covered` is the one
-check that a source has every period a caller needs: the spine up to the validation period, the
-target source up to the validation period + w (the window's last period stands in for a null
+Every stage that reads a use case's data reads it through `read_keyed_source` (Target Factory,
+the dataset's join and, later, Inference), which is what lets a source tagged on a period's
+first day join one tagged on its last (D-129). The key columns become `unit_id` (cast to
+string, so a draw on it survives an upstream change of the id column's type) and `period`,
+moved to its period's last day, the framework's one convention, through the period spec
+(`periods.py`). A source names its key columns as in `data.keys`, or, written as
+`{source, keys}` in `entities.<e>.sources`, its own (`source_keys`); the spine always uses
+`data.keys`. A period that is not a date or timestamp, a timestamp period not at midnight in
+the session time zone (it may shift a period), or keys that repeat after the move fail loud
+here, before any target or join is built on the source. A non-key column named like a key is
+read as `source_<name>` (`rename_reserved`); one named like a column the dataset adds keeps its
+name here and is handled on the read side (`dataset/panel.py`), so `data.target.column` names
+an upstream column as the source does. The log feeds the join log (docs/components/dataset.md,
+"Sources and joins"), and `check_periods_covered` is the one check that a source has every
+period a caller needs: the spine up to the validation period, the target source up to the
+validation period + w (the window's last period stands in for a null
 `time.validation_period`, an EDA-only config).
 """
 
@@ -77,10 +74,11 @@ def read_keyed_source(
     env: EnvironmentConfig,
     spark: SparkSession,
 ) -> tuple[DataFrame, dict]:
-    """The source `entry` (a name, or `{source, keys}`) of `entity` with its keys as `unit_id`
-    (a string) and `period` (the period's last day), another column named like a key as
-    `source_<name>`, and its log: the source, its distinct periods, how it tagged them, the raw
-    id's type, the renames and its non-key columns after them (`columns`)."""
+    """The source `entry` (a name, or `{source, keys}`) of `entity`, lazily, one row per source
+    row and unique on the keys: `unit_id` (a string), `period` (the period's last day) and every
+    other column, one named like a key as `source_<name>`. Its log: the source, its distinct
+    periods (a small collect), how it tagged them, the raw id's type, the keys of a
+    `{source, keys}` entry, the renames and its non-key columns after them (`columns`)."""
     name = source_name(entry)
     raw = read_source(spark, env, entity, name)
     spec = period_spec(cfg)

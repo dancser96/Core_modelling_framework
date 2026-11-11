@@ -102,7 +102,8 @@ time:                                    # required
   validation_period: <validation_period> # required
 
 features:
-  # glob patterns over the feature sources' columns; exclude known non-features
+  # glob patterns over the feature sources' columns; exclude known non-features and every
+  # column that looks forward from the period (other use cases' targets, 'next N months' flags)
   candidates: {include: ["*"], exclude: []}
   # a candidate's kind over the Spark-schema default (numbers numeric; strings and booleans
   # categorical): a numeric code such as a branch or product code is categorical, a number stored
@@ -111,7 +112,8 @@ features:
 
 strata:                                  # required · reported by every stage (D-038)
   variables: [<strata_variable>]         # required · categorical columns for metrics and drift
-  max_levels: 10                         # rarer levels are pooled as other
+  max_levels: 10                         # rarer levels are pooled as other; a numeric with more
+                                         # values is merged into about this many deep-dive groups
   min_events: 50                         # fewer positives in a stratum: shown as insufficient
 
 eda:

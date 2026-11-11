@@ -3,23 +3,15 @@
 The target source (`entities.<e>.sources.targets`, else the spine) is read keyed
 (`sources.read_keyed_source`) and checked before any target is built: the target column exists
 and its type and values suit the task (`TASK_SPECS`), and the source has every period from the
-observation window's first to the last labelled period + w (`last_labelled_period`: the
-validation period, or the window's last in an EDA-only config). With `data.target.rule` set,
-the task's rule compares the value at t with the forward window t+1 … t+w of the same unit,
-counted by the period spec's index (`periods.py`: a month, a week or a day, never `add_months`,
-T19), the current period never in it (T8) and `w` from config only (T13); the target is null
-wherever the unit lacks any of the w periods (the panel edge, a leaver, a gap; D-029 (c)); a
-null value follows SQL semantics (never an event; a null target when nothing can be compared)
-and is the source's business to fill, while `null_in_window` says whether the raw column held
-one at t or in the window, and is null where the window is incomplete, so its average is the
-share among complete windows. Without a rule, the upstream `column` is the target, refused
-when it has values in the source's last w periods, where no such target can be known yet.
-Targets are built over every row of the source, lazily in Spark, so every period with a
-complete window carries its label; the dataset selects the eligible rows and joins them
+observation window's first to the last labelled period + w (`last_labelled_period`). With
+`data.target.rule` set, the task's rule compares the value at t with the forward window
+t+1 … t+w of the same unit (`build_targets`). Without a rule, the upstream `column` is the
+target, refused when it has values in the source's last w periods, where no such target can be
+known yet. Targets are built over every row of the source, lazily in Spark, so every period
+with a complete window carries its label; the dataset selects the eligible rows and joins them
 (docs/components/target_factory.md). The lineage, the columns the target was built from, is
-excluded from the candidates (T12). `run_target_factory` reads the source once and returns a
-`TargetSummary`: the per-period target summary and, for a built target, the occurrences per
-period (the events in the target column itself, up to the window's last period + w).
+excluded from the candidates (T12). `run_target_factory` reads the source once and prints and
+returns a `TargetSummary`.
 """
 
 from dataclasses import dataclass
@@ -38,9 +30,18 @@ from core_modelling.tasks import TASK_SPECS
 
 
 def build_targets(source: DataFrame, cfg: UseCaseConfig) -> DataFrame:
-    """The target of every row of a keyed source by the task's rule, lazily: exactly `unit_id`,
-    `period`, `target`, `null_in_window` (for a complete window: the raw column had a null at t or
-    in the window; null where the window is incomplete)."""
+    """The target of every row of a keyed source by the task's rule over the unit's forward
+    window t+1 … t+w, lazily: one row per source row, exactly `unit_id, period, target,
+    null_in_window`.
+
+    The window counts periods by the period spec's index (a month, a week or a day, never
+    `add_months`, T19), never holds the current period (T8) and takes `w` from config only (T13).
+    `target` is null wherever the unit lacks any of the w periods (the panel edge, a leaver, a
+    gap; D-029 (c)); a null value follows SQL semantics (never an event; a null target when
+    nothing can be compared) and is the source's business to fill. `null_in_window` says whether
+    the raw column held a null at t or in the window, null where the window is incomplete, so its
+    average is the share among complete windows.
+    """
     rule, column = cfg.data.target.rule, cfg.data.target.column
     rules = TASK_SPECS[cfg.task]["target_rules"]
     if rule not in rules:
@@ -147,8 +148,9 @@ def _targets_from(source: DataFrame, cfg: UseCaseConfig) -> DataFrame:
 def load_targets(
     cfg: UseCaseConfig, entity: str, env: EnvironmentConfig, spark: SparkSession
 ) -> tuple[DataFrame, dict]:
-    """The targets of `entity`'s target source (the spine when `targets` is omitted), built by the
-    rule or taken from the upstream column, with the source's log."""
+    """The targets of `entity`'s target source (the spine when `targets` is omitted), lazily,
+    one row per source row (`unit_id, period, target, null_in_window`): built by the rule, or the
+    upstream column with `null_in_window` null; with the source's log."""
     source, log = _read_target_source(cfg, entity, env, spark)
     return _targets_from(source, cfg), log
 
@@ -174,7 +176,8 @@ def _check_target_names(cfg: UseCaseConfig) -> None:
 @dataclass(frozen=True)
 class TargetSummary:
     """What `run_target_factory` returns: the per-period target summary and the occurrences per
-    period (None for an upstream target, decided before anything runs)."""
+    period, the events in the target column itself up to the window's last period + w (None for
+    an upstream target, decided before anything runs)."""
 
     per_period: pd.DataFrame
     occurrences: pd.DataFrame | None

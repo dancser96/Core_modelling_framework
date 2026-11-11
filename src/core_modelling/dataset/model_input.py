@@ -3,22 +3,18 @@ prepared on read by every use case's own config (D-131; the Stage 1 addendum, se
 
 `save_model_input` writes the panel of `panel.load_panel` (the keys, every feature column, one
 `target_<use_case>` column per config) to the path the environment file maps for
-`data.model_input`, partitioned by `period`, with `_model_input.json` in the same folder holding
-the definition the table was built from, per use case its target's spec hash, lineage, windows,
-null share and the target source's last period, the columns and the join log. Everything
-config-driven after the join (eligibility, the candidates, the contract, the split) is derived
-on read from the reader's config by `panel.prepare_panel`, so a changed eligibility, window,
-split or candidate list never forces a rebuild, and one table serves several use cases. The
-folder is rewritten whole on every save, so a rerun never leaves periods of an earlier
-definition behind, and a failed sidecar write leaves a table without one, refused on read. The
-sidecar's name starts with `_` so Spark's listing skips it, and never with `_metadata`, which
-Spark reads as a parquet summary (T21). Reading checks the sidecar first: another schema or
-hash version, another join definition, a use case the table lacks, another target spec, a
-target source ending before the last labelled period's labels are known (the validation
-period, or the window's last in an EDA-only config), or periods it doesn't cover are refused
-naming `save_model_input`, the rebuild being the migration until release 1.0. A sidecar
-records each use case's validation period, null for an EDA-only config. Saving is the moment
-the configs freeze (D-125). The path is local until the M2.4 transport.
+`data.model_input`, partitioned by `period`, with the sidecar `_model_input.json`: the join
+definition, per use case its target's spec hash, lineage, windows (the validation period null
+for an EDA-only config), null share and the target source's last period, the columns and the
+join log. Everything config-driven after the join (eligibility, the candidates, the contract,
+the split) is derived on read by `panel.prepare_panel`, so a changed eligibility, window, split
+or candidate list never forces a rebuild. The folder is rewritten whole on every save, so no
+period of an earlier definition stays behind, and a failed sidecar write leaves a table without
+one, refused on read. The sidecar's name starts with `_` so Spark's listing skips it, never
+with `_metadata`, which Spark reads as a parquet summary (T21). Reading checks the sidecar
+first (`read_model_input_metadata`) and refuses a mismatch naming `save_model_input`: the
+rebuild is the migration until release 1.0. Saving is the moment the configs freeze (D-125).
+The path is local until the M2.4 transport.
 """
 
 import json
@@ -114,10 +110,10 @@ def save_model_input(
 def read_model_input_metadata(cfg: UseCaseConfig, entity: str, env: EnvironmentConfig) -> dict:
     """The saved model input's metadata, checked in order: a missing table, another schema or
     hash version, another join definition (the feature sources, the keys, the period), a use
-    case the table lacks, another target spec for it, or periods not covering the window's
-    first to the last labelled period (`last_labelled_period`) fail naming
-    `save_model_input`. A changed eligibility, window, split or candidate list is derived on
-    read and never refused."""
+    case the table lacks, another target spec for it, a target source ending before the last
+    labelled period's labels are known, or periods not covering the window's first to the last
+    labelled period (`last_labelled_period`) fail naming `save_model_input`. A changed
+    eligibility, window, split or candidate list is derived on read and never refused."""
     path = _model_input_path(cfg, entity, env)
     file = Path(path, METADATA_FILE)
     if not file.is_file():
@@ -228,8 +224,9 @@ def saved_candidates(cfg: UseCaseConfig, entity: str, env: EnvironmentConfig) ->
 def read_model_input(
     cfg: UseCaseConfig, entity: str, env: EnvironmentConfig, spark: SparkSession
 ) -> tuple[DataFrame, list[dict], dict]:
-    """The saved model input prepared for the config (`prepare_panel`), with the join log it
-    was saved with followed by the preparation's log, and the preparation's meta."""
+    """The saved model input read lazily (the sidecar's columns, `period` cast to a date) and
+    prepared for the config (`prepare_panel`, whose columns it returns), with the join log it was
+    saved with followed by the preparation's log, and the preparation's meta."""
     metadata = read_model_input_metadata(cfg, entity, env)
     saved = spark.read.parquet(_model_input_path(cfg, entity, env))
     # The partition column comes back as a date only while Spark's partition type inference is

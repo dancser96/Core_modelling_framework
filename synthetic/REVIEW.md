@@ -1,6 +1,6 @@
 # Synthetic data — review guide
 
-The review guide for the synthetic data generator (M1, D-003), version 0.6.0. Approved by the SDS
+The review guide for the synthetic data generator (M1, D-003), version 0.6.0. Approved by the EDS
 on 2026-10-19 and accepted by the LDS on 2026-10-21 (summary on `worknotes/sync.md`); 0.5.0 adds
 the ten trap columns from the LDS's to-dos (2026-10-25); 0.5.1 also writes a slim `holdings` table
 (the client key and the six holding flags, copied from the mart) beside the mart (2026-10-26); 0.5.2 tags the holdings' months with their last day, the mart's with their first (D-129); 0.5.3 adds the feature-store extract `fs_extract` (a second feature source with its own keys, six trait proxies and a look-ahead trap column; 2026-10-30); 0.6.0 adds nine trap columns and six natural-control rows, so that every Feature Checks finding has a trap that must raise it and a control that must not (2026-11-10). The spec and code map are

@@ -387,7 +387,7 @@ class Stability(StrictModel):
     range must reach it × |`concordance_window` − 0.5| (0.5: the periods differ by half the
     signal; 2: from the full signal to its mirror image), so a wobble that matters for a weak
     feature does not flag a strong one. `concordance_range_floor` is the absolute range it never
-    goes below, so a feature with no signal needs a real swing (the SDS's Q547).
+    goes below, so a feature with no signal needs a real swing (the EDS's Q547).
     """
 
     psi_note_min: float = Field(default=0.10, gt=0)

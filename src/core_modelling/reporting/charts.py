@@ -4,12 +4,11 @@ applied (docs/components/reporting.md), and `side_by_side`, which sets two of th
 Every figure is drawn from pre-aggregated tables (group tables, quartiles), never from rows. The
 rules enforced: a rate axis follows the data (from 0 to 1.25 times the plotted values on each
 side of it, never a fixed 0 to 1; a line chart's values counted up to twice its highest
-supported point), a group with
-too little support is greyed but drawn with its interval, `null` is its own category and comes
-last, one colour stands for one thing, and traces are SVG only (no WebGL: browsers allow a
-handful of WebGL contexts per page). Every figure
-carries `layout.meta` (its reference line, whether anything is greyed): shapes and annotations do
-not move into a subplot, so `side_by_side` redraws them from it.
+supported point), a group with too little support is greyed but drawn with its interval, `null`
+is its own category and comes last, one colour stands for one thing, and traces are SVG only
+(no WebGL: browsers allow a handful of WebGL contexts per page). Every figure carries
+`layout.meta` (its reference line, whether anything is greyed): shapes and annotations do not
+move into a subplot, so `side_by_side` redraws them from it.
 """
 
 import numpy as np

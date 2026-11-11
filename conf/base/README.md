@@ -8,6 +8,10 @@ The use-case configs and the examples a new use case starts from:
 - `environment.example.yml`: the environment file's example with placeholder paths; copy it to
   `conf/local/environment.yml` and fill it in (`docs/components/environment.md`, D-130).
 
+Nothing in `conf/local/` overrides these files: a notebook or the CLI loads the config file it is
+given. To try a change without editing an example, copy it into `conf/local/` (gitignored) and
+point `CONFIG` at the copy. The tests read their own frozen copies in `tests/conf/`.
+
 A use case is **one config file** (unless it bloats) and its decision audit log (D-006, D-043). The
 config holds the intent: the entities and their logical sources, the data definition, the
 candidates, the rules and the settings; the level defaults fill what it leaves out

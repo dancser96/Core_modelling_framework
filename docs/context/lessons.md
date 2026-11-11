@@ -33,20 +33,20 @@ harness, an environment adapter and explicit invariants. Legacy file references 
 | T21 | A sidecar file in a parquet folder | Spark's listing skips files whose name starts with `_` or `.`, except `_metadata` and `_common_metadata`, which it reads as parquet summaries: a `_metadata.json` beside the model input's partitions failed the read with "not a Parquet file". Found in Stage 1's dataset build (2026-10-27) | A sidecar in a table folder is named `_<something>.json`, never starting with `_metadata`; the model input's is `_model_input.json` |
 | T22 | A hash draw on the id column's bytes | The split's draw (`xxhash64` over `unit_id`) hashes the column's bytes, so the same digits as a string (`'12345'`) and as a long (`12345`) draw differently: an upstream change of the id column's type would move every client between train and test, silently. Found by the hash check on structured ids (2026-10-28), before any run relied on it | `read_keyed_source` casts `unit_id` to string at load, so the draw is independent of the id's storage type for integer, long and string ids. A double or decimal id casts to `'12345.0'`, so an upstream move from integer to decimal still moves every client; the source log's `id_type` shows it. A test reads an integer id back as a string and the pinned draw (`'12345'`, salt `split`, seed 42 → 0.322993) is unchanged |
 | T23 | A screen that flags without acting | At the `autonomous` level a flag that only annotated left leaking features in the model (Stage 2 design, 2026-11-02) | Flags hold a feature out of training until a person keeps or excludes it (D-134); every check states what it changes at `autonomous` |
-| T24 | Sampling the analysis population | A client sample before the collect would have made the report's statistics approximate (Stage 2 design, Q482 rejected) | Window statistics are Spark aggregates (the counts table); the snapshot is collected whole; never sample the analysis population (D-135) |
+| T24 | Sampling the analysis population | A client sample before the collect would have made the report's statistics approximate (Stage 2 design, Q482 rejected). Collecting the window instead does not fit: the `dev` window (117,000 rows × 160 columns) took about 0.5 GB at the conversion peak, the canonical one extrapolates to 2.3 GB, above Spark's default `maxResultSize` of 1 GB, and a bank window of 1–5 million clients × 200–400 columns to 10–50 GB | Window statistics are Spark aggregates (the counts table); the snapshot is collected whole; never sample the analysis population (D-135) |
 | T26 | `Bucketizer` null vs NaN | With `handleInvalid="keep"` a NaN lands in the extra bucket but a NULL input gives a NULL output bucket, so "null and NaN in their own bucket" is half true; duplicate splits are refused with an unreadable message. Measured on PySpark 3.4.3 (the Stage 2 facts spike, 2026-11-03) | The counts pass maps both the null bucket and the extra bucket to the one null bin (`is_null`), deduplicates the splits (`quantile_edges` does) and builds singleton bins with `np.nextafter`; ints and decimals need no cast. `-0.0` sorts below `0.0` in Java's `binarySearch`, so the pass normalises `-0.0` before bucketing (measured: unnormalised it lands in the bucket below). `F.isnan` on a string column casts it to double first (`isnan('NaN')` is true), so NaN handling is gated on float and double types |
 | T27 | Wide per-client aggregates and an ambiguous target | `groupBy(unit_id)` with min, max and count over 139 columns (417 aggregates) spills 2.2 GB and fills the 2 GB heap on the Mac, while the lag pass over the same columns is fine (19 s); `F.lag` of the target beside a same-named feature column makes `F.col("cc_flag")` an `AMBIGUOUS_REFERENCE`. Spike 2026-11-03 | The client-constant shares are computed in column chunks or inside the lag window; the target is always read as `target`, never as its source column |
 | T28 | Rank-once is not the pairwise-complete Spearman | Ranking every column once over its non-null rows and taking Pearson on the ranks differs from the pairwise-complete Spearman by up to 0.23 when the two columns' null masks differ; pandas' own `corr(method="spearman")` with nulls takes 123 s at 139 × 200,000. Spike 2026-11-03 | Group the columns by their null mask: rank once inside a group (exact there), rank per pair across groups; `na_option="keep"` only (`top`/`bottom` tie the nulls into ranks) |
 | T29 | `association(method="cramer")` on empty marginals | scipy raises `ValueError` on a table with an all-zero row or column and needs an integer table; a one-row table returns NaN with a warning. Spike 2026-11-03 | Drop empty marginals up front and return "not compared" below 2 × 2; never catch the error (§1.8) |
-| T30 | plotly ids, log axes and the Styler's dependency | A `div_id` given twice is kept twice (no deduplication); a zero quartile on a log axis is clamped to the axis floor with no warning; `DataFrame.style` needs jinja2, which the venv lacked although matplotlib was pinned. Spike 2026-11-03 | The report writer generates every id itself; a distribution with zeros never goes on a log axis without an offset or a separate zero share; jinja2 3.1.6 is pinned before the Styler path (asked of the SDS) |
+| T30 | plotly ids, log axes and the Styler's dependency | A `div_id` given twice is kept twice (no deduplication); a zero quartile on a log axis is clamped to the axis floor with no warning; `DataFrame.style` needs jinja2, which the venv lacked although matplotlib was pinned. Spike 2026-11-03 | The report writer generates every id itself; a distribution with zeros never goes on a log axis without an offset or a separate zero share; jinja2 3.1.6 is pinned before the Styler path (asked of the EDS) |
 | T31 | Parquet and JSON round trips of artifact values | A parquet list column reads back as numpy arrays (not lists) and an all-empty list column is written as `list<null>`; `np.datetime64.tolist()` is nanoseconds since the epoch, so a date written through the generic numpy branch becomes an integer; `json.dumps` writes NaN as a bare `NaN` token (invalid JSON) by default. Spike and m1.5's review, 2026-11-03 | `read_parquet` turns list cells back into lists; `datetime64` goes through `pd.Timestamp(...).isoformat()`; `json.dumps(..., allow_nan=False)` so a NaN fails loud and the stage writes `None` |
 | T32 | Table statistics against their row oracles | The concordance from the two-way table equals the AUC of the binned values to 1e-16 and is within 0.0001 of the raw AUC at 100 bins, but the regression τ-b against a 20-bin target differs from `kendalltau` on raw rows by up to 0.009; `numpy.linalg.lstsq` on exactly collinear columns returns R² = 1 while `inv`/`solve` raise `LinAlgError`. Spike 2026-11-03 | Tests compare table statistics with the oracle on the BINNED rows (exact) and state the raw tolerance; `explained_by_others` uses `lstsq` or a 1e-6 ridge, never `inv`, capped at 1 |
 | T33 | A target encoding fitted in sample flatters noise | Ordering a categorical's levels by their shrunk target rate on the same rows made a null 20–50-level code read 0.53–0.57 at ~190 events per period (shrinkage never reorders equal-sized levels, so it removes none of the optimism); a fixed best-order margin of 0.03 marked 42% of null numerics `non_monotone` at 500 events, because ordering ten groups by their own rates gains about 2 SE on noise. On a panel the same clients sit in every period with persistent labels: an encoding fitted on the other periods still read 0.57, and a window SE counted in rows marked a null numeric 12–18% of the time, and the cross-fitted value spreads about 1.4× its SE. Measured 2026-11-03 and 2026-11-04 | The level encoding is cross-fitted by client fold (each fold's levels ordered by the other folds' clients, pairs inside a fold only); the best-order margin is max(0.03, 4 SE) with every window SE on effective clients (Kish, the per-task `client_support`) |
 | T34 | A collected frame's row order | `toPandas()` after joins and shuffles returns rows in no guaranteed order, so a positional seeded sample (`DataFrame.sample(n, random_state=0)`, the association's 50,000-row cap) can pick other rows on a rerun of the same data, and a FLAML fit on such a frame need not repeat. Found by the ML audit of Stage 2 major step 2, 2026-11-04 (not measured: the unit preset is below the cap) | `collect_frame` sorts every collected frame by the keys in Spark (`orderBy("unit_id", "period")` before `toPandas()`, so pandas holds no second copy at the peak), so a seed alone fixes a sample (`CLAUDE.md` §4.10) |
 | T35 | A "rare cell" read on quantile bins | Every bin of a numeric cut into `eda.bins` = 100 quantile bins holds about 1% of the rows by construction, so a rule "a cell below 1% of the window's rows whose rate is 5× the rest's" read every bin as rare and flagged the top bin of 51 legitimate monotone numerics on the canonical data (balances, income: 13–46% against 2.5%), while it missed the process-leak trap whose leaking value holds 1.34%. Found by measuring the build's first `rare_value_leak` on the 100k artifacts, 2026-11-06 | Rarity is judged against a dominant value, as the approved design had it (Q441): one filled value on at least 90% of the filled rows, the other values pooled, their rate against the dominant value's (Cohen's h since 2026-11-09, Q539); a rule on a binned statistic is measured on the real artifacts before it ships |
-| T36 | A background test run that hangs for hours | A background `pytest` whose Spark JVM died under memory pressure (the 8 GB Mac, with the SDS's Jupyter JVMs beside it) waited on the dead gateway without failing; nothing watched it, and 5 h 45 min passed before anyone looked (Feature Checks' build, 2026-11-07) | Every background Spark test or job runs under a deadline of about twice its expected time (macOS has no `timeout`: `perl -e 'alarm shift; exec @ARGV' <seconds> <command>`), and a run past its expected time is looked at, never waited on |
+| T36 | A background test run that hangs for hours | A background `pytest` whose Spark JVM died under memory pressure (the 8 GB Mac, with the EDS's Jupyter JVMs beside it) waited on the dead gateway without failing; nothing watched it, and 5 h 45 min passed before anyone looked (Feature Checks' build, 2026-11-07) | Every background Spark test or job runs under a deadline of about twice its expected time (macOS has no `timeout`: `perl -e 'alarm shift; exec @ARGV' <seconds> <command>`), and a run past its expected time is looked at, never waited on |
 | T37 | A standard error read at the estimate collapses at the edges | Hanley–McNeil's SE of a concordance taken at its own value goes to its floor (0.005) as the value nears 0 or 1, so on a thin period (2 events) a chance 1.0 reads as precise: it dominated Cochran's Q (3–4% false `concordance_unstable` on a homogeneous feature in simulation) and passed as "significant" against a threshold. Found by the ML audit of Feature Checks' Q540 build, 2026-11-09, once support guards no longer kept thin periods out | A weight or a significance test uses the SE at the reference value on the observation's own support: the pooled value for a heterogeneity test, the threshold for "past the threshold", 0.5 for a flip; the SE at the estimate is for display only |
-| T25 | Quantile bins that collapse into one bucket | `pd.qcut(..., duplicates="drop")` on a zero-inflated or discrete column puts most quantile edges on one value and leaves one bucket for everything else; fixed-width `pd.cut` on a skewed column puts nearly every row into the first bucket. Seen in EDA plot code (the SDS, 2026-11-03), before the counts table was built | The edges rule: values holding at least `1 / bins` of the rows (mass points) are singleton bins and the quantile edges are taken over the remaining values; charts merge cells by cumulative row share, never by equal width; a test asserts the bin count on constructed columns and on every synthetic numeric (`docs/components/eda.md`, D-135) |
+| T25 | Quantile bins that collapse into one bucket | `pd.qcut(..., duplicates="drop")` on a zero-inflated or discrete column puts most quantile edges on one value and leaves one bucket for everything else; fixed-width `pd.cut` on a skewed column puts nearly every row into the first bucket. Seen in EDA plot code (the EDS, 2026-11-03), before the counts table was built | The edges rule: values holding at least `1 / bins` of the rows (mass points) are singleton bins and the quantile edges are taken over the remaining values; charts merge cells by cumulative row share, never by equal width; a test asserts the bin count on constructed columns and on every synthetic numeric (`docs/components/eda.md`, D-135) |
 
 ## Statistical lessons
 
@@ -56,9 +56,10 @@ harness, an environment adapter and explicit invariants. Legacy file references 
   deciles. Don't compute MI on downsampled data: it silently changes the joint distribution.
 - **Univariate AUC floor.** Direction-agnostic AUC < ~0.515 is a drop candidate. Treat this mainly
   as a speed lever (more FLAML trials per budget). Its standard error is the
-  Hanley–McNeil formula in positive events (distinct converting clients, not rows, D-082): about
-  `0.5 / sqrt(events)` only as a rough order of magnitude near 0.5; with about 800 events the
-  third decimal is noise.
+  Hanley–McNeil formula in positive events (distinct converting clients, not rows, D-082). At
+  the null it is `1 / sqrt(12 · events)`, about `0.29 / sqrt(events)`: a simulation at 800 events
+  measured 0.0105. The crunch's `0.5 / sqrt(events)` rule overstated it 1.7 times, so the 0.515
+  floor sits about 1.5 SE above 0.5 at 800 events.
 - **Downsampling.** Keep all positives; the negative:positive ratio is mostly a compute lever that
   barely moves ranking. The positive *count* is the real ceiling (e.g. ~800 for a 0.04% product
   is low-confidence at any ratio). Set the ratio per use case. Stratified negative sampling is the
@@ -85,6 +86,20 @@ harness, an environment adapter and explicit invariants. Legacy file references 
   importance doesn't align with raw-string categoricals (FLAML encodes them internally). SHAP via
   `PermutationExplainer` works for any model but is slow — sample it. Per-level categorical tables
   are the reliable categorical view.
+- **A range across periods flags noise.** At 50 events per period a concordance's null SE is
+  about 0.04, so six periods show a range near 0.10 from noise alone. A range rule flags exactly
+  where the data is thinnest; stability is a test weighted by 1/SE² (Cochran's Q) with a floor on
+  the relative range.
+- **A forward-against-backward label check separates nothing on acquisition targets.** On the
+  eligible rows (non-holders) the backward label is almost always 0. With holders included, a
+  legitimate holding feature and its shifted twin both predict the past event perfectly. The
+  signal worth a flag is a jump at the boundary, which the lagged concordance measures.
+- **The crunch's statistics, beyond T10–T16.** Every statistic ran after median imputation, so
+  missingness leaked into the signal. Its PSI dropped nulls first, so a missingness shift was
+  invisible. VIF silently dropped constant columns, which hid T11. Signal persistence used the
+  OOT month's labels for a feature decision. The univariate AUC was implemented twice. Every
+  threshold was a literal in code or a notebook. Phase 2's answers: a null is a bin of its own
+  (D-029 (c)), `CLAUDE.md` §4.4, one statistics package, every threshold a config leaf.
 - **FLAML search.** It is time-budgeted and cost-frugal. With large data, the cheapest improving
   learner (LightGBM) eats the budget. For a fair comparison, run learners in isolation or raise the
   budget. `sample=True` means early trials run on subsamples.
@@ -113,6 +128,37 @@ harness, an environment adapter and explicit invariants. Legacy file references 
 - **Notebooks as interface worked.** One notebook per stage; switch the product and rerun. Phase 2
   makes them guided (instructions on what to look at and decide) and lets users copy them to explore
   (D-039).
+
+## Build-process lessons (Stage 2)
+
+- **Measure the load-bearing facts before the build.** A facts spike on the pinned versions
+  settled the counts design before any module was written: one explode pass over every numeric
+  runs 4.5 times faster than a per-feature loop, `Bucketizer` keeps a null and a NaN in different
+  buckets, the table concordance equals its row oracle. Its outcomes are T26–T32.
+- **Fable on every piece spends the allowance in one step.** Major step 1 ran Fable on the main
+  thread, two builders and three audits: about 40% of the output tokens and most of the weekly
+  allowance. What worked after: the main thread and the builders on Opus or Sonnet, `xhigh` only
+  on the two pieces where a wrong answer costs most, and Fable for one whole-stage ML audit at the
+  end, where its audits had earned their cost (D-072 (l)).
+- **Fold the reviews.** Major step 1 ran 15 reviews and seven fix rounds. One combined review per
+  minor step (the code reviewer briefed with the silent-failure and compatibility lenses where
+  they apply), the ML audit once per major step and one fix round per major step found as much.
+- **A review guide lists code, not tests.** The EDS reads code. A guide names at most two tests
+  per major step, marked "read this test" (Stage 2: the hold-out test and the trap acceptance
+  test), and lists the notebooks' guide cells as code to read.
+- **Tests that read the shipped examples break when someone tries a setting.** Trying a filter
+  and three key features in an example config failed six tests. The tests now read frozen
+  copies in `tests/conf/`, and one cheap test loads every example in `conf/base/`.
+- **A stale-file scan walks the gitignored folders too.** A 120 MB model input that nothing read
+  sat in `data/` for two weeks because the scan covered tracked files only.
+- **Simplifications the codebase review tried and dropped** (2026-11-10), so nobody retries them:
+  fitting a categorical's fold encodings once per feature (needs a parameter with no caller); one
+  dotted-path walk shared by `levels.py` and `replay.py` (an import cycle); a refusal on the
+  look-ahead buffer (it could never fire); persisting the joined panel (measured: slower).
+- **A stage's working notes close with the stage.** Each answer is recorded verbatim before the
+  chat is compacted, and the record is deleted when the EDS closes the stage. The docs must then
+  stand without the Q-numbers they cite (`CLAUDE.md` §8, References); the questions worth keeping
+  go to a stage FAQ (`docs/guides/eda_fc_faq.md`).
 
 ## Legacy map (where to look)
 

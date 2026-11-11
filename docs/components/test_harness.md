@@ -1,5 +1,5 @@
 # Synthetic data and test harness
-**Status:** tested (built 2026-10-17; the SDS's review applied and approved, 2026-10-19);
+**Status:** tested (built 2026-10-17; the EDS's review applied and approved, 2026-10-19);
 reviewed and accepted by the LDS, 2026-10-21, guided by `synthetic/REVIEW.md` (D-003); version
 0.5.0 adds ten trap columns from the LDS's to-dos and a 20k `dev` preset (2026-10-25, M2.1); 0.5.1
 adds the slim `holdings` table (2026-10-26, D-129); 0.5.2 tags the holdings' months with their last day; 0.5.3 adds the feature-store extract `fs_extract` (2026-10-30); 0.6.0 adds nine trap columns and six natural-control rows, so that every Feature Checks finding has a trap that must raise it and a control that must not (2026-11-10); the canonical and `dev` datasets in `data/01_raw/` are written by it ·
@@ -354,7 +354,7 @@ Design constraints:
   stop being the ceiling.
 - **Simplicity by measured effect** (D-003): a mechanism stays only if its effect is worth its code.
   Cut in round 1: the relevance rankings (recomputable from the oracle) and the `separation` knob
-  (no effect at its only value). Kept by the SDS's choice: the regression oracle.
+  (no effect at its only value). Kept by the EDS's choice: the regression oracle.
 
 ### Population and client description
 
@@ -384,7 +384,7 @@ peaks in Priority. The emirate is drawn independently of residence status and na
 | mass | UM, MM, LM | 74 / 12 / 1.5 / 4 / 0.5 / 7 / 1 | 91 / 5 / 1.5 / 1 / 1.5 | 11% | 70% | 0% | 1.1% / 1.3% |
 
 **Entry and exit:** about 8% (Private) to 12% (Mass) of clients leave a year. Exits are random:
-they don't depend on behaviour (the SDS, 2026-10-19), so the null targets of leavers (D-029 (c))
+they don't depend on behaviour (the EDS, 2026-10-19), so the null targets of leavers (D-029 (c))
 carry no signal here, as they will on real data. Every profile grows ≈ 0.2% a
 month, so the mix stays flat. New clients start at relationship day 0; leavers' rows stop.
 `n_clients` is the size 13 months before the panel starts (≈ 103k at month 1 for 100k). Dormant
@@ -676,7 +676,7 @@ subcategories aren't perfectly collinear with their totals; they add up to the t
 - **Loans:** an annuity per account, summed per loan type.
   - Principal at opening = multiple × true income × exp(N(0, 0.3²)): personal 8, auto 5, home 60
     (the UAE cap for personal loans is 20×).
-  - Equal monthly instalments at fixed annual rates of 7% / 4% / 5% (ballparks the SDS accepted),
+  - Equal monthly instalments at fixed annual rates of 7% / 4% / 5% (ballparks the EDS accepted),
     from the month after opening until maturity.
   - The outstanding balance and instalment per loan type are summed over the client's accounts.
     The starting book's accounts are amortised from their opening.
@@ -696,7 +696,7 @@ subcategories aren't perfectly collinear with their totals; they add up to the t
     digitally onboarded clients;
   - the mobile share is σ(1.5 + 0.5 × digital deviation − 0.3 × (age − 40) / 10);
   - mobile and online counts are each overdispersed, and an active month has at least one login;
-  - dormant or unregistered clients have 0 logins. The login levels are ballparks the SDS
+  - dormant or unregistered clients have 0 logins. The login levels are ballparks the EDS
     accepted.
 - **Days since last login** (month end): for an active month, a uniform day after the month's last
   login; dormant months add the days in the month; null if the client never logged in.
@@ -843,7 +843,7 @@ seed (unit preset, seed 0, checked 2026-10-30). The spec is `spec/extract.py` (`
   "current" value pulled today and written over history (kind `lookahead`).
 
 ### Merges and mistake tests
-**The primary example is a merge, and every source guardrail has a test (the SDS, 2026-10-30).**
+**The primary example is a merge, and every source guardrail has a test (the EDS, 2026-10-30).**
 `cc_acquisition` and `td_acquisition` join the extract after the mart as
 `{source: retail_fs_extract, keys: {unit_id: customer_no, period: as_of_date}}`, so every stage
 runs on a merged model input. `tests/test_source_mistakes.py` plants one mistake per variant of
@@ -855,7 +855,7 @@ framework does ([dataset](dataset.md#sources-and-joins-d-129)):
 - **printed only:** the clean extract's matched share (about 85%) with the string id joined to
   the int one; periods tagged on the 15th (`other days`);
 - **accepted by design:** the validation period missing from the extract leaves its columns
-  null there only (the left join; the SDS, 2026-10-30);
+  null there only (the left join; the EDS, 2026-10-30);
 - **not caught, documented:** half the ids zero-padded only lower the matched share. The
   look-ahead column passes Stage 1 by design and is Feature Checks' to flag (M2.2).
 
@@ -1294,12 +1294,12 @@ on the Mac: generation 80 s, the six Spark stage runs about 240 s), and
   singleton holds more than 5% of its non-null rows (the edges rule, T25); the failure names the
   feature and its bin count.
 - **False positives are checked on the controls** (above), **on the null controls**, pure noise
-  that must never be flagged (below), and by a count-free guard (the SDS's Q545): no card-config
+  that must never be flagged (below), and by a count-free guard (the EDS's Q545): no card-config
   candidate raises `too_strong`, `missingness_leak` or `lagged_signal_drop`
   (`NEVER_ON_LEGITIMATE`) unless a trap row allows it (a trap column, a row not asserted, or a
   real-column row whose own findings include one), so a leakage or time-alignment check firing on
   genuine signal fails the test; the real columns named only for a note or as a control stay
-  under the guard. There is no bound on the count of held non-trap features (the SDS, 2026-11-09): the
+  under the guard. There is no bound on the count of held non-trap features (the EDS, 2026-11-09): the
   legitimate features a flag holds by design (static attributes under `client_constant`, a
   genuine minority under `rare_value_leak`, a drifting roll-up under a PSI flag) are a person's
   to keep or exclude, which is why those findings stay out of the guard.
@@ -1470,7 +1470,10 @@ amounts, additive on log-odds for wake-ups. Drift is the digital uptake trend an
 relaunch; their parameters are in the spec (`seasons.drift`).
 
 ## Open questions
-None. Answered in the SDS's review (2026-10-19):
+- **Not looked into:** the generator's own checks fail four statistical rows on the `dev`
+  preset (seen at the codebase review of 2026-11-10, the same before and after it).
+
+Answered in the EDS's review (2026-10-19):
 - exits stay random;
 - the moderate leak and the shifted column are built;
 - dirty defects stay out of the rollups (stated as a known limit);

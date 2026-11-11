@@ -32,7 +32,6 @@ from core_modelling.dataset.counts import (
     window_levels,
 )
 from core_modelling.eda.deep_dives import (
-    DEEP_DIVE_GROUPS,
     MIN_BIN_SUPPORT,
     concordance_per_period,
     group_table,
@@ -55,6 +54,7 @@ from core_modelling.eda.profile import PROFILE_COLUMNS, QUANTILES, value_profile
 from core_modelling.eda.ranking import (
     count_levels,
     feature_statistics,
+    list_key_features,
     rank_features,
     select_key_features,
 )
@@ -80,7 +80,7 @@ from core_modelling.eda.slices import (
 from core_modelling.environment import EnvironmentConfig
 from core_modelling.ledger import COLUMNS_BY_STAGE
 from core_modelling.periods import PERIODS
-from core_modelling.reporting.formats import plain_number
+from core_modelling.reporting.formats import finding_number, plain_number
 from core_modelling.reporting.theme import THEME
 from core_modelling.statistics.capture import capture_curve, capture_table
 from core_modelling.statistics.cells import pool_periods
@@ -195,6 +195,8 @@ def test_key_features_skip_by_association_and_list_the_included_first() -> None:
     assert chosen["represented_by"].to_dict() == {
         "a": "e", "b": "", "c": "b", "d": "", "e": "", "f": ""
     }  # fmt: skip
+    shown = list_key_features(chosen.reset_index())
+    assert shown["feature"].tolist() == ["e", "b", "d"]  # the listed one first, then by rank
 
 
 def test_levels_count_distinct_non_null_eligible_values() -> None:
@@ -355,8 +357,9 @@ def test_group_table_groups_match_the_merged_cells(
     snapshot_period = eda_frames.meta["snapshot_period"]
     edges = bin_edges(eda_frames.snapshot, {"income": "numeric"}, in_memory.eda.bins)["income"]
     base = known_rows(eda_frames.snapshot)["target"].mean()
+    groups = in_memory.strata.max_levels
     table = group_table(
-        eda_frames.snapshot, "income", "numeric", edges, in_memory.task, base, DEEP_DIVE_GROUPS
+        eda_frames.snapshot, "income", "numeric", edges, in_memory.task, base, groups
     )
     current = cells.loc[(cells["feature"] == "income") & ~cells["lagged"]]
     pooled = pool_periods(current, [snapshot_period])
@@ -501,7 +504,7 @@ def test_the_correlation_overview_shows_the_key_features_and_whom_they_represent
     it d with a and their association; a rule that skipped nothing says so."""
     ranking = pd.DataFrame(
         {"feature": list("abcde"), "key_feature": ["top_n", "top_n", "listed", "", ""],
-         "represented_by": ["", "", "", "a", ""]}
+         "represented_by": ["", "", "", "a", ""], "rank": [1, 2, 3, 4, 5]}
     )  # fmt: skip
     pairs = [("a", "b", 0.3), ("a", "c", np.nan), ("b", "c", np.nan), ("a", "d", 0.95),
              ("b", "d", 0.2), ("c", "d", np.nan), ("a", "e", 0.1)]  # fmt: skip
@@ -545,7 +548,7 @@ def test_a_regression_target_runs_through_the_same_tables(
     assert stats["concordance_se"].notna().all()
     edges = bin_edges(frames.snapshot, {"age": "numeric"}, cfg.eda.bins)["age"]
     table = group_table(frames.snapshot, "age", "numeric", edges, "regression", known.mean(),
-                        DEEP_DIVE_GROUPS)  # fmt: skip
+                        cfg.strata.max_levels)  # fmt: skip
     assert {"median", "nonzero_share"} <= set(table.columns)
     assert table["rows"].sum() == len(known)
     assert (table["low"] <= table["estimate"]).all() and (table["estimate"] <= table["high"]).all()
@@ -811,6 +814,8 @@ def test_the_value_profile_view_splits_the_kinds_and_prints_amounts_plainly() ->
     assert only[1] == "<p>Not available: no categorical candidate.</p>"
     assert [plain_number(x) for x in (69_310.4, -1_000.0, 0.331_49, 12.0)] == [
         "69,310", "-1,000", "0.3315", "12"]  # fmt: skip
+    assert [finding_number(x) for x in (1.8e-126, 0.0, 0.0123, -2e-5)] == [
+        "< 0.0001", "0", "0.0123", "-0.00002"]  # fmt: skip
 
 
 def test_the_slices_view_states_the_decision_and_draws_the_diagonal_as_a_reference(

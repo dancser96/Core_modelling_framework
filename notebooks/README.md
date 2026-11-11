@@ -14,7 +14,7 @@ package functions and a way to learn how things work under the hood (D-039,
 - Every notebook has the same shape:
   1. **Guide cell:** what this stage is for, what to look at, which decisions to record in the
      decision audit log (`record_decision`, D-125), and links to the docs. Written as
-     instructions, not commentary. The guide text is the notebook's main deliverable (the SDS,
+     instructions, not commentary. The guide text is the notebook's main deliverable (the EDS,
      2026-11-03): before every step a short markdown cell says what the step does, what to look
      at in its output, how to read each number, which decision to take and how to record it, at
      both automation levels; concise, but nothing a first-time user needs is left out. Guide

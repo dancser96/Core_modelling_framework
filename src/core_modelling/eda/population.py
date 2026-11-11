@@ -2,17 +2,12 @@
 target per period and by stratum, and the reference groups (docs/components/eda.md requirement
 2, "The views").
 
-The window views read the frames' log (the funnel; `sources_per_period`, each joined source's
-matched share of the spine's rows per compared period, from the join entries), the D-088
-population counts and the cells (the target per period); the snapshot views read the collected
-snapshot. Every label statistic
-uses the snapshot's eligible rows with a known target (`known_rows`, §4.4); the reference groups
-are label-free and use every snapshot row. `cap_levels` and `summarise_groups` are the two
-pieces every group table shares (here and in `deep_dives.py`): a column's values as capped,
-ordered level labels, null a level (N16), and one row of the per-task group summary per group
-with `insufficient` below its support rule (`TASK_SPECS[task]["summarise_group"]`, D-050).
-`is_numeric` and `reference_sides` are public because `run.py` and `explore.py` judge a column
-and cut a tag's sides the same way.
+The window tables read the frames' log, the D-088 population counts and the cells; the snapshot
+tables read the collected snapshot. Every label statistic uses the snapshot's eligible rows with
+a known target (`known_rows`, §4.4); the reference groups are label-free and use every snapshot
+row. `cap_levels` and `summarise_groups` are shared by every group table, here and in
+`deep_dives.py`. `is_numeric` and `reference_sides` are public because `run.py` and
+`explore.py` judge a column and cut a tag's sides the same way.
 
 `reference_groups` returns one long table, per modelling tag, with three sections, each side
 being the rows the tag excludes (`tag = 0`) against the modelling population (`eligible = 1`):
@@ -53,18 +48,18 @@ def known_rows(snapshot: pd.DataFrame) -> pd.DataFrame:
 
 
 def is_numeric(values: pd.Series, kind: str | None) -> bool:
-    """A candidate is numeric by its kind; any other column has none and, not being a feature, is
-    not bound by N13 (kinds never read the dtype): its dtype decides, a boolean not numeric."""
+    """Whether a column is numeric: a candidate by its `kind`; any other column (`kind` None) by
+    its dtype, a boolean not numeric (N13, kinds never read the dtype, binds features only)."""
     if kind is not None:
         return kind == "numeric"
     return pd.api.types.is_numeric_dtype(values) and not pd.api.types.is_bool_dtype(values)
 
 
 def cap_levels(values: pd.Series, max_levels: int) -> pd.Series:
-    """Each value as a level label (an ordered categorical on the same index): the `max_levels`
+    """Each value as a level label, an ordered categorical on the same index: the `max_levels`
     levels with the most rows (ties by label) as their text (`_level_text`), a real level named
     like a reserved bin or blank quoted (`'null'`, `''`, `' '`), the rest `__other__`, null (a
-    NaN too) `null`; ordered by rows, then `__other__`, then `null` last."""
+    NaN too) its own level `null` (N16); ordered by rows, then `__other__`, then `null`."""
     text = values.dropna().map(_level_text).astype(str)  # str: an empty map keeps a float dtype
     quoted = text.isin(RESERVED_BINS) | text.str.match(BLANK_LEVEL)
     text = text.where(~quoted, "'" + text + "'")
@@ -90,10 +85,11 @@ def _level_text(value: object) -> str:
 def summarise_groups(
     target: pd.Series, groups: pd.DataFrame, task: str, base: float, min_support: int
 ) -> pd.DataFrame:
-    """One row per observed combination of `groups`' columns (ordered categoricals on the
-    target's index, in their order): the keys, then the task's `summary_columns` from its group
-    summary against `base` (`lift` NaN when no lift exists), `insufficient` meaning support below
-    `min_support`."""
+    """One row per observed combination of `groups`' columns (ordered categoricals on
+    `target`'s index), in their order: the keys, then the task's `summary_columns` from its group
+    summary (`TASK_SPECS[task]["summarise_group"]`, D-050) against `base` (`lift` NaN when no
+    lift exists), `insufficient` meaning support below `min_support`. An empty `target`, or a
+    summary whose columns differ from `summary_columns`, fails loud."""
     if target.empty:
         raise ValueError("summarise_groups: no row with a known target to summarise")
     spec = TASK_SPECS[task]
@@ -135,10 +131,10 @@ def headline_formats(task: str) -> dict[str, str | Callable[[float], str]]:
 
 
 def headline_numbers(snapshot: pd.DataFrame, per_period: pd.DataFrame, task: str) -> dict:
-    """The summary's headline: the snapshot's eligible rows, clients and eligible share, the
-    target's headline on its known rows (`base_rate_views`, prefixed `snapshot_`), and the
-    window's rows, positive rows, positive events and rows per event from `target_per_period`'s
-    `all` row."""
+    """The summary's headline numbers by name (`headline_formats`' keys): the snapshot's eligible
+    rows, clients and eligible share; the target's headline on its known rows
+    (`base_rate_views`, prefixed `snapshot_`); and the window's rows, positive rows, positive
+    events and rows per event (NaN without an event) from `target_per_period`'s `all` row."""
     eligible = snapshot.loc[snapshot["eligible"] == 1]
     views = TASK_SPECS[task]["base_rate_views"](known_rows(snapshot)["target"])
     window = per_period.set_index("period").loc["all"]
@@ -156,10 +152,11 @@ def headline_numbers(snapshot: pd.DataFrame, per_period: pd.DataFrame, task: str
 
 
 def funnel_per_period(log: list[dict], window_periods: list[str]) -> pd.DataFrame:
-    """Per window period plus an `all` row, from the frames' log: `spine` (the rows the first
-    eligibility filter met; the eligible rows when there is no filter), `after_<name>` per
-    analysis filter, `tagged_<name>` per modelling filter (the rows it tags 1) and `eligible`
-    (the contract's eligible rows). A period missing from a step's counts had no row there."""
+    """One row per window period plus an `all` row (the sum), from the frames' eligibility and
+    contract entries: `period`, `spine` (the rows the first eligibility filter met; the eligible
+    rows when there is no filter), `after_<name>` per analysis filter, `tagged_<name>` per
+    modelling filter (the rows it tags 1) and `eligible` (the contract's eligible rows). A period
+    missing from a step's counts had no row there (0)."""
     steps = [entry for entry in log if entry["step"] == "eligibility"]
     contract = [entry for entry in log if entry.get("check") == "eligible_rows"]
     if len(contract) != 1:
@@ -181,10 +178,10 @@ def funnel_per_period(log: list[dict], window_periods: list[str]) -> pd.DataFram
 
 
 def sources_per_period(log: list[dict], periods: list[str]) -> pd.DataFrame:
-    """Per compared period plus an `all` row over them, from the join entries: `rows` (the
-    spine's rows), then per joined feature source the share of those rows it matched (`all`
-    pooled). Only `period` and `rows` when the spine is the only source: the view is then not
-    available, decided from the table, never caught."""
+    """One row per compared period plus an `all` row over them, from the join entries: `period`,
+    `rows` (the spine's rows), then one column per joined feature source, the share of those rows
+    it matched (`all` pooled). Only `period` and `rows` when the spine is the only source: the
+    view is then not available, decided from the table, never caught."""
     joins = [entry for entry in log if entry["step"] == "join"]
     spine = [entry for entry in joins if entry["role"] == "spine"]
     if len(spine) != 1:
@@ -207,14 +204,15 @@ def target_per_period(
     min_events: int,
     clients: dict[str, float],
 ) -> pd.DataFrame:
-    """Per labelled window period plus the pooled `all` row: `rows` (a known target),
-    `positive_rows`, `support` (units with a non-zero target; for `all` the distinct ones,
-    `clients["event_clients"]` of `counts.window_clients`), the estimate with its interval from
-    `period_estimate` (binary: the rate and Wilson; regression: `sum_y / rows` of one feature's
-    labelled cells (`population_cells`), with its t-interval from `sum_y2`, and the
-    non-zero share) and `insufficient` (support below `min_events`). The pooled row's clients
-    recur in every period, so its counts are scaled to effective clients (Kish's, as every window
-    SE): the estimate stays, the interval widens."""
+    """One row per labelled window period plus the pooled `all` row: `period`, `rows` (a known
+    target), `positive_rows`, `support` (units with a non-zero target; for `all` the distinct
+    clients, `clients["event_clients"]`), the task's `period_estimate` columns (binary: the rate
+    with Wilson's interval; regression: the mean of one feature's labelled cells,
+    `population_cells`, with its t-interval, and the non-zero share) and `insufficient` (support
+    below `min_events`). The `all` row's counts are scaled to effective clients (Kish's, as every
+    window SE), since its clients recur in every period: its estimate stays, its interval widens.
+    A window period without a known target, or cells whose labelled rows differ from the
+    population counts, fails loud."""
     labelled = population.loc[population["known_target"].notna()].set_index("period")
     empty = list(labelled.index[labelled["known_target"] == 0])
     if empty:
@@ -244,10 +242,11 @@ def target_per_period(
 
 
 def strata_tables(snapshot: pd.DataFrame, strata: Strata, task: str) -> pd.DataFrame:
-    """The target by stratum on the snapshot's eligible rows with a known target: per variable,
-    one row per level (`cap_levels` at `strata.max_levels` over the eligible rows), the summary
-    columns against the snapshot's base and `insufficient` below `strata.min_events`; `feature`
-    and `feature_group` null (the strata pivots fill them)."""
+    """The target by stratum on the snapshot's eligible rows with a known target, one long table
+    (`STRATA_KEYS` first): per stratum variable, one row per level (`cap_levels` at
+    `strata.max_levels`, cut over the eligible rows), the summary columns against the snapshot's
+    base and `insufficient` below `strata.min_events`; `feature` and `feature_group` null (the
+    strata pivots fill them)."""
     eligible = snapshot.loc[snapshot["eligible"] == 1]
     known = known_rows(snapshot)
     base = known["target"].mean()
@@ -337,8 +336,9 @@ def _feature_row(values: pd.Series, sides: dict[str, pd.Series], feature: str, k
 
 
 def _difference(excluded: pd.Series, eligible: pd.Series, kind: str) -> tuple[float, str]:
-    """The excluded side's standardised difference from the eligible side and '' (a categorical:
-    the largest level-share difference, null a level), or NaN and the "not available" reason."""
+    """The excluded side's standardised difference from the eligible side (Cohen's d; a
+    categorical's largest level-share difference, null a level) and '', or NaN and the "not
+    available" reason, decided before computing (D-035)."""
     if excluded.empty or eligible.empty:
         return np.nan, "not available: a side has no row"
     if kind == "categorical":

@@ -27,7 +27,8 @@ over a non-positive whisker, T30); an empty section reads "Not available: <reaso
   the leak cue; the report opens the slices with it, notebook 02 says it in its text.
 - `slices` (list): the key features at the decision's slices (Styler) and their capture curve
   (Figure), "Not available" when nothing can be shown.
-- `deep_dives` (dict feature → list): per key feature in rank order, `_deep_dive`'s views.
+- `deep_dives` (dict feature → list): per key feature, the listed ones first
+  (`list_key_features`), `_deep_dive`'s views.
 - `reference_groups` (dict tag → list of Stylers): the rows kept and excluded per window period
   (from the funnel), the snapshot's size, composition per stratum, key features.
 - `correlation` (list): the association heatmap of the key features, then the candidates they
@@ -50,6 +51,7 @@ from core_modelling.dataset.frames import GB, SNAPSHOT_CALLOUT
 from core_modelling.eda.deep_dives import MIN_BIN_SUPPORT
 from core_modelling.eda.population import headline_formats
 from core_modelling.eda.profile import QUANTILES, TOP_LEVELS
+from core_modelling.eda.ranking import list_key_features
 from core_modelling.eda.slices import RANDOM, skipped_slices
 from core_modelling.reporting import blocks, charts
 from core_modelling.reporting.formats import COUNT, SHARE, column_formats, format_of, plain_number
@@ -94,7 +96,7 @@ def build_views(
 ) -> dict:
     """Every view by its `StageResult.views` key (the module docstring's list)."""
     ranking = tables["ranking"]
-    keys = ranking.loc[ranking["key_feature"] != ""].set_index("feature")
+    keys = list_key_features(ranking).set_index("feature")
     return {
         **_summary_views(meta, resolved),
         **_target_views(tables, resolved),
@@ -455,7 +457,7 @@ def _correlation_view(
     """The association heatmap of the key features, the method on hover (one without a compared
     pair among them left out and counted; "Not available" when fewer than two have one, D-035),
     then the candidates they represent (`_represented_view`)."""
-    keys = ranking.loc[ranking["key_feature"] != "", "feature"].tolist()
+    keys = list_key_features(ranking)["feature"].tolist()
     inside = correlation["a"].isin(keys) & correlation["b"].isin(keys)
     pairs = correlation.loc[inside & correlation["statistic"].notna()]
     compared = [name for name in keys if name in set(pairs["a"]) | set(pairs["b"])]
@@ -547,8 +549,9 @@ def _decision_paragraph(resolved: UseCaseConfig, rows: int, support: int, base: 
 
 
 def _slices_table(slices: pd.DataFrame, resolved: UseCaseConfig, rows: int) -> Styler:
-    """The key features in rank order × the slices: capture, estimate (coloured by lift), lift
-    and support, greyed below `MIN_BIN_SUPPORT`, `unavailable` shown when a row has a reason."""
+    """The key features (the listed ones first) × the slices: capture, estimate (coloured by
+    lift), lift and support, greyed below `MIN_BIN_SUPPORT`, `unavailable` shown when a row has
+    a reason."""
     spec, task = TASK_SPECS[resolved.task], resolved.task
     shown = ["feature", "slice", "capture", "estimate", "lift", "support"]
     shown += ["unavailable"] if (slices["unavailable"] != "").any() else []
@@ -569,9 +572,9 @@ def _slices_table(slices: pd.DataFrame, resolved: UseCaseConfig, rows: int) -> S
 
 
 def _capture_chart(curve: pd.DataFrame, slices: pd.DataFrame, task: str) -> go.Figure | str:
-    """The capture by share of rows, one line per key feature in rank order and the `RANDOM`
-    diagonal dashed and muted (a reference, not a feature); "Not available" with the slices'
-    reasons when no key feature has a curve (D-035)."""
+    """The capture by share of rows, one line per key feature (the listed ones first) and the
+    `RANDOM` diagonal dashed and muted (a reference, not a feature); "Not available" with the
+    slices' reasons when no key feature has a curve (D-035)."""
     if curve.empty:
         reasons = slices.loc[slices["unavailable"] != "", "unavailable"]
         why = "; ".join(dict.fromkeys(reasons.str.removeprefix("not available: ")))

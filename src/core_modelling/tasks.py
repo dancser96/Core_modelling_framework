@@ -1,39 +1,27 @@
 """The per-task spec: every task-specific choice, by `task`, in one dict (D-050).
 
 A stage that does something differently for binary and regression looks the choice up in
-`TASK_SPECS[cfg.task]` instead of branching on the task. Stage 1 holds the target rules, the
-target column check and the target summary (Target Factory) and the contract checks (the
-dataset).
+`TASK_SPECS[cfg.task]` instead of branching on the task; both tasks share one function where the
+formula is the same (the lift test). Target Factory and the dataset read the target rules, the
+target column check, the target summary and occurrences and the contract checks. EDA and Feature
+Checks read the rest (A28, A29): the counts table's target bins, the group summary and the
+per-period estimate with their intervals, the rare effect, the concordance from cells and its
+SE, the support in effective clients and its name, the events warning, the headline, the level
+encoding's shrinkage, whether a lift exists, the target class and how an estimate is printed
+and named.
 
-A target rule compares a unit's value at period t with its values in periods t+1 … t+w and
-returns the target at t as a Column. It gets the target column and the forward window over
-those periods (`target_factory.build_targets` builds it, so the time separation of §4.1 lives in
-one place); `build_targets` nulls the target where the unit lacks any of the w periods. Nulls
-follow SQL semantics: a null is ignored, never an event, and the target is null only when nothing
-can be compared; a source that codes zeros as nulls fills them upstream. Stage 1 has a flag rule
-only; the count and amount rules (`count_goes_up`, thresholds) are separate rules for M4 (D-091).
-A column check refuses a target column whose type or values the task can't read, before any
-target is built. A summary turns the targets frame into a small pandas table: one row per
-period (labelled by the period spec) plus an `all` row, from one Spark aggregate, with label
-rates up to the observation window's last period; the occurrences give the events in the target
-column itself per period (binary: the conversions; regression: the amount), label-free. A
-contract check runs on the eligible rows of the observation window before any sampling (§4.8),
-returns its log entry and raises with its numbers when the window can't be modelled.
-
-Stage 2 adds what EDA and Feature Checks read (D-050, A28, A29): the target bins of the counts
-table, the group summary (binary: positive events, the rate with its Wilson interval; regression:
-units with a non-zero target, the mean with its t-interval and the median, the non-zero share), the
-rare effect (Cohen's h on two rates, Cohen's d on two means, each with its SE in effective clients),
-the concordance's standard error, the events warning, the support's name, the target's headline
-(`base_rate_views`), the shrinkage of the level encoding and whether a lift exists: a ratio to a
-mean needs a positive mean, so a regression target whose mean is not positive shows "not available:
-mean not positive", decided before anything runs (D-035, V8). Both tasks share one rule where the
-formula is the same (the lift test). EDA's tables add more: how a feature's cells give its
-concordance (a regression target with every value a bin goes through Kendall's τ, not the dense
-table), the estimate per window period with its interval from the population counts and the cells (a
-mean's t-interval from the cells' sum of squares), the target class a box plot groups by, how an
-estimate is printed and named (rate or mean) and whether the target has a distribution to show per
-group.
+A target rule compares a unit's value at period t with its values in t+1 … t+w and returns the
+target at t as a Column, from the target column and the forward window that
+`target_factory.build_targets` builds (so §4.1's time separation lives in one place; it nulls
+the target where the unit lacks any of the w periods). Nulls follow SQL semantics: a null is
+ignored, never an event, and the target is null only when nothing can be compared; a source that
+codes zeros as nulls fills them upstream. The count and amount-threshold rules (`count_goes_up`,
+thresholds) are separate rules for M4 (D-091). A column check refuses a target column whose type
+or values the task cannot read, before any target is built. A contract check runs on the
+eligible rows of the observation window before any sampling (§4.8), returns its log entry and
+raises with its numbers when the window cannot be modelled. A lift is a ratio to the base, so a
+regression target whose mean is not positive shows "not available: mean not positive", decided
+before anything runs (D-035, V8).
 """
 
 from collections.abc import Callable
@@ -134,13 +122,18 @@ def _label_aggregates(
 def _summarise(
     targets: DataFrame, cfg: UseCaseConfig, extra: Callable[[Column], dict[str, Column]]
 ) -> pd.DataFrame:
-    """Per period (labelled by the period spec) plus an `all` row, from one rollup: rows, the
-    null share and, among the complete windows, the share of rows whose window held a null in
-    the target column (`null_in_window`, label-free) of every period; the mean target and the
-    `extra` label aggregates of every period up to the observation window's last (the periods
-    before the window are training-time history), the `all` row's over the window's periods,
-    the population the later stages read. A later period's labels are never shown: a gap
-    period's target window reaches into the validation period's outcomes (§4.2, §4.4, D-030)."""
+    """The target summary from one Spark rollup over `targets` (one row per unit and period,
+    with `target` and `null_in_window`): one row per period in order, labelled by the period
+    spec, then an `all` row.
+
+    Columns: `period`, `rows`, `null_share` (no known target), `null_value_share` (among the
+    complete windows, the rows whose window held a null in the target column; label-free), then
+    `mean_target` and the `extra` label aggregates. The labels are filled up to the observation
+    window's last period (the periods before the window are training-time history) and null
+    after it, since a gap period's target window reaches into the validation period's outcomes
+    (§4.2, §4.4, D-030); the `all` row's are over the window's periods, the population the later
+    stages read.
+    """
     window = cfg.time.observation_window
     labelled = F.col("period") <= window.last
     in_window = labelled & (F.col("period") >= window.first)
@@ -192,10 +185,10 @@ def _regression_summary(targets: DataFrame, cfg: UseCaseConfig) -> pd.DataFrame:
 def _occurrences(
     source: DataFrame, cfg: UseCaseConfig, aggregates: dict[str, Column]
 ) -> pd.DataFrame:
-    """The outcome `aggregates` per period of the source, in period order, labelled by the
-    period spec; every period has a row, the aggregates filled up to the window's last + w: the
-    outcomes the window's labels measure; later ones are later labels', the validation period's
-    among them (§4.4)."""
+    """One row per period of `source`, in period order, labelled by the period spec, with the
+    outcome `aggregates` as columns: filled up to the window's last period + w (the outcomes the
+    window's labels measure), null after (later labels' outcomes, the validation period's among
+    them, §4.4)."""
     spec = period_spec(cfg)
     last = spec.index(cfg.time.observation_window.last) + cfg.time.target_window
     measured = F.max(spec.spark_index(F.col("period"))) <= last  # one period per group
@@ -236,9 +229,10 @@ def _regression_occurrences(source: DataFrame, cfg: UseCaseConfig) -> pd.DataFra
 
 
 def _check_flag_target(eligible: DataFrame, cfg: UseCaseConfig) -> dict:
-    """Both classes present, and the pooled positive rate at or below `data.rate_band.max`,
-    reported per period (rows, as a prevalence, null without a known target; the events are in
-    the target summary, D-082)."""
+    """Both classes present, and the pooled positive rate at or below `data.rate_band.max`;
+    returns the log entry (`check`, `rate`, `max`, `positive_rows`, `known`, `per_period`: the
+    rate per period in rows, as a prevalence, null without a known target; the events are in the
+    target summary, D-082)."""
     by_period = (
         eligible.groupBy("period")
         .agg(
@@ -268,7 +262,7 @@ def _check_flag_target(eligible: DataFrame, cfg: UseCaseConfig) -> dict:
 
 
 def _check_amount_target(eligible: DataFrame, cfg: UseCaseConfig) -> dict:
-    """A finite, non-constant target."""
+    """A finite, non-constant target; returns the log entry (`check`, `known`, `min`, `max`)."""
     target = F.col("target").cast("double")
     not_finite = F.isnan(target) | (F.abs(target) == float("inf"))
     stats = eligible.agg(

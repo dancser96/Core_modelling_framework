@@ -19,6 +19,7 @@ from core_modelling.artifacts import (
     STAGE_SCHEMA_VERSION,
     StageResult,
     check_upstream,
+    list_data_definitions,
     new_run_token,
     read_stage,
     read_upstream,
@@ -36,7 +37,8 @@ from core_modelling.config.identities import (
 )
 from core_modelling.config.replay import dump_resolved
 from core_modelling.config.schema import UseCaseConfig
-from core_modelling.environment import EnvironmentConfig, Roots, feature_dir
+from core_modelling.environment import EnvironmentConfig, Roots, Source, feature_dir
+from core_modelling.sources import feature_source_names
 
 ENTITY = "entity_a"
 
@@ -227,7 +229,8 @@ def test_read_stage_refuses_a_missing_stage_and_another_version(
     path = tmp_path / "eda" / "eda.json"
     current, other = f'"schema_version": {STAGE_SCHEMA_VERSION}', '"schema_version": 1'
     path.write_text(path.read_text().replace(current, other))
-    with pytest.raises(ValueError, match="schema_version 1 .* this version reads 2: rerun"):
+    reads = f"schema_version 1 .* reads {STAGE_SCHEMA_VERSION}: rerun"
+    with pytest.raises(ValueError, match=reads):
         read_stage(folder, "eda")
 
 
@@ -268,24 +271,41 @@ def _resolved(variant: Callable[..., UseCaseConfig], **sections: object) -> UseC
     return resolved
 
 
+def _env(cfg: UseCaseConfig, root: str = "/data") -> EnvironmentConfig:
+    """An environment mapping every source `cfg` reads for `ENTITY` to a parquet folder under
+    `root`, plus one source it does not read."""
+    names = [*feature_source_names(cfg, ENTITY), cfg.entities[ENTITY].sources.targets,
+             cfg.data.model_input, "unread_source"]  # fmt: skip
+    sources = {n: Source(format="parquet", path=f"{root}/{n}") for n in names if n is not None}
+    return EnvironmentConfig(schema_version=1, roots=Roots(data=root), sources={ENTITY: sources})
+
+
 def _eda_meta(resolved: UseCaseConfig) -> dict:
     """The meta EDA would store for the resolved config, as read back from its json."""
-    meta = {"stage": "eda", **stage_identity(resolved, "eda"), "run_token": new_run_token()}
+    identity = stage_identity(resolved, "eda", _env(resolved))
+    meta = {"stage": "eda", **identity, "run_token": new_run_token()}
     return json.loads(json.dumps(meta))
 
 
 def test_stage_identity_opens_the_meta_with_the_hashes_and_the_settings(
     variant: Callable[..., UseCaseConfig],
 ) -> None:
-    """The housekeeping keys, then the digest and values of the stage's settings; a loaded config
-    is refused; run tokens are short and fresh."""
+    """The housekeeping keys, the digest and values of the stage's settings, then the digest and
+    entries of the sources the config reads (not the environment's others); a loaded config is
+    refused; run tokens are short and fresh."""
     resolved = _resolved(variant)
-    identity = stage_identity(resolved, "feature_checks")
-    assert list(identity) == [*HOUSEKEEPING_KEYS, "settings_digest", "settings"]
+    identity = stage_identity(resolved, "feature_checks", _env(resolved))
+    assert list(identity) == [*HOUSEKEEPING_KEYS, "settings_digest", "settings",
+                              "sources_digest", "sources"]  # fmt: skip
     assert list(identity["settings"]) == SETTINGS_PATHS_BY_STAGE["feature_checks"]
     assert SETTINGS_PATHS_BY_STAGE["feature_checks"][:-1] == SETTINGS_PATHS_BY_STAGE["eda"]
+    read = [*feature_source_names(resolved, ENTITY), "retail_holdings", "retail_acquisition_input"]
+    assert list(identity["sources"]) == read
+    assert identity["sources"]["retail_mart"] == {
+        "format": "parquet", "path": "/data/retail_mart", "table": None,
+    }  # fmt: skip
     with pytest.raises(ValueError, match="stage_identity for eda needs the resolved config"):
-        stage_identity(variant(), "eda")
+        stage_identity(variant(), "eda", _env(resolved))
     tokens = {new_run_token() for _ in range(3)}
     assert len(tokens) == 3 and all(len(token) == 12 for token in tokens)
 
@@ -294,16 +314,16 @@ def test_check_upstream_names_the_changed_path(variant: Callable[..., UseCaseCon
     """Unchanged settings pass; a changed kind, strata setting or validation period (it decides
     the compared periods, outside the data-definition hash) is refused naming its path."""
     meta = _eda_meta(_resolved(variant))
-    check_upstream(meta, _resolved(variant))
+    check_upstream(meta, _resolved(variant), _env(_resolved(variant)))
     moved = _resolved(variant, time={"validation_period": None})
     with pytest.raises(ValueError, match=r"time\.validation_period"):
-        check_upstream(meta, moved)
+        check_upstream(meta, moved, _env(moved))
     kinds = _resolved(variant, features={"kinds": {"income": "categorical"}})
     with pytest.raises(ValueError, match=r"features\.kinds = \{\}.*'income': 'categorical'"):
-        check_upstream(meta, kinds)
+        check_upstream(meta, kinds, _env(kinds))
     strata = _resolved(variant, strata={"max_levels": 5})
     with pytest.raises(ValueError, match="eda ran with strata = .*rerun eda"):
-        check_upstream(meta, strata)
+        check_upstream(meta, strata, _env(strata))
 
 
 def test_a_changed_decision_or_slice_makes_eda_stale(variant: Callable[..., UseCaseConfig]) -> None:
@@ -312,10 +332,10 @@ def test_a_changed_decision_or_slice_makes_eda_stale(variant: Callable[..., UseC
     meta = _eda_meta(_resolved(variant))
     decision = _resolved(variant, decision={"type": "top_n", "n": 500})
     with pytest.raises(ValueError, match="eda ran with decision = .*rerun eda"):
-        check_upstream(meta, decision)
+        check_upstream(meta, decision, _env(decision))
     slices = _resolved(variant, evaluation={"slices": {"top_n": [500]}})
     with pytest.raises(ValueError, match=r"eda ran with evaluation\.slices = .*rerun eda"):
-        check_upstream(meta, slices)
+        check_upstream(meta, slices, _env(slices))
 
 
 def test_read_upstream_reads_and_checks_the_stage_folder(
@@ -323,12 +343,12 @@ def test_read_upstream_reads_and_checks_the_stage_folder(
 ) -> None:
     """The stage's json and tables come back from its folder of the data definition; a missing
     stage asks for it and a stale one is refused."""
-    env = EnvironmentConfig(schema_version=1, roots=Roots(data=str(tmp_path)))
     resolved = _resolved(variant)
+    env = _env(resolved, str(tmp_path))
     with pytest.raises(FileNotFoundError, match="run the eda stage first"):
         read_upstream(env, resolved, ENTITY, "eda")
     result = _result(resolved)
-    result.meta = {**stage_identity(resolved, "eda"), "run_token": new_run_token()}
+    result.meta = {**stage_identity(resolved, "eda", env), "run_token": new_run_token()}
     write_stage(result, feature_dir(env, resolved, ENTITY, "eda"), "eda")
     meta, tables = read_upstream(env, resolved, ENTITY, "eda")
     assert meta["settings_digest"] == result.meta["settings_digest"] and set(tables) == {
@@ -339,6 +359,23 @@ def test_read_upstream_reads_and_checks_the_stage_folder(
         read_upstream(env, slices, ENTITY, "eda")
 
 
+def test_check_upstream_refuses_artifacts_read_from_moved_sources(
+    variant: Callable[..., UseCaseConfig],
+) -> None:
+    """A source the environment file maps elsewhere (same logical name, so the same data
+    definition) refuses the stage, naming the source and both entries (Q577); a source the
+    config does not read changes nothing."""
+    resolved = _resolved(variant)
+    meta, env = _eda_meta(resolved), _env(resolved)
+    unread = env.model_copy(deep=True)
+    unread.sources[ENTITY]["unread_source"] = Source(format="table", table="db.other")
+    check_upstream(meta, resolved, unread)
+    moved = env.model_copy(deep=True)
+    moved.sources[ENTITY]["retail_mart"] = Source(format="parquet", path="/elsewhere/mart")
+    with pytest.raises(ValueError, match=r"retail_mart was .*/data/retail_mart.*/elsewhere/mart"):
+        check_upstream(meta, resolved, moved)
+
+
 def test_check_upstream_refuses_another_data_definition(
     variant: Callable[..., UseCaseConfig],
 ) -> None:
@@ -347,9 +384,9 @@ def test_check_upstream_refuses_another_data_definition(
     resolved = _resolved(variant)
     meta = {**_eda_meta(resolved), "data_definition_hash": "0" * 64}
     with pytest.raises(ValueError, match="data definition 000000000000"):
-        check_upstream(meta, resolved)
+        check_upstream(meta, resolved, _env(resolved))
     with pytest.raises(ValueError, match="check_upstream needs the resolved config, not a loaded"):
-        check_upstream(meta, variant())
+        check_upstream(meta, variant(), _env(variant()))
 
 
 def test_check_upstream_refuses_an_incomplete_meta_and_an_unknown_path(
@@ -361,9 +398,27 @@ def test_check_upstream_refuses_an_incomplete_meta_and_an_unknown_path(
     meta = _eda_meta(resolved)
     del meta["stage"], meta["settings_digest"], meta["run_token"]
     with pytest.raises(ValueError, match=r"lacks \['stage', 'settings_digest', 'run_token'\]"):
-        check_upstream(meta, resolved)
+        check_upstream(meta, resolved, _env(resolved))
     with pytest.raises(KeyError, match=r"no setting at eda\.binz"):
         settings_meta(resolved, ["eda.binz"])
+
+
+def test_list_data_definitions_puts_the_one_in_use_first(
+    variant: Callable[..., UseCaseConfig], tmp_path: Path
+) -> None:
+    """The config's folder comes first, also before its first run; another data definition's
+    follows with the times its stage jsons stored."""
+    cfg = variant()
+    env = _env(cfg, str(tmp_path))
+    other = Path(feature_dir(env, cfg, ENTITY)).parent / "0123456789ab" / "eda"
+    other.mkdir(parents=True)
+    ran = "2026-11-01T00:00:00+00:00"
+    (other / "eda.json").write_text(json.dumps({"entity": ENTITY, "written_at": ran}))
+    table = list_data_definitions(env, cfg, ENTITY)
+    assert table["in_use"].tolist() == [True, False] and table.at[0, "eda_run"] == ""
+    assert table.at[0, "entity"] == ENTITY
+    columns = ["data_definition", "entity", "eda_run", "feature_checks_run"]
+    assert table.loc[1, columns].tolist() == ["0123456789ab", ENTITY, ran, ""]
 
 
 def test_remove_stage_removes_the_folder(cc_config: UseCaseConfig, tmp_path: Path) -> None:

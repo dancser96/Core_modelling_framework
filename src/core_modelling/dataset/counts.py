@@ -1,25 +1,19 @@
 """EDA's counts table, the Spark side (D-135).
 
 Two passes over `Frames.rows` (the eligible rows of the compared periods, the label kept in the
-window only) leave Spark as result tables, never as rows. Pass 1 (`count_cells`) counts every
-feature's rows, target sum (`sum_y`) and target sum of squares (`sum_y2`, for a regression
-mean's interval) per period, bin and target bin; pass 2 (`count_lagged_cells`) the
-same for each feature's value one period back, against the current period's target. A numeric is
-bucketed by one `Bucketizer` on the edges `bin_edges` takes from the collected snapshot's
-eligible rows (`statistics.distributions.quantile_edges`, T25), a categorical mapped to the
-window's levels (`window_levels`: the `LEVEL_CAP` most frequent kept, the rest `OTHER`, a level
-unseen in the window `NEW`; past `POOLED_LEVEL_CAP` window levels every level not kept is
-`OTHER`), null and a float NaN always the null bin (N2, N5). A categorical's window cells also
-carry the client's `fold` (`ENCODING_FOLDS` folds by a hash of `unit_id`), so its level
-encoding can be fitted on other clients than the ones it orders
-(`concordance.cross_fitted_concordance`): the same client sits in every period, so leaving a
-period out leaves the client in (V16). Then one
+window only) leave Spark as result tables, never as rows: `count_cells` counts every feature's
+rows, `sum_y` and `sum_y2` per period, bin and target bin, and `count_lagged_cells` the same for
+each feature's value one period back against the current period's target. A numeric is bucketed
+on the snapshot's edges (`bin_edges`, T25), a categorical mapped to the window's levels
+(`window_levels`), null and a float NaN always the null bin (N2, N5). A categorical's window
+cells also carry the client's `fold`, so its level encoding can be fitted on other clients than
+the ones it orders (`concordance.cross_fitted_concordance`): the same client sits in every
+period, so leaving a period out leaves the client in (V16). Each pass is one
 `explode(array(struct(...)))` and one `groupBy`, whose partial aggregation collapses the exploded
 rows inside each partition, so the shuffle carries cells, not rows (the plan's spike: 15–18 s
 and a 3 MB shuffle over the six-month canonical window; a per-feature loop was 4.5× slower, so
-there is no fallback).
-`client_constant_shares`, `population_counts` and `window_clients` are the other tables,
-`compared_periods` picks the periods the passes compare and `estimate_cells` guards `eda.bins:
+there is no fallback). `client_constant_shares`, `population_counts` and `window_clients` are
+the other tables, `compared_periods` picks the periods and `estimate_cells` guards `eda.bins:
 null`. Spark SQL and JVM transformers only, no pandas UDF: nothing Python-side runs on the
 bank's executors. What the statistics read from the cells is `docs/components/eda.md`'s.
 """
@@ -74,13 +68,11 @@ def compared_periods(cfg: UseCaseConfig, available: list[date]) -> dict[str, lis
 def bin_edges(
     snapshot: pd.DataFrame, kinds: dict[str, str], bins: int | None
 ) -> dict[str, np.ndarray | None]:
-    """Per numeric candidate, the interior edges the `Bucketizer` splits on, from the non-null
-    values of the snapshot's ELIGIBLE rows (`eligible == 1`: the cells count eligible rows, so
-    the mass points and the `2 / bins` guarantee are cut on them) through `quantile_edges`
-    (`bins` None: every distinct value its own bin), with 0 its own singleton bin whenever it
-    occurs, since the zero share is read from the `= 0` cell (`quantile_edges` makes it one
-    above `1 / bins` only); None for a column without a non-null eligible value (every row in
-    the null bin)."""
+    """Per numeric candidate, the interior edges the `Bucketizer` splits on: `quantile_edges` of
+    the non-null values on the snapshot's eligible rows, the rows the cells count (`bins` None:
+    every distinct value its own bin), plus 0 as its own bin whenever it occurs, since the zero
+    share is read from the `= 0` cell and `quantile_edges` isolates 0 only above `1 / bins`. None
+    for a column without a non-null eligible value (every row in the null bin)."""
     eligible = snapshot[snapshot["eligible"] == 1]
     zero = np.array([0.0, np.nextafter(0.0, np.inf)])
     edges = {}
@@ -146,11 +138,12 @@ def count_cells(
     window_periods: list[date],
     spec: Period,
 ) -> pd.DataFrame:
-    """Pass 1: the counts table of `rows` (`CELL_COLUMNS`, `lagged` false, `fold` null for a
-    numeric), every numeric of `edges` bucketed by one `Bucketizer`, every categorical of
-    `levels` mapped to its level (`over_ceiling`: `window_levels`' second list), the target to
-    its value (`target_edges` None, a binary target) or its bucket's label, read for the window
-    periods only; `period` as its label."""
+    """Pass 1, collected: the counts table of `rows`, one row per feature, period, fold, bin and
+    target bin (`CELL_COLUMNS`; `period` as its label, `lagged` false, `fold` null for a numeric
+    and outside the window). Every numeric of `edges` is bucketed, every categorical of `levels`
+    mapped to its level (`over_ceiling`: `window_levels`' second list), the target to its value
+    (`target_edges` None: binary) or its bucket's label, and labelled in the window periods only
+    (`target_bin` null elsewhere)."""
     _require_window(window_periods)
     return _aggregate_cells(
         rows, edges, levels, over_ceiling, target_edges, window_periods, spec, lagged=False
@@ -168,10 +161,13 @@ def count_lagged_cells(
 ) -> pd.DataFrame:
     """Pass 2: each feature's value one period back by period index (the client's previous row
     in `rows`, the eligible rows, counts only when its index is the current one minus one, else
-    the value is null), binned on the same edges and levels and counted against the current
-    period's target as `lagged` cells of the window periods; the window's first period has no
-    previous row in `rows`, so its lagged cells are null (N11)."""
+    the value is null, N11), binned on the same edges and levels and counted against the current
+    period's target as `lagged` cells of the window periods after the first: the first has no
+    previous row in `rows`, so its lagged values would all be null. A one-period window has no
+    lagged cells and is refused."""
     _require_window(window_periods)
+    if len(window_periods) < 2:
+        raise ValueError("count_lagged_cells: a one-period window has no lagged value")
     index = spec.spark_index(F.col("period"))
     by_client = Window.partitionBy("unit_id").orderBy(index)
     adjacent = F.lag(index).over(by_client) == index - 1
@@ -180,7 +176,8 @@ def count_lagged_cells(
         for name in (*edges, *levels)
     ]
     window = rows.where(F.col("period").isin(window_periods))
-    lagged = window.select("unit_id", "period", "target", *previous)
+    after_first = F.col("period") != F.lit(min(window_periods))  # the lag is taken first
+    lagged = window.select("unit_id", "period", "target", *previous).where(after_first)
     return _aggregate_cells(
         lagged, edges, levels, over_ceiling, target_edges, window_periods, spec, lagged=True
     )
@@ -205,10 +202,10 @@ def _aggregate_cells(
     spec: Period,
     lagged: bool,
 ) -> pd.DataFrame:
-    """One pass: the label kept for the window periods only (§4.4), the numerics and a binned
-    target bucketed together, every feature's cell exploded, one `groupBy` right after it (so
-    the partial aggregation collapses the rows), the labels joined in pandas; a binary target's
-    bins checked."""
+    """One pass, collected with `toPandas` (cells, not rows): the label kept for the window
+    periods only (§4.4), the numerics and a binned target bucketed together, every feature's
+    cell exploded, one `groupBy` right after it (so the partial aggregation collapses the rows),
+    then the labels joined in pandas (`_label_cells`); a binary target's bins checked."""
     if not edges and not levels:
         raise ValueError("nothing to count: `edges` and `levels` name no feature")
     label = F.when(F.col("period").isin(window_periods), F.col("target"))
@@ -337,9 +334,9 @@ def _nan_as_null(frame: DataFrame, name: str) -> Column:
 
 
 def _cell(name: str, bin_label: Column, bin_order: Column, is_null: Column, fold: Column) -> Column:
-    """The struct the pass explodes: `feature`, `fold` (int; null for a numeric and outside
-    the window), `bin` (a
-    string, null for a numeric until the labels join), `bin_order` (int), `is_null`."""
+    """The struct the pass explodes: `feature`, `fold` (int; null for a numeric and outside the
+    window), `bin` (a string, null for a numeric until the labels join), `bin_order` (int),
+    `is_null`."""
     return F.struct(
         F.lit(name).alias("feature"),
         fold.cast("int").alias("fold"),
@@ -398,11 +395,10 @@ def _label_cells(
 def client_constant_shares(
     rows: DataFrame, features: list[str], window_periods: list[date]
 ) -> pd.DataFrame:
-    """Per feature, the share of clients whose value never changes over the window periods,
-    among the clients with at least two non-null values (a float NaN counts as null, N2), with
-    that client count: `feature, constant_share, clients`. A `groupBy(unit_id)` with min, max
-    and count per column, in chunks of `CONSTANT_CHUNK` columns: one job over every column
-    spills and fills the heap (the spike), so the cost grows as one job per 50 columns."""
+    """One row per feature, `feature, constant_share, clients`: the share of clients whose value
+    never changes over the window periods, among the `clients` with at least two non-null values
+    (NaN as null, N2). One `groupBy(unit_id)` job per `CONSTANT_CHUNK` columns, each collecting a
+    single row: one job over every column spilled and filled the heap (the spike)."""
     window = rows.where(F.col("period").isin(window_periods))
     records = []
     for start in range(0, len(features), CONSTANT_CHUNK):
@@ -435,11 +431,12 @@ def _constant_aggregates(name: str) -> list[Column]:
 def population_counts(
     panel: DataFrame, cfg: UseCaseConfig, periods: dict[str, list[date]]
 ) -> pd.DataFrame:
-    """The D-088 counts per compared period on the panel after the analysis filters, before any
-    sample: `period` (its label), `rows`, `eligible_rows`, `known_target`, `positive_rows`,
-    `positive_events` (units), `non_event_units`; the labelled counts for the window periods
-    only, null elsewhere (N10: a row with a null target is in `eligible_rows` and out of
-    `known_target`). Positive is a non-zero label, for a flag and an amount alike."""
+    """The D-088 counts on the panel after the analysis filters, before any sample, collected:
+    one row per compared period, `period` (its label), `rows`, `eligible_rows`, `known_target`,
+    `positive_rows`, `positive_events` (units), `non_event_units`. The labelled counts cover the
+    eligible rows of the window periods only, null elsewhere (N10: a row with a null target is in
+    `eligible_rows` and out of `known_target`). Positive is a non-zero label, for a flag and an
+    amount alike."""
     compared = [period for group in periods.values() for period in group]
     eligible = F.col("eligible") == 1
     label = F.when(eligible & F.col("period").isin(periods["window"]), F.col("target"))
@@ -469,14 +466,12 @@ def population_counts(
 
 
 def window_clients(rows: DataFrame, window_periods: list[date]) -> dict[str, float]:
-    """The window's labelled rows and their effective number of clients, per class and in all:
-    `event_rows` and `event_effective` (a non-zero target), `non_event_rows` and
-    `non_event_effective` (a zero one), `rows` and `effective`; and `event_clients`, the distinct
-    clients with an event (the pooled window's positive events). The same client is labelled in
-    every period, mostly with the same label under overlapping target windows, so its rows are
-    near copies: the effective number is Kish's `(Σ m)² / Σ m²` over the clients' row counts
-    `m`, the clients themselves when each has as many rows. The window's standard errors rest on
-    it (`TASK_SPECS[task]["client_support"]`)."""
+    """The window's labelled rows and Kish's effective number of clients, `(Σ m)² / Σ m²` over
+    the clients' row counts `m`, per class and in all: `event_rows`, `event_effective` (a
+    non-zero target), `non_event_rows`, `non_event_effective`, `rows`, `effective`; and
+    `event_clients`, the distinct clients with an event. A client's rows are near copies across
+    periods, so the window's standard errors rest on these (`TASK_SPECS[task]["client_support"]`).
+    """
     _require_window(window_periods)
     labelled = rows.where(F.col("period").isin(window_periods) & F.col("target").isNotNull())
     event = F.col("target") != 0
@@ -504,13 +499,12 @@ def window_clients(rows: DataFrame, window_periods: list[date]) -> dict[str, flo
 
 
 def estimate_cells(rows: DataFrame, kinds: dict[str, str], window_periods: list[date]) -> int:
-    """The counts table's cells over both passes with `eda.bins: null` (every distinct value a
-    bin), estimated from `approx_count_distinct` per candidate and for the target over `rows`: a
-    numeric's distinct values, a categorical's capped at `LEVEL_CAP` (plus `OTHER` and `NEW`),
-    each plus the null bin, times the target's distinct values plus null, times the periods of
-    pass 1 plus the window periods of pass 2, a categorical's window periods `ENCODING_FOLDS`
-    times. Above `MAX_CELLS` it fails loud naming `eda.bins` (V3). With bins set the cells are
-    bounded and EDA does not call it."""
+    """The counts table's cells over both passes with `eda.bins: null`, from
+    `approx_count_distinct` over `rows`: per feature its bins (a numeric's distinct values, a
+    categorical's capped at `LEVEL_CAP` plus `OTHER` and `NEW`, each plus null) × the periods of
+    both passes (a categorical's window periods `ENCODING_FOLDS` times) × the target's distinct
+    values plus null. Above `MAX_CELLS` it fails loud naming `eda.bins` (V3); EDA calls it only
+    with `eda.bins: null`."""
     distinct = rows.agg(
         F.countDistinct("period").alias("__periods"),
         *[F.approx_count_distinct(name).alias(name) for name in (*kinds, "target")],

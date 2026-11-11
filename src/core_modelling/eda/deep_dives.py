@@ -1,21 +1,17 @@
 """The key features' deep dives and the strata pivots (docs/components/eda.md).
 
-A deep dive reads the snapshot: `group_table` summarises the eligible rows with a known target
-per group, a numeric's buckets of its edges (the counts table's `Bucketizer` buckets, `bin_orders`)
-merged into about ten groups (`numeric_groups`, a mass point its own group, chart rule 4), or one
-row per level (a categorical, or a numeric with few values); `quartiles_by_target` the feature's
-box per target class and `target_quartiles_by_group` an amount target's box per group of the
-feature (`box_table`); `per_period_concordance` the window periods' concordance read in the
-window's direction, which `concordance_per_period` gives for every ranked candidate (stored,
-and read by Feature Checks' stability step). Every group table carries the per-task summary columns
-(`population.summarise_groups`) and greys a group below `MIN_BIN_SUPPORT` events (strata cells below
-`strata.min_events`), never hides it. `dive_group_count` is the one rule for how a feature's deep
-dive groups it (by level, or about ten merged groups). `strata_pivots` crosses every key feature's
-groups with each other stratum variable's levels. A numeric whose every group is one value (by
-level) reads its values, `0`, `1`, not `= 0` (`value_labels`); merged ranges and a mass point among
-them keep `[a, b)` and `= v`. `dive_group_count`, `numeric_groups`, `merged_groups`, `value_labels`
-and `box_table` are public because the exploration functions (`explore.py`) cut and draw the same
-groups.
+A deep dive reads the snapshot's eligible rows with a known target. `dive_group_count` is the
+one rule for how it groups a feature: one row per level (a categorical, or a numeric with at
+most `strata.max_levels` values), or a numeric's buckets (the counts table's `Bucketizer`
+buckets, `bin_orders`) merged into about `strata.max_levels` groups (`numeric_groups`, a mass
+point its own group, chart rule 4). `group_table` summarises each group with the per-task
+summary columns, `quartiles_by_target` and `target_quartiles_by_group` give boxes
+(`box_table`), and `concordance_per_period` gives every ranked candidate's concordance per window
+period in the window's direction (stored, and read by Feature Checks' stability step). A group
+below `MIN_BIN_SUPPORT` events (a strata cell below `strata.min_events`) is greyed, never hidden.
+`strata_pivots` crosses every key feature's groups with each other stratum variable's levels.
+`dive_group_count`, `numeric_groups`, `merged_groups`, `value_labels` and `box_table` are public
+because `explore.py` cuts and draws the same groups.
 """
 
 import numpy as np
@@ -31,31 +27,30 @@ from core_modelling.statistics.scope import scope_statistics
 from core_modelling.tasks import TASK_SPECS
 
 MIN_BIN_SUPPORT = 20  # events (units with a non-zero target) below which a group is greyed
-DEEP_DIVE_GROUPS = 10  # the groups a numeric's bins are merged into (chart rule 4)
 BOX_COLUMNS = ["rows", "q1", "median", "q3", "lower_whisker", "upper_whisker"]
 
 
 def dive_group_count(kind: str, levels: int, max_levels: int) -> int | None:
-    """How a feature's deep dive groups it: None, one group per level, for a categorical or a
+    """How a feature's deep dive groups it: None (one group per level) for a categorical or a
     numeric with at most `max_levels` (`strata.max_levels`) distinct non-null eligible values
-    (`levels`); else about `DEEP_DIVE_GROUPS` merged groups."""
-    return None if kind == "categorical" or levels <= max_levels else DEEP_DIVE_GROUPS
+    (`levels`), else `max_levels`, the number of merged groups to aim for."""
+    return None if kind == "categorical" or levels <= max_levels else max_levels
 
 
 def bin_orders(values: pd.Series, edges: np.ndarray | None) -> np.ndarray:
-    """Each value's bucket on the interior `edges`, as the counts table's `Bucketizer` gives it
-    (bucket i is `[e_i, e_{i+1})` over `[-inf, *edges, inf]`, `np.digitize`'s index; -0.0 as 0.0,
-    ±inf in the outer buckets); -1 for a null or a NaN. No edges: every value in bucket 0."""
+    """Each value's bucket on the interior `edges` as the counts table's `Bucketizer` gives it,
+    `np.digitize`'s index (`[e_i, e_{i+1})`, -0.0 as 0.0); -1 for a null or NaN; 0 without
+    edges."""
     numbers = values.to_numpy(dtype=float, na_value=np.nan) + 0.0
     orders = np.zeros(numbers.size, dtype=int) if edges is None else np.digitize(numbers, edges)
     return np.where(np.isnan(numbers), -1, orders)
 
 
 def _merged(per_bin: pd.DataFrame, groups: int | None, edges: np.ndarray | None) -> pd.DataFrame:
-    """The groups over `per_bin` (`bin_order`, `bin`, `n`): `merge_bins` into about `groups`, or
-    every bin its own group when `groups` is None or no larger (also `merge_bins`' rule, kept here
-    for a feature without a non-null value); `bin_order_first` and `label` in bin order, a
-    group's label its outer range on `edges`."""
+    """The groups over `per_bin` (one row per bin: `bin_order, bin, n`), one row per group in bin
+    order with `bin_order_first` and `label` (its outer range on `edges`): `merge_bins` into about
+    `groups`, or every bin its own group when `groups` is None or no larger (also `merge_bins`'
+    rule, kept here for a feature without a non-null value)."""
     if groups is None or len(per_bin) <= groups:
         return per_bin.sort_values("bin_order").rename(
             columns={"bin_order": "bin_order_first", "bin": "label"}
@@ -87,9 +82,9 @@ def _assign_groups(values: pd.Series, edges: np.ndarray | None, merged: pd.DataF
 
 
 def numeric_groups(values: pd.Series, edges: np.ndarray | None, groups: int | None) -> pd.Series:
-    """A numeric's group labels over its own rows' buckets (`bin_order`, `bin` its label and `n`
-    per bucket): merged into about `groups` (None: one group per bucket), null its own group last
-    when there is one."""
+    """Each value's group label, an ordered categorical on `values`' index: its buckets on
+    `edges`, counted over `values` itself and merged into about `groups` (None: one group per
+    bucket); null its own group, last, when there is one."""
     orders = bin_orders(values, edges)
     counts = pd.Series(orders[orders >= 0]).value_counts().sort_index()
     labels = bin_labels(np.array([]) if edges is None else edges)
@@ -103,8 +98,9 @@ def numeric_groups(values: pd.Series, edges: np.ndarray | None, groups: int | No
 def merged_groups(
     pooled: pd.DataFrame, edges: np.ndarray | None, groups: int | None
 ) -> pd.DataFrame:
-    """A numeric's groups from one period's pooled cells (`pool_periods`): its non-null bins
-    merged into about `groups` (None: one per bin; `_merged`: `bin_order_first`, `label`, …)."""
+    """A numeric's groups from one period's pooled cells (`pool_periods`), one row per group: its
+    non-null bins, `n` summed over the target bins, merged into about `groups` (None: one per
+    bin; columns as `_merged` gives them, `bin_order_first` and `label` among them)."""
     values = pooled.loc[~pooled["is_null"]]
     per_bin = values.groupby(["bin_order", "bin"], as_index=False)["n"].sum()
     return _merged(per_bin, groups, edges)
@@ -133,12 +129,12 @@ def group_table(
     base: float,
     group_count: int | None,
 ) -> pd.DataFrame:
-    """A key feature's deep dive: one row per group (`_known_groups`: by level for a
-    `group_count` of None, else about `group_count` merged from the eligible rows' buckets, which
-    the snapshot period's cells count; null last), each summarised on the known rows against
-    `base`, `insufficient` below `MIN_BIN_SUPPORT`; a group without a known target keeps its row
-    with no rows and no support, insufficient. Columns: `feature, group`, then the task's summary
-    columns."""
+    """A key feature's deep dive, one row per group in group order, null last (`_known_groups`: by
+    level when `group_count` is None, else about `group_count` merged from the eligible rows'
+    buckets, as the snapshot period's cells count them). Columns: `feature, group`, then the
+    task's summary columns on the known rows against `base`, `insufficient` below
+    `MIN_BIN_SUPPORT`. A group without a known target keeps its row with 0 rows and support,
+    insufficient."""
     groups = _known_groups(snapshot, feature, kind, edges, group_count)
     target = snapshot.loc[groups.index, "target"]
     table = summarise_groups(target, groups.rename("group").to_frame(), task, base, MIN_BIN_SUPPORT)
@@ -159,10 +155,9 @@ def _box(values: pd.Series) -> dict:
 
 
 def box_table(values: pd.Series, groups: pd.Series | np.ndarray, column: str) -> pd.DataFrame:
-    """One box per group of `values` in the groups' order (`column`, then `BOX_COLUMNS`; a group
-    without a value has no row) and `skew`, the values' over every group (NaN below three
-    values), so the caller can choose a log axis (and must check the whiskers are positive first,
-    T30)."""
+    """One box per group of `values` in the groups' order (`column`, then `BOX_COLUMNS`; an empty
+    group has no row), and `skew`, the skewness of all `values` (NaN below three), from which the
+    caller picks a log axis once it has checked the whiskers are positive (T30)."""
     parts = values.groupby(groups, observed=True, sort=True)
     records = [{column: name, **_box(part)} for name, part in parts]
     table = pd.DataFrame.from_records(records, columns=[column, *BOX_COLUMNS])
@@ -189,10 +184,9 @@ def target_quartiles_by_group(
     edges: np.ndarray | None,
     group_count: int | None,
 ) -> pd.DataFrame:
-    """An amount target's box per group of one feature (eda.md view 6) on the known rows, its
-    groups `dive_group_count`'s, `group_table`'s: one per level for None, else merged into
-    about `group_count` over the eligible rows' buckets (which the snapshot period's cells
-    count). Columns: `feature, group`, `BOX_COLUMNS` and `skew` (`box_table`)."""
+    """An amount target's box per group of one feature (eda.md view 6) on the known rows, grouped
+    as `group_table` groups it. Columns: `feature, group`, `BOX_COLUMNS` and `skew`
+    (`box_table`)."""
     groups = _known_groups(snapshot, feature, kind, edges, group_count)
     table = box_table(snapshot.loc[groups.index, "target"].astype(float), groups, "group")
     return table.assign(feature=feature)[["feature", *table.columns]]
@@ -209,14 +203,13 @@ def per_period_concordance(
     sign: int,
     exact: bool,
 ) -> pd.DataFrame:
-    """Each window period's concordance of one feature, read in the raw sign of the window's D
-    (the ranking's `raw_sign_window`: +1 or −1, so a flip reads below 0.5 and a noise feature
-    still sits around 0.5; 0 when the window has no concordance, and then no period has one,
-    its rows being a subset of the window's), a categorical's cross-fitted `read=[period]` in
-    its encoding's direction; its SE the scope's, on the period's own rows (`feature_se`, at
-    max(value, 1 − value), so reading it in the window's direction leaves it as it is);
-    `insufficient` below `min_events` support. Columns: `feature, period, rows` (labelled
-    non-null rows), `support, concordance, se, insufficient, unavailable`."""
+    """One feature's concordance per window period, one row each, read in `sign`, the window's
+    raw sign (`raw_sign_window`), so a flip reads below 0.5 and noise stays near 0.5; a
+    categorical's is cross-fitted (`read=[period]`) in its encoding's direction. `sign` 0 means
+    the window has no concordance, so no period has one (its rows are a subset). The SE is the
+    scope's on the period's own rows (`feature_se` at max(value, 1 − value), so the sign leaves
+    it unchanged). Columns: `feature, period, rows` (labelled non-null rows), `support,
+    concordance, se, insufficient` (support below `min_events`), `unavailable`."""
     if sign not in (1, -1, 0):
         raise ValueError(f"per_period_concordance: sign must be +1, -1 or 0, got {sign}")
     current = cells.loc[(cells["feature"] == feature) & ~cells["lagged"]]
@@ -274,11 +267,12 @@ def strata_pivots(
     strata: Strata,
     task: str,
 ) -> pd.DataFrame:
-    """Each of `features` (every key feature) × each stratum variable but itself (a diagonal) on
-    the snapshot's eligible rows with a known target: one row per observed feature group (a
-    numeric's buckets of `edges` grouped by `dive_group_count`, as its deep dive; a categorical
-    capped at `strata.max_levels`) and stratum level, the summary columns against the snapshot's
-    base, `insufficient` below `strata.min_events`; the long shape of `strata_tables`."""
+    """One long table in `strata_tables`' shape: for each of `features` (every key feature) ×
+    each stratum variable but itself (a diagonal), one row per observed feature group and stratum
+    level on the snapshot's eligible rows with a known target. A numeric is grouped as its deep
+    dive groups it (`dive_group_count` over `edges`), a categorical capped at
+    `strata.max_levels`; the summary columns against the snapshot's base, `insufficient` below
+    `strata.min_events`."""
     eligible = snapshot.loc[snapshot["eligible"] == 1]
     known = known_rows(snapshot)
     base = known["target"].mean()

@@ -196,9 +196,9 @@ from them are [EDA](eda.md)'s (its statistics section). The functions:
   levels, counted against the current period's target as `lagged = true` cells. The lag is by
   period index and runs on `rows`, the eligible rows: the previous row counts only when its
   period index is the current one minus one, so a client with no eligible row in the previous
-  period (eligible at t but not at t − 1) has a null lagged value; the window's first period
-  has no previous period in `rows`, so its lagged cells are null and the lagged concordance
-  pools the window periods that have one (N11).
+  period (eligible at t but not at t − 1) has a null lagged value (N11). The window's first
+  period has no previous period in `rows`, so it gets no lagged cells, and a one-period window
+  none at all (`count_lagged_cells` refuses it; `run_eda` skips the pass).
 - `client_constant_shares(rows, features, window_periods) -> pd.DataFrame`: `min == max` per
   client and feature over the window periods: `feature, constant_share, clients` (the share of
   clients with at least two non-null values whose value never changes, and their count; a float
@@ -250,7 +250,7 @@ and that `eda.bins: null` gives the exact values.
 - **Key names.** The spine's key columns are named by `data.keys`. Another source (a joined
   feature source or the target source) whose keys are named otherwise is listed as
   `{source: <name>, keys: {unit_id: <column>, period: <column>}}`; a key left out falls back to
-  `data.keys`. The spine is always a plain name, since its names are `data.keys` (SDS, Q415).
+  `data.keys`. The spine is always a plain name, since its names are `data.keys` (EDS, Q415).
   A target source that is also a feature source is keyed exactly as its feature entry: the same
   rows under another period column would shift the target against the features (§4.1). In a
   source with its own key names, a column named like the spine's key columns (`client_id`,
@@ -285,7 +285,7 @@ and that `eda.bins: null` gives the exact values.
   in two feature sources fails loud, compared ignoring case as Spark does (`Income` and
   `income` clash); it is renamed upstream.
 - A joined feature source needs no full coverage: clients or periods it lacks get nulls in its
-  columns from the left join (the SDS, 2026-10-30). The periods it lacks, from the window's
+  columns from the left join (the EDS, 2026-10-30). The periods it lacks, from the window's
   first to the latest validation period, are printed by name and kept in its join entry
   (`missing_periods`), so a missing validation period never shifts validation silently against
   test (ML audit, 2026-10-30). The join prints, per source, the share of spine rows it matches,
@@ -417,7 +417,12 @@ Its path is local until the M2.4 transport.
    and `data.split.seed` (`pmod(xxhash64(…), 10⁶) / 10⁶`, Interface); `test_share` is 0.3 at
    both levels (D-091), and the assignment is stable across periods, reruns and machines (across
    machines unverified; Spark's own XXH64 is expected to match); `unit_id` is a string by the
-   time it is hashed, so the draw survives an upstream change of the id's type (T22). The
+   time it is hashed, so the draw survives an upstream change of the id's type (T22). Checked
+   on 100,000 structured ids (segment digits, an age block and a counter, nothing random): the
+   test share, each segment's and block's deviation, the autocorrelation along the counter and
+   a chi-square over 100 bins all sit where a random draw's would. Like any random split it
+   does not stratify (a 500-client segment gets 30% ± 4 points) and does not know dependent
+   clients: a household with two ids needs the household as `unit_id`. The
    sampling draws carry the salt `'sample'` instead, so equal seeds never make the sample a
    slice of the split (T20). Any
    CV inside train is grouped by client, as the calibration step's out-of-fold predictions are
@@ -440,7 +445,7 @@ Its path is local until the M2.4 transport.
    common targets and regression) or raise the budget and the Spark settings
    (`spark.driver.maxResultSize`, which caps the Arrow collect, and the driver memory). For the
    snapshot: raise the budget and the Spark settings, or pick a smaller `eda.snapshot` population
-   through eligibility (which changes the data-definition hash and reruns EDA); the framework never samples the analysis population (the SDS, Q482;
+   through eligibility (which changes the data-definition hash and reruns EDA); the framework never samples the analysis population (the EDS, Q482;
    D-135), since a sample defeats some of EDA's views. The collect
    proceeds; there is no fail-loud on the budget, since inside the bank one simply raises the
    Spark settings. The estimate and the measured size both go into `meta`, so every run checks the

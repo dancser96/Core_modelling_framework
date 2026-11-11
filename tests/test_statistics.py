@@ -370,7 +370,7 @@ def test_cross_fitting_skips_a_fold_without_the_read_period() -> None:
 
 
 def test_cross_fitting_by_client_holds_on_a_panel() -> None:
-    """The SDS's case over 10 seeds: 10,000 clients in every period, each keeping one of 50
+    """The EDS's case over 10 seeds: 10,000 clients in every period, each keeping one of 50
     levels, unrelated to a target that persists (about 200 events a period). In sample it reads
     about 0.60 and cross-fitted by period (folds that are periods) still about 0.57, since the
     other periods hold the same clients and labels; by client fold 0.50 on average (40 seeds:
