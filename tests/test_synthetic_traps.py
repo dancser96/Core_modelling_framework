@@ -2,40 +2,18 @@
 both of which need the oracle's window probabilities, the off-by-default switches (dirty data,
 extra columns) and the trap list in truth."""
 
-from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from synthetic.checks.suite import run_checks
 from synthetic.checks.switches import OUTAGE_COLUMNS, check_dirty, check_extra_columns
 from synthetic.generate import generate_mart
-from synthetic.mechanisms.traps import trap_summary
+from synthetic.mechanisms.traps import lookahead_months, trap_summary
 from synthetic.output import read_output, write_mart
 from synthetic.spec.traps import TRAPS
 
 DEFECT_COLUMNS = ["income", "casa_bal", *OUTAGE_COLUMNS]
-FAMILIES = ["traps", "controls"]
-
-
-@pytest.mark.parametrize("family", FAMILIES)
-def test_trap_rules_hold_on_unit(unit_output: tuple[str, dict], family: str) -> None:
-    """On the unit preset, every rule row of the family passes."""
-    checks = run_checks(unit_output[0], [family])[family]
-    rules = checks[checks["rule"]]
-    assert len(rules) > 0, f"{family} has no rule rows"
-    assert rules["passed"].all(), rules[~rules["passed"]].to_string()
-
-
-@pytest.mark.slow
-@pytest.mark.parametrize("family", FAMILIES)
-def test_trap_checks_pass_on_canonical(
-    canonical_checks: Callable[..., pd.DataFrame], family: str
-) -> None:
-    """Every row of the family passes at the canonical size."""
-    checks = canonical_checks(family)
-    assert checks["passed"].all(), checks[~checks["passed"]].to_string()
 
 
 @pytest.fixture(scope="module")
@@ -81,8 +59,8 @@ def test_written_dirty_data_reads_back_as_generated(
 def test_extra_columns_are_weak_or_noise(unit: tuple[pd.DataFrame, pd.DataFrame, dict]) -> None:
     """50 extra columns: 5 weak ones track a hidden trait, 45 track none; they come after the
     snapshot's columns and change no other column."""
-    mart, oracle, _ = generate_mart("unit", seed=0, n_extra_columns=50)
-    checks = check_extra_columns(mart, oracle)
+    mart, oracle, truth = generate_mart("unit", seed=0, n_extra_columns=50)
+    checks = check_extra_columns(mart, oracle, truth)
     assert len(checks) == 50 and checks["passed"].all(), checks[~checks["passed"]].to_string()
     extra = [c for c in mart.columns if c.startswith("extra_")]
     assert sum(c.endswith("_trap_weak") for c in extra) == 5
@@ -100,3 +78,13 @@ def test_truth_lists_every_trap(unit: tuple[pd.DataFrame, pd.DataFrame, dict]) -
     listed = {t["column"] for t in TRAPS if t["trap_column"] and t["column"]}
     in_extract = {"holding_cnt_trap_lookahead"}  # the feature-store extract's look-ahead column
     assert listed == {c for c in unit[0].columns if "_trap_" in c} | in_extract
+
+
+def test_lookahead_buffer_follows_the_longest_window(
+    unit: tuple[pd.DataFrame, pd.DataFrame, dict],
+) -> None:
+    """A trap row with a longer window deepens the look-ahead buffer."""
+    spec = unit[2]["spec"]
+    assert lookahead_months(spec) == 3
+    longer = {**spec, "traps": [*spec["traps"], dict(spec["traps"][0], parameters={"w": 5})]}
+    assert lookahead_months(longer) == 5

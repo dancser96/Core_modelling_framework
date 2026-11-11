@@ -37,12 +37,7 @@ import pyarrow.parquet as pq
 import scipy
 
 from synthetic import __version__
-from synthetic.generate import (
-    advance_simulation,
-    finish_simulation,
-    generate_extract,
-    start_simulation,
-)
+from synthetic.generate import generate_extract, run_months, start_simulation
 from synthetic.mechanisms.extract import extract_schema
 from synthetic.mechanisms.mart import arrow_schema
 from synthetic.mechanisms.traps import dirty_panel, trap_record
@@ -122,17 +117,16 @@ def _write_clean(out: Path, sim: dict) -> dict:
     """Run the month loop, writing each month as it becomes final; the truth without its oracle
     part (the simulation's state is freed on return)."""
     products = list(sim["spec"]["products"])
-    columns = None
-    while sim["month"] < sim["last_month"]:
-        sim, final = advance_simulation(sim)
+    columns: list[str] = []
+
+    def write(final: list[tuple[pd.DataFrame, pd.DataFrame]]) -> None:
+        """Write the months that became final; note the mart's columns from the first."""
         _write_months(out, final, products)
-        if columns is None and final:
-            columns = list(final[0][0].columns)
-    final = finish_simulation(sim)
-    _write_months(out, final, products)
-    if columns is None and final:
-        columns = list(final[0][0].columns)
-    if columns is None:
+        if not columns and final:
+            columns.extend(final[0][0].columns)
+
+    sim = run_months(sim, write)
+    if not columns:
         raise ValueError("the simulation wrote no panel month")
     return build_truth(sim, columns)
 
@@ -141,10 +135,7 @@ def _write_dirty(out: Path, sim: dict) -> dict:
     """Run the month loop holding every month, plant the defects and write the panel; the full
     truth, its oracle part from the clean panel."""
     frames = []
-    while sim["month"] < sim["last_month"]:
-        sim, final = advance_simulation(sim)
-        frames += final
-    frames += finish_simulation(sim)
+    sim = run_months(sim, frames.extend)
     sim, planted = dirty_panel(sim, frames)
     _write_months(out, planted, list(sim["spec"]["products"]))
     clean = [pd.concat([pair[i] for pair in frames], ignore_index=True) for i in (0, 1)]

@@ -41,8 +41,9 @@ from core_modelling.eda.population import (
 )
 from core_modelling.eda.report import boxes, group_chart, strata_chart
 from core_modelling.reporting import charts
+from core_modelling.reporting.formats import column_formats, format_of
 from core_modelling.reporting.html import style_table
-from core_modelling.statistics.cells import pool_periods, zero_target_bins
+from core_modelling.statistics.cells import group_of_bins, pool_periods, zero_target_bins
 from core_modelling.statistics.distributions import quantile_edges, range_label
 from core_modelling.tasks import TASK_SPECS
 
@@ -127,11 +128,11 @@ def _styled_pivot(
         shown = indexed[["rows", "support", "estimate", "lift"]]
         lift = indexed[["lift"]].rename(columns={"lift": "estimate"})
         greyed = indexed["insufficient"]
-        formats = {"rows": "{:,.0f}", "support": "{:,.0f}", "estimate": estimate, "lift": "{:.2f}"}
+        formats = column_formats(shown, task)
     else:
         shown, lift = (indexed[name].unstack(column) for name in ("estimate", "lift"))
         greyed = indexed["insufficient"].unstack(column).astype("boolean").fillna(True).astype(bool)
-        formats = dict.fromkeys(shown.columns, estimate)
+        formats = dict.fromkeys(shown.columns, format_of("estimate", task))
     caption = (
         f"The target's estimate by {', '.join(row_dims + ([column] if column else []))}: coloured "
         f"by lift against the snapshot's base {estimate.format(base)}, greyed below "
@@ -281,9 +282,9 @@ def _cell_groups(
 ) -> tuple[np.ndarray, list[str]]:
     """Each `labelled` cell's group and the groups' order, null last. A numeric's are the deep
     dive's (`_numeric_cut`), cut from the snapshot period's cells over the stage's edges; a cell
-    joins the group its bucket falls in by `searchsorted` on the groups' first buckets, so another
-    period's value in a bucket empty at the snapshot period joins the group below, and one below
-    the first group joins the first. Each group is labelled by the buckets it receives
+    joins the group its bucket falls in (`group_of_bins`), so another period's value in a bucket
+    empty at the snapshot period joins the group below, and one below the first group joins the
+    first. Each group is labelled by the buckets it receives
     (`_received_labels`), which can be wider than its deep-dive label. A categorical's are the
     snapshot period's `strata.max_levels` most frequent levels (ties by label), the rest
     `__other__` (`__new__` among them)."""
@@ -297,8 +298,8 @@ def _cell_groups(
                 f"rate_by_period: {feature} has no value in the snapshot period to cut groups from"
             )
         orders = labelled["bin_order"].to_numpy()
-        place = np.searchsorted(merged["bin_order_first"].to_numpy(), orders, side="right") - 1
-        place = np.where(null, -1, np.maximum(place, 0))  # -1: null
+        place = group_of_bins(merged["bin_order_first"].to_numpy(), orders, join_outer=True)
+        place = np.where(null, -1, place)  # -1: null
         received = _received_labels(merged, place, orders, edges)
         names = np.array([*received, NULL_BIN], dtype=object)
         return names[place], list(names)

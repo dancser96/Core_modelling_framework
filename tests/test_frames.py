@@ -5,7 +5,10 @@ a hand-made panel (D-030, D-129, D-131, D-133, D-135).
 The skeleton's config runs end to end on the written unit preset: EDA's snapshot keeps every
 client of the snapshot period after the analysis filter with the holders tagged, `rows` stays in
 Spark with the label inside the window only and never the validation period, the modelling
-frames hold the eligible rows with a known target split by client, the saved model input gives
+frames hold the eligible rows with a known target split by client with the features passed only
+(required for Training and Evaluation, refused for EDA), Training's without the validation
+period, downsampling thins train only, after the contract and whatever the features, the saved
+model input gives
 the same frames back, a model input saved from two configs serves each, a changed eligibility,
 window, split or candidate list is prepared on read while a changed target spec, a validation
 period the saved target source can't label, a missing use case, an older sidecar or uncovered
@@ -24,11 +27,14 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from conftest import REGRESSION
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import DateType
 
 from core_modelling.config import UseCaseConfig
+from core_modelling.config.audit_log import resolve_config
+from core_modelling.config.identities import resolved_input_hash
 from core_modelling.dataset import Frames, build_frames, save_model_input
 from core_modelling.dataset.frames import _eda_frames, collect_frame, estimate_collect
 from core_modelling.dataset.model_input import METADATA_FILE, saved_candidates
@@ -40,6 +46,7 @@ INPUT = "retail_acquisition_input"
 WEEK = PERIODS["week"]
 SUNDAYS = [date(2025, 1, 5) + timedelta(days=7 * i) for i in range(10)]  # 2025-W01 … W10
 WINDOW_LABELS = ["2025-03", "2025-04", "2025-05", "2025-06", "2025-07", "2025-08"]
+PRUNED = ["income", "segment", "cc_limit"]  # a feature set without the other candidates
 
 
 @pytest.fixture(scope="module")
@@ -48,12 +55,6 @@ def env(unit_env: EnvironmentConfig, tmp_path_factory: pytest.TempPathFactory) -
     path = str(tmp_path_factory.mktemp("model_input") / "retail_acquisition" / ENTITY)
     sources = {**unit_env.sources[ENTITY], INPUT: Source(format="parquet", path=path)}
     return unit_env.model_copy(update={"sources": {ENTITY: sources}})
-
-
-@pytest.fixture(scope="module")
-def in_memory(variant: Callable[..., UseCaseConfig]) -> UseCaseConfig:
-    """The skeleton's config without a model input: the frames are built in memory."""
-    return variant(data={"model_input": None})
 
 
 @pytest.fixture(scope="module")
@@ -68,17 +69,57 @@ def td_config(variant: Callable[..., UseCaseConfig]) -> UseCaseConfig:
 
 
 @pytest.fixture(scope="module")
-def eda_frames(spark: SparkSession, env: EnvironmentConfig, in_memory: UseCaseConfig) -> Frames:
-    """EDA's frames, built once for the module."""
-    return build_frames(in_memory, ENTITY, env, spark, "eda")
+def candidates(eda_frames: Frames) -> list[str]:
+    """Every candidate, each of a supported kind on the unit preset: the feature set
+    `resolve_features` gives when nothing is excluded or held."""
+    return eda_frames.meta["candidates"]
 
 
 @pytest.fixture(scope="module")
 def training_frames(
-    spark: SparkSession, env: EnvironmentConfig, in_memory: UseCaseConfig
+    spark: SparkSession, env: EnvironmentConfig, in_memory: UseCaseConfig, candidates: list[str]
 ) -> Frames:
-    """The modelling frames, built once for the module."""
-    return build_frames(in_memory, ENTITY, env, spark, "training")
+    """Training's frames on every candidate, built once for the module."""
+    resolved = resolve_config(in_memory, ENTITY, env)
+    return build_frames(resolved, ENTITY, env, spark, "training", features=candidates)
+
+
+@pytest.fixture(scope="module")
+def evaluation_frames(
+    spark: SparkSession, env: EnvironmentConfig, in_memory: UseCaseConfig, candidates: list[str]
+) -> Frames:
+    """Evaluation's frames on every candidate, built once for the module."""
+    return build_frames(in_memory, ENTITY, env, spark, "evaluation", features=candidates)
+
+
+@pytest.fixture(scope="module")
+def downsampled(variant: Callable[..., UseCaseConfig]) -> UseCaseConfig:
+    """The skeleton's config in memory with negative downsampling declared."""
+    sampling = {"method": "negative_downsampling", "keep_fraction": 0.3}
+    return variant(data={"model_input": None}, training={"sampling": sampling})
+
+
+@pytest.fixture(scope="module")
+def downsampled_frames(
+    spark: SparkSession, env: EnvironmentConfig, downsampled: UseCaseConfig, candidates: list[str]
+) -> Frames:
+    """Evaluation's frames of the downsampled config on every candidate."""
+    return build_frames(downsampled, ENTITY, env, spark, "evaluation", features=candidates)
+
+
+@pytest.fixture(scope="module")
+def pruned_frames(
+    spark: SparkSession, env: EnvironmentConfig, downsampled: UseCaseConfig
+) -> Frames:
+    """Evaluation's frames of the downsampled config on three features (`PRUNED`)."""
+    return build_frames(downsampled, ENTITY, env, spark, "evaluation", features=PRUNED)
+
+
+@pytest.fixture(scope="module")
+def saved_input(spark: SparkSession, env: EnvironmentConfig, cc_config: UseCaseConfig) -> str:
+    """The card config's model input, saved once at `env`'s path for the tests that only read
+    it; a test that saves another table or changes it uses its own folder (`_with_input`)."""
+    return save_model_input(cc_config, ENTITY, env, spark)
 
 
 def _sorted(frame: pd.DataFrame) -> pd.DataFrame:
@@ -215,18 +256,23 @@ def test_eda_frames_refuse_no_supported_candidate_and_a_snapshot_period_without_
 
 
 def test_modelling_frames_hold_eligible_labelled_rows_split_by_client(
-    training_frames: Frames, eda_frames: Frames, in_memory: UseCaseConfig
+    evaluation_frames: Frames,
+    eda_frames: Frames,
+    in_memory: UseCaseConfig,
+    candidates: list[str],
 ) -> None:
-    """Train and test share the window and no client; validation is the OOT period; every row
-    eligible with a known target; train plus test at the snapshot period is its eligible
-    labelled rows; the null-target and sampling entries in the log; the collect measurements in
-    the meta."""
+    """Evaluation's frames: train and test share the window and no client; validation is the
+    OOT period; the keys, the features, `target` and `split` only; every row with a known
+    target; train plus test are the eligible labelled rows of the window (EDA's `rows` with a
+    label), the snapshot period's among them; validation is the eligible rows of its period
+    less the null targets; the null-target and sampling entries in the log; the collect
+    measurements in the meta."""
     train, test, validation = (
-        training_frames.train,
-        training_frames.test,
-        training_frames.validation,
+        evaluation_frames.train,
+        evaluation_frames.test,
+        evaluation_frames.validation,
     )
-    assert training_frames.snapshot is None and training_frames.rows is None
+    assert evaluation_frames.snapshot is None and evaluation_frames.rows is None
     assert not set(train["unit_id"]) & set(test["unit_id"])
     assert (train["split"] == "train").all() and (test["split"] == "test").all()
     assert validation["period"].unique().tolist() == [in_memory.time.validation_period]
@@ -234,35 +280,145 @@ def test_modelling_frames_hold_eligible_labelled_rows_split_by_client(
     periods = set(train["period"]) | set(test["period"])
     assert min(periods) == window.first and max(periods) == window.last and len(periods) == 6
     for frame in (train, test, validation):
-        assert (frame["eligible"] == 1).all() and frame["target"].notna().all()
-        assert frame.columns.tolist() == eda_frames.snapshot.columns.tolist()
+        assert frame["target"].notna().all()
+        assert frame.columns.tolist() == ["unit_id", "period", *candidates, "target", "split"]
+    labelled_rows = eda_frames.rows.where(F.col("target").isNotNull()).select("unit_id", "period")
+    at_window = pd.concat([train, test])
+    assert set(zip(at_window["unit_id"], at_window["period"], strict=True)) == {
+        (row.unit_id, row.period) for row in labelled_rows.collect()
+    }
     snapshot = eda_frames.snapshot
     labelled = snapshot[(snapshot["eligible"] == 1) & snapshot["target"].notna()]
-    at_snapshot = pd.concat([train, test])
-    assert (at_snapshot["period"] == window.last).sum() == len(labelled)
-    steps = [entry["step"] for entry in training_frames.log]
+    assert (at_window["period"] == window.last).sum() == len(labelled)
+    steps = [entry["step"] for entry in evaluation_frames.log]
     assert steps[-5:] == ["null_target", "sampling", "collect", "collect", "collect"]
-    null_target = training_frames.log[-5]
+    null_target = evaluation_frames.log[-5]
     assert set(null_target["share"]) == {*WINDOW_LABELS, "2025-11"}
-    assert training_frames.meta["sampling"] == {"step": "sampling", "method": None}
-    measured = [entry["frame"] for entry in training_frames.meta["collect"]]
+    eligible_rows = next(e for e in evaluation_frames.log if e.get("check") == "eligible_rows")
+    at_v = eligible_rows["per_period"]["2025-11"] * (1 - null_target["share"]["2025-11"])
+    assert len(validation) == round(at_v)
+    assert evaluation_frames.meta["sampling"] == {"step": "sampling", "method": None}
+    measured = [entry["frame"] for entry in evaluation_frames.meta["collect"]]
     assert measured == ["train", "test", "validation"]
     assert all(
-        e["measured_bytes"] > 0 < e["estimate_bytes"] for e in training_frames.meta["collect"]
+        e["measured_bytes"] > 0 < e["estimate_bytes"] for e in evaluation_frames.meta["collect"]
     )
+
+
+def test_training_gets_train_and_test_only_never_the_validation_period(
+    training_frames: Frames, evaluation_frames: Frames
+) -> None:
+    """Training's train and test are Evaluation's; its validation is None and never collected:
+    no validation collect in the log or the meta, and the null-target share covers the window's
+    periods only (§4.4); everything before (joins, eligibility, contract) is Evaluation's."""
+    assert training_frames.validation is None
+    for name in ("train", "test"):
+        built, expected = getattr(training_frames, name), getattr(evaluation_frames, name)
+        pd.testing.assert_frame_equal(built, expected)
+    steps = [entry["step"] for entry in training_frames.log]
+    assert steps[-4:] == ["null_target", "sampling", "collect", "collect"]
+    assert set(training_frames.log[-4]["share"]) == set(WINDOW_LABELS)
+    assert [entry["frame"] for entry in training_frames.meta["collect"]] == ["train", "test"]
+    assert training_frames.log[:-4] == evaluation_frames.log[:-5]
+
+
+def test_a_feature_left_out_is_in_no_frame(pruned_frames: Frames) -> None:
+    """Three features passed: every frame carries the keys, those three, `target` and `split`,
+    in that order, and nothing else (no other candidate, tag or `eligible`)."""
+    for frame in (pruned_frames.train, pruned_frames.test, pruned_frames.validation):
+        assert frame.columns.tolist() == ["unit_id", "period", *PRUNED, "target", "split"]
+        assert "cc_bal" not in frame.columns and "non_holders" not in frame.columns
+
+
+def test_downsampling_leaves_test_and_validation_whole(
+    evaluation_frames: Frames, downsampled_frames: Frames
+) -> None:
+    """Sampling is train-only (§4.7, §4.12): with negative downsampling declared, test and
+    validation are the unsampled build's frames, while train keeps every positive and a subset
+    of its rows; the record's rows before are the unsampled train split's."""
+    for name in ("test", "validation"):
+        built, whole = getattr(downsampled_frames, name), getattr(evaluation_frames, name)
+        pd.testing.assert_frame_equal(built, whole)
+    full, sampled = evaluation_frames.train, downsampled_frames.train
+    assert len(sampled) < len(full)
+    assert (sampled["target"] == 1).sum() == (full["target"] == 1).sum()
+    keys = set(zip(sampled["unit_id"], sampled["period"], strict=True))
+    assert keys < set(zip(full["unit_id"], full["period"], strict=True))
+    record = downsampled_frames.meta["sampling"]
+    assert record["rows_before"] == len(full) and record["rows_after"] == len(sampled)
+
+
+def test_contract_checks_count_the_unsampled_population(
+    evaluation_frames: Frames, downsampled_frames: Frames
+) -> None:
+    """The contract runs before any sampling (§4.8): the downsampled build's contract entries
+    are the unsampled build's, and each window period's eligible rows less the null targets are
+    the unsampled train and test rows of that period."""
+    contract = [entry for entry in evaluation_frames.log if entry["step"] == "contract"]
+    assert [entry for entry in downsampled_frames.log if entry["step"] == "contract"] == contract
+    eligible_rows = next(entry for entry in contract if entry["check"] == "eligible_rows")
+    null_share = next(e for e in evaluation_frames.log if e["step"] == "null_target")["share"]
+    unsampled = pd.concat([evaluation_frames.train, evaluation_frames.test])["period"]
+    per_period = unsampled.map(lambda period: f"{period:%Y-%m}").value_counts()
+    for label in WINDOW_LABELS:
+        expected = eligible_rows["per_period"][label] * (1 - null_share[label])
+        assert per_period[label] == round(expected)
+    assert len(downsampled_frames.train) < len(evaluation_frames.train)  # sampling did run
+
+
+def test_a_pruned_feature_set_samples_the_same_train_rows(
+    downsampled_frames: Frames, pruned_frames: Frames
+) -> None:
+    """Pruning the columns moves no row (§4.12): with the same sampling, three features give the
+    same train, test and validation rows, in the same order with the same values, as every
+    candidate, and the same sampling record."""
+    for name in ("train", "test", "validation"):
+        pruned, full = getattr(pruned_frames, name), getattr(downsampled_frames, name)
+        pd.testing.assert_frame_equal(pruned, full[pruned.columns])
+    assert pruned_frames.meta["sampling"] == downsampled_frames.meta["sampling"]
+
+
+def test_features_are_required_by_the_modelling_stages_and_refused_by_eda(
+    spark: SparkSession, env: EnvironmentConfig, in_memory: UseCaseConfig
+) -> None:
+    """Training and Evaluation without `features`, with an empty list or with a repeated name
+    fail naming `resolve_features`, before the panel is built; `eda` with `features` fails;
+    Training refuses a held or an excluded feature; a name that is no candidate (the lineage
+    `cc_flag`, the framework's `target`) fails naming it."""
+    for stage in ("training", "evaluation"):
+        with pytest.raises(ValueError, match=rf"the {stage} frames need `features`: pass resolve_"):
+            build_frames(in_memory, ENTITY, env, spark, stage)
+        with pytest.raises(ValueError, match=r"`features` is empty: .* resolve_features\(ledger"):
+            build_frames(in_memory, ENTITY, env, spark, stage, features=[])
+        with pytest.raises(ValueError, match=r"`features` repeats \['income'\]: pass each name"):
+            build_frames(in_memory, ENTITY, env, spark, stage, features=["income", "income"])
+    with pytest.raises(ValueError, match="eda reads every candidate: build its frames without"):
+        build_frames(in_memory, ENTITY, env, spark, "eda", features=["income"])
+    with pytest.raises(ValueError, match="build_frames for training needs the resolved config"):
+        build_frames(in_memory, ENTITY, env, spark, "training", features=["income"])
+    resolved = resolve_config(in_memory, ENTITY, env)
+    message = r"features names \['cc_flag', 'target'\], which are not candidates of the panel"
+    with pytest.raises(ValueError, match=message):
+        build_frames(resolved, ENTITY, env, spark, "training", ["income", "cc_flag", "target"])
+    resolved.features.held, resolved.features.excluded = ["income"], ["age"]
+    resolved.housekeeping["resolved_input_hash"] = resolved_input_hash(resolved)
+    with pytest.raises(ValueError, match=r"names \['income', 'age'\], held or excluded"):
+        build_frames(resolved, ENTITY, env, spark, "training", features=["income", "age", "tenure"])
 
 
 def test_model_input_round_trip_gives_the_same_frames(
     spark: SparkSession,
     env: EnvironmentConfig,
     cc_config: UseCaseConfig,
-    training_frames: Frames,
+    saved_input: str,
+    evaluation_frames: Frames,
+    candidates: list[str],
 ) -> None:
     """The saved model input, read back by the config that names it, gives the modelling frames
     built in memory; it holds the sources and `target_cc_acquisition` only, its period
     partition is a date, the label of every period with a complete forward window; its
     metadata holds the join definition, the use case's target and the join log."""
-    path = save_model_input(cc_config, ENTITY, env, spark)
+    path = saved_input
     assert path == env.sources[ENTITY][INPUT].path
     saved = spark.read.parquet(path)
     assert isinstance(saved.schema["period"].dataType, DateType)
@@ -274,17 +430,17 @@ def test_model_input_round_trip_gives_the_same_frames(
     metadata = json.loads(Path(path, METADATA_FILE).read_text())
     assert metadata["use_cases"] == ["cc_acquisition"] and metadata["schema_version"] == 4
     target = metadata["targets"]["cc_acquisition"]
-    assert target["target_spec_hash"] == training_frames.meta["target_spec_hash"]
+    assert target["target_spec_hash"] == evaluation_frames.meta["target_spec_hash"]
     assert target["lineage"] == ["cc_flag"] and target["null_in_window_share"] == 0.0
     assert [entry["step"] for entry in metadata["log"]] == ["join", "join", "join"]
     assert set(metadata["columns"]) == set(saved.columns)  # Spark lists the partition last
-    from_input = build_frames(cc_config, ENTITY, env, spark, "evaluation")
+    from_input = build_frames(cc_config, ENTITY, env, spark, "evaluation", features=candidates)
     for name in ("train", "test", "validation"):
-        built, read = getattr(training_frames, name), getattr(from_input, name)
+        built, read = getattr(evaluation_frames, name), getattr(from_input, name)
         pd.testing.assert_frame_equal(_sorted(built), _sorted(read[built.columns]))
-    assert from_input.meta["candidates"] == training_frames.meta["candidates"]
-    assert from_input.meta["column_sources"] == training_frames.meta["column_sources"]
-    assert saved_candidates(cc_config, ENTITY, env) == training_frames.meta["candidates"]
+    assert from_input.meta["candidates"] == evaluation_frames.meta["candidates"]
+    assert from_input.meta["column_sources"] == evaluation_frames.meta["column_sources"]
+    assert saved_candidates(cc_config, ENTITY, env) == evaluation_frames.meta["candidates"]
 
 
 def test_model_input_saved_from_two_configs_serves_each(
@@ -293,16 +449,20 @@ def test_model_input_saved_from_two_configs_serves_each(
     cc_config: UseCaseConfig,
     td_config: UseCaseConfig,
     training_frames: Frames,
+    candidates: list[str],
+    tmp_path: Path,
 ) -> None:
     """One table with two target columns: the first use case gets the frames built in memory,
     the second its own snapshot with its own eligibility, neither seeing the other's target; a
     use case the table lacks is refused naming `save_model_input`."""
+    env = _with_input(env, tmp_path)
     path = save_model_input([cc_config, td_config], ENTITY, env, spark)
     saved = spark.read.parquet(path)
     assert {"target_cc_acquisition", "target_td_acquisition"} <= set(saved.columns)
     metadata = json.loads(Path(path, METADATA_FILE).read_text())
     assert metadata["use_cases"] == ["cc_acquisition", "td_acquisition"]
-    cc = build_frames(cc_config, ENTITY, env, spark, "training")
+    resolved = resolve_config(cc_config, ENTITY, env)
+    cc = build_frames(resolved, ENTITY, env, spark, "training", features=candidates)
     pd.testing.assert_frame_equal(_sorted(training_frames.train), _sorted(cc.train))
     td = build_frames(td_config, ENTITY, env, spark, "eda")
     assert "target_cc_acquisition" not in td.snapshot.columns
@@ -322,12 +482,11 @@ def test_model_input_saved_from_two_configs_serves_each(
 def test_changed_settings_after_the_join_are_prepared_on_read(
     spark: SparkSession,
     env: EnvironmentConfig,
-    cc_config: UseCaseConfig,
+    saved_input: str,
     variant: Callable[..., UseCaseConfig],
 ) -> None:
     """A changed eligibility, snapshot, split, candidate list or kind is not refused: the saved
     table is prepared again from the reader's config."""
-    save_model_input(cc_config, ENTITY, env, spark)
     everyone = variant(data={"eligibility": {"modelling": []}})
     frames = build_frames(everyone, ENTITY, env, spark, "eda")
     assert (frames.snapshot["eligible"] == 1).all()
@@ -356,6 +515,7 @@ def test_stale_or_missing_model_input_is_refused(
 ) -> None:
     """Another target spec, periods the table doesn't cover, another feature source list, an
     older sidecar schema (by name) or no saved table each fail naming `save_model_input`."""
+    env = _with_input(env, tmp_path)
     path = save_model_input(cc_config, ENTITY, env, spark)
     shorter = variant(time={"target_window": 2})
     with pytest.raises(ValueError, match="built from another target spec; rebuild it with save_"):
@@ -381,12 +541,13 @@ def test_validation_period_beyond_the_saved_labels_is_refused(
     spark: SparkSession,
     env: EnvironmentConfig,
     cc_config: UseCaseConfig,
+    saved_input: str,
     variant: Callable[..., UseCaseConfig],
 ) -> None:
     """A reader whose validation period needs labels later than the saved target source reaches
     (it ends at `target_last`, so labels are known up to `target_last` - w) is refused naming
     the periods, before the saved periods are compared (§4.2)."""
-    path = save_model_input(cc_config, ENTITY, env, spark)
+    path = saved_input
     target = json.loads(Path(path, METADATA_FILE).read_text())["targets"]["cc_acquisition"]
     month, w = PERIODS["month"], cc_config.time.target_window
     last = date.fromisoformat(target["target_last"])
@@ -433,28 +594,17 @@ def test_collect_printout_becomes_a_callout_worded_for_the_frame_above_the_budge
 def test_regression_runs_through_the_same_path_with_client_sampling(
     spark: SparkSession, env: EnvironmentConfig, variant: Callable[..., UseCaseConfig]
 ) -> None:
-    """Card spend summed forward for holders, sampled by client: whole clients kept, the record
-    with the rows before and after, the regression contract entries."""
-    cfg = variant(
-        task="regression",
-        entities={ENTITY: {"sources": {"features": ["retail_mart"], "targets": None}}},
-        data={
-            "model_input": None,
-            "target": {"rule": "forward_sum", "column": "spend_cc_vol"},
-            "eligibility": {
-                "modelling": [
-                    {"name": "holders", "filter": "cc_flag = 1", "reason": "spend needs a card"}
-                ]
-            },
-        },
-        training={"sampling": {"method": "client_sample", "share": 0.5}},
-    )
-    frames = build_frames(cfg, ENTITY, env, spark, "training")
+    """Card spend summed forward for holders, sampled by client: whole clients kept, holders
+    only (their `cc_flag` passed as a feature), the record with the rows before and after, the
+    regression contract entries."""
+    cfg = variant(**REGRESSION, training={"sampling": {"method": "client_sample", "share": 0.5}})
+    cfg = resolve_config(cfg, ENTITY, env)
+    frames = build_frames(cfg, ENTITY, env, spark, "training", features=["cc_flag", "income"])
     record = frames.meta["sampling"]
     assert record["method"] == "client_sample" and record["rows_after"] < record["rows_before"]
     assert len(frames.train) == record["rows_after"]
     assert frames.train.groupby("unit_id")["period"].count().max() == 6
-    assert (frames.train["holders"] == 1).all() and "spend_cc_vol" not in frames.train.columns
+    assert (frames.train["cc_flag"] == 1).all() and "spend_cc_vol" not in frames.train.columns
     checks = [entry["check"] for entry in frames.log if entry["step"] == "contract"]
     assert checks == ["eligible_rows", "unique_keys", "target_range", "null_in_window"]
 
@@ -529,12 +679,12 @@ def test_weekly_panel_runs_end_to_end_with_week_labels(
     assert sorted(r.period for r in eda.rows.select("period").distinct().collect()) == [
         *SUNDAYS[:5], SUNDAYS[9]
     ]  # fmt: skip
-    training = build_frames(cfg, ENTITY, env, spark, "training")
-    assert training.validation["period"].unique().tolist() == [SUNDAYS[5]]
-    assert not set(training.train["unit_id"]) & set(training.test["unit_id"])
-    assert len(training.train) > 0 < len(training.test)
-    assert set(training.train["period"]) | set(training.test["period"]) <= set(SUNDAYS[:4])
-    null_target = next(entry for entry in training.log if entry["step"] == "null_target")
+    evaluation = build_frames(cfg, ENTITY, env, spark, "evaluation", features=["income"])
+    assert evaluation.validation["period"].unique().tolist() == [SUNDAYS[5]]
+    assert not set(evaluation.train["unit_id"]) & set(evaluation.test["unit_id"])
+    assert len(evaluation.train) > 0 < len(evaluation.test)
+    assert set(evaluation.train["period"]) | set(evaluation.test["period"]) <= set(SUNDAYS[:4])
+    null_target = next(entry for entry in evaluation.log if entry["step"] == "null_target")
     assert set(null_target["share"]) == {f"2025-W{week:02d}" for week in (1, 2, 3, 4, 6)}
 
 

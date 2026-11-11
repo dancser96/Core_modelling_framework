@@ -1,12 +1,11 @@
 """Synthetic data: population, client description, day counters, latent traits."""
 
-from collections.abc import Callable
-
+import numpy as np
 import pandas as pd
 import pytest
 
-from synthetic.checks.suite import run_checks
 from synthetic.generate import generate_mart
+from synthetic.mechanisms.clients import step_latents
 from synthetic.mechanisms.mart import DERIVED_COLUMNS
 from synthetic.mechanisms.traps import (
     APPLICATION,
@@ -37,20 +36,6 @@ LOOKAHEAD_COLUMNS = [  # the trap columns that read up to 3 months ahead
     CC_STATUS,
     SPEND_REVIEW,
 ]
-
-
-def test_population_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
-    """On the unit preset, every rule that must always hold (tolerance 0) passes."""
-    checks = run_checks(unit_output[0], ["population"])["population"]
-    rules = checks[checks["rule"]]
-    assert len(rules) and rules["passed"].all(), rules[~rules["passed"]].to_string()
-
-
-@pytest.mark.slow
-def test_population_checks_pass_on_canonical(canonical_checks: Callable[..., pd.DataFrame]) -> None:
-    """Every row of the population check table passes at the canonical size."""
-    checks = canonical_checks("population")
-    assert checks["passed"].all(), checks[~checks["passed"]].to_string()
 
 
 def test_same_seed_same_data_other_seed_differs(
@@ -102,3 +87,12 @@ def test_small_population_survives_months_without_new_clients() -> None:
     joined = set(mart.drop_duplicates("client_id")["snapshot_month"])  # each client's first month
     assert set(months[1:]) - joined  # a month without new clients: the empty-batch path ran
     assert mart["snapshot_month"].nunique() == 24
+
+
+def test_client_with_an_unknown_profile_fails_loud(
+    unit: tuple[pd.DataFrame, pd.DataFrame, dict],
+) -> None:
+    """A profile outside the spec raises in the traits' noise instead of getting none."""
+    clients, z = pd.DataFrame({"profile": ["nowhere"]}), np.zeros((1, 5))
+    with pytest.raises(ValueError):
+        step_latents(unit[2]["spec"], clients, z, z, np.random.default_rng(0))

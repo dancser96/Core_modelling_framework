@@ -1,22 +1,23 @@
-"""The blocks every report shares: the choices table, headline numbers, warnings, reading notes.
+"""The blocks every report shares: the choices table, headline numbers, warnings, "not
+available" lines and the appendix.
 
 `CHOICES` is plain data, one row per decision a report states up front (D-032): its label, the
 dotted config path its value is read from and the alternatives. When to move to one is the config
 template's (`conf/base/TEMPLATE.yml`) and the component docs' to explain, not the report's. A row
 without a path (a count, a hash, a cap) gets its value from the stage that computed it. Each
-function returns what `render_report` takes as a block.
+function returns what `render_report` takes as a block (`appendix` a dict of them by view key).
 """
 
+from collections.abc import Callable
 from html import escape
-from numbers import Integral, Real
 
-import numpy as np
 import pandas as pd
 from pandas.io.formats.style import Styler
 
-from core_modelling.config.replay import get_at
+from core_modelling.config.identities import short
+from core_modelling.config.replay import dump_resolved, get_at
 from core_modelling.config.schema import UseCaseConfig
-from core_modelling.reporting.html import paragraph, style_table
+from core_modelling.reporting.html import paragraph, preformatted, style_table
 
 STAT_STYLE = "display: inline-block; margin: 4px 16px 4px 0"  # a headline figure
 VALUE_STYLE = "display: block; font-weight: 600"  # its value on one line, its label below
@@ -197,56 +198,76 @@ def _show(value: object) -> str:
     return str(value)
 
 
-def _choice_value(choice: dict, raw: dict) -> object:
+def _choice_value(name: str, values: dict[str, object], raw: dict) -> object:
     """A choice's value: the caller's, else the config's at its path; no path, no value fails."""
-    if "value" in choice:
-        return choice["value"]
+    if name in values:
+        return values[name]
+    choice = CHOICES[name]
     if choice["path"] is None:
-        raise ValueError(f"choice {choice['label']!r} has no config path: pass its `value`")
+        raise ValueError(f"choice {choice['label']!r} has no config path: pass its value")
     return get_at(raw, choice["path"])
 
 
-def choices_block(resolved: UseCaseConfig, choices: list[dict]) -> Styler:
+def choices_block(resolved: UseCaseConfig, names: list[str], values: dict[str, object]) -> Styler:
     """The choices table: what was chosen, its value and the alternatives (D-032).
 
-    Each choice is a `CHOICES` row, with a `value` key added where the stage computed it. When to
-    move to an alternative is the config template's and the component docs' to explain.
+    `names` are the `CHOICES` rows in the report's order; `values` holds the value of each row
+    the stage computed (every row without a config path), a value for a row not shown fails.
+    When to move to an alternative is the config template's and the component docs' to explain.
     """
+    unshown = [name for name in values if name not in names]
+    if unshown:
+        raise ValueError(f"choices_block: values for rows not in names: {unshown}")
     raw = resolved.model_dump(mode="json")
     rows = [
         {
-            "Choice": choice["label"],
-            "Value": _show(_choice_value(choice, raw)),
-            "Alternatives": choice["alternatives"],
+            "Choice": CHOICES[name]["label"],
+            "Value": _show(_choice_value(name, values, raw)),
+            "Alternatives": CHOICES[name]["alternatives"],
         }
-        for choice in choices
+        for name in names
     ]
     styler = style_table(pd.DataFrame(rows))
     return styler.set_properties(subset=["Value"], **{"white-space": "pre-line"})
 
 
-def _format_number(value: object) -> str:
-    """A headline value as text: thousands separators for counts, four digits for fractions,
-    `n/a` for a missing value (None, as the stage's meta stores it, or NaN)."""
-    if value is None or (isinstance(value, Real) and np.isnan(value)):
+def identity_values(meta: dict) -> dict[str, object]:
+    """The identity rows' values every report shows, from a stage's meta: the audit-log entry
+    replayed to and the short config and data-definition hashes."""
+    return {
+        "replayed_to": meta["replayed_to"],
+        "config_hash": short(meta["config_hash"]),
+        "data_definition_hash": short(meta["data_definition_hash"]),
+    }
+
+
+def _headline_text(value: object, number_format: str | Callable[[float], str]) -> str:
+    """A headline value in its format; `n/a` for a missing value (None, as a stage's meta stores
+    it, or NaN)."""
+    if value is None or pd.isna(value):
         return "n/a"
-    # Integral and Real take numpy's scalars too, which pandas aggregates return.
-    if isinstance(value, bool | np.bool_) or not isinstance(value, Real):
-        return str(value)
-    if isinstance(value, Integral) or abs(value) >= 1000:
-        return f"{value:,.0f}"
-    return f"{value:.4g}"
+    return number_format(value) if callable(number_format) else number_format.format(value)
 
 
-def headline(numbers: dict) -> str:
-    """The headline numbers as a row of labelled figures."""
+def headline(numbers: dict[str, object], formats: dict[str, str | Callable[[float], str]]) -> str:
+    """The headline numbers as a row of labelled figures, each name read with spaces for its
+    underscores.
+
+    `formats` gives each number the format its table column uses (`formats.format_of`'s, the
+    task's estimate format for a rate or a mean, the share format for a share), so the headline
+    reads like the tables below it; a number without a format fails.
+    """
+    unformatted = [name for name in numbers if name not in formats]
+    if unformatted:
+        raise ValueError(f"headline: no format for {unformatted}: pass one per number")
     # Inline layout, no colours: a notebook shows the block without the report's CSS, on a light
     # or a dark page.
     cells = "".join(
         f'<div class="stat" style="{STAT_STYLE}">'
-        f'<span class="value" style="{VALUE_STYLE}">{escape(_format_number(value))}</span>'
-        f'<span class="label">{escape(str(label))}</span></div>'
-        for label, value in numbers.items()
+        f'<span class="value" style="{VALUE_STYLE}">'
+        f"{escape(_headline_text(value, formats[name]))}</span>"
+        f'<span class="label">{escape(name.replace("_", " "))}</span></div>'
+        for name, value in numbers.items()
     )
     return f'<div class="headline">{cells}</div>'
 
@@ -258,34 +279,20 @@ def warnings_block(items: list[str]) -> str:
     return "<ol>" + "".join(f"<li>{escape(item)}</li>" for item in items) + "</ol>"
 
 
-def how_to_read(
-    bins: int | None, estimate_noun: str, support_name: str, group_support: int
-) -> list[str]:
-    """The five how-to-read notes of a report that shows concordance, lift and intervals
-    (reporting.md req. 8).
+def not_available(reason: str) -> str:
+    """A view declared incompatible up front as one line, "Not available: <reason>." (D-035)."""
+    return paragraph(f"Not available: {reason}.")
 
-    `bins` is `eda.bins`; with None every statistic is exact and the binning sentence is left
-    out. `estimate_noun` and `support_name` are the task's words for its estimate (`rate`,
-    `mean`) and its support; `group_support` is the support a key feature's group needs.
-    """
-    concordance = (
-        "Concordance says how well a feature orders clients by the target: 0.5 is no better "
-        "than chance, 1 a perfect ordering, whichever way round (the direction column says "
-        "which). For a yes/no target it is the AUC of that feature alone."
-    )
-    if bins is not None:
-        concordance += (
-            f" Numerics are read on {bins} quantile bins; pairs inside one bin count half."
-        )
-    notes = [
-        concordance,
-        f"Lift is a group's {estimate_noun} divided by the snapshot's base {estimate_noun}: 1 is "
-        "the base, 2 twice the base.",
-        "Intervals are 95%: Wilson for a rate, Student t for a mean. On charts they are the "
-        "error bars.",
-        f"Grey means too little support, still shown: fewer than strata.min_events "
-        f"{support_name} ({group_support} in a key feature's groups). Read the interval, not "
-        "the point.",
-        "null is the clients without a value: their own bar or level, always last.",
-    ]
-    return [paragraph(note) for note in notes]
+
+def appendix(
+    resolved: UseCaseConfig, decisions: pd.DataFrame, seconds: dict[str, float], caption: str
+) -> dict[str, str | Styler]:
+    """The appendix every report holds, by view key: the resolved config, the audit log's
+    entries (`show_decisions`' table) and the seconds per phase at one decimal under `caption`;
+    a stage adds its own parts beside them."""
+    timings = pd.DataFrame({"phase": list(seconds), "seconds": list(seconds.values())})
+    return {
+        "resolved_config": preformatted(dump_resolved(resolved)),
+        "decisions": style_table(decisions, caption="The audit log's entries, replayed in order"),
+        "timings": style_table(timings, {"seconds": "{:.1f}"}, caption=caption),
+    }

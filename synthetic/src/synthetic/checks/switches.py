@@ -10,17 +10,14 @@ import numpy as np
 import pandas as pd
 
 from synthetic.checks.events import KEYS, LATENT_COLUMNS, observation_month, to_panel
-from synthetic.checks.table import fisher_row, range_row, row, violations_row
+from synthetic.checks.table import fisher_row, range_row, row, trap_parameters, violations_row
 
 LOGIN_COUNTS = ["login_digital_mobile_cnt", "login_digital_online_cnt"]
 # The outage nulls "the digital columns": taken to be the login measures of the month.
 OUTAGE_COLUMNS = [*LOGIN_COUNTS, "days_since_last_login_digital"]
 EXTRA_ORACLE_COLUMNS = [*KEYS, *LATENT_COLUMNS]  # the mart side: keys and every `extra_*` column
-# Restated from the trap summary (docs/components/test_harness.md).
-UNIT_CHANGE = 12  # income × 12 from the unit-change month on
 # A × 1,000 typo stands far above the client's other months; 100 leaves room for real moves.
 TYPO_MIN_RATIO = 100
-WEAK_RANGE = (0.1, 0.3)  # a weak extra column's rank correlation with its trait
 
 
 def check_dirty(mart: pd.DataFrame, truth: dict) -> pd.DataFrame:
@@ -48,7 +45,9 @@ def check_dirty(mart: pd.DataFrame, truth: dict) -> pd.DataFrame:
             rule=True,
         ),
         *_outage_rows(clean, pd.Timestamp(record["outage_month"])),
-        _unit_change_row(clean, pd.Timestamp(record["unit_change_month"])),
+        _unit_change_row(
+            clean, pd.Timestamp(record["unit_change_month"]), record["unit_change_factor"]
+        ),
         _typo_row(clean, pd.DataFrame(record["typos"])),
     ]
     return pd.DataFrame(rows)
@@ -69,14 +68,14 @@ def _outage_rows(clean: pd.DataFrame, outage: pd.Timestamp) -> list[dict]:
     ]
 
 
-def _unit_change_row(clean: pd.DataFrame, change: pd.Timestamp) -> dict:
-    """Declared income is 12 × the month before the unit change in every month from it on."""
+def _unit_change_row(clean: pd.DataFrame, change: pd.Timestamp, factor: int) -> dict:
+    """Declared income is `factor` × the month before the unit change in every month from it on."""
     month = pd.to_datetime(clean["snapshot_month"])
     before = clean.loc[month == change - pd.DateOffset(months=1), ["client_id", "income"]]
     after = clean.loc[month >= change, ["client_id", "income"]]
     pairs = before.merge(after, on="client_id", suffixes=("_0", "_1")).dropna()
-    bad = ~np.isclose(pairs["income_1"], UNIT_CHANGE * pairs["income_0"], rtol=1e-9, atol=0.01)
-    return violations_row("dirty: income × 12 from the unit-change month on", pd.Series(bad))
+    bad = ~np.isclose(pairs["income_1"], factor * pairs["income_0"], rtol=1e-9, atol=0.01)
+    return violations_row(f"dirty: income × {factor} from the unit-change month on", pd.Series(bad))
 
 
 def _typo_row(clean: pd.DataFrame, typos: pd.DataFrame) -> dict:
@@ -101,9 +100,11 @@ def _typo_row(clean: pd.DataFrame, typos: pd.DataFrame) -> dict:
     return violations_row("dirty: casa_bal typos ≥ 100 × the client's usual balance", bad)
 
 
-def check_extra_columns(mart: pd.DataFrame, oracle: pd.DataFrame) -> pd.DataFrame:
+def check_extra_columns(mart: pd.DataFrame, oracle: pd.DataFrame, truth: dict) -> pd.DataFrame:
     """Extra columns (one month): a weak column's strongest rank correlation with the five hidden
-    traits lies in [0.1, 0.3]; a noise column's is within Z_TOL Fisher-z standard errors of 0."""
+    traits lies in the spec's range; a noise column's is within Z_TOL Fisher-z standard errors of
+    0."""
+    weak_range = trap_parameters(truth, None, "extra")["weak_rank_corr"]
     extra = [c for c in mart.columns if c.startswith("extra_")]
     if not extra:
         raise ValueError("the mart has no extra columns")
@@ -116,7 +117,7 @@ def check_extra_columns(mart: pd.DataFrame, oracle: pd.DataFrame) -> pd.DataFram
         kind = column.rsplit("_trap_", 1)[-1]
         if kind == "weak":
             check = "extra: weak column's strongest |rank correlation| with a trait"
-            rows.append(range_row(check, column, len(one), *WEAK_RANGE, abs(rho)))
+            rows.append(range_row(check, column, len(one), *weak_range, abs(rho)))
         elif kind == "noise":
             check = "extra: noise column's strongest rank correlation with a trait"
             rows.append(fisher_row(check, column, len(one), 0.0, rho, rank=True))

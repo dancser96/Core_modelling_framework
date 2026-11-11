@@ -75,6 +75,9 @@ behind the environment adapter; nothing is written back (D-021, OD-26).
    Feature Checks excludes them automatically (T12). For targets built upstream, no lineage list is
    required: a target is almost never built from more than one column, and a DS knows the data
    (D-029). The DS can still list lineage columns in config; this asks nothing of upstream.
+   A listed entry is matched ignoring case, as Spark matches names, and one that names no column
+   of the feature sources or the target source is refused when the panel is built: a misspelt
+   entry would exclude nothing (§4.6).
 7. **Partial and incremental builds** (later, M4): build per source, per entity and per period
    without touching other sources' or periods' outputs (partitioned, idempotent writes). Domains
    arrive at different times with different schemas, and the spec names columns per source.

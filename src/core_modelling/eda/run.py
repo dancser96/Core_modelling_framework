@@ -21,7 +21,14 @@ import numpy as np
 import pandas as pd
 from pyspark.sql import DataFrame, SparkSession
 
-from core_modelling.artifacts import StageResult, remove_stage, settings_meta, write_stage
+from core_modelling.artifacts import (
+    StageResult,
+    lap,
+    new_run_token,
+    remove_stage,
+    stage_identity,
+    write_stage,
+)
 from core_modelling.config import UseCaseConfig
 from core_modelling.config.audit_log import resolve_config, show_decisions
 from core_modelling.dataset import Frames, build_frames
@@ -36,10 +43,9 @@ from core_modelling.dataset.counts import (
 )
 from core_modelling.eda.deep_dives import (
     BOX_COLUMNS,
-    bin_table,
     concordance_per_period,
     dive_group_count,
-    level_table,
+    group_table,
     quartiles_by_target,
     strata_pivots,
     target_quartiles_by_group,
@@ -58,7 +64,6 @@ from core_modelling.eda.population import (
 from core_modelling.eda.profile import value_profile
 from core_modelling.eda.ranking import (
     count_levels,
-    encoding_prior_rows,
     feature_statistics,
     rank_features,
     select_key_features,
@@ -71,13 +76,9 @@ from core_modelling.periods import period_spec
 from core_modelling.reporting.html import render_report
 from core_modelling.sources import HELPER_COLUMNS, KEYS
 from core_modelling.statistics.association import association_table, pairwise_sample
+from core_modelling.statistics.scope import encoding_prior_rows
 from core_modelling.tasks import TASK_SPECS
 
-# EDA's digest, which Feature Checks checks; the validation period decides the compared periods
-# and the population counts yet is outside the data-definition hash (D-088).
-SETTINGS_PATHS = ["features.kinds", "strata", "eda", "time.validation_period"]
-HOUSEKEEPING_KEYS = ("entity", "config_hash", "data_definition_hash", "resolved_input_hash",
-                     "hash_version", "replayed_to")  # fmt: skip
 FRAMEWORK_COLUMNS = [*KEYS, *HELPER_COLUMNS]  # added by the framework; never a stratum
 # The stacked deep-dive tables' columns, so an empty one (no key feature of that kind) keeps its
 # schema within a task; the group tables add the task's summary columns (`_dive_columns`).
@@ -102,49 +103,44 @@ def run_eda(
     resolved = resolve_config(cfg, entity, env)
     frames = build_frames(resolved, entity, env, spark, "eda")
     _check_frame_names(resolved, frames)
-    labels, window = _compared_periods(resolved, frames.log)
-    seconds["frames"], start = _lap(start)
+    labels, window_dates = _compared_periods(resolved, frames.log)
+    seconds["frames"], start = lap(start)
     rows = frames.rows.persist()
     try:
-        counts = _count_tables(rows, frames, resolved, window)
+        counts = _count_tables(rows, frames, resolved, window_dates)
     finally:
         rows.unpersist()
-    seconds["passes"], start = _lap(start)
+    seconds["passes"], start = lap(start)
     ranking, correlation, prior_rows, extra = _rank(counts, frames, resolved, labels)
-    seconds["statistics"], start = _lap(start)
+    seconds["statistics"], start = lap(start)
     min_events, exact = resolved.strata.min_events, resolved.eda.bins is None
     per_period = concordance_per_period(counts["cells"], ranking, resolved.task, labels["window"],
                                         prior_rows, min_events, exact)  # fmt: skip
-    seconds["concordance_per_period"], start = _lap(start)
+    seconds["concordance_per_period"], start = lap(start)
     meta = _stage_meta(resolved, frames, counts, ranking, labels)
     tables = _population_tables(frames, resolved, counts, labels, ranking)
     tables.update(cells=counts["cells"], client_constant=counts["client_constant"])
     tables.update(ranking=ranking, correlation=correlation, concordance_per_period=per_period)
-    window = meta["compared_periods"]["window"]
-    tables["slices"], tables["capture_curve"] = slice_tables(counts["cells"], ranking, meta,
-                                                             resolved, window)  # fmt: skip
+    tables["slices"], tables["capture_curve"] = slice_tables(
+        counts["cells"], ranking, meta, resolved, labels["window"], prior_rows
+    )
     tables["profile"] = value_profile(frames.snapshot, frames.meta["kinds"], ranking,
                                       counts["cells"], meta["snapshot_period"])  # fmt: skip
     keys = ranking.loc[ranking["key_feature"] != ""].iterrows()
     dives = [_deep_dive(key, counts, frames, resolved, per_period) for _, key in keys]
     tables.update(_dive_tables(dives, resolved.task))
-    seconds["tables"], start = _lap(start)
+    seconds["tables"], start = lap(start)
     ledger = _ledger(frames.meta, ranking)
     meta["warnings"] = eda_warnings(tables, frames.log, resolved, meta["snapshot_period"])
     headline = headline_numbers(frames.snapshot, tables["target_per_period"], resolved.task)
     meta["headline"] = {name: None if pd.isna(value) else value for name, value in headline.items()}
-    meta["timings"] = {"seconds": seconds, "cells_estimate": counts["estimate"], **extra}
+    meta["timings"] = {"seconds": seconds, "cells": len(counts["cells"]),
+                       "cells_estimate": counts["estimate"], **extra}  # fmt: skip
     views = build_views(tables, meta, resolved, ledger, show_decisions(cfg, entity, env))
     result = StageResult(tables=tables, ledger=ledger, log=frames.log, meta=meta, paths={},
                          views=views, frame=frames.snapshot, config=resolved)  # fmt: skip
     _write(result, env, entity)
     return result
-
-
-def _lap(start: float) -> tuple[float, float]:
-    """The seconds since `start`, rounded, and the new start."""
-    now = time.perf_counter()
-    return round(now - start, 2), now
 
 
 def _check_frame_names(resolved: UseCaseConfig, frames: Frames) -> None:
@@ -205,11 +201,13 @@ def _compared_periods(
 def _count_tables(
     rows: DataFrame, frames: Frames, resolved: UseCaseConfig, window: list[date]
 ) -> dict:
-    """The Spark side over the persisted `rows` (eda.md steps 4–6): the cell estimate, the edges,
-    the window levels, the target bins, the cells of both passes, the client-constant table and
-    the window's clients."""
+    """The Spark side over the persisted `rows` (eda.md steps 4–6): the cell estimate (with
+    `eda.bins: null` only), the edges, the window levels, the target bins, the cells of both
+    passes, the client-constant table and the window's clients."""
     kinds, snapshot, bins = frames.meta["kinds"], frames.snapshot, resolved.eda.bins
-    estimate = estimate_cells(rows, kinds, bins, window)
+    # The estimate guards exact statistics alone: with bins set the cells are bounded, and its
+    # full scan of `rows` (about a counts pass long) would feed nothing.
+    estimate = estimate_cells(rows, kinds, window) if bins is None else None
     edges = bin_edges(snapshot, kinds, bins)
     categoricals = [name for name, kind in kinds.items() if kind == "categorical"]
     levels, over_ceiling = window_levels(rows, categoricals, window)
@@ -242,7 +240,7 @@ def _rank(
     eligible = pairwise_sample(snapshot.loc[snapshot["eligible"] == 1, list(kinds)])
     start = time.perf_counter()
     correlation = association_table(eligible, kinds)
-    seconds, _ = _lap(start)
+    seconds, _ = lap(start)
     numerics = [name for name, kind in kinds.items() if kind == "numeric"]
     masks = np.unique(eligible[numerics].isna().to_numpy(), axis=1).shape[1] if numerics else 0
     ranking = select_key_features(rank_features(stats), correlation, resolved.eda.key_features)
@@ -288,16 +286,13 @@ def _deep_dive(
     `levels` when `dive_group_count` says by level, else `bins`; `per_period`, its rows of
     `concordance_per_period`'s table; a numeric's `quartiles` by target class; and, when the
     task's target has a distribution, its `target_quartiles` per group."""
-    snapshot, task, cells = frames.snapshot, resolved.task, counts["cells"]
+    snapshot, task = frames.snapshot, resolved.task
     base = known_rows(snapshot)["target"].mean()
     name, kind = ranked["feature"], ranked["kind"]
     edges = counts["edges"].get(name)
     group_count = dive_group_count(kind, ranked["levels"], resolved.strata.max_levels)
-    if group_count is None:
-        dive = {"levels": level_table(snapshot, name, kind, edges, task, base)}
-    else:
-        period = frames.meta["snapshot_period"]
-        dive = {"bins": bin_table(cells, snapshot, name, edges, period, task, base, group_count)}
+    part = "levels" if group_count is None else "bins"
+    dive = {part: group_table(snapshot, name, kind, edges, task, base, group_count)}
     dive["per_period"] = per_period.loc[per_period["feature"] == name].reset_index(drop=True)
     if kind == "numeric":
         dive["quartiles"] = quartiles_by_target(snapshot, name, task)
@@ -353,15 +348,16 @@ def _stage_meta(
     resolved: UseCaseConfig, frames: Frames, counts: dict, ranking: pd.DataFrame, labels: dict
 ) -> dict:
     """`eda.json` without the warnings, the headline and the timings: the hashes, the settings
-    digest and values, the periods, the D-088 population counts, the window levels, the clients,
-    the key features and why, the kinds, the snapshot's base and the slices (label → share of the
-    snapshot's labelled rows)."""
+    digest and values (`stage_identity`), the run token the ledger's sidecar also records, the
+    periods, the D-088 population counts, the window levels, the clients, the key features and
+    why, the kinds, the snapshot's base and the slices (label → share of the snapshot's labelled
+    rows)."""
     meta, keys = frames.meta, ranking.loc[ranking["key_feature"] != ""]
     skipped = ranking.loc[ranking["represented_by"] != ""]
     known = known_rows(frames.snapshot)
     return {
-        **{key: resolved.housekeeping[key] for key in HOUSEKEEPING_KEYS},
-        **settings_meta(resolved, SETTINGS_PATHS),
+        **stage_identity(resolved, "eda"),
+        "run_token": new_run_token(),
         "snapshot_period": meta["snapshot_period"],
         "compared_periods": labels,
         "population": _records(meta["population"]),
@@ -383,14 +379,14 @@ def _stage_meta(
 
 def _write(result: StageResult, env: EnvironmentConfig, entity: str) -> None:
     """Render the report, then write in the commit order: Feature Checks' folder removed (its
-    judgement is stale), the ledger saved, `eda/` written with `report.html` in it (`eda.json`
-    is the commit marker). A render error (a Styler fails only when rendered) leaves the
-    previous run's files as they were."""
+    judgement is stale), the ledger saved with this run's token alone, `eda/` written with
+    `report.html` in it (`eda.json` is the commit marker). A render error (a Styler fails only
+    when rendered) leaves the previous run's files as they were."""
     resolved, meta = result.config, result.meta
     page = render_report(f"EDA: {resolved.use_case} ({entity})", report_sections(result.views))
     remove_stage(feature_dir(env, resolved, entity, "feature_checks"))
-    sidecar = {"stage": "eda", "data_definition_hash": meta["data_definition_hash"],
-               "settings_digest": meta["settings_digest"]}  # fmt: skip
+    sidecar = {"data_definition_hash": meta["data_definition_hash"],
+               "runs": {"eda": meta["run_token"]}}  # fmt: skip
     save_ledger(result.ledger, feature_dir(env, resolved, entity), sidecar)
     folder = feature_dir(env, resolved, entity, "eda")
     result.paths = write_stage(result, folder, "eda", texts={"report.html": page})

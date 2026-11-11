@@ -6,7 +6,8 @@ correlation overview's left-out key feature, and one regression run with no bina
 
 The hand-made cases (ties, the skip, the levels, the statistics that cannot exist and a flipped
 period, the level labels, a rare level) run on small frames, so each is
-visible in the test; the rest reads the skeleton config's real frames, built once.
+visible in the test; the rest reads the skeleton config's real frames (`conftest.py`'s, built
+once for the session).
 """
 
 from collections.abc import Callable
@@ -16,6 +17,7 @@ from html import unescape
 import numpy as np
 import pandas as pd
 import pytest
+from conftest import REGRESSION
 from pyspark.sql import SparkSession
 from sklearn.metrics import roc_auc_score
 
@@ -32,9 +34,8 @@ from core_modelling.dataset.counts import (
 from core_modelling.eda.deep_dives import (
     DEEP_DIVE_GROUPS,
     MIN_BIN_SUPPORT,
-    bin_table,
     concordance_per_period,
-    level_table,
+    group_table,
     numeric_groups,
     per_period_concordance,
     quartiles_by_target,
@@ -53,10 +54,8 @@ from core_modelling.eda.population import (
 from core_modelling.eda.profile import PROFILE_COLUMNS, QUANTILES, value_profile
 from core_modelling.eda.ranking import (
     count_levels,
-    encoding_prior_rows,
     feature_statistics,
     rank_features,
-    scope_statistics,
     select_key_features,
 )
 from core_modelling.eda.report import (
@@ -72,8 +71,6 @@ from core_modelling.eda.slices import (
     SIGNED,
     SLICE_COLUMNS,
     SLICE_GRID,
-    capture_curve,
-    capture_table,
     ordered_categorical_bins,
     ordered_numeric_bins,
     skipped_slices,
@@ -85,9 +82,11 @@ from core_modelling.ledger import COLUMNS_BY_STAGE
 from core_modelling.periods import PERIODS
 from core_modelling.reporting.formats import plain_number
 from core_modelling.reporting.theme import THEME
+from core_modelling.statistics.capture import capture_curve, capture_table
 from core_modelling.statistics.cells import pool_periods
 from core_modelling.statistics.distributions import bin_labels, merge_bins, quantile_edges
 from core_modelling.statistics.intervals import wilson_interval
+from core_modelling.statistics.scope import encoding_prior_rows, scope_statistics
 from core_modelling.tasks import TASK_SPECS
 
 ENTITY = "entity_a"
@@ -112,27 +111,15 @@ def _cells(frames: Frames, cfg: UseCaseConfig, target_edges: np.ndarray | None) 
 
 
 @pytest.fixture(scope="module")
-def cfg(variant: Callable[..., UseCaseConfig]) -> UseCaseConfig:
-    """The skeleton's config without a model input."""
-    return variant(data={"model_input": None})
-
-
-@pytest.fixture(scope="module")
-def frames(spark: SparkSession, unit_env: EnvironmentConfig, cfg: UseCaseConfig) -> Frames:
-    """EDA's frames on the unit preset, built once."""
-    return build_frames(cfg, ENTITY, unit_env, spark, "eda")
-
-
-@pytest.fixture(scope="module")
-def cells(frames: Frames, cfg: UseCaseConfig) -> pd.DataFrame:
+def cells(eda_frames: Frames, in_memory: UseCaseConfig) -> pd.DataFrame:
     """The binary counts table of the three features."""
-    return _cells(frames, cfg, None)
+    return _cells(eda_frames, in_memory, None)
 
 
 @pytest.fixture(scope="module")
-def ranking(frames: Frames, cfg: UseCaseConfig, cells: pd.DataFrame) -> pd.DataFrame:
+def ranking(eda_frames: Frames, in_memory: UseCaseConfig, cells: pd.DataFrame) -> pd.DataFrame:
     """The ranked statistics of the three features."""
-    return rank_features(_statistics(frames, cfg, cells, exact=False))
+    return rank_features(_statistics(eda_frames, in_memory, cells, exact=False))
 
 
 def _statistics(
@@ -151,7 +138,7 @@ def _statistics(
 
 
 def test_the_ranking_holds_the_ledger_columns_ranked_by_value(
-    frames: Frames, ranking: pd.DataFrame
+    eda_frames: Frames, ranking: pd.DataFrame
 ) -> None:
     """Every EDA ledger column but the key-feature pair, ranked 1… by the ranking value
     descending; each feature's statistics exist on the unit preset; a numeric's snapshot
@@ -165,7 +152,7 @@ def test_the_ranking_holds_the_ledger_columns_ranked_by_value(
     by_feature = ranking.set_index("feature")
     assert np.isnan(by_feature.loc["segment", "concordance_best_order"])
     assert by_feature.loc["income", "missing_share"] > 0 and by_feature.loc["age", "levels"] > 10
-    known = known_rows(frames.snapshot)
+    known = known_rows(eda_frames.snapshot)
     auc = roc_auc_score(known["target"], known["age"])
     assert by_feature.loc["age", "concordance"] == pytest.approx(max(auc, 1 - auc), abs=0.005)
 
@@ -358,18 +345,18 @@ def test_cap_levels_name_levels_as_spark_casts_them() -> None:
     assert cap_levels(pd.Series([np.nan, np.nan]), 10).tolist() == ["null", "null"]
 
 
-def test_bin_table_groups_match_the_merged_cells(
-    frames: Frames, cfg: UseCaseConfig, cells: pd.DataFrame
+def test_group_table_groups_match_the_merged_cells(
+    eda_frames: Frames, in_memory: UseCaseConfig, cells: pd.DataFrame
 ) -> None:
     """For a numeric with nulls, each group's known-target rows and events equal the snapshot
     cells' labelled `n` and `sum_y` over the group's bins (`merge_bins` on every row, a group
     read as its outer range), so the rows' mapping agrees with the Bucketizer's buckets; the null
     group last; greyed below `MIN_BIN_SUPPORT`; the lift against the base."""
-    snapshot_period = frames.meta["snapshot_period"]
-    edges = bin_edges(frames.snapshot, {"income": "numeric"}, cfg.eda.bins)["income"]
-    base = known_rows(frames.snapshot)["target"].mean()
-    table = bin_table(
-        cells, frames.snapshot, "income", edges, snapshot_period, cfg.task, base, DEEP_DIVE_GROUPS
+    snapshot_period = eda_frames.meta["snapshot_period"]
+    edges = bin_edges(eda_frames.snapshot, {"income": "numeric"}, in_memory.eda.bins)["income"]
+    base = known_rows(eda_frames.snapshot)["target"].mean()
+    table = group_table(
+        eda_frames.snapshot, "income", "numeric", edges, in_memory.task, base, DEEP_DIVE_GROUPS
     )
     current = cells.loc[(cells["feature"] == "income") & ~cells["lagged"]]
     pooled = pool_periods(current, [snapshot_period])
@@ -401,23 +388,25 @@ def test_a_rare_level_is_greyed_not_hidden() -> None:
             "x": ["common"] * 100 + ["rare"] * 10 + [None] * 50,
         }
     )
-    table = level_table(snapshot, "x", "categorical", None, "binary", 58 / 160)
+    table = group_table(snapshot, "x", "categorical", None, "binary", 58 / 160, None)
     assert table["group"].tolist() == ["common", "rare", "null"]
     assert table["support"].tolist() == [30, 3, 25]
     assert table["insufficient"].tolist() == [False, True, False]
 
 
 def test_target_per_period_pools_the_window(
-    frames: Frames, cfg: UseCaseConfig, cells: pd.DataFrame
+    eda_frames: Frames, in_memory: UseCaseConfig, cells: pd.DataFrame
 ) -> None:
     """Each window period's rows and rate are the population counts'; the `all` row sums the
     periods, its rate is the pooled one, its support the distinct positive units and its
     interval on effective clients, wider than on the pooled rows."""
-    collected = frames.rows.select("unit_id", "period", "target").toPandas()
+    collected = eda_frames.rows.select("unit_id", "period", "target").toPandas()
     window_events = collected.loc[collected["target"] == 1, "unit_id"].nunique()
-    population = frames.meta["population"]
-    clients = window_clients(frames.rows, _window(cfg))
-    table = target_per_period(population, cells, cfg.task, cfg.strata.min_events, clients)
+    population = eda_frames.meta["population"]
+    clients = window_clients(eda_frames.rows, _window(in_memory))
+    table = target_per_period(
+        population, cells, in_memory.task, in_memory.strata.min_events, clients
+    )
     periods = table.set_index("period")
     labelled = population.loc[population["known_target"].notna()].set_index("period")
     assert list(periods.index) == [*labelled.index, "all"]
@@ -432,54 +421,56 @@ def test_target_per_period_pools_the_window(
 
 
 def test_the_other_tables_build_on_the_unit_preset(
-    frames: Frames, cfg: UseCaseConfig, cells: pd.DataFrame
+    eda_frames: Frames, in_memory: UseCaseConfig, cells: pd.DataFrame
 ) -> None:
     """Smoke and bookkeeping: the funnel narrows step by step and its `all` row sums the
     periods; every stratum table and pivot covers the known rows once, a feature never crossed
     with itself; the reference group's two
     sides are the tag's 0 rows and the eligible rows; the boxes are ordered; one per-period row
     per window period, a categorical's too."""
-    window = [MONTH.label(p) for p in _window(cfg)]
-    funnel = funnel_per_period(frames.log, window).set_index("period")
+    window = [MONTH.label(p) for p in _window(in_memory)]
+    funnel = funnel_per_period(eda_frames.log, window).set_index("period")
     steps = ["spine", "after_income_known_or_salaried", "tagged_non_holders", "eligible"]
     assert funnel.columns.tolist() == steps and (funnel.diff(axis=1).iloc[:, 1:] <= 0).all().all()
     assert (funnel.loc["all"] == funnel.loc[window].sum()).all()
-    snapshot, known = frames.snapshot, known_rows(frames.snapshot)
-    strata = strata_tables(snapshot, cfg.strata, cfg.task)
+    snapshot, known = eda_frames.snapshot, known_rows(eda_frames.snapshot)
+    strata = strata_tables(snapshot, in_memory.strata, in_memory.task)
     assert (strata.groupby("variable")["rows"].sum() == len(known)).all()
-    edges = bin_edges(snapshot, {"age": "numeric", "income": "numeric"}, cfg.eda.bins)
-    pivots = strata_pivots(snapshot, ["age", "segment"], edges, cfg.strata, cfg.task)
+    edges = bin_edges(snapshot, {"age": "numeric", "income": "numeric"}, in_memory.eda.bins)
+    pivots = strata_pivots(snapshot, ["age", "segment"], edges, in_memory.strata, in_memory.task)
     assert (pivots.groupby(["feature", "variable"])["rows"].sum() == len(known)).all()
-    others = [variable for variable in cfg.strata.variables if variable != "segment"]
-    assert "segment" in cfg.strata.variables  # a key feature that is a stratum: no diagonal
+    others = [variable for variable in in_memory.strata.variables if variable != "segment"]
+    assert "segment" in in_memory.strata.variables  # a key feature that is a stratum: no diagonal
     assert pivots.loc[pivots["feature"] == "segment", "variable"].unique().tolist() == others
     kinds = {"age": "numeric", "segment": "categorical"}
-    groups = reference_groups(snapshot, ["non_holders"], ["age", "segment"], kinds, cfg.strata)
+    groups = reference_groups(
+        snapshot, ["non_holders"], ["age", "segment"], kinds, in_memory.strata
+    )
     size = groups.loc[groups["section"] == "size"].iloc[0]
     assert size["rows_excluded"] == (snapshot["non_holders"] == 0).sum()
     assert size["rows_eligible"] == (snapshot["eligible"] == 1).sum()
     assert groups.loc[groups["section"] == "feature", "smd"].notna().all()
-    boxes = quartiles_by_target(snapshot, "age", cfg.task)
+    boxes = quartiles_by_target(snapshot, "age", in_memory.task)
     assert boxes["target_class"].tolist() == ["0", "1"]
     assert ((boxes["q1"] <= boxes["median"]) & (boxes["median"] <= boxes["q3"])).all()
-    prior_rows = encoding_prior_rows(cells, cfg.task, cfg.strata.min_events, window)
+    prior_rows = encoding_prior_rows(cells, in_memory.task, in_memory.strata.min_events, window)
     for feature, kind in kinds.items():
-        args = (cfg.task, window, prior_rows, cfg.strata.min_events, 1, False)
+        args = (in_memory.task, window, prior_rows, in_memory.strata.min_events, 1, False)
         periods = per_period_concordance(cells, feature, kind, *args)
         assert periods["period"].tolist() == window and periods["se"].notna().all()
 
 
 def test_pivot_target_with_a_backticked_filter_and_columns(
-    frames: Frames, cfg: UseCaseConfig
+    eda_frames: Frames, in_memory: UseCaseConfig
 ) -> None:
     """A bank-style column name in `where` (backticks), rows by a numeric cut into quantile
     bins against a stratum's levels: the bins in bin order, the levels by rows with null last,
     each cell's rate the rows' mean target; without `columns`, the lean long form; no rows
     refused."""
-    snapshot = frames.snapshot.rename(columns={"segment": "client segment"})
+    snapshot = eda_frames.snapshot.rename(columns={"segment": "client segment"})
     left_out = snapshot["client segment"].dropna().iloc[0]
     ledger = pd.DataFrame({"feature": ["age"], "kind": ["numeric"]})
-    result = StageResult({}, ledger, [], {}, {}, {}, snapshot, cfg)
+    result = StageResult({}, ledger, [], {}, {}, {}, snapshot, in_memory)
     styler = pivot_target(result, "age", "onboarding_channel", f"`client segment` != '{left_out}'")
     data = known_rows(snapshot)
     data = data.loc[data["client segment"] != left_out]
@@ -515,15 +506,17 @@ def test_the_correlation_overview_shows_the_key_features_and_whom_they_represent
     pairs = [("a", "b", 0.3), ("a", "c", np.nan), ("b", "c", np.nan), ("a", "d", 0.95),
              ("b", "d", 0.2), ("c", "d", np.nan), ("a", "e", 0.1)]  # fmt: skip
     correlation = pd.DataFrame(pairs, columns=["a", "b", "statistic"]).assign(method="spearman")
-    heatmap, represented = _correlation_view(correlation, ranking, 0.9)
+    heatmap, represented = _correlation_view(correlation, ranking, 0.9, "binary")
     assert list(heatmap.data[0].x) == ["a", "b"] == list(heatmap.data[0].y)
     assert "2 shown, 1 without a compared pair left out" in heatmap.layout.title.text
     assert represented.data.to_dict("records") == [
         {"candidate": "d", "represented_by": "a", "association": 0.95, "method": "spearman"}
     ]
     alone = ranking.assign(represented_by="")
-    assert "represent no candidate" in _correlation_view(correlation, alone, 0.9)[1]
-    assert _correlation_view(correlation, alone.iloc[2:], 0.9)[0].startswith("<p>Not available")
+    assert "represent no candidate" in _correlation_view(correlation, alone, 0.9, "binary")[1]
+    assert _correlation_view(correlation, alone.iloc[2:], 0.9, "binary")[0].startswith(
+        "<p>Not available"
+    )
 
 
 def test_a_by_level_numeric_reads_values_and_a_mass_point_among_ranges_keeps_its_sign() -> None:
@@ -543,19 +536,7 @@ def test_a_regression_target_runs_through_the_same_tables(
     """Card spend summed forward for holders: the statistics exist for every feature (Kendall's
     SE), the bin table's groups carry the mean, its t-interval and the median, and each period's
     mean its t-interval from the cells' sum of squares."""
-    cfg = variant(
-        task="regression",
-        entities={ENTITY: {"sources": {"features": ["retail_mart"], "targets": None}}},
-        data={
-            "model_input": None,
-            "target": {"rule": "forward_sum", "column": "spend_cc_vol"},
-            "eligibility": {
-                "modelling": [
-                    {"name": "holders", "filter": "cc_flag = 1", "reason": "spend needs a card"}
-                ]
-            },
-        },
-    )
+    cfg = variant(**REGRESSION)
     frames = build_frames(cfg, ENTITY, unit_env, spark, "eda")
     known = known_rows(frames.snapshot)["target"]
     cells = _cells(frames, cfg, TASK_SPECS["regression"]["target_bins"](known, False))
@@ -563,8 +544,8 @@ def test_a_regression_target_runs_through_the_same_tables(
     assert (stats["unavailable"] == "").all() and stats["concordance"].between(0.5, 1).all()
     assert stats["concordance_se"].notna().all()
     edges = bin_edges(frames.snapshot, {"age": "numeric"}, cfg.eda.bins)["age"]
-    table = bin_table(cells, frames.snapshot, "age", edges, frames.meta["snapshot_period"],
-                      "regression", known.mean(), DEEP_DIVE_GROUPS)  # fmt: skip
+    table = group_table(frames.snapshot, "age", "numeric", edges, "regression", known.mean(),
+                        DEEP_DIVE_GROUPS)  # fmt: skip
     assert {"median", "nonzero_share"} <= set(table.columns)
     assert table["rows"].sum() == len(known)
     assert (table["low"] <= table["estimate"]).all() and (table["estimate"] <= table["high"]).all()
@@ -598,13 +579,13 @@ def test_a_concordance_row_without_any_period_reads_not_available() -> None:
     assert len(boxes.data) == 2 and text == alone[0]
 
 
-def test_sources_per_period_shares_are_the_join_entries(frames: Frames) -> None:
+def test_sources_per_period_shares_are_the_join_entries(eda_frames: Frames) -> None:
     """Over the compared periods, each joined feature source's share is its entry's matched rows
     over the spine's, `all` pooled, the target source left out; the spine alone leaves `rows`."""
-    compared = next(entry for entry in frames.log if entry["step"] == "compared_periods")
+    compared = next(entry for entry in eda_frames.log if entry["step"] == "compared_periods")
     periods = [*compared["window"], *compared["gap"], *compared["latest"]]
-    spine, extract, targets = [entry for entry in frames.log if entry["step"] == "join"]
-    table = sources_per_period(frames.log, periods).set_index("period")
+    spine, extract, targets = [entry for entry in eda_frames.log if entry["step"] == "join"]
+    table = sources_per_period(eda_frames.log, periods).set_index("period")
     assert table.columns.tolist() == ["rows", extract["source"]] and targets["role"] == "targets"
     assert table.index.tolist() == [*periods, "all"]
     rows = pd.Series(spine["rows"])[periods]
@@ -701,7 +682,8 @@ def test_a_null_categorical_on_a_panel_captures_its_share() -> None:
     captured = []
     for _ in range(20):
         cells = _slice_cells("c", _null_code_rows(rng, 2_000, periods))
-        ordered = ordered_categorical_bins(cells, periods[-1], periods, 50, "binary")
+        prior_rows = encoding_prior_rows(cells, "binary", 50, periods)
+        ordered = ordered_categorical_bins(cells, periods[-1], periods, prior_rows)
         captured.append(capture_table(ordered, shares, 0.03, "binary", "")["capture"])
     np.testing.assert_allclose(np.mean(captured, axis=0), [0.05, 0.1], atol=0.025)
 
@@ -721,7 +703,8 @@ def test_slice_tables_order_categoricals_by_client_fold_and_take_the_decision_on
              (p, 2, 1, 5, 1), (p, 2, 0, 5, 1), (p, -1, 0, 40, 1)]  # fmt: skip
     numeric = _slice_cells("x", [(p, 0, 0, 325), (p, 1, 1, 125)])
     cells = pd.concat([_slice_cells("c", level), numeric])
-    order = ordered_categorical_bins(cells.loc[cells["feature"] == "c"], p, [p], 50, "binary")
+    prior_rows = encoding_prior_rows(cells, "binary", 50, [p])  # the run's, as `run_eda` hands it
+    order = ordered_categorical_bins(cells.loc[cells["feature"] == "c"], p, [p], prior_rows)
     by_fold = order.groupby("fold")["bin"].agg(list).to_dict()
     assert by_fold == {0: ["v0", "v1"], 1: ["v1", "v2", "v0", "null"]}
     ranking = _slice_ranking(["x", "c", "z"], ["numeric", "categorical", "numeric"], [1, 1, 0])
@@ -729,7 +712,7 @@ def test_slice_tables_order_categoricals_by_client_fold_and_take_the_decision_on
                        evaluation={"slices": {"top_pct": [0.1], "top_n": [45, 5_000]}})  # fmt: skip
     meta = {"snapshot_period": p, "snapshot_base": 125 / 450,
             "slices": slice_shares(resolved, 450)}  # fmt: skip
-    slices, curve = slice_tables(cells, ranking, meta, resolved, [p])
+    slices, curve = slice_tables(cells, ranking, meta, resolved, [p], prior_rows)
     assert slices.columns.tolist() == SLICE_COLUMNS and curve.columns.tolist() == CURVE_COLUMNS
     assert slices["slice"].iloc[:2].tolist() == ["decision n = 45", "top 10%"]
     assert slices["feature"].tolist() == ["x", "x", "c", "c", "z"]
@@ -762,7 +745,7 @@ def test_a_regression_capture_needs_a_target_never_negative(
         cells = _slice_cells("x", [(p, b, target, 100) for b, target in enumerate(targets)])
         meta = {"snapshot_period": p, "snapshot_base": base, "slices": slice_shares(resolved, 200)}
         slices, curve = slice_tables(cells, _slice_ranking(["x"], ["numeric"], [1]), meta,
-                                     resolved, [p])  # fmt: skip
+                                     resolved, [p], 50.0)  # fmt: skip
         assert (slices["unavailable"] == reason).all() and curve.empty == bool(reason)
         read = slices[["capture", "lift", "estimate"]].to_numpy().T
         np.testing.assert_allclose(read, [capture, lift, estimate])

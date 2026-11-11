@@ -14,7 +14,7 @@ in `docs/components/test_harness.md`; history is in `docs/UPDATES.md` and D-003,
   - `mechanisms/`: the functions that simulate;
   - `truth/`: the oracle, the regression oracle and `truth.json`;
   - `checks/`: 10 check families, written from the spec and never from the generator's code.
-- `truth.json` (55 KB) keeps only what can't be recomputed: the spec, calibration, column kinds,
+- `truth.json` (about 70 KB) keeps only what can't be recomputed: the spec, calibration, column kinds,
   per-target oracle metrics and the dirty-data record.
 - Traps of two kinds:
   - **Trap columns** (`trap_column` true), named `<column>_trap_<kind>`: two leaks (one strong,
@@ -43,22 +43,21 @@ in `docs/components/test_harness.md`; history is in `docs/UPDATES.md` and D-003,
 source .venv/bin/activate
 python -m synthetic --preset dev --out data/01_raw/synthetic_dev            # 20k, daily work
 python -m synthetic --preset canonical --out data/01_raw/synthetic_canonical --checks
-pytest                 # fast suite, ≈ 3 min
+pytest                 # default suite, the trap test included, ≈ 13 min; -m "not slow and not traps" skips it
 pytest -m slow         # canonical size, each check family in its own process, ≈ 15–20 min
 ```
-- Generation takes about 6 minutes at 100k and about a minute at 20k. `--checks` then runs each family in its own process
-  (10–15 minutes on a quiet Mac) and exits with an error if any row fails. Close memory-heavy apps
-  first.
+- Generation takes about 6 minutes at 100k and about a minute at 20k. `--checks` then runs each
+  family in its own process (10–15 minutes on a quiet Mac) and exits with an error if any row
+  fails. Close memory-heavy apps first.
 - The output folder must be new or empty. `load_truth` refuses a dataset written by another
   generator version, so a stale `data/01_raw/` fails loudly.
 
 ## 3. The review, in order
 ### 3.1 The notebook (`notebooks/00_synthetic_data.ipynb`, committed with outputs)
 A visual tour first (sections 1–8, following Level 2 of the spec), then an appendix with the check
-tables and the tables behind each chart. Its first cell prints the check status: 1,309 of 1,309
-rows pass in 8 families (its committed outputs are from 0.5.2; at 0.5.3 the canonical dataset
-passes 1,336 of 1,336 rows in 9 families, the extract's included, and the notebook shows the
-extract once it is re-run).
+tables and the tables behind each chart. Its first cell prints the check status: 1,374 of 1,374
+rows pass in 10 families (its committed outputs, from 0.6.0 before the oracle family gained its
+target-table row, show 1,373).
 
 | Section | What right looks like |
 |---|---|

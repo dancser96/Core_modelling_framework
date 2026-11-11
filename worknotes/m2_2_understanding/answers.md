@@ -3,14 +3,13 @@ _Round 1 (Q418–Q462 and Q447b): written 2026-10-30, answered 2026-11-02 · rou
 3 (Q477–Q489, A19–A36) and 4 (Q490–Q493): written and answered 2026-11-02, recorded in order after
 round 1 · the null-value assumptions register (N1 onwards) follows round 3 · every question verbatim as
 asked, each followed by the SDS's answer verbatim and the outcome for the plan · the record the
-build plan is written from, kept complete through context compaction (the SDS, 2026-11-02) · the
-open round is in `questions.md` beside it · cited decisions are summarised in brackets (D-072 (k))
+build plan is written from, kept complete through context compaction (the SDS, 2026-11-02) · no
+round is open · cited decisions are summarised in brackets (D-072 (k))
 · the folder is deleted when the stage is done_
 
-**Where it stands (2026-11-03): every round answered (Q418–Q493) and the SDS's remarks of
-2026-11-03 (R1–R9, at the end) applied; the design is settled and written into the component
-docs; the build plan is `plan.md` beside this file, revised, waiting for approval (V13–V15 open to
-veto). New questions start at Q494.** Stage 2 is M2.2 Understanding:
+**Where it stands (2026-11-10): Stage 2 is built (0.3.0). The record runs to Q547 and R58, every
+question answered; the plan was approved on 2026-11-03 and its decisions to veto are `plan.md`
+§9 (V74–V103 still open, for the Feature Checks code review).** Stage 2 is M2.2 Understanding:
 EDA, Feature Checks, the feature ledger and Reporting, with their two notebooks and the trap
 acceptance test. The plan sized it at four days (11-03 – 11-06) and "thin" (D-022 (the Phase 2
 plan: skeleton first, two deepening rounds)). You asked for something between thin and deep with
@@ -2145,7 +2144,7 @@ into the owner docs** (the spec step, 2026-11-02; N10 and N17 on 2026-11-03 afte
 R1): `eda.md` "Nulls" owns N1–N9, N13–N16 and N19; `feature_checks.md` "Nulls" repeats the ones
 it relies on (N4–N6, N11, N12, N15, N18); `dataset.md` owns N10 (the population counts) and N11
 (the lag pass); `training.md` owns N17 (the predefined path's imputation rule). This table stays
-the numbered index until the stage is built and the folder is deleted; a new assumption is added
+the numbered index until the folder is deleted at the stage's sign-off; a new assumption is added
 here and in its owner doc the moment it is made._
 
 | # | Assumption | Source | Status |
@@ -2804,12 +2803,14 @@ The SDS's answers to review 1's follow-up questions, verbatim, with the outcome 
   `DOMINANT_SHARE` becomes `leakage.dominant_share_min` (0.90).
 - Q545. "Option (B), but create a work note todo note for a synthetic data extension which I will
   do today whereas there must be trap and check columns for every single test" → the count-free
-  guard in the trap test; `worknotes/synthetic_trap_coverage.md` lists, per finding, the trap
-  column that must fire and the control column that must not, what exists and what is missing.
+  guard in the trap test; a note listed, per finding, the trap column that must fire and the
+  control column that must not, and it was built as synthetic 0.6.0 (2026-11-10).
 
 # Feature Checks review 1, last answers (2026-11-10): Q546–Q547; the plan agreed
 The SDS's answers, verbatim, with the outcome of each.
-- Q546. "Option (A)" → `steps.py` stays one module, as built.
+- Q546. "Option (A)" → `steps.py` stays one module, as built. (Since the codebase review of
+  2026-11-10, Q568: the five checks stay one module, their input gathering is
+  `feature_checks/inputs.py` and the finding-row builders are in `findings.py`.)
 - Q547. "Option (B)" → the leaf `stability.concordance_range_floor` (default 0.05):
   `concordance_unstable` needs a range of at least max(floor, `concordance_range_min` ×
   |`concordance_window` − 0.5|). On the canonical term-deposit config the two signal-less digital

@@ -25,7 +25,8 @@ order flatters noise, and so does an order fitted on the same clients' other per
 a null 50-level code reads 0.60 in sample and 0.57 cross-fitted by period. So a categorical's
 concordance is cross-fitted by client fold (`cross_fitted_concordance`): each fold's levels are
 ordered by the encoding fitted on the other folds' clients, and only pairs inside a fold count,
-so no client informs its own order and the null code reads 0.5 on average. Its spread is wider
+so no client informs its own order and the null code reads 0.5 on average; `fold_encodings`
+gives those encodings, which EDA's slices order a categorical's list by too. Its spread is wider
 than its SE says (about 1.4×: each fold's order is fitted partly on the others' noise), so its
 SE is multiplied by `CROSS_FIT_SE_INFLATION`.
 
@@ -41,7 +42,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from core_modelling.statistics.cells import pool_periods, two_way_table
+from core_modelling.statistics.cells import group_of_bins, pool_periods, two_way_table
 from core_modelling.statistics.distributions import merge_bins
 
 SE_FLOOR = 0.005  # a concordance of 1 would otherwise get an infinite weight in Cochran's Q
@@ -66,19 +67,6 @@ def concordance_from_table(table: np.ndarray, sign: int | None = None) -> float:
     period reads below 0.5.
     """
     return _rescale(_somers_d(table), sign)
-
-
-def direction_from_table(table: np.ndarray, se: float) -> int:
-    """+1 or −1, the sign of D; 0 when the concordance is below 0.5 + 2 · `se`, and the caller
-    then reads the per-period and lagged values with `sign=None` (direction taken out).
-
-    With `se = 0` it is the plain sign of D, what `concordance_from_table`'s `sign` needs. A
-    window's `se` takes its support in effective clients (`client_support`), as every window SE.
-    """
-    d = _somers_d(table)
-    if (1 + abs(d)) / 2 < 0.5 + 2 * se:
-        return 0
-    return int(np.sign(d))
 
 
 def concordance_se(value: float, events: float, non_events: float) -> float:
@@ -174,6 +162,29 @@ def encode_levels(cells: pd.DataFrame, k_rows: float) -> dict[str, float]:
     return _shrunk(sums["n"], sums["sum_y"], k_rows, base).to_dict()
 
 
+def fold_encodings(
+    cells: pd.DataFrame, periods: list[str], k_rows: float
+) -> dict[int, tuple[dict[str, float], float]]:
+    """Per client fold of `cells`, in fold order: the level encoding fitted on the other folds'
+    current cells over `periods` (`encode_levels` with `k_rows`), and that fit's labelled
+    non-null mean, a level unseen there scoring it. Every fold the cells hold is fitted, so a
+    fold whose clients sit only in periods outside `periods` gets the fit on all of them."""
+    if "fold" not in cells or cells["fold"].isna().any():
+        raise ValueError(
+            "fold_encodings: every cell needs a client fold; a numeric's cells and the cells "
+            "outside the window have none"
+        )
+    folds = sorted(cells["fold"].unique())
+    if len(folds) < 2:
+        raise ValueError(f"fold_encodings: needs two client folds, got {folds}")
+    encodings = {}
+    for fold in folds:
+        fit = pool_periods(cells.loc[cells["fold"] != fold], periods)
+        fitted = _labelled_values(fit)
+        encodings[fold] = (encode_levels(fit, k_rows), fitted["sum_y"].sum() / fitted["n"].sum())
+    return encodings
+
+
 def cross_fitted_concordance(
     cells: pd.DataFrame,
     periods: list[str],
@@ -182,7 +193,9 @@ def cross_fitted_concordance(
     lagged: bool = False,
 ) -> float:
     """A categorical's concordance with its levels ordered by an encoding its own clients never
-    informed: per client fold, `encode_levels` fitted on the other folds' current cells over
+    informed (but for the prior's weight `k_rows`, one number from the window's base rate over
+    every fold; simulated, it moves a null code's concordance by nothing): per client fold,
+    `encode_levels` fitted on the other folds' current cells over
     `periods`, and the fold's cells over `read` (`periods` by default; lagged ones with `lagged`)
     ordered by it. Somers' D sums the pairs inside each fold only, since two folds' orders come
     from different fits, and is read in the encoding's direction: below 0.5 means the order does
@@ -193,27 +206,16 @@ def cross_fitted_concordance(
     snapshot's value is `read=[snapshot period]`, a period's `read=[period]`, the lagged value
     `lagged=True`, always with the window as `periods`. Its SE is the task's SE on the same
     support times `CROSS_FIT_SE_INFLATION`: its spread under no signal is about 1.4× the
-    Hanley–McNeil SE (the folds' orders share fitted noise).
+    Hanley–McNeil SE (the folds' orders share fitted noise). The encodings are
+    `fold_encodings` of the cells over `periods` and `read`.
     """
     read = list(periods) if read is None else read
     if not read:
         raise ValueError("cross_fitted_concordance: `read` names no period")
     cells = cells.loc[cells["period"].isin([*periods, *read])]
-    if "fold" not in cells or cells["fold"].isna().any():
-        raise ValueError(
-            "cross_fitted_concordance: every cell of the periods needs a client fold; a numeric's "
-            "cells and the cells outside the window have none"
-        )
-    folds = sorted(cells["fold"].unique())
-    if len(folds) < 2:
-        raise ValueError(f"cross_fitted_concordance: needs two client folds, got {folds}")
     difference = untied = 0.0
-    for fold in folds:
+    for fold, (encoding, base) in fold_encodings(cells, periods, k_rows).items():
         held_out = cells["fold"] == fold
-        fit = pool_periods(cells.loc[~held_out], periods)
-        encoding = encode_levels(fit, k_rows)
-        fitted = _labelled_values(fit)
-        base = fitted["sum_y"].sum() / fitted["n"].sum()
         read_cells = cells.loc[held_out & (cells["lagged"] == lagged) & cells["period"].isin(read)]
         if read_cells.empty:  # none of the fold's clients is in the read periods
             continue
@@ -245,7 +247,7 @@ def best_order_concordance(cells: pd.DataFrame, k_rows: float) -> float:
     groups = merge_bins(per_bin, BEST_ORDER_GROUPS, None)  # no edges: the labels go unread
     base = per_bin["sum_y"].sum() / per_bin["n"].sum()
     score = _shrunk(groups["n"], groups["sum_y"], k_rows, base).to_numpy()
-    group = np.searchsorted(groups["bin_order_first"], values["bin_order"], side="right") - 1
+    group = group_of_bins(groups["bin_order_first"], values["bin_order"])  # its own bins: no outer
     return concordance_from_table(_table_by_score(values.assign(score=score[group])))
 
 

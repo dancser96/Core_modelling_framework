@@ -1,5 +1,5 @@
 # Environment adapter
-**Status:** building (M2.1, from 2026-10-26; the compat shim is built) · **Legacy:** `src/_compat.py`, `src/io.py` (`_read`), `src/inference.py` (`_put_file`, `_read_text`, `_fetch_dir`, `_is_hdfs`)
+**Status:** built (partial; M2.1, 2026-10-26: the environment file, `load_environment`, `get_spark_session`, the sources per entity, the local paths and the compat shim; the `hdfs dfs` transport and the tier roots in M2.4) · **Legacy:** `src/_compat.py`, `src/io.py` (`_read`), `src/inference.py` (`_put_file`, `_read_text`, `_fetch_dir`, `_is_hdfs`)
 **Related:** [`docs/context/environment.md`](../context/environment.md) · [config](config.md) (what the environment file is kept out of) ·
 [dataset](dataset.md) (the collect budget, the model input) · [lifecycle](lifecycle.md) (tier paths) ·
 [reporting](reporting.md) (theme) · [test harness](test_harness.md) (synthetic sources) · D-011, D-021, D-024, D-079,
@@ -25,7 +25,7 @@ schema_version: 1                        # the environment file's own version; m
 spark:
   master: "local[*]"
   driver_memory: 2g
-  shuffle_partitions: 8
+  shuffle_partitions: 8                  # a laptop's; on a cluster about two to three times the executor cores
   time_zone: UTC
   extra: {}                              # any other spark.* setting; the named and fixed keys are refused here
 roots:
@@ -88,8 +88,9 @@ is refused (T5). Credentials references, if any, also live here and never in the
    other-sources setting runs, on synthetic data, and the two feature-store settings ship
    commented out. In Phase 2 the feature store integration is limited to Stage 1, where a use
    case's data comes in; no later stage knows about it (D-021).
-6. The report theme: `theme` in the environment file (the mechanism in Phase 2; the corporate
-   look it applies comes after internalisation).
+6. The report theme: `theme` in the environment file, kept for the corporate look that comes
+   after internalisation. Nothing reads it yet, so it must stay null: a value is refused at load
+   (the theme is not built yet; reports use the neutral theme).
 
 ## Design constraints
 - Plain functions in one module until it genuinely outgrows ~300 lines.
@@ -106,12 +107,13 @@ Built: `core_modelling/_compat.py`, the `np.NaN` alias applied on package import
 2026-10-14: without it, `import pyspark.pandas` fails on the pinned numpy 2.3.5 + PySpark 3.4.3).
 
 Built in Stage 1's major step 1 (2026-10-26; under the SDS's review), in
-`core_modelling/environment.py` (235 lines; the paths changed in Stage 2's m1.2, 2026-11-03). They replace the M1 private session and source
-functions and their YAML source mapping.
+`core_modelling/environment.py` (the paths changed in Stage 2's m1.2, 2026-11-03). They replace
+the M1 private session and source functions and their YAML source mapping.
 - `EnvironmentConfig` (Pydantic, `extra="forbid"`): `spark: SparkSettings` (master,
   driver_memory, shuffle_partitions, time_zone, extra), `roots: Roots` (data, registered,
   production), `sources: dict[str, dict[str, Source]]` (entity → logical name → `{format, path |
-  table}`), `collect_budget_gb: float`, `theme: str | None`.
+  table}`), `collect_budget_gb: float`, `theme: str | None` (null only until the theme is built;
+  a value is refused, req. 6).
 - `load_environment(path: str | None = None) -> EnvironmentConfig` (public, D-024: the
   notebooks' setup cell calls it): the argument, else `CORE_MODELLING_ENVIRONMENT`, else fail
   loud naming both.

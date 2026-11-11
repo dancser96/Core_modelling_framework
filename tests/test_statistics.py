@@ -29,8 +29,6 @@ from core_modelling.statistics import association as association_module
 from core_modelling.statistics.association import (
     association_table,
     cluster_features,
-    correlation_ratio,
-    cramers_v,
     explained_by_others,
     spearman_matrix,
 )
@@ -53,7 +51,6 @@ from core_modelling.statistics.concordance import (
     concordance_from_table,
     concordance_se,
     cross_fitted_concordance,
-    direction_from_table,
     effective_count,
     encode_levels,
     is_non_monotone,
@@ -62,6 +59,7 @@ from core_modelling.statistics.concordance import (
 )
 from core_modelling.statistics.distributions import bin_labels, merge_bins, quantile_edges
 from core_modelling.statistics.intervals import t_interval, wilson_interval
+from core_modelling.statistics.scope import concordance_direction
 from core_modelling.tasks import TASK_SPECS
 
 PERIOD = "2025-08"
@@ -162,7 +160,8 @@ def _in_sample(cells: pd.DataFrame, periods: list[str], k_rows: float) -> float:
     """The concordance of the pooled periods in the order of the encoding fitted on them."""
     pooled = pool_periods(cells, periods)
     encoding = encode_levels(pooled, k_rows)
-    return concordance_from_table(two_way_table(pooled, sorted(encoding, key=encoding.get)))
+    rank = {level: i for i, level in enumerate(sorted(encoding, key=encoding.get))}
+    return concordance_from_table(two_way_table(pooled.assign(bin_order=pooled["bin"].map(rank))))
 
 
 def _pairs(rows: list[tuple[str, str, float, str]]) -> pd.DataFrame:
@@ -216,14 +215,16 @@ def test_table_concordance_at_100_quantile_bins_is_within_0_005_of_the_raw_auc()
 
 def test_direction_and_the_window_sign() -> None:
     """A falling feature has direction −1; read in the opposite direction it reads below 0.5;
-    a weak one has no direction at a wide SE."""
+    a weak one has no direction at a wide SE; an exact D of 0 with no SE reads +1."""
     rng = np.random.default_rng(2)
     x = rng.normal(size=2_000)
     y = _binary(-x, rng)
     table = two_way_table(pool_periods(_numeric_cells(x, y, quantile_edges(x, 100)), [PERIOD]))
     value = concordance_from_table(table)
-    assert direction_from_table(table, se=0.01) == -1
-    assert direction_from_table(table, se=0.5) == 0
+    signed = concordance_from_table(table, sign=1)
+    assert concordance_direction(value, signed, se=0.01) == -1
+    assert concordance_direction(value, signed, se=0.5) == 0
+    assert concordance_direction(0.5, 0.5, se=0.0) == 1
     assert concordance_from_table(table, sign=-1) == pytest.approx(value)
     assert concordance_from_table(table, sign=1) == pytest.approx(1 - value)
 
@@ -569,8 +570,6 @@ def test_pool_periods_and_shares() -> None:
         pool_periods(cells, ["p3"])
     with pytest.raises(ValueError, match="pool the periods first"):
         two_way_table(pd.concat([pooled, pooled]))
-    with pytest.raises(ValueError, match="not in `order`"):
-        two_way_table(pooled, order=["= 0"])
 
 
 def test_support_by_bin_counts_each_bins_labelled_rows_outside_the_zero_target_bin() -> None:
@@ -653,23 +652,30 @@ def test_spearman_matrix_is_pandas_pairwise_spearman_across_null_patterns() -> N
     assert matrix.loc["a", "f"] != matrix.loc["a", "f"]  # NaN: about 300 shared rows
 
 
+def _pair_statistic(a: pd.Series, b: pd.Series, kinds: tuple[str, str]) -> float:
+    """The statistic `association_table` gives the one pair of columns `a` and `b`."""
+    table = association_table(pd.DataFrame({"a": a, "b": b}), dict(zip("ab", kinds, strict=True)))
+    return table["statistic"].item()
+
+
 def test_correlation_ratio_is_spearman_for_two_levels_and_cramers_v_guards() -> None:
     """η on ranks equals |Spearman| with a 0/1 grouping; Cramér's V matches scipy, takes null
     as a level and is not compared with one level (T29)."""
     rng = np.random.default_rng(7)
     x = pd.Series(rng.normal(size=3_000))
     group = pd.Series((x + rng.normal(size=x.size) > 0.5).astype(int))
-    assert correlation_ratio(x, group.astype(str)) == pytest.approx(
-        abs(stats.spearmanr(x, group).statistic)
-    )
+    eta = _pair_statistic(x, group.astype(str), ("numeric", "categorical"))
+    assert eta == pytest.approx(abs(stats.spearmanr(x, group).statistic))
     a = pd.Series(rng.choice(["u", "v", None], 3_000))
     b = pd.Series(np.where(a.isna(), "w", rng.choice(["w", "z"], 3_000)))
     table = pd.crosstab(a.fillna("null"), b).to_numpy()
     plain = contingency.association(table, method="cramer", correction=False)
-    assert cramers_v(a, b) == pytest.approx(plain)
-    assert np.isnan(cramers_v(a, pd.Series(["w"] * 3_000)))
+    categorical = ("categorical", "categorical")
+    assert _pair_statistic(a, b, categorical) == pytest.approx(plain)
+    assert np.isnan(_pair_statistic(a, pd.Series(["w"] * 3_000), categorical))
     identity = pd.Series(["u"] * 50 + ["v"] * 50)
-    assert cramers_v(identity, identity.copy()) == 1.0  # Yates' correction would read below 1
+    # Yates' correction would read below 1
+    assert _pair_statistic(identity, identity.copy(), categorical) == 1.0
 
 
 def test_association_table_methods_rows_and_seeded_cap(monkeypatch: pytest.MonkeyPatch) -> None:

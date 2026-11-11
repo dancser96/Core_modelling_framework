@@ -1,15 +1,20 @@
 """From entries to the resolved config (D-125): the entry model and what each operation does.
 
 An `Entry` is one decision. `APPLY_BY_OP` maps every allowed operation to one small function on
-the config's raw dict; `replay` runs entries 1–n through it, and the result validated by the
-config schema is the resolved config, a run's one input. `exclude`, `include`, `keep` and `set`
-change the input directly; `set` may touch the paths in `LOGGABLE_SETTINGS` only. Feature Checks'
-`flag` entries change it through the held set: replay writes the features of the open flags
-(`open_flags`) into `features.held`, which Training leaves out (D-134). A `revert` restarts the
-replay from an earlier state (the entries after it stay as the trail). The other operations are
-the trail. Storage, writing and the public functions live in `audit_log.py`.
+the config's raw dict; `replay` runs entries 1–n through it in one pass, keeping the state after
+each entry, and the result validated by the config schema is the resolved config, a run's one
+input. A `set` changes a setting, one of the paths in `LOGGABLE_SETTINGS`. A `revert` takes the
+stored state after entry `to_seq` (the entries after it stay as the trail). The feature entries
+change the three feature lists, which the replay writes last from the effective entries (the ones
+no revert undid): `features.excluded` and `features.kept` from `decisions_in_force`, the one walk
+of what exclude, include and keep mean, and `features.held` from the open flags (`open_flags`),
+which Training leaves out (D-134). The other operations are the trail. `check_resolved` refuses
+a config that was only loaded where the resolved one is needed, and `dump_resolved` is the
+resolved config's one YAML form. Storage, writing and the public functions live in
+`audit_log.py`.
 """
 
+import copy
 from collections.abc import Callable
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -18,7 +23,7 @@ from typing import Annotated, Literal
 import yaml
 from pydantic import ConfigDict, Field, ValidationError, model_validator
 
-from core_modelling.config.identities import short
+from core_modelling.config.identities import REPLAY_FIELDS, resolved_input_hash, short
 from core_modelling.config.levels import refill_level_defaults, unmark_level_filled
 from core_modelling.config.schema import StrictModel, UseCaseConfig
 
@@ -77,9 +82,10 @@ LOGGABLE_SETTINGS: dict[str, str] = {
     "training.categoricals.min_level_count": "training",
     "training.calibration.method": "training",
     "training.sampling": "training",
-    "time.validation_period": "evaluation",  # refused once Feature Checks compared it (D-088)
-    "evaluation.slices.top_pct": "evaluation",
-    "evaluation.slices.top_n": "evaluation",
+    # EDA reads these two: the compared periods, and its decision-slices view.
+    "time.validation_period": "eda",  # refused once Feature Checks compared it (D-088)
+    "evaluation.slices.top_pct": "eda",
+    "evaluation.slices.top_n": "eda",
     "evaluation.views": "evaluation",
 }
 
@@ -201,26 +207,6 @@ def check_settable(raw: dict, path: str, context: str) -> None:
             )
 
 
-def _apply_exclude(raw: dict, entry: Entry) -> dict:
-    """Add the entry's features to `features.excluded` (sorted, once each)."""
-    raw["features"]["excluded"] = sorted({*raw["features"]["excluded"], *entry.features})
-    return raw
-
-
-def _apply_include(raw: dict, entry: Entry) -> dict:
-    """Remove the entry's features from `features.excluded`."""
-    excluded = raw["features"]["excluded"]
-    raw["features"]["excluded"] = [name for name in excluded if name not in entry.features]
-    return raw
-
-
-def _apply_keep(raw: dict, entry: Entry) -> dict:
-    """Add the entry's features to `features.kept` (sorted, once each); the findings it settles
-    act through `open_flags`."""
-    raw["features"]["kept"] = sorted({*raw["features"]["kept"], *entry.features})
-    return raw
-
-
 def _apply_set(raw: dict, entry: Entry) -> dict:
     """Write the entry's `to` value at its path; a level move refills the level-filled paths, any
     other `set` makes its path explicit, so a later level move keeps it (D-132)."""
@@ -233,14 +219,15 @@ def _apply_set(raw: dict, entry: Entry) -> dict:
 
 
 def _leave_unchanged(raw: dict, entry: Entry) -> dict:
-    """A trail entry: recorded, but it changes nothing at replay."""
+    """An entry that changes no setting: a trail entry, recorded only, or a feature entry, which
+    acts through the feature lists `replay` writes last from the effective entries."""
     return raw
 
 
 APPLY_BY_OP: dict[str, Callable[[dict, Entry], dict]] = {
-    "exclude": _apply_exclude,
-    "include": _apply_include,
-    "keep": _apply_keep,
+    "exclude": _leave_unchanged,
+    "include": _leave_unchanged,
+    "keep": _leave_unchanged,
     "set": _apply_set,
     "flag": _leave_unchanged,
     "dropped": _leave_unchanged,
@@ -274,14 +261,22 @@ def validate_raw(raw: dict, context: str) -> UseCaseConfig:
 
 
 def replay(cfg: UseCaseConfig, entries: list[Entry]) -> dict:
-    """The entries applied in order to the config's raw dict, then the open flags' features
-    written into `features.held`; a stale entry fails citing its `seq`. A `revert` restarts from
-    the config with entries 1 … `to_seq` applied (the slice, since the entries run 1..n) and the
-    later entries continue from there."""
-    raw = cfg.model_dump(mode="json")
+    """The config's raw dict after the entries, in one pass; a stale entry fails citing its `seq`.
+    `states[n]` is the state after the first n entries (entry n, since the entries run 1..n): a
+    `revert` takes `states[to_seq]` and the later entries continue from it. The feature lists are
+    written last: the excluded and kept features in force, and the open flags' in `held`. A
+    config that sets one of those lists is refused: its values would be overwritten without a
+    word (the replay starts from the config as loaded; `resolve_config` refuses a resolved one)."""
+    filled = sorted(name for name in REPLAY_FIELDS if getattr(cfg.features, name))
+    if filled:
+        raise ValueError(
+            f"the config sets features.{', features.'.join(filled)}, which the audit log's "
+            "replay writes: record exclude and keep entries instead (D-125, D-134)"
+        )
+    states = [cfg.model_dump(mode="json")]
     for entry in entries:
         if entry.op == "revert":
-            raw = replay(cfg, entries[: entry.to_seq])
+            states.append(states[entry.to_seq])
             continue
         stale = f"entry {entry.seq} is stale"
         if entry.op in INPUT_FEATURE_OPS:
@@ -291,10 +286,15 @@ def replay(cfg: UseCaseConfig, entries: list[Entry]) -> dict:
             # seed, nor set a threshold of a step the config no longer runs.
             if entry.path not in LOGGABLE_SETTINGS:
                 raise ValueError(f"{stale}: {entry.path} is not a loggable setting")
-            check_settable(raw, entry.path, stale)
-        raw = APPLY_BY_OP[entry.op](raw, entry)
+            check_settable(states[-1], entry.path, stale)
+        raw = APPLY_BY_OP[entry.op](copy.deepcopy(states[-1]), entry)  # stored states stay as is
         if entry.op == "set":
             validate_raw(raw, f"{stale}: set {entry.path} = {entry.to_value!r}")
+        states.append(raw)
+    raw = states[-1]
+    kept, excluded = decisions_in_force(entries)
+    raw["features"]["excluded"] = sorted(excluded)
+    raw["features"]["kept"] = sorted(kept)
     raw["features"]["held"] = held_features(entries)
     return raw
 
@@ -308,16 +308,12 @@ def open_flags(entries: list[Entry]) -> dict[str, list[str]]:
     not held."""
     latest: dict[str, list[str]] = {}  # finding → the features of its latest flag entry
     settled: set[tuple[str, str]] = set()  # (feature, finding)
-    excluded: set[str] = set()
     for entry in effective_entries(entries):
         if entry.op == "flag":
             latest[entry.finding] = entry.features
         elif entry.op == "keep":
             settled |= {(name, finding) for name in entry.features for finding in entry.findings}
-        elif entry.op == "exclude":
-            excluded |= set(entry.features)
-        elif entry.op == "include":
-            excluded -= set(entry.features)
+    _, excluded = decisions_in_force(entries)
     flags: dict[str, list[str]] = {}
     for finding, features in latest.items():
         for name in features:
@@ -333,21 +329,36 @@ def held_features(entries: list[Entry]) -> list[str]:
 
 
 def effective_entries(entries: list[Entry]) -> list[Entry]:
-    """The entries that shape the current state once every revert is applied: a revert drops the
-    entries after its `to_seq` up to itself (restarting the way `replay` does), and reverts
-    themselves are never effective."""
-    effective: list[Entry] = []
+    """The entries that shape the current state once every revert is applied, in one pass:
+    `after[n]` are the effective entries after the first n, and a revert takes `after[to_seq]`
+    the way `replay` takes the state; reverts themselves are never effective."""
+    after: list[list[Entry]] = [[]]
     for entry in entries:
-        if entry.op == "revert":
-            effective = effective_entries(entries[: entry.to_seq])
-        else:
-            effective.append(entry)
-    return effective
+        after.append(after[entry.to_seq] if entry.op == "revert" else [*after[-1], entry])
+    return after[-1]
+
+
+def decisions_in_force(entries: list[Entry]) -> tuple[dict[str, list[int]], dict[str, int]]:
+    """Per feature, over the effective entries: the `seq`s of its `keep` entries, and the `seq`
+    of its latest `exclude` that no later `include` reversed."""
+    kept: dict[str, list[int]] = {}
+    excluded: dict[str, int] = {}
+    for entry in effective_entries(entries):
+        for feature in entry.features or []:
+            if entry.op == "keep":
+                kept.setdefault(feature, []).append(entry.seq)
+            elif entry.op == "exclude":
+                excluded[feature] = entry.seq
+            elif entry.op == "include":
+                excluded.pop(feature, None)
+    return kept, excluded
 
 
 def _origins(entries: list[Entry]) -> dict[str, int]:
     """Each changed value's key → the entry that set it (the latest wins, an include removes, a
-    revert restarts from the earlier state); a held feature → the latest flag entry holding it."""
+    revert restarts from the earlier state); a held feature → the latest flag entry holding it.
+    It walks the effective entries itself rather than reading `decisions_in_force`: the keys'
+    order, the resolved file's header order, is the order the values were first set."""
     origins: dict[str, int] = {}
     effective = effective_entries(entries)
     for entry in effective:
@@ -366,6 +377,31 @@ def _origins(entries: list[Entry]) -> dict[str, int]:
     return origins
 
 
+def check_resolved(cfg: UseCaseConfig, what: str) -> None:
+    """Refuse a config that was only loaded where `what` needs the resolved one (a loaded config's
+    replayed lists are empty, so it would pass a held or excluded feature as usable), and a
+    resolved one whose content no longer matches its hash (a list emptied by hand in a saved
+    file, a value changed in code)."""
+    stored = (cfg.housekeeping or {}).get("resolved_input_hash")
+    if stored is None:
+        raise ValueError(
+            f"{what} needs the resolved config, not a loaded one (its housekeeping has no "
+            "resolved_input_hash and its held and excluded lists are empty): pass "
+            "resolve_config(...)'s result"
+        )
+    if stored != resolved_input_hash(cfg):
+        raise ValueError(
+            f"{what}: the config's content no longer matches its resolved_input_hash (changed "
+            "after it was resolved, or migrated from an older schema): resolve it again with "
+            "resolve_config(...)"
+        )
+
+
+def dump_resolved(resolved: UseCaseConfig) -> str:
+    """The resolved config as YAML, the one serialisation every writer of it uses."""
+    return yaml.safe_dump(resolved.model_dump(mode="json"), sort_keys=False, allow_unicode=True)
+
+
 def write_resolved(resolved: UseCaseConfig, entries: list[Entry], save_to: str | Path) -> None:
     """The resolved config as YAML under a comment header: the entries replayed, each revert and,
     per changed value, the entry that set it. `resolved.housekeeping` is filled already."""
@@ -380,5 +416,4 @@ def write_resolved(resolved: UseCaseConfig, entries: list[Entry], save_to: str |
         if e.op == "revert"
     ]
     header += [f"# {key}: #{seq}" for key, seq in _origins(entries).items()]
-    body = yaml.safe_dump(resolved.model_dump(mode="json"), sort_keys=False, allow_unicode=True)
-    Path(save_to).write_text("\n".join(header) + "\n" + body)
+    Path(save_to).write_text("\n".join(header) + "\n" + dump_resolved(resolved))

@@ -8,9 +8,9 @@ from inspect import signature
 
 import pandas as pd
 import pytest
+from conftest import build_entry
 
-from core_modelling.config.audit_log import LOG_SCHEMA_VERSION, _keep_findings, record_stage_entry
-from core_modelling.config.identities import HASH_VERSION
+from core_modelling.config.audit_log import _keep_findings, record_stage_entry
 from core_modelling.config.replay import Entry, open_flags
 from core_modelling.feature_checks.decisions import (
     CLOSING_REASON,
@@ -62,18 +62,7 @@ def _findings(rows: list[tuple[str, str, float]], **overrides: object) -> pd.Dat
 
 def _entry(seq: int, op: str, by: str = "stage", **fields: object) -> Entry:
     """Entry `seq` built in code, by Feature Checks or by a person."""
-    fields = {"reason": "r", **fields}
-    return Entry(
-        seq=seq,
-        time="2026-11-06T10:00:00+00:00",
-        by=BY[by],
-        stage="feature_checks",
-        op=op,
-        data_definition_hash="d_A",
-        hash_version=HASH_VERSION,
-        log_schema_version=LOG_SCHEMA_VERSION,
-        **fields,
-    )
+    return build_entry(seq, op, by=BY[by], data_definition_hash="d_A", **fields)
 
 
 def _flag(seq: int, finding: str, features: list[str]) -> Entry:

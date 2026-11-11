@@ -1,32 +1,14 @@
 """Synthetic data: the oracle (window probabilities, regression oracle, metrics), truth.json."""
 
-from collections.abc import Callable
-
 import numpy as np
 import pandas as pd
 import pytest
 
 from synthetic.checks.events import values_at
-from synthetic.checks.suite import run_checks
 from synthetic.truth.oracle import BINARY_TARGETS, STANDARD_TARGETS, window_probability
 from synthetic.truth.regression import COLUMNS as REGRESSION_COLUMNS
 
 KEYS = ["client_id", "snapshot_month"]
-
-
-def test_oracle_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
-    """On the unit preset, every rule row of the oracle family passes."""
-    checks = run_checks(unit_output[0], ["oracle"])["oracle"]
-    rules = checks[checks["rule"]]
-    assert len(rules) > 0, "the oracle family has no rule rows"
-    assert rules["passed"].all(), rules[~rules["passed"]].to_string()
-
-
-@pytest.mark.slow
-def test_oracle_checks_pass_on_canonical(canonical_checks: Callable[..., pd.DataFrame]) -> None:
-    """Every row of the oracle family passes at the canonical size."""
-    checks = canonical_checks("oracle")
-    assert checks["passed"].all(), checks[~checks["passed"]].to_string()
 
 
 @pytest.mark.parametrize("target", BINARY_TARGETS)

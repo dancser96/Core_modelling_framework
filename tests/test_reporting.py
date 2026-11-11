@@ -1,4 +1,4 @@
-"""Reporting primitives: the writer, the chart rules, the table styling and the choices block."""
+"""Reporting primitives: the writer, the chart rules, the table styling and the blocks."""
 
 import re
 import warnings
@@ -11,14 +11,16 @@ import pytest
 from plotly.offline import get_plotlyjs
 
 from core_modelling.config.schema import UseCaseConfig
+from core_modelling.eda.report import _how_to_read
 from core_modelling.reporting import charts
 from core_modelling.reporting.blocks import (
-    CHOICES,
+    appendix,
     choices_block,
     headline,
-    how_to_read,
+    not_available,
     warnings_block,
 )
+from core_modelling.reporting.formats import SHARE, format_of, plain_number
 from core_modelling.reporting.html import paragraph, render_report, style_table, table_html
 from core_modelling.reporting.theme import THEME
 from core_modelling.tasks import TASK_SPECS
@@ -62,7 +64,7 @@ def test_report_embeds_plotly_once_with_unique_ids() -> None:
     figures = [charts.bar_with_intervals(_groups(), "group") for _ in range(60)]
     tables = [style_table(_groups(3)) for _ in range(5)]
     sections = [
-        ("Summary", [paragraph("a < b"), {"k": "v"}]),
+        ("Summary", [paragraph("a < b")]),
         ("Core", [*figures[:30], ("Sub", [*figures[30:], *tables])]),
     ]
     text = render_report("Report", sections)
@@ -79,10 +81,12 @@ def test_report_embeds_plotly_once_with_unique_ids() -> None:
 
 
 def test_render_report_refuses_unknown_blocks_and_shapes() -> None:
-    """An unknown block type fails naming it, as do blocks that are not a list and a subsection
-    that is not a 2-tuple."""
+    """An unknown block type (a views dict passed unconverted among them) fails naming it, as do
+    blocks that are not a list and a subsection that is not a 2-tuple."""
     with pytest.raises(TypeError, match="int"):
         render_report("R", [("S", [42])])
+    with pytest.raises(TypeError, match="got dict"):
+        render_report("R", [("S", [{"k": "v"}])])
     with pytest.raises(TypeError, match=r"section 1 'S': the blocks must be a list; got str"):
         render_report("R", [("S", "text")])
     with pytest.raises(TypeError, match=r"a subsection of 'S'.*got a 3-tuple"):
@@ -331,9 +335,10 @@ def test_style_table_greys_rows_and_cells_and_colours_lift() -> None:
     """Greyed rows and cells carry the insufficient colour; lift cells are coloured by lift; the
     caption carries its own style, so a notebook shows it as the report does."""
     df = pd.DataFrame({"estimate": [0.1, 0.2, np.nan], "support": [5, 500, 70]})
-    rows = table_html(
-        style_table(df, {"estimate": "{:.1%}"}, greyed=pd.Series([True, False, False])), "a"
-    )
+    styler = style_table(df, {"estimate": "{:.1%}"}, greyed=pd.Series([True, False, False]))
+    uuid = styler.uuid
+    rows = table_html(styler, "a")
+    assert styler.uuid == uuid  # a notebook's Styler keeps its own CSS ids
     assert rows.count(THEME["insufficient"]) >= 1 and "#T_a_row0_col0, #T_a_row0_col1" in rows
     assert "10.0%" in rows
     cells = pd.DataFrame({"estimate": [False, True, False]})
@@ -361,32 +366,57 @@ def test_style_table_escapes_axis_names_and_reads_a_missing_flag_as_false() -> N
 
 
 def test_choices_block_reads_config_and_caller_values(cc_config: UseCaseConfig) -> None:
-    """A path row reads the resolved config; a path-less row takes the caller's value."""
-    rows = [
-        CHOICES["task"],
-        CHOICES["kind_overrides"],
-        {**CHOICES["candidate_count"], "value": 139},
-    ]
-    table = choices_block(cc_config, rows).data
+    """A path row reads the resolved config; a path-less row takes the caller's value; a
+    path-less row without one and a value for a row not shown fail."""
+    names = ["task", "kind_overrides", "candidate_count"]
+    table = choices_block(cc_config, names, {"candidate_count": 139}).data
     assert list(table.columns) == ["Choice", "Value", "Alternatives"]
     assert list(table["Value"]) == ["binary", "none", "139"]
     with pytest.raises(ValueError, match="Candidate features"):
-        choices_block(cc_config, [CHOICES["candidate_count"]])
-    window = choices_block(cc_config, [CHOICES["observation_window"]]).data["Value"][0]
+        choices_block(cc_config, ["candidate_count"], {})
+    with pytest.raises(ValueError, match=r"not in names: \['bins'\]"):
+        choices_block(cc_config, ["task"], {"bins": 10})
+    window = choices_block(cc_config, ["observation_window"], {}).data["Value"][0]
     assert window == "first: 2025-03-31, last: 2025-08-31"
 
 
+def test_appendix_and_format_of(cc_config: UseCaseConfig) -> None:
+    """The appendix shows the timings at one decimal under the caller's caption; `format_of`
+    gives a column its format by name or prefix, None for an unknown name."""
+    decisions = pd.DataFrame({"seq": [1], "op": ["run"]})
+    views = appendix(cc_config, decisions, {"frames": 1.26}, "Seconds per phase")
+    assert list(views) == ["resolved_config", "decisions", "timings"]
+    timings = table_html(views["timings"], "t")
+    assert ">1.3<" in timings and "Seconds per phase" in timings
+    assert views["resolved_config"].startswith("<pre>")
+    assert format_of("estimate", "binary") == TASK_SPECS["binary"]["estimate_format"]
+    assert format_of("share_kept", "regression") == SHARE
+    assert format_of("p10_amount", "binary") is plain_number
+    assert format_of("feature", "binary") is None
+
+
 def test_text_blocks() -> None:
-    """Headline, warnings and how-to-read escape their text and follow the spec's wording; the
-    headline carries its own layout for a notebook without the report's CSS."""
-    numbers = headline({"clients <": 1234})
+    """Headline, warnings, "not available" and how-to-read escape their text and follow the
+    spec's wording; the headline reads each number in the format it is given (no scientific
+    notation below 1e-4), refuses a number without one and carries its own layout for a
+    notebook without the report's CSS."""
+    rate = TASK_SPECS["binary"]["estimate_format"]
+    values = {"clients <": 1234, "snapshot_rate": 0.00005, "eligible_share": 0.6449}
+    numbers = headline(
+        values, {"clients <": "{:,.0f}", "snapshot_rate": rate, "eligible_share": SHARE}
+    )
     assert "1,234" in numbers and "&lt;" in numbers
-    assert headline({"none": None, "nan": float("nan")}).count(">n/a<") == 2
+    assert ">0.01%<" in numbers and ">64.5%<" in numbers and ">snapshot rate<" in numbers
+    missing = headline({"none": None, "nan": float("nan")}, {"none": SHARE, "nan": plain_number})
+    assert missing.count(">n/a<") == 2
+    with pytest.raises(ValueError, match=r"no format for \['rows'\]"):
+        headline({"rows": 3}, {})
     assert 'style="display: inline-block; margin: 4px 16px 4px 0"' in numbers
     assert warnings_block([]) == "<p>No warnings.</p>"
     assert warnings_block(["a & b", "c"]).count("<li>") == 2
-    binned = how_to_read(100, "rate", "positive events", 20)
-    exact = how_to_read(None, "mean", "units with a non-zero target", 20)
+    assert not_available("x's view") == "<p>Not available: x&#x27;s view.</p>"
+    binned = _how_to_read(100, "rate", "positive events", 20)
+    exact = _how_to_read(None, "mean", "units with a non-zero target", 20)
     assert len(binned) == len(exact) == 5
     assert "100 quantile bins" in binned[0] and "quantile" not in exact[0]
     assert "base rate" in binned[1] and "base mean" in exact[1]

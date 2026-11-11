@@ -3,8 +3,10 @@
 EDA creates it (`create_ledger`, then its statistics with `add_columns`), Feature Checks appends
 its columns, and both save it with `save_ledger` as `ledger.parquet` + `_ledger.json` in
 `<use_case>/04_feature/<ddh>/`, beside the stage folders; the caller passes that folder and the
-sidecar records the data-definition hash and the writing stage's settings digest. A stage saves
-the ledger before it writes its own folder, so `<stage>.json` is the commit marker. The ledger
+sidecar records the data-definition hash and, per stage whose columns the file holds, the run
+token that stage also wrote into its `<stage>.json`. A stage saves the ledger before it writes
+its own folder, so `<stage>.json` is the commit marker, and `read_ledger(..., expect=...)` refuses
+a ledger from another run. `read_candidates` gives the rows a step reads. The ledger
 decides nothing and stores no decision: `render_decisions` derives `held`, `kept`, `excluded` and
 `verdict` from the resolved config and the audit log's entries whenever a view is drawn, and
 `resolve_features` gives Training its feature set (candidates − lineage − unsupported − excluded
@@ -20,10 +22,10 @@ import pandas as pd
 from core_modelling import __version__
 from core_modelling.artifacts import local_path, read_parquet, utc_now, write_json, write_parquet
 from core_modelling.config.identities import short
-from core_modelling.config.replay import Entry, effective_entries
+from core_modelling.config.replay import Entry, check_resolved, decisions_in_force
 from core_modelling.config.schema import UseCaseConfig
 
-LEDGER_SCHEMA_VERSION = 2  # 2: the identity column `source` (11-06)
+LEDGER_SCHEMA_VERSION = 3  # 2: the identity column `source` (11-06); 3: the sidecar's `runs`
 LEDGER_FILE = "ledger.parquet"
 SIDECAR_FILE = "_ledger.json"  # starts with `_`, never `_metadata` (T21)
 
@@ -128,8 +130,7 @@ def _check_stage_columns(ledger: pd.DataFrame, columns: pd.DataFrame, stage: str
     unknown = sorted(set(columns["feature"]) - set(ledger["feature"]))
     if unknown:
         raise ValueError(f"stage {stage}: {unknown} are not in the ledger (one row per candidate)")
-    read = ledger.loc[~(ledger["lineage"] | ledger["unsupported"]), "feature"]
-    missing = [f for f in read if f not in set(columns["feature"])]
+    missing = [f for f in read_candidates(ledger)["feature"] if f not in set(columns["feature"])]
     if missing:
         raise ValueError(
             f"stage {stage}: no row for the candidates {missing}; every candidate it read needs "
@@ -168,33 +169,39 @@ def _check_storable(ledger: pd.DataFrame) -> None:
 
 
 def _sidecar(ledger: pd.DataFrame, meta: dict) -> dict:
-    """`_ledger.json`'s content: the version stamp, the stages whose columns the file holds, and
-    the writing stage's `stage`, `data_definition_hash` and (optional) `settings_digest`."""
-    missing = [k for k in ("data_definition_hash", "stage") if k not in meta]
-    other = sorted(set(meta) - {"data_definition_hash", "stage", "settings_digest"})
+    """`_ledger.json`'s content: the version stamp, the `data_definition_hash` and `runs`, the
+    run token of each stage whose columns the file holds, in `STAGES` order."""
+    keys = {"data_definition_hash", "runs"}
+    missing, other = sorted(keys - set(meta)), sorted(set(meta) - keys)
     if missing or other:
         raise ValueError(
-            "save_ledger's meta holds data_definition_hash and stage, and may hold "
-            f"settings_digest; it lacks {missing} and may not set {other}"
+            f"save_ledger's meta holds data_definition_hash and runs; it lacks {missing} and may "
+            f"not set {other}"
         )
-    if meta["stage"] not in STAGES:
-        raise ValueError(f"save_ledger's meta names stage {meta['stage']!r}; one of {STAGES}")
+    present = [stage for stage in STAGES if set(COLUMNS_BY_STAGE[stage]) & set(ledger)]
+    if sorted(meta["runs"]) != sorted(present):
+        raise ValueError(
+            f"save_ledger's runs name {sorted(meta['runs'])}, but the ledger holds the columns of "
+            f"{present}: one run token per stage whose columns it holds"
+        )
     return {
         "ledger_schema_version": LEDGER_SCHEMA_VERSION,
         "framework_version": __version__,
         "written_at": utc_now(),
-        "stages": [stage for stage in STAGES if set(COLUMNS_BY_STAGE[stage]) & set(ledger)],
-        **meta,
+        "data_definition_hash": meta["data_definition_hash"],
+        "runs": {stage: meta["runs"][stage] for stage in present},
     }
 
 
 def save_ledger(ledger: pd.DataFrame, folder: str, meta: dict) -> None:
     """Write `ledger.parquet` and `_ledger.json` into the data definition's folder, each to a
     temporary name first (removed when a write fails) and then renamed, so a crash never leaves
-    half a file. `meta` holds the writing stage's `stage` and `data_definition_hash`, and may hold
-    its `settings_digest`. A stage calls it before `write_stage`, so `<stage>.json` is the commit
-    marker: a crash in between leaves a new ledger beside the old json, which the next stage's
-    `check_upstream` refuses, never an old ledger beside a new json."""
+    half a file. `meta` holds the `data_definition_hash` and `runs`, `{stage: run_token}` for
+    every stage whose columns the ledger holds (EDA: its own; Feature Checks: the EDA run's it
+    read and its own). A stage calls it before `write_stage`, so `<stage>.json` is the commit
+    marker: a crash in between leaves a new ledger beside the old json, whose tokens differ and
+    the next reader's `read_ledger(..., expect=...)` refuses, never an old ledger beside a new
+    json."""
     _check_storable(ledger)
     sidecar = _sidecar(ledger, meta)
     target = local_path(folder)
@@ -208,14 +215,21 @@ def save_ledger(ledger: pd.DataFrame, folder: str, meta: dict) -> None:
         parquet.unlink(missing_ok=True)
         stamp.unlink(missing_ok=True)
         raise
-    parquet.replace(target / LEDGER_FILE)
+    # The sidecar first: a crash between the two then leaves the new run's tokens beside the
+    # old table, which `read_ledger(..., expect=...)` refuses; the other order would pass the
+    # new table under the old tokens.
     stamp.replace(target / SIDECAR_FILE)
+    parquet.replace(target / LEDGER_FILE)
 
 
-def read_ledger(folder: str, data_definition_hash: str | None = None) -> pd.DataFrame:
+def read_ledger(
+    folder: str, data_definition_hash: str | None = None, expect: dict[str, str] | None = None
+) -> pd.DataFrame:
     """The saved ledger; a missing one asks for an EDA run, another `ledger_schema_version` is
     refused before the parquet is read, and so is a ledger written for another data definition
-    than `data_definition_hash` when one is given."""
+    than `data_definition_hash` when one is given. `expect`, `{stage: run_token}` from the stage
+    jsons the caller read, refuses a ledger whose runs differ: it and that stage's folder come
+    from different runs (a crash between the ledger's save and the folder's write)."""
     target = local_path(folder)
     if not (target / SIDECAR_FILE).is_file():
         raise FileNotFoundError(f"no feature ledger at {folder}: run EDA first")
@@ -234,7 +248,21 @@ def read_ledger(folder: str, data_definition_hash: str | None = None) -> pd.Data
             f"the feature ledger at {folder} was written for data definition "
             f"{short(str(stored))}, the config's is {short(data_definition_hash)}: rerun EDA"
         )
+    runs = sidecar.get("runs", {})
+    for stage, token in (expect or {}).items():
+        if runs.get(stage) != token:
+            raise ValueError(
+                f"the feature ledger at {folder} and {stage}/ come from different runs (the "
+                f"ledger's {stage} run token is {runs.get(stage)}, {stage}.json's {token}): "
+                f"rerun {stage}"
+            )
     return read_parquet(target / LEDGER_FILE)
+
+
+def read_candidates(ledger: pd.DataFrame) -> pd.DataFrame:
+    """The rows a step reads: the candidates that are neither lineage nor unsupported (the
+    automatic exclusions), in the ledger's order."""
+    return ledger.loc[~(ledger["lineage"] | ledger["unsupported"])]
 
 
 def _check_named_features(ledger: pd.DataFrame, resolved: UseCaseConfig) -> None:
@@ -253,35 +281,6 @@ def _check_named_features(ledger: pd.DataFrame, resolved: UseCaseConfig) -> None
         )
 
 
-def _decisions_in_force(entries: list[Entry]) -> tuple[dict[str, list[int]], dict[str, int]]:
-    """Per feature, over the effective entries (every revert applied): the `seq`s of the `keep`
-    entries, and the `seq` of the latest `exclude` that no later `include` reversed."""
-    kept: dict[str, list[int]] = {}
-    excluded: dict[str, int] = {}
-    for entry in effective_entries(entries):
-        for feature in entry.features or []:
-            if entry.op == "keep":
-                kept.setdefault(feature, []).append(entry.seq)
-            elif entry.op == "exclude":
-                excluded[feature] = entry.seq
-            elif entry.op == "include":
-                excluded.pop(feature, None)
-    return kept, excluded
-
-
-def _check_same_state(resolved: UseCaseConfig, kept: dict, excluded: dict) -> None:
-    """Refuse entries other than those the config was resolved from: the entry numbers would
-    then describe another state than the verdicts."""
-    for name, by_entry in (("excluded", excluded), ("kept", kept)):
-        in_config = set(getattr(resolved.features, name))
-        if set(by_entry) != in_config:
-            raise ValueError(
-                f"the entries and the resolved config disagree on features.{name} "
-                f"({sorted(by_entry)} vs {sorted(in_config)}): pass the entries the config was "
-                "resolved from"
-            )
-
-
 def render_decisions(
     ledger: pd.DataFrame, resolved: UseCaseConfig, entries: list[Entry]
 ) -> pd.DataFrame:
@@ -289,9 +288,16 @@ def render_decisions(
     `kept` (the numbers of the `keep` entries in force), `excluded` (the number of the `exclude`
     in force, null when none) and `verdict` (`auto_excluded`, else `excluded`, else `held`, else
     `kept`, else `pass`). `entries` are the ones `resolved` was replayed from."""
+    check_resolved(resolved, "render_decisions")
+    replayed_to, last = resolved.housekeeping["replayed_to"], entries[-1].seq if entries else 0
+    if replayed_to != last:
+        raise ValueError(
+            f"the config was resolved to entry {replayed_to} and the entries end at {last}: the "
+            "entry numbers would describe another state than the verdicts; pass the entries the "
+            "config was resolved from"
+        )
     _check_named_features(ledger, resolved)
-    kept, excluded = _decisions_in_force(entries)
-    _check_same_state(resolved, kept, excluded)
+    kept, excluded = decisions_in_force(entries)
     view = ledger.copy()
     feature = view["feature"]
     is_excluded = feature.isin(resolved.features.excluded)
@@ -315,8 +321,10 @@ def resolve_features(ledger: pd.DataFrame, resolved: UseCaseConfig) -> list[str]
     """Training's feature set: candidates − lineage − unsupported − excluded − held, in the
     ledger's order. In effect, for Training, a held feature is an excluded feature without a
     final decision: the model is built without it until a person keeps or excludes it (§4.6,
-    D-134). A name in the decisions that is no ledger row is refused."""
+    D-134). A name in the decisions that is no ledger row is refused, and so is a config that was
+    only loaded: its held and excluded lists are empty until the replay fills them."""
+    check_resolved(resolved, "resolve_features")
     _check_named_features(ledger, resolved)
     out = set(resolved.features.excluded) | set(resolved.features.held)
-    usable = ~(ledger["lineage"] | ledger["unsupported"] | ledger["feature"].isin(out))
-    return ledger.loc[usable, "feature"].tolist()
+    read = read_candidates(ledger)
+    return read.loc[~read["feature"].isin(out), "feature"].tolist()

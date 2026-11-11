@@ -46,16 +46,6 @@ from core_modelling.sources import (
 )
 from core_modelling.target_factory import last_labelled_period, load_targets, target_lineage
 
-PANEL_META_KEYS = ("data_definition_hash", "target_spec_hash", "hash_version", "lineage",
-                   "candidates", "tags")  # what `prepare_panel` puts in the meta  # fmt: skip
-# The config fields every config of one model input must share (the panel is built from them).
-SHARED_FIELDS = {
-    "sources.features": feature_sources_dump,
-    "keys": lambda cfg, entity: cfg.data.keys.model_dump(),
-    "model_input": lambda cfg, entity: cfg.data.model_input,
-    "time.period": lambda cfg, entity: cfg.time.period,
-}
-
 
 @dataclass(frozen=True)
 class JoinedSource:
@@ -72,6 +62,17 @@ def target_column(use_case: str) -> str:
     """The panel's target column of a use case, `target_<use_case>` lower-cased (Q405): Spark
     compares column names ignoring case."""
     return f"target_{use_case.lower()}"
+
+
+def join_definition(cfg: UseCaseConfig, entity: str) -> dict:
+    """The definition a panel is joined from, as the model input's sidecar records it: the
+    feature sources, the keys, the period. The configs of one model input share it, and a reader
+    of the saved table must have it too."""
+    return {
+        "sources": {"features": feature_sources_dump(cfg, entity)},
+        "keys": cfg.data.keys.model_dump(),
+        "period": cfg.time.period,
+    }
 
 
 def load_panel(
@@ -91,12 +92,9 @@ def load_panel(
     entries, null_shares = _join_log(panel, joined, cfgs, spec)
     for use_case, share in null_shares.items():
         targets[use_case]["null_in_window_share"] = share
-    cfg = cfgs[0]
     meta = {
         "hash_version": HASH_VERSION,
-        "sources": {"features": feature_sources_dump(cfg, entity)},
-        "keys": cfg.data.keys.model_dump(),
-        "period": cfg.time.period,
+        **join_definition(cfgs[0], entity),
         "periods": {"first": spec.label(first), "last": spec.label(last)},
         "targets": targets,
     }
@@ -107,8 +105,8 @@ def load_panel(
 
 def _check_shared_definition(cfgs: list[UseCaseConfig], entity: str) -> None:
     """The use cases are distinct ignoring case and every config lists `entity` and declares the
-    same feature sources, keys, model input and period, else the two use cases and the field are
-    named."""
+    same join definition (`join_definition`) and model input, else the two use cases and the
+    field are named."""
     if not cfgs:
         raise ValueError("load_panel needs at least one config")
     lowered = [cfg.use_case.lower() for cfg in cfgs]
@@ -125,13 +123,21 @@ def _check_shared_definition(cfgs: list[UseCaseConfig], entity: str) -> None:
                 f"unknown entity {entity!r}: the config {cfg.use_case!r} has {sorted(cfg.entities)}"
             )
     first = cfgs[0]
+    shared = {**join_definition(first, entity), "model_input": first.data.model_input}
+    paths = {  # where a person changes each field: the config's path, not the sidecar's key
+        "sources": f"entities.{entity}.sources.features",
+        "keys": "data.keys",
+        "period": "time.period",
+        "model_input": "data.model_input",
+    }
     for cfg in cfgs[1:]:
-        for field, value in SHARED_FIELDS.items():
-            if value(cfg, entity) != value(first, entity):
+        mine = {**join_definition(cfg, entity), "model_input": cfg.data.model_input}
+        for field, value in shared.items():
+            if mine[field] != value:
                 raise ValueError(
-                    f"the configs {first.use_case!r} and {cfg.use_case!r} differ in {field} "
-                    f"({value(first, entity)} vs {value(cfg, entity)}); one model input needs "
-                    "one data definition"
+                    f"the configs {first.use_case!r} and {cfg.use_case!r} differ in "
+                    f"{paths[field]} ({value} vs {mine[field]}); one model input needs one data "
+                    "definition"
                 )
 
 
@@ -185,6 +191,7 @@ def _join_targets(
     transient `_null_<column>`, marked; the joined list extended; per use case the target's
     meta (`_target_meta`)."""
     targets = {}
+    feature_columns = panel.columns
     for cfg in cfgs:
         column = target_column(cfg.use_case)
         if column in (name.lower() for name in panel.columns):
@@ -193,6 +200,7 @@ def _join_targets(
                 "sources; rename it upstream"
             )
         built, log = load_targets(cfg, entity, env, spark)
+        _check_lineage_names(cfg, [*feature_columns, *log["columns"]])
         marker = f"_from_{column}"
         built = built.select(
             *KEYS, F.col("target").alias(column), F.col("null_in_window").alias(f"_null_{column}")
@@ -201,6 +209,21 @@ def _join_targets(
         joined.append(JoinedSource(log, marker, "targets", cfg.use_case))
         targets[cfg.use_case] = _target_meta(cfg, entity, column, log)
     return panel, joined, targets
+
+
+def _check_lineage_names(cfg: UseCaseConfig, columns: list[str]) -> None:
+    """Refuse a `data.target.lineage` entry that names no column of the feature sources or the
+    target source, ignoring case as Spark matches names: a misspelt entry would exclude nothing
+    and leave the column it meant a candidate (§4.6)."""
+    known = {column.lower() for column in columns}
+    unknown = [name for name in cfg.data.target.lineage if name.lower() not in known]
+    if unknown:
+        raise ValueError(
+            f"data.target.lineage of {cfg.use_case!r} names {unknown}, columns of no source: an "
+            "entry that matches nothing excludes nothing; correct the names (a source column "
+            "named like a key is listed as `source_<name>`, one named `target`, `split` or "
+            "`eligible` by its source name)"
+        )
 
 
 def _target_meta(cfg: UseCaseConfig, entity: str, column: str, target_log: dict) -> dict:
@@ -386,16 +409,21 @@ def _columns_to_drop(targets: dict, use_case: str, features: list[str]) -> dict[
 
 def read_side_columns(
     columns: list[str], targets: dict, use_case: str, features: list[str]
-) -> tuple[dict[str, str], dict[str, str]]:
-    """The panel's columns the use case's read drops, with why (`_columns_to_drop`), and the
+) -> tuple[dict[str, str], dict[str, str], list[str], list[str]]:
+    """The panel's columns the use case's read drops, with why (`_columns_to_drop`); the
     renames, in order: a remaining `target`, `split` or `eligible` as `source_<name>`, then the
-    own target column as `target`; `features` are the entity's feature sources."""
+    own target column as `target`; the columns as read; the own target's lineage under its read
+    names. `features` are the entity's feature sources."""
     planned = _columns_to_drop(targets, use_case, features)
     dropped = {column: reason for column, reason in planned.items() if column in columns}
     remaining = [column for column in columns if column not in dropped]
     renames = rename_reserved(remaining, HELPER_COLUMNS, "the panel")
     renames[targets[use_case]["column"]] = "target"
-    return dropped, renames
+    read = [renames.get(column, column) for column in remaining]
+    # ignoring case, as the lineage is matched: `target` names a source column `Target` too
+    lowered = {old.lower(): new for old, new in renames.items()}
+    lineage = [lowered.get(column.lower(), column) for column in targets[use_case]["lineage"]]
+    return dropped, renames, read, lineage
 
 
 def prepare_panel(
@@ -404,8 +432,8 @@ def prepare_panel(
     """The panel of `load_panel` (or the saved model input) prepared for `cfg`: its columns
     dropped and renamed by `read_side_columns`, eligibility applied, the candidates resolved,
     the contract checked, the split assigned; the keys, the candidates, the tags, `eligible`,
-    `target` and `split`, with the log and the meta (`PANEL_META_KEYS`; the lineage under its
-    read names)."""
+    `target` and `split`, with the log and the meta (the hashes, the lineage under its read
+    names, the candidates, the tags)."""
     if cfg.use_case not in targets:
         raise ValueError(
             f"the panel has no target for use case {cfg.use_case!r}; its use cases: "
@@ -413,7 +441,9 @@ def prepare_panel(
         )
     own = targets[cfg.use_case]
     features = feature_source_names(cfg, entity)
-    dropped, renames = read_side_columns(panel.columns, targets, cfg.use_case, features)
+    dropped, renames, read, lineage = read_side_columns(
+        panel.columns, targets, cfg.use_case, features
+    )
     panel = panel.drop(*dropped)
     for old, new in renames.items():  # in order: `source_target` before `target_<use_case>`
         panel = panel.withColumnRenamed(old, new)
@@ -421,8 +451,9 @@ def prepare_panel(
     read_log = _read_side_log(dropped, renamed)
     _check_named_features(panel, cfg)
     panel, eligibility_log = apply_eligibility(panel, cfg.data.eligibility, period_spec(cfg))
-    lineage = [renames.get(column, column) for column in own["lineage"]]
-    candidates = resolve_candidates(panel.columns, cfg, lineage)
+    # the columns as read, as `saved_candidates` resolves them: eligibility adds only its tags
+    # and `eligible`, which are never candidates
+    candidates = resolve_candidates(read, cfg, lineage)
     tags = modelling_tags(cfg)
     contract_log = check_contract(panel, cfg, own["null_in_window_share"])
     panel = assign_split(panel, cfg)

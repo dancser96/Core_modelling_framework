@@ -40,14 +40,13 @@ stay plain, around 0.5.
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-import yaml
 from pandas.io.formats.style import Styler
 
-from core_modelling.config.identities import short
 from core_modelling.config.schema import UseCaseConfig
+from core_modelling.eda.population import headline_formats
 from core_modelling.feature_checks.findings import FINDINGS, STEP_ORDER
 from core_modelling.reporting import blocks, charts
-from core_modelling.reporting.formats import COUNT, column_formats, plain_number
+from core_modelling.reporting.formats import COUNT, column_formats, format_of, plain_number
 from core_modelling.reporting.html import paragraph, preformatted, style_table
 from core_modelling.tasks import TASK_SPECS
 
@@ -140,15 +139,9 @@ def _choices(meta: dict, resolved: UseCaseConfig) -> Styler:
         **{step: "not run" for step in meta["steps_skipped"]},
         "skipped_steps": meta["steps_skipped"],
         "compared_periods": compared,
-        "replayed_to": meta["replayed_to"],
-        "config_hash": short(meta["config_hash"]),
-        "data_definition_hash": short(meta["data_definition_hash"]),
+        **blocks.identity_values(meta),
     }
-    choices = [
-        {**blocks.CHOICES[name], **({"value": values[name]} if name in values else {})}
-        for name in CHOICE_NAMES
-    ]
-    return blocks.choices_block(resolved, choices)
+    return blocks.choices_block(resolved, CHOICE_NAMES, values)
 
 
 def _how_to_read(resolved: UseCaseConfig) -> list[str]:
@@ -197,11 +190,10 @@ def _summary_views(meta: dict, resolved: UseCaseConfig, held: pd.DataFrame) -> d
         "The findings of the steps that ran, in run order: how many features raised each, the "
         "flagged ones named (the noted ones are listed under Findings per step)"
     )
-    numbers = {name.replace("_", " "): value for name, value in meta["eda_headline"].items()}
     return {
         "choices": _choices(meta, resolved),
         "how_to_read": _how_to_read(resolved),
-        "headline": blocks.headline(numbers),
+        "headline": blocks.headline(meta["eda_headline"], headline_formats(resolved.task)),
         "warnings": blocks.warnings_block(_warnings(meta)),
         "raised": style_table(raised, {"count": COUNT}, caption=caption),
         "held": _held_views(held, resolved.task),
@@ -398,7 +390,9 @@ def _per_period_views(per_period: pd.DataFrame, meta: dict, resolved: UseCaseCon
     )
     return [
         paragraph("Every candidate's concordance per window period is in EDA's report."),
-        style_table(psi, dict.fromkeys(psi.columns, "{:.3f}"), caption=psi_caption),
+        style_table(
+            psi, dict.fromkeys(psi.columns, format_of("psi", resolved.task)), caption=psi_caption
+        ),
     ]
 
 
@@ -411,7 +405,7 @@ def _stability_chart(
     unstable = findings["finding"] == "stability.concordance_unstable"
     names = list(dict.fromkeys(findings.loc[unstable, "feature"]))
     if not names:
-        return paragraph("Not available: no concordance_unstable finding.")
+        return blocks.not_available("no concordance_unstable finding")
     rows = concordance_per_period.loc[concordance_per_period["feature"].isin(names)]
     return charts.grouped_lines(
         rows, "period", "concordance", group="feature", reference=0.5, from_zero=False,
@@ -422,15 +416,10 @@ def _stability_chart(
 
 def _appendix_views(meta: dict, resolved: UseCaseConfig, decisions: pd.DataFrame) -> dict:
     """The resolved config, the audit log, the entries this run wrote and the timings."""
-    config = yaml.safe_dump(resolved.model_dump(mode="json"), sort_keys=False, allow_unicode=True)
     written = pd.DataFrame(meta["entries_written"], columns=["seq", "op", "finding"])
-    seconds = meta["timings"]["seconds"]
-    timings = pd.DataFrame({"phase": list(seconds), "seconds": list(seconds.values())})
     return {
-        "resolved_config": preformatted(config),
-        "decisions": style_table(decisions, caption="The audit log's entries, replayed in order"),
         "entries_written": style_table(written, caption=WRITTEN),
-        "timings": style_table(timings, {"seconds": "{:.2f}"}, caption="Seconds per phase"),
+        **blocks.appendix(resolved, decisions, meta["timings"]["seconds"], "Seconds per phase"),
     }
 
 

@@ -1,5 +1,5 @@
 # Inference
-**Status:** legacy-only · **Legacy:** `src/inference.py`, `notebooks/Inference.ipynb`
+**Status:** designing · **Legacy:** `src/inference.py`, `notebooks/Inference.ipynb`
 **Related:** [lifecycle](lifecycle.md) · [training](training.md) (categorical handling) · [monitoring](monitoring.md) ·
 [environment](environment.md) · D-007, D-016, D-033, D-047, D-049, D-051, D-052, D-088, D-128 · OD-18, OD-27, OD-28
 

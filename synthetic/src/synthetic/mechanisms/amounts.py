@@ -96,7 +96,7 @@ def step_amounts(
     flows keep their link to it. Own-product payments leave the account as outflow transfers.
     """
     levels, rng = spec["levels"], rngs["amounts"]
-    state = _step_noises(spec, state, rng)
+    state = step_noises(spec, state, rng)
     profiles, dz = profile_codes(clients), z - means
     log_parts = log_variation(spec, measure_offsets(spec), state, dz, profiles)
     count_tilt = np.exp(levels["counts"]["activity_loading"] * dz[:, LATENTS.index("activity")])
@@ -128,7 +128,7 @@ def step_amounts(
     return state, mart, oracle
 
 
-def _step_noises(
+def step_noises(
     spec: dict, state: dict[str, np.ndarray], rng: np.random.Generator
 ) -> dict[str, np.ndarray]:
     """The state after one month of the stocks' and the flows' AR(1) noise."""

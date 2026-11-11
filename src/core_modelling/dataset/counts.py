@@ -503,28 +503,26 @@ def window_clients(rows: DataFrame, window_periods: list[date]) -> dict[str, flo
     return sizes
 
 
-def estimate_cells(
-    rows: DataFrame, kinds: dict[str, str], bins: int | None, window_periods: list[date]
-) -> int:
-    """The counts table's cells over both passes, estimated from `approx_count_distinct` per
-    candidate and for the target over `rows`: a numeric's distinct values capped at `bins`, a
-    categorical's at `LEVEL_CAP` (plus `OTHER` and `NEW`), each plus the null bin, times the
-    target's bins (its distinct values capped at `bins`, plus null), times the periods of pass 1
-    plus the window periods of pass 2, a categorical's window periods `ENCODING_FOLDS` times. With
-    `bins` None, above `MAX_CELLS` fails loud naming `eda.bins` (V3)."""
+def estimate_cells(rows: DataFrame, kinds: dict[str, str], window_periods: list[date]) -> int:
+    """The counts table's cells over both passes with `eda.bins: null` (every distinct value a
+    bin), estimated from `approx_count_distinct` per candidate and for the target over `rows`: a
+    numeric's distinct values, a categorical's capped at `LEVEL_CAP` (plus `OTHER` and `NEW`),
+    each plus the null bin, times the target's distinct values plus null, times the periods of
+    pass 1 plus the window periods of pass 2, a categorical's window periods `ENCODING_FOLDS`
+    times. Above `MAX_CELLS` it fails loud naming `eda.bins` (V3). With bins set the cells are
+    bounded and EDA does not call it."""
     distinct = rows.agg(
         F.countDistinct("period").alias("__periods"),
         *[F.approx_count_distinct(name).alias(name) for name in (*kinds, "target")],
     ).collect()[0]
-    cap = float("inf") if bins is None else bins
-    numeric = sum(min(distinct[n], cap) + 1 for n, kind in kinds.items() if kind == "numeric")
+    numeric = sum(distinct[n] + 1 for n, kind in kinds.items() if kind == "numeric")
     categorical = sum(
         min(distinct[n], LEVEL_CAP) + 3 for n, kind in kinds.items() if kind != "numeric"
     )
     periods = distinct["__periods"] + len(window_periods)
     folded = periods + 2 * len(window_periods) * (ENCODING_FOLDS - 1)  # both passes' window
-    estimate = int((numeric * periods + categorical * folded) * (min(distinct["target"], cap) + 1))
-    if bins is None and estimate > MAX_CELLS:
+    estimate = int((numeric * periods + categorical * folded) * (distinct["target"] + 1))
+    if estimate > MAX_CELLS:
         raise ValueError(
             f"eda.bins: null would give about {estimate:,} cells over both passes, above "
             f"{MAX_CELLS:,}; set eda.bins (100 by default) or run EDA on a smaller population"

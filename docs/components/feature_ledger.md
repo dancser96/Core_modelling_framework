@@ -1,5 +1,5 @@
 # Feature ledger
-**Status:** building (spec settled 2026-11-02; `ledger.py` built in Stage 2's m1.5, 2026-11-03; EDA writes the identity and EDA columns since 2026-11-04, Stage 2 major step 2; the identity column `source` and `ledger_schema_version` 2 since 2026-11-06; Feature Checks writes its columns since 2026-11-06, major step 3; the per-run part in M2.3) · **Legacy:** none (the crunch had only `features_include` / `features_exclude`)
+**Status:** built (spec settled 2026-11-02; `ledger.py` built in Stage 2's m1.5, 2026-11-03; EDA writes the identity and EDA columns since 2026-11-04, Stage 2 major step 2; the identity column `source` and `ledger_schema_version` 2 since 2026-11-06; the sidecar's run tokens and `ledger_schema_version` 3 since 2026-11-10; Feature Checks writes its columns since 2026-11-06, major step 3; the per-run part in M2.3) · **Legacy:** none (the crunch had only `features_include` / `features_exclude`)
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [training](training.md) ·
 [evaluation](evaluation.md) · [config](config.md) (the decision audit log) · [reporting](reporting.md) ·
 D-030, D-031, D-043, D-125, D-134, D-135, D-136, D-137 · settles OD-11
@@ -16,8 +16,9 @@ from Feature Checks, the decisions from the audit log ([config](config.md#decisi
 D-125).
 
 - **Where:** `<root>/<use_case>/04_feature/<data-definition hash>/ledger.parquet` plus
-  `_ledger.json` (`ledger_schema_version: 2`, the data-definition hash, the writing stage and its
-  settings digest), beside the `eda/`, `feature_checks/` and `decisions/` folders (D-136).
+  `_ledger.json` (`ledger_schema_version: 3`, the data-definition hash and, per stage whose
+  columns it holds, the run token also in that stage's json), beside the `eda/`,
+  `feature_checks/` and `decisions/` folders (D-136).
 - **Who writes:** EDA creates it (identity and EDA statistics); Feature Checks appends its columns.
   No stage rewrites another's columns.
 - **Derived at render time, never stored:** `held`, `kept`, `excluded` and `verdict`, read from
@@ -51,18 +52,18 @@ This spec settles OD-11 (the ledger's shape).
    calls `create_ledger`; it adds its ranking columns with `add_columns(..., stage="eda")`.
 2. EDA saves it with `save_ledger` **before** it writes its `eda/` folder, so `eda.json` is the
    commit marker: a crash in between leaves a new ledger beside the old `eda.json`, which
-   Feature Checks' `check_upstream` refuses, never an old ledger beside a new `eda.json`. An EDA
+   `read_ledger` refuses by its run token, never an old ledger beside a new `eda.json`. An EDA
    run starts from a fresh ledger, so **an EDA rerun removes Feature Checks' columns** (and EDA
    removes the `feature_checks/` folder, A22).
-3. Feature Checks reads the ledger with `read_ledger(folder, data_definition_hash)` (another data
-   definition is refused), refuses one without EDA's columns, whose EDA settings digest differs
-   from the current resolved config, or whose `concordance_window` differs from `eda/`'s ranking
-   (two EDA runs), runs its steps and adds its columns with
-   `add_columns(..., stage="feature_checks")`, a skipped step's as null. A Feature Checks rerun
-   replaces its own columns.
+3. Feature Checks reads `eda/` with `read_upstream` (refused when EDA's settings digest differs from
+   the current resolved config's) and the ledger with `read_ledger(folder, data_definition_hash,
+   expect={"eda": <eda.json's run_token>})` (another data definition, or a ledger from another EDA
+   run than `eda/`, is refused), refuses one without EDA's columns, runs its steps and adds its
+   columns with `add_columns(..., stage="feature_checks")`, a skipped step's as null. A Feature
+   Checks rerun replaces its own columns.
 4. Feature Checks writes its `flag` entries to the audit log, renders its report, saves the
-   ledger with its own sidecar (stage `feature_checks`, its settings digest) and writes its
-   `feature_checks/` folder last, the same order as EDA.
+   ledger with the EDA run's token it read and its own, and writes its `feature_checks/` folder
+   last, the same order as EDA.
 5. A report, the notebook's review view or Training reads the ledger with `read_ledger` and calls
    `render_decisions` (the view; it takes the resolved config and the entries, for the entry
    numbers) or `resolve_features` (the feature set; it takes the resolved config).
@@ -70,7 +71,8 @@ This spec settles OD-11 (the ledger's shape).
 ### Functions in brief
 `src/core_modelling/ledger.py`, one module:
 - `create_ledger`, `add_columns`: build the table;
-- `save_ledger`, `read_ledger`: the artifact, with its schema version;
+- `save_ledger`, `read_ledger`: the artifact, with its schema version and run tokens;
+- `read_candidates`: the rows a step reads (neither lineage nor unsupported);
 - `render_decisions`: the derived columns, for a view;
 - `resolve_features`: Training's feature set.
 
@@ -82,9 +84,9 @@ tests ([config](config.md)). `resolve_features` is tested against hand-built res
 (lineage, unsupported, excluded and held out; a name that is no ledger row refused);
 `add_columns` refuses another stage's column, a repeated feature and a read candidate left out;
 a stage's rerun leaves none of its earlier columns; `save_ledger` refuses a derived column and an
-incomplete meta, and a failed save keeps the previous ledger; another `ledger_schema_version` or
-data definition is refused; the list, nullable-int and bool columns survive the parquet round
-trip unchanged.
+incomplete meta, and a failed save keeps the previous ledger; another `ledger_schema_version`,
+data definition or stage run token is refused; the list, nullable-int and bool columns survive
+the parquet round trip unchanged.
 
 ## Level 3: Details
 
@@ -95,12 +97,12 @@ trip unchanged.
    only, statistics null).
 2. **It decides nothing.** No ledger function writes an audit-log entry or changes the
    candidates; it records statistics and flags and derives the rest.
-3. **Versioned per `CLAUDE.md` §2.** `_ledger.json` carries `ledger_schema_version` (2: the
-   identity column `source`, 2026-11-06), read before the parquet; another version is refused
-   and EDA reruns (0.x; from 1.0 an older one is migrated). Columns are only added within a
-   major version (D-007); in 0.x a column a reader needs bumps the version, everything else
-   changes in place (D-136). From 1.0, readers keep or drop a column they do not know instead of
-   refusing it, so a ledger written by a later patch still reads.
+3. **Versioned per `CLAUDE.md` §2.** `_ledger.json` carries `ledger_schema_version` (2: the identity
+   column `source`; 3: the run tokens), read before the parquet; another version is refused and EDA
+   reruns (0.x; from 1.0 an older one is migrated). Columns are only added within a major version
+   (D-007); in 0.x a column a reader needs bumps the version, everything else changes in place
+   (D-136). From 1.0, readers keep or drop a column they do not know instead of refusing it, so a
+   ledger written by a later patch still reads.
 4. **Stages append, never rewrite.** `add_columns` refuses a column that belongs to another
    stage; a stage's rerun replaces only its own columns; an EDA rerun starts a new ledger.
 5. **Derived columns are never stored.** `held`, `kept`, `excluded` and `verdict` exist only in
@@ -212,14 +214,17 @@ The hold-out rule is [feature checks](feature_checks.md)'s (D-134); in short:
 ### The artifact
 - `ledger.parquet`: the stored columns above (identity, EDA, checks); `flags`, `notes` and
   `partners` are parquet list columns.
-- `_ledger.json`: `ledger_schema_version`, the framework version, when, the stages whose
-  columns the file holds (`eda`, `feature_checks`), and the writing stage's `stage`,
-  `data_definition_hash` (also the folder's name) and `settings_digest` (when it has one). After
-  Feature Checks, the sidecar records stage `feature_checks` and Feature Checks' settings digest
-  (EDA's paths plus `feature_checks`, the one in `feature_checks.json`).
-- Both files are written to temporary names (removed when a write fails) and renamed, so a crash
-  never leaves half a ledger (A22). The stage folder is written after the ledger, so the stage's
-  json is the commit marker.
+- `_ledger.json`: `ledger_schema_version`, the framework version, when, the
+  `data_definition_hash` (also the folder's name) and `runs`, `{stage: run_token}` for each stage
+  whose columns the file holds, in stage order: `{"eda": …}` after EDA (its save starts afresh),
+  `{"eda": …, "feature_checks": …}` after Feature Checks (the EDA run's it read and its own).
+  Each token (`artifacts.new_run_token`, 12 hex characters) is the one the stage wrote as
+  `run_token` into its `<stage>.json`.
+- Both files are written to temporary names (removed when a write fails) and renamed, the
+  sidecar first, so a crash never leaves half a ledger (A22) and one between the two renames
+  leaves the new run's tokens beside the old table, which a reader refuses. The stage folder is written after the ledger, so the stage's
+  json is the commit marker, and a reader passing the tokens of the stage jsons it read
+  (`expect`) refuses a ledger from another run: Feature Checks passes EDA's, Training (M2.3) both.
 - Size: one row per candidate and about 40 columns (the canonical synthetic data: about 150
   rows), far below pandas Styler's 262,144-cell render limit.
 - Local paths only in Stage 2; the HDFS transport arrives in M2.4 for every artifact at once
@@ -227,11 +232,12 @@ The hold-out rule is [feature checks](feature_checks.md)'s (D-134); in short:
 
 ### Code map
 - `src/core_modelling/ledger.py`: the column lists as plain data (`COLUMNS_BY_STAGE`: `identity`,
-  `eda`, `feature_checks`; `DERIVED_COLUMNS` apart) and the six functions below; the files go
+  `eda`, `feature_checks`; `DERIVED_COLUMNS` apart) and the seven functions below; the files go
   through `artifacts.py` (`write_parquet`, `read_parquet`, `write_json`). The callers:
   - EDA's stage function: `create_ledger`, `add_columns(..., "eda")`, `save_ledger`;
-  - Feature Checks' stage function: `read_ledger`, `add_columns(..., "feature_checks")`,
-    `save_ledger`, and `render_decisions` for its report and review view;
+  - Feature Checks' stage function: `read_ledger(..., expect={"eda": …})`,
+    `add_columns(..., "feature_checks")`, `save_ledger`, and `render_decisions` for its report and
+    review view; its steps' `read_candidates`;
   - Training (M2.3): `read_ledger`, `resolve_features`.
 - Reading order for review: `resolve_features` and `render_decisions` first (the hold-out lives
   there), then `add_columns`.
@@ -244,7 +250,7 @@ reports, `StageResult.ledger` in the notebooks and the versioned artifact. The i
 rest private:
 
 ```python
-LEDGER_SCHEMA_VERSION = 2
+LEDGER_SCHEMA_VERSION = 3
 
 
 def create_ledger(
@@ -256,7 +262,10 @@ def create_ledger(
 ) -> pd.DataFrame: ...
 def add_columns(ledger: pd.DataFrame, columns: pd.DataFrame, stage: str) -> pd.DataFrame: ...
 def save_ledger(ledger: pd.DataFrame, folder: str, meta: dict) -> None: ...
-def read_ledger(folder: str, data_definition_hash: str | None = None) -> pd.DataFrame: ...
+def read_ledger(
+    folder: str, data_definition_hash: str | None = None, expect: dict[str, str] | None = None
+) -> pd.DataFrame: ...
+def read_candidates(ledger: pd.DataFrame) -> pd.DataFrame: ...
 def render_decisions(
     ledger: pd.DataFrame, resolved: UseCaseConfig, entries: list[Entry]
 ) -> pd.DataFrame: ...
@@ -274,17 +283,23 @@ def resolve_features(ledger: pd.DataFrame, resolved: UseCaseConfig) -> list[str]
   every column the stage wrote before, so a rerun that skips a step leaves none of its earlier
   columns. The lineage and unsupported rows hold None in the stage's object and list columns, so
   the frame in memory equals the one read back.
-- `save_ledger` refuses a derived column, a column no stage owns, and a `meta` without `stage`
-  (`eda` or `feature_checks`) and `data_definition_hash` or with keys other than those and
-  `settings_digest`. A stage calls it before `write_stage`. `read_ledger` refuses another
-  `ledger_schema_version`, a missing ledger ("run EDA first") and, when `data_definition_hash` is
-  given, a ledger written for another one, naming both. List columns read back as Python lists.
-- `render_decisions` adds `held`, `kept`, `excluded` and `verdict`; it refuses a name in
-  `features.excluded`, `held` or `kept` that is no ledger row (a mistyped entry is never ignored)
-  and entries whose `exclude` / `keep` state differs from the resolved config's (pass the entries
-  it was resolved from).
+- `save_ledger` refuses a derived column, a column no stage owns, a `meta` other than
+  `data_definition_hash` and `runs`, and `runs` that do not name exactly the stages whose columns
+  the ledger holds. A stage calls it before `write_stage`. `read_ledger` refuses another
+  `ledger_schema_version`, a missing ledger ("run EDA first"), when `data_definition_hash` is
+  given a ledger written for another one, naming both, and, per stage in `expect`, a sidecar
+  token that is missing or differs ("the ledger and `<stage>/` come from different runs: rerun
+  `<stage>`"). List columns read back as Python lists.
+- `read_candidates` gives the rows a step reads, `~(lineage | unsupported)`, in the ledger's
+  order.
+- `render_decisions` adds `held`, `kept`, `excluded` and `verdict`; it refuses a config that was
+  only loaded (`check_resolved`), a name in `features.excluded`, `held` or `kept` that is no
+  ledger row (a mistyped entry is never ignored) and entries that do not end at the resolved
+  config's `replayed_to` (pass the entries it was resolved from).
 - `resolve_features` returns candidates − lineage − unsupported − excluded − held, in the
-  ledger's order, and refuses a name that is no ledger row as `render_decisions` does.
+  ledger's order, and refuses a name that is no ledger row as `render_decisions` does, and a
+  config that was only loaded (`check_resolved`: its held and excluded lists are empty until the
+  replay fills them).
 
 ### Lessons from the crunch
 None specific: the crunch had include and exclude lists only, which is why it could not say why a
@@ -294,7 +309,3 @@ feature was in or out.
 - Readable labels per feature: not in Stage 2 (Q452; D-046).
 - The per-run part's columns (automated selection with its rule and train-split statistic, use in
   the model, importance and rank, effect direction): decided in M2.3.
-- A crash between Feature Checks' ledger save and its folder write leaves the ledger's
-  informational columns one run ahead of `feature_checks.json` (the held set is read from the
-  audit log, so the hold-out stays right). Training (M2.3) cross-checks a per-run marker (e.g. the
-  `run` entry's `seq` in both) when it reads them.

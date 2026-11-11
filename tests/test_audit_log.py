@@ -12,6 +12,7 @@ from typing import get_args
 
 import pytest
 import yaml
+from conftest import build_entry
 from pydantic import BaseModel, ValidationError
 
 from core_modelling.__main__ import main
@@ -20,6 +21,7 @@ from core_modelling.config.audit_log import (
     LOG_SCHEMA_VERSION,
     LOGGABLE_SETTINGS,
     Entry,
+    _is_period_label,
     _write_entry,
     read_entries,
     read_resolved_config,
@@ -34,6 +36,7 @@ from core_modelling.config.identities import (
     resolved_input_hash,
     short,
 )
+from core_modelling.config.migrations import MIGRATIONS
 from core_modelling.config.replay import (
     APPLY_BY_OP,
     Op,
@@ -44,6 +47,7 @@ from core_modelling.config.replay import (
 )
 from core_modelling.config.schema import FeatureChecks
 from core_modelling.environment import EnvironmentConfig, Roots, audit_log_dir
+from core_modelling.periods import PERIODS
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "conf/base/cc_acquisition.yml"
@@ -129,19 +133,10 @@ def _rule(name: str) -> dict:
     return {"kind": "rule", "id": name}
 
 
-def _entry(cfg: UseCaseConfig, **fields: object) -> Entry:
-    """A person's entry 1 built in code, with the given operands."""
-    return Entry(
-        seq=1,
-        time="2026-10-27T11:00:00+00:00",
-        by={"kind": "person", "id": "someone"},
-        stage="feature_checks",
-        reason="r",
-        data_definition_hash=data_definition_hash(cfg, ENTITY),
-        hash_version=HASH_VERSION,
-        log_schema_version=LOG_SCHEMA_VERSION,
-        **fields,
-    )
+def _entry(cfg: UseCaseConfig, seq: int = 1, **fields: object) -> Entry:
+    """A person's entry built in code (entry 1 by default) on the config's data definition, with
+    the given operands."""
+    return build_entry(seq, data_definition_hash=data_definition_hash(cfg, ENTITY), **fields)
 
 
 def _variant(config_path: Path, candidates: dict) -> Path:
@@ -473,8 +468,40 @@ def test_saved_resolved_config_names_its_entries_and_loads_back(
     assert "# training.max_iter: #10" in text and "# features.excluded.nationality: #12" in text
     assert f"# features.held.{QUALITY[1]}: #2" in text and f"features.held.{LEAKS[0]}" not in text
     assert resolved_input_hash(read_resolved_config(saved)) == resolved_input_hash(resolved)
+    body = yaml.safe_dump(resolved.model_dump(mode="json"), sort_keys=False, allow_unicode=True)
+    assert text.endswith("\n" + body)  # the body as the writers dumped it before `dump_resolved`
     with pytest.raises(ValueError, match="features.excluded is written by the audit log"):
         load_config(saved)
+
+
+def test_an_old_resolved_config_loads_through_its_migration(
+    cfg: UseCaseConfig, env: EnvironmentConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A saved resolved config of an older `schema_version` runs the same migration as a config
+    file, so it outlives the first schema bump (§2); without one it fails naming it, and an empty
+    file is refused, both naming the file."""
+    saved = tmp_path / "resolved.yml"
+    resolved = resolve_config(cfg, ENTITY, env, save_to=saved)
+    raw = yaml.safe_load(saved.read_text())
+    raw["schema_version"] = 0
+    raw["training"]["selection"]["auc_floor"] = raw["training"]["selection"].pop("univariate_floor")
+    saved.write_text(yaml.safe_dump(raw, sort_keys=False))
+
+    def rename_floor(old: dict) -> dict:
+        """The dummy 0 → 1 migration."""
+        selection = old["training"]["selection"]
+        selection["univariate_floor"] = selection.pop("auc_floor")
+        return {**old, "schema_version": 1}
+
+    with pytest.raises(ValueError, match=r"no migration from resolved config .*resolved\.yml "):
+        read_resolved_config(saved)
+    monkeypatch.setitem(MIGRATIONS, 0, rename_floor)
+    with pytest.warns(DeprecationWarning, match=r"resolved\.yml schema_version 0 is deprecated"):
+        migrated = read_resolved_config(saved)
+    assert migrated == resolved
+    (tmp_path / "empty.yml").write_text("")
+    with pytest.raises(ValueError, match=r"empty\.yml must be a YAML mapping, got NoneType"):
+        read_resolved_config(tmp_path / "empty.yml")
 
 
 def test_stale_entry_fails_naming_its_seq(config_path: Path, env: EnvironmentConfig) -> None:
@@ -564,6 +591,66 @@ def test_effective_entries_drop_what_a_revert_undid(
     entries = read_entries(audit_log_dir(env, cfg, ENTITY))
     assert [e.seq for e in effective_entries(entries)] == [1, 5]
     assert [e.seq for e in effective_entries(entries[:3])] == [1, 2, 3]
+
+
+def test_replay_starts_from_the_config_as_loaded(
+    cfg: UseCaseConfig, env: EnvironmentConfig
+) -> None:
+    """A config with a replayed list filled is refused: the replay writes those lists from the
+    entries alone, so the value would vanish. A resolved config is refused by `resolve_config`:
+    replaying onto its replayed values would give another input than the file's."""
+    filled = cfg.model_copy(deep=True)
+    filled.features.excluded = ["income"]
+    with pytest.raises(ValueError, match=r"sets features.excluded, which the audit log's replay"):
+        replay(filled, [])
+    resolved = resolve_config(cfg, ENTITY, env)
+    with pytest.raises(ValueError, match="takes the config as loaded .* not a resolved one"):
+        resolve_config(resolved, ENTITY, env)
+
+
+def test_nested_reverts_take_the_stored_states(cfg: UseCaseConfig) -> None:
+    """Reverts of reverts, and a revert to a state before an earlier revert: each takes the state
+    after its entry, as (max_iter, excluded, kept)."""
+    a, b, c = LEAKS[0], UNSTABLE[0], LEAKS[1]
+    ops = [
+        dict(op="set", path="training.max_iter", to=300),
+        dict(op="exclude", features=[a]),
+        dict(op="keep", features=[b], findings=[]),
+        dict(op="revert", to_seq=1),
+        dict(op="exclude", features=[c]),
+        dict(op="set", path="training.max_iter", to=400),
+        dict(op="revert", to_seq=3),  # before the revert of entry 4
+        dict(op="include", features=[a]),
+        dict(op="revert", to_seq=6),  # 6 is entry 4's restart plus 5 and 6
+        dict(op="revert", to_seq=8),
+        dict(op="revert", to_seq=9),  # a revert to a revert's state
+    ]
+    log = [_entry(cfg, seq=seq, **op) for seq, op in enumerate(ops, start=1)]
+
+    def state(upto: int) -> tuple[int, list[str], list[str]]:
+        """The replayed (max_iter, excluded, kept) after the first `upto` entries."""
+        raw = replay(cfg, log[:upto])
+        return raw["training"]["max_iter"], raw["features"]["excluded"], raw["features"]["kept"]
+
+    assert {upto: state(upto) for upto in (4, 7, 8, 9, 10, 11)} == {
+        4: (300, [], []),
+        7: (300, [a], [b]),
+        8: (300, [], [b]),
+        9: (400, [c], []),
+        10: (300, [], [b]),
+        11: (400, [c], []),
+    }
+    assert [e.seq for e in effective_entries(log[:10])] == [1, 2, 3, 8]
+    assert [e.seq for e in effective_entries(log)] == [1, 5, 6]
+
+
+def test_twenty_chained_reverts_replay(cfg: UseCaseConfig) -> None:
+    """A revert takes the stored state rather than replaying its prefix again, so 20 reverts each
+    to the one before replay at once (restarting at each revert took over a minute)."""
+    log = [_entry(cfg, op="set", path="training.max_iter", to=300)]
+    log += [_entry(cfg, seq=seq, op="revert", to_seq=seq - 1) for seq in range(2, 22)]
+    assert validate_raw(replay(cfg, log), "20 reverts").training.max_iter == 300
+    assert [e.seq for e in effective_entries(log)] == [1]
 
 
 def test_feature_outside_the_candidate_patterns_is_refused(
@@ -841,7 +928,7 @@ def test_validation_period_a_run_compared_is_refused(
                         reason="later", **decide)  # fmt: skip
     entry = record_decision(config_path, ENTITY, set={"time.validation_period": "2025-12-01"},
                             reason="one more month", **decide)  # fmt: skip
-    assert entry.stage == "evaluation"
+    assert entry.stage == "eda"  # EDA reads the validation period, so it reruns from there
     assert str(resolve_config(cfg, ENTITY, env).time.validation_period) == "2025-12-31"
 
 
@@ -1006,6 +1093,16 @@ def test_run_periods_are_labels_of_the_configs_period(
     with pytest.raises(ValueError, match="a `run` entry needs `periods`, a non-empty list"):
         record_stage_entry(cfg, ENTITY, env, periods=[], **write)
     assert read_entries(audit_log_dir(env, cfg, ENTITY)) == []
+
+
+def test_a_period_label_is_one_the_framework_writes() -> None:
+    """A label reads as its period's own label: a month, an ISO week or a day; a label of no real
+    period, or one in another period's form, is none."""
+    month, week, day = PERIODS["month"], PERIODS["week"], PERIODS["day"]
+    assert _is_period_label("2025-06", month) and not _is_period_label("2025-13", month)
+    assert _is_period_label("2025-W23", week) and not _is_period_label("2025-W53", week)
+    assert _is_period_label("2025-02-28", day) and not _is_period_label("2025-02-30", day)
+    assert not _is_period_label("2025-06-15", month) and not _is_period_label("2025-06", day)
 
 
 def test_a_writer_starting_a_new_log_says_where(

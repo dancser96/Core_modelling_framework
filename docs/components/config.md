@@ -69,7 +69,7 @@ automation_level: assisted               # autonomous | assisted (D-023)
 
 decision:                                # declared before any result; never changed through the audit log (CLAUDE.md §4.3)
   type: probability                      # top_n | threshold | ranking | probability; scores compared across products (D-049)
-  n: null                                # top_n only: the list size
+  n: null                                # top_n only: the list size; refused under another type
   metric: null                           # null = derived from type; else a FLAML metric name (T9)
   gate_metric: null                      # null = derived from type; the promotion gate's metric
   baselines: [population_base_rate]      # + previous_model, historic_predicted_rate (D-009)
@@ -132,7 +132,8 @@ eda:
 # left out runs every step with its defaults. Every threshold is a loggable leaf, the same at both
 # levels. Flags hold a feature out of training until a person decides; notes inform (D-134).
 feature_checks:
-  # quality: all-null, constant, near-constant, high-missing, high-cardinality (flags); two null notes
+  # quality: all-null, constant, near-constant, high-missing, high-cardinality (flags); two null
+  # notes
   quality:        {dominant_share_max: 0.99, missing_share_max: 0.95, max_levels: 50,
                    nulls_may_be_zeros: {missing_min: 0.2, zero_share_max: 0.005}, nulls_informative_min: 0.55}
   # leakage: too strong, missingness leak, rare-value leak (flags); rare_effect_max: beside a
@@ -204,14 +205,16 @@ What it holds, what its reader refuses and when it is written: [dataset](dataset
    defaults and the entries replayed). The resolved config is plain data (YAML, D-043); the
    config itself is never edited afterwards, since decisions taken later are entries in the
    decision audit log (D-125, section below). The resolved config carries a **housekeeping
-   block**:
-   - the framework version and a version card of the key libraries;
-   - when the run was made;
-   - the environment values the run used (the physical sources, roots, Spark settings and the
-     collect budget), since they sit outside every hash (D-130);
-   - the run's identities (`run_id`; config, data-definition and resolved-input hashes; the last
-     entry replayed; code version; EDA and Feature Checks have no `run_id` yet). The hashes exclude
-     this block, so they don't depend on themselves.
+   block** (`resolve_config`):
+   - the framework version (`framework_version`) and when it was resolved (`resolved_at`);
+   - the environment values the run used (`environment`: the physical sources, roots, Spark
+     settings and the collect budget), since they sit outside every hash (D-130);
+   - the identities: the entity, the config, data-definition and resolved-input hashes with
+     `hash_version`, the last entry replayed (`replayed_to`) and the fields the level filled
+     (`level_filled`). The hashes exclude this block, so they don't depend on themselves.
+   - Planned with Training's local-tier run (M2.3, roadmap → Backlog → Training): the run's
+     `run_id`, the code version and a version card of the key libraries; EDA and Feature Checks
+     identify a run by its `run_token` in their stage json instead.
 3. **Automation levels** (`autonomous` / `assisted`; `manual` later) set defaults for every
    stage; explicit fields override (D-023). The field is `automation_level` from M2.1; `profile` is
    the retired name, with no migration since 0.x promises nothing (D-007 (c)). The same checks run
@@ -357,7 +360,7 @@ any extension-point entry.
 | person | `include`: reverse a person's `exclude` | changes the input |
 | person | `keep`: settles the open flags it names (`findings`), each open on every feature it names; by default the features' open flags, which must then be the same on each (else one keep per finding set); also protects from automated pruning | changes the input |
 | person | `set`: change one listed setting (next section) | changes the input |
-| person | `revert`: go back to the state after an earlier entry (`to_seq`; 0 is the config as written) | changes the input: replay restarts from there |
+| person | `revert`: go back to the state after an earlier entry (`to_seq`; 0 is the config as written) | changes the input: replay takes that stored state |
 | person | `sign_off`: approve a run's final feature list (D-031) | trail |
 | person | `register`, `promote`: written by those commands | trail |
 | rule | `exclude`: none written in Phase 2 (lineage and unsupported types leave through the candidate resolution, never as entries; D-134) | changes the input |
@@ -375,10 +378,10 @@ any extension-point entry.
   and is refused. Notes are never entries: they live in Feature Checks' findings table. Which
   findings are flags and how the hold-out works: [feature checks](feature_checks.md) (D-134).
 - A `revert` entry, `{op: revert, to_seq: 8, reason}`, goes back to an earlier state without
-  deleting anything: at replay the state restarts from the config with entries 1 … 8 applied,
-  and the entries after the revert continue from there. The undone entries stay in the log as
-  the trail, and `resolve_config(upto=n)` still reproduces every earlier state (`to_seq: 0` is
-  the config as written; a revert inside the reverted range is honoured in turn). It is written
+  deleting anything: at replay the state becomes the state after entry 8, and the entries after
+  the revert continue from there. The undone entries stay in the log as the trail, and
+  `resolve_config(upto=n)` still reproduces every earlier state (`to_seq: 0` is the config as
+  written; a revert inside the reverted range is honoured in turn). It is written
   with `record_decision(…, revert_to=8, reason=…)` or `decide --revert-to 8`, exactly one of
   the five operations; it is refused unless `to_seq` is an earlier state than the current one
   (0 … n−1), and it carries no features, path, `from` or `to` (no other operation takes
@@ -440,9 +443,10 @@ LOGGABLE_SETTINGS = {
     "training.categoricals.min_level_count": "training",
     "training.calibration.method": "training",
     "training.sampling": "training",
-    "time.validation_period": "evaluation",  # refused when a Feature Checks run entry lists it (D-088)
-    "evaluation.slices.top_pct": "evaluation",
-    "evaluation.slices.top_n": "evaluation",
+    # EDA reads these two (the compared periods, its decision-slices view), so they rerun from EDA
+    "time.validation_period": "eda",  # refused when a Feature Checks run entry lists it (D-088)
+    "evaluation.slices.top_pct": "eda",
+    "evaluation.slices.top_n": "eda",
     "evaluation.views": "evaluation",
 }
 ```
@@ -474,15 +478,18 @@ from the new resolved input.
 
 ### From entries to code: replay
 1. Load and migrate the config.
-2. Apply entries 1–n in order through `APPLY_BY_OP`. A later entry on the same feature or setting
-   wins: an `include` after an `exclude` restores the feature.
-3. Validate the result with the schema and hash it: the resolved-input hash (Identities, below).
+2. Apply entries 1–n in order through `APPLY_BY_OP`, in one pass that keeps the state after each
+   entry. A later `set` of the same setting wins.
+3. Write the three feature lists from the **effective** entries (the ones no revert undid):
+   `features.excluded` and `features.kept` from `decisions_in_force` (an `include` after an
+   `exclude` restores the feature), `features.held` from the open flags.
+4. Validate the result with the schema and hash it: the resolved-input hash (Identities, below).
 
 ```python
 APPLY_BY_OP = {
-    "exclude": _apply_exclude,
-    "include": _apply_include,
-    "keep": _apply_keep,
+    "exclude": _leave_unchanged,   # the feature entries act through the lists of step 3
+    "include": _leave_unchanged,
+    "keep": _leave_unchanged,
     "set": _apply_set,
     "flag": _leave_unchanged,
     "dropped": _leave_unchanged,
@@ -492,15 +499,23 @@ APPLY_BY_OP = {
     "run": _leave_unchanged,
 }
 
+states = [raw_config]  # states[n]: the state after entry n
 for entry in entries[:upto]:
-    cfg = APPLY_BY_OP[entry["op"]](cfg, entry)
+    if entry.op == "revert":
+        states.append(states[entry.to_seq])
+    else:
+        states.append(APPLY_BY_OP[entry.op](copy(states[-1]), entry))
 ```
 
-`revert` is not in `APPLY_BY_OP`: `replay` handles it itself, since it needs the config and the
-earlier entries, not only the current state. The replay restarts from the config with entries
-1 … `to_seq` (the slice, replayed the same way, so a revert inside it is honoured in turn) and
-continues with the entries after the revert; the origins of each value restart the same way, so
-the resolved file points at the entries still in force.
+`revert` is not in `APPLY_BY_OP`: `replay` handles it itself, since it takes a stored state, not
+the current one. It continues from the state after entry `to_seq` (so a revert inside the reverted
+range is honoured in turn), and the cost of a replay is linear in the entries.
+`effective_entries` walks the log the same way, keeping the effective entries after each entry,
+and `decisions_in_force(entries)` reads them: per feature, the `keep` entries in force and the
+`exclude` in force. It is the one meaning of exclude, include and keep, read by the replay, by
+`open_flags` (an excluded feature is not held) and by the ledger's decision view
+(`render_decisions`); the origins of each value walk the effective entries too, so the resolved
+file points at the entries still in force.
 
 - **Replaying to any point reproduces any run:** `upto` = a run marker's `replayed_to` gives that
   run's input, so an old run can be rerun or compared without guessing what was decided then; the
@@ -509,10 +524,11 @@ the resolved file points at the entries still in force.
   replay, citing the entry number.
 - **Rule and stage entries can be checked:** rerunning a stage on unchanged data writes no new
   entry. When restated data or a changed threshold changes a finding's feature set, the rerun
-  appends the finding's new `flag` entry (an empty one closes it); replay shows the difference
-  and flags the person entries that cited the old entry (entry 6 cites entry 3 below) for a look,
-  rather than applying them silently. A `keep` stays valid for the same finding with new values;
-  a different finding on a kept feature opens again (D-134).
+  appends the finding's new `flag` entry (an empty one closes it). Planned, not built (Open
+  questions below): replay showing the difference and flagging the person entries that cited the
+  old entry (entry 6 cites entry 3 below) for a look; today they apply as written. A `keep`
+  stays valid for the same finding with new values; a different finding on a kept feature opens
+  again (D-134).
 - **The trail never changes the input:** run outputs, sign-offs, register and promote are recorded
   but leave the resolved config alone.
 
@@ -524,7 +540,8 @@ The replay code is expected to be a few dozen lines. That is a design target, no
 - A person writes one entry per group, with one reason (D-043's one note per group).
 - So a use case's road to production is tens of entries, not hundreds; the worked example below
   has 16.
-- The default view hides run outputs and resolved flags, and filters by stage and by who decided.
+- `show_decisions` lists every entry, one row each; a default view that hides run outputs and
+  resolved flags and filters by stage and by who decided is planned, not built.
 - Each feature's trail is read through the [feature ledger](feature_ledger.md).
 
 ### One entry
@@ -583,7 +600,9 @@ table](feature_checks.md#the-finding-table); a name or kind changed is a log-for
 `resolve_config(cfg, entity, env, upto=None, save_to=None)` returns the resolved config, or writes it
 as one YAML file with each value's entry number as a comment and, per revert replayed, one header
 line `# entry 14 reverted to the state after #8`. It is a view, regenerated on demand and never
-edited back. Every run already saves its resolved config with its artifacts.
+edited back: it takes the config as loaded and refuses a resolved one, and a resolved config
+whose content no longer matches its hash is refused wherever one is needed. Every run already
+saves its resolved config with its artifacts.
 
 ### Storage
 - **Locally:** one small JSON file per entry, per instance, at
@@ -597,8 +616,9 @@ edited back. Every run already saves its resolved config with its artifacts.
   its checks were made against the log before the other writer's entry (that `hdfs dfs -put`
   without `-f` refuses an existing file is to be verified in the bank). Until the M2.4 transport,
   an `hdfs://` data root is refused where the log is read or written. A missing log folder reads
-  as an empty log with a warning; once the model input exists (major step 3), a missing folder
-  for a frozen config is an error.
+  as an empty log: a reader (`resolve_config`, `show_decisions`, Feature Checks' replay) logs a
+  warning, since a wrong root looks like an empty log; a writer, which starts the log there,
+  does not (`load_entries(…, warn_if_missing=False)`).
 - **Register:** the run's slice (the entries up to its run marker, any later validation-period entry
   its Evaluation was scored with, plus the sign-off that approved
   the run) is packed into one file inside the registered bundle, immutable; promote reads it
@@ -802,46 +822,44 @@ step 1" change in Stage 2's first step, in place (no schema or log bump, D-136):
 fields, the template, the examples and the `keep` rename are built (m1.1, 2026-11-03), the audit
 log's `findings`, `flag`, `run`, the held set and the paths too (m1.2, 2026-11-03). Package:
 `core_modelling/config/` (`schema.py`, `levels.py`, `migrations.py`, `identities.py`,
-`replay.py` (the entry model, the operations, the replay), `audit_log.py` (storage and the public
-functions)); the CLI command `decide` in `core_modelling/__main__.py`.
+`replay.py` (the entry model, the operations, the replay, `check_resolved`, `dump_resolved`),
+`audit_log.py` (storage and the public functions)); the CLI command `decide` in
+`core_modelling/__main__.py`.
 - `load_config(path: str | Path) -> UseCaseConfig` (public): YAML → `migrate` →
   `apply_level_defaults` (fills nulls only) → `UseCaseConfig.model_validate`, with `extra="forbid"`
-  on every model. One validator per rule: the name's characters (D-128), the time rules (req. 8),
-  `decision.type: top_n` needs `n`, the period typo rule on the three `time` dates (a
-  `model_validator` on `Time`, since it needs `time.period`), an eligibility entry has exactly one
-  of `define` / `filter`,
-  a `filter` has a `reason`, step names are unique across the `analysis` and `modelling` lists,
-  `target` has `column` (any source column name, `target` included) with an optional `rule`
-  (its name is checked against the task's spec
-  when the target is built) and an optional `lineage`, `sampling` with its parameters, `metric`
-  in FLAML's names when set (T9), `test_share` in (0, 1). Stage 2 step 1: `time.validation_period`
-  is required but may be null (the `v` rules then skip); `eda.snapshot` is `last` or a period
-  inside the window by period index, a date held as its period's last day under the typo rule (a
-  `model_validator` on `UseCaseConfig`, since it needs `time`; the typo rule is one private
-  helper, `_accepted_period_end(value, period, path)`, shared with `Time`); `eda.bins` is null
-  or at least 2, `eda.key_features.max_correlation` in (0, 1]; `feature_checks` is a mapping
-  of five typed step models (`Quality`, `Leakage`, `TimeAlignment`, `Stability`, `Redundancy`,
-  the null note's `NullsMayBeZeros`) with a default for every parameter, so an unknown
-  parameter or step fails loud (each bounded: shares in (0, 1], concordance thresholds from
-  0.5, `psi_note_min` and `psi_max` above 0, `rare_effect_max` in (0, 3] (Cohen's h tops out
-  at π and a d above 3 is implausible, so a ratio-era 5 fails at load instead of never firing),
-  `leakage.dominant_share_min` in (0.5, 1), `stability.concordance_range_min` in [0, 2] (a
-  multiple of the window's signal) and `stability.concordance_range_floor` in [0, 1] (an
-  absolute range), `max_levels` at least 2), and `stability.psi_note_min`
-  above `stability.psi_max` is refused naming both (a `model_validator` on `Stability`: the PSI
-  note fires between the two); a step left out of a
-  present mapping is `None` (not run), and the section left out is `EVERY_CHECK`, all five with
-  their defaults;
-  a present mapping naming no step (`feature_checks: {}`) is refused naming the five, and
-  `quality.nulls_informative_min` at or above `leakage.null_concordance_max` is refused naming
-  both values when both steps are present (two `model_validator`s on `FeatureChecks`; with
-  `leakage` left out, the quality step takes `Leakage().null_concordance_max` as its bound);
-  `features.kinds` values are `numeric` or
-  `categorical` (a key naming no candidate is refused when the frames are built, since the
-  candidates are patterns at load); `features.kept` and `features.held` join `features.excluded`
-  as replay-written lists a config file may not carry; `eda.chart_sample_share`,
-  `feature_checks.steps` and the `eligibility_constant` step of the Stage 1 schema are gone, and a
-  config still carrying them fails naming the field.
+  on every model; a YAML or schema error is a `ValueError` naming the file. One validator per rule:
+  the name's characters (D-128), the time rules (req. 8), `decision.type: top_n` needs `n` and
+  another type refuses one, the period typo rule on the three `time` dates (a `model_validator` on
+  `Time`, since it needs `time.period`), an eligibility entry has exactly one of `define` /
+  `filter`, a `filter` has a `reason`, step names are unique across the `analysis` and `modelling`
+  lists, `target` has `column` (any source column name, `target` included) with an optional `rule`
+  (its name is checked against the task's spec when the target is built) and an optional `lineage`
+  (its names checked against the sources' columns, ignoring case, when the panel is built: [target
+  factory](target_factory.md)), `sampling` with its parameters, `metric` in FLAML's names when set
+  (T9), `test_share` in (0, 1). Stage 2 step 1: `time.validation_period` is required but may be null
+  (the `v` rules then skip); `eda.snapshot` is `last` or a period inside the window by period index,
+  a date held as its period's last day under the typo rule (a `model_validator` on `UseCaseConfig`,
+  since it needs `time`; the typo rule is one private helper, `_accepted_period_end(value, period,
+  path)`, shared with `Time`); `eda.bins` is null or at least 2, `eda.key_features.max_correlation`
+  in (0, 1]; `feature_checks` is a mapping of five typed step models (`Quality`, `Leakage`,
+  `TimeAlignment`, `Stability`, `Redundancy`, the null note's `NullsMayBeZeros`) with a default for
+  every parameter, so an unknown parameter or step fails loud (each bounded: shares in (0, 1],
+  concordance thresholds from 0.5, `psi_note_min` and `psi_max` above 0, `rare_effect_max` in (0, 3]
+  (Cohen's h tops out at π and a d above 3 is implausible, so a ratio-era 5 fails at load instead of
+  never firing), `leakage.dominant_share_min` in (0.5, 1), `stability.concordance_range_min` in [0,
+  2] (a multiple of the window's signal) and `stability.concordance_range_floor` in [0, 1] (an
+  absolute range), `max_levels` at least 2), and `stability.psi_note_min` above `stability.psi_max`
+  is refused naming both (a `model_validator` on `Stability`: the PSI note fires between the two); a
+  step left out of a present mapping is `None` (not run), and the section left out is `EVERY_CHECK`,
+  all five with their defaults; a present mapping naming no step (`feature_checks: {}`) is refused
+  naming the five, and `quality.nulls_informative_min` at or above `leakage.null_concordance_max` is
+  refused naming both values when both steps are present (two `model_validator`s on `FeatureChecks`;
+  with `leakage` left out, the quality step takes `Leakage().null_concordance_max` as its bound);
+  `features.kinds` values are `numeric` or `categorical` (a key naming no candidate is refused when
+  the frames are built, since the candidates are patterns at load); `features.kept` and
+  `features.held` join `features.excluded` as replay-written lists a config file may not carry;
+  `eda.chart_sample_share`, `feature_checks.steps` and the `eligibility_constant` step of the Stage
+  1 schema are gone, and a config still carrying them fails naming the field.
 - `snapshot_period(cfg: UseCaseConfig) -> date` (`schema.py`): the period EDA collects whole, as
   its last day; `last` resolves to the window's last period.
 - `LEVEL_DEFAULTS: dict[str, dict[str, object]]` (path → {autonomous, assisted}: `training.max_iter`
@@ -855,42 +873,58 @@ functions)); the CLI command `decide` in `core_modelling/__main__.py`.
   (`REPLAY_FIELDS = {"excluded", "kept", "held"}`); the resolved-input hash excludes
   `housekeeping` only.
 - The audit log (public, D-024): `record_decision(config_path, entity, *, exclude=None,
-  include=None, keep=None, findings=None, set=None, revert_to=None, reason, evidence=(),
-  stage=None, env_path=None) -> Entry` (Stage 2 step 1: `keep` replaces the Stage 1
-  `keep_despite_flag`, and `findings` goes with `keep` only, refused otherwise before anything is
-  read; each named finding must be open on every kept feature, and without `findings` the writer
-  stores the features' open flags, refused when they differ between the features (one keep per
-  finding set) and `[]` when none is open; a named `[]` while flags are open is refused; the
-  replayed list becomes `features.kept`) (exactly
-  one of the five operations; the writer is the current user id; a feature op
-  checks its names against the saved model input's candidate list when the config names one and
-  it is saved, else against the candidate patterns, saying so; `revert_to` writes a `revert`
-  entry with `to_seq`, its stage the first undone entry's unless `stage` is given, refused when
-  the state it brings back has a `null` validation period where the current one has a period,
-  or a period a `run` entry compared);
-  `read_resolved_config(path) ->
-  UseCaseConfig` reads a saved resolved config back as is (no level defaults, its replayed lists
-  and housekeeping kept), which `load_config` refuses, since a config file carries intent only;
-  `resolve_config(cfg, entity, env, upto=None, save_to=None) -> UseCaseConfig` (stale when a
-  replayed `run` entry lists the resolved validation period); `show_decisions(cfg, entity, env)
-  -> pd.DataFrame`; the CLI command `decide`
-  (`--revert-to N` writes a revert; Stage 2 step 1: `--keep … --findings …`, `--findings`
-  without `--keep` refused by `record_decision`).
+  include=None, keep=None, findings=None, set=None, revert_to=None, reason, evidence=(), stage=None,
+  env_path=None) -> Entry` (Stage 2 step 1: `keep` replaces the Stage 1 `keep_despite_flag`, and
+  `findings` goes with `keep` only, refused otherwise before anything is read; each named finding
+  must be open on every kept feature, and without `findings` the writer stores the features' open
+  flags, refused when they differ between the features (one keep per finding set) and `[]` when none
+  is open; a named `[]` while flags are open is refused; the replayed list becomes `features.kept`)
+  (exactly one of the five operations; the writer is the current user id; a feature op checks its
+  names against the saved model input's candidate list when the config names one and it is saved,
+  else against the candidate patterns, saying so; `revert_to` writes a `revert` entry with `to_seq`,
+  its stage the first undone entry's unless `stage` is given, refused when the state it brings back
+  has a `null` validation period where the current one has a period, or a period a `run` entry
+  compared); `read_resolved_config(path) -> UseCaseConfig` reads a saved resolved config back
+  through the same `migrate` as every config load (a schema error names the file, as `load_config`'s
+  does), otherwise as is (no level defaults, its replayed lists and housekeeping kept), which
+  `load_config` refuses, since a config file carries intent only; `resolve_config(cfg, entity, env,
+  upto=None, save_to=None) -> UseCaseConfig` (stale when a replayed `run` entry lists the resolved
+  validation period); `show_decisions(cfg, entity, env) -> pd.DataFrame`; `load_entries(cfg, entity,
+  env, *, warn_if_missing=True) -> list[Entry]`, the log's entries read through the checked reader
+  (an entry under another data definition fails citing its `seq`), which Feature Checks reads the
+  log with; the CLI command `decide` (`--revert-to N` writes a revert; Stage 2 step 1: `--keep …
+  --findings …`, `--findings` without `--keep` refused by `record_decision`).
 - `record_stage_entry(cfg, entity, env, *, stage, op: Literal["flag", "run"], reason,
   features=None, finding=None, periods=None, evidence=(), run_id=None, replayed_to=None,
   resolved_input_hash=None) -> Entry` (`audit_log.py`, Stage 2 step 1; Feature Checks calls it
   from m3.2): `by = {kind: stage, id: stage}`, the same storage and data-definition check as a
   person's entry; a `flag` needs `finding` (`<step>.<finding>`) and `features` (empty closes the
-  finding), a `run` needs `periods`, a non-empty list of labels in the form of the config's
-  period (`PERIOD_LABEL_FORMS`: `2025-06`, `2025-W23`, `2025-06-15`), else refused naming the
-  label; whether a `flag` is due (its finding's feature set changed) is the stage's call.
+  finding), a `run` needs `periods`, a non-empty list of labels of the config's period as
+  `periods.PERIODS` writes them (`2025-06`, `2025-W23`, `2025-06-15`; a label of no real period,
+  such as `2025-02-30`, is refused too: a label must survive the round trip through the period
+  spec), else refused naming the label; whether a `flag` is due (its finding's feature set
+  changed) is the stage's call.
 - `open_flags(entries: list[Entry]) -> dict[str, list[str]]` and `held_features(entries) ->
   list[str]` (`replay.py`, Stage 2 step 1): over the effective entries, per feature the findings
   whose latest `flag` entry names it and which no `keep` naming the feature and that finding
   settles; a feature with an `exclude` in force is left out. `replay` writes `features.excluded`,
   `features.kept` and `features.held` sorted and once each, so the order of entries never moves
   the resolved-input hash; a `set` under a `feature_checks` step the config leaves out is refused
-  at write and stops the replay as stale (`check_settable`).
+  at write and stops the replay as stale (`check_settable`). A config built in code with one of
+  those three lists filled is refused at replay, since the replay would overwrite the lists
+  without a word; and `resolve_config` refuses a config that is already resolved, since the
+  replay starts from the file's values.
+- `effective_entries(entries) -> list[Entry]` and `decisions_in_force(entries) -> tuple[dict[str,
+  list[int]], dict[str, int]]` (`replay.py`): the entries no revert undid, and from them per feature
+  the `seq`s of its `keep` entries and of its `exclude` in force
+  ([replay](#from-entries-to-code-replay)).
+- `check_resolved(cfg, what: str) -> None` (`replay.py`): refuses a config that was only
+  loaded where `what` needs the resolved one (no `resolved_input_hash` in its housekeeping: its
+  held and excluded lists are empty), and a resolved one whose content no longer matches that
+  hash (a saved file edited by hand); `build_frames` for Training, `stage_identity`,
+  `check_upstream`, `resolve_features` and `render_decisions` call it. `dump_resolved(resolved)
+  -> str`: the resolved config as YAML, the one serialisation every writer of it uses (the
+  resolved file, a stage's `resolved_config.yml`, a report's appendix).
 - Entries live at `<roots.data>/<use_case>/04_feature/<ddh>/decisions/<seq>.json` (Stage 2 step 1,
   D-136; `audit_log_dir(env, cfg, entity)` in [environment](environment.md)), `seq` zero-padded to
   four digits, written create-if-absent, a clash failing so the person re-runs the decision; the
@@ -918,7 +952,8 @@ functions)); the CLI command `decide` in `core_modelling/__main__.py`.
 - `training.calibration.method` defaults to `platt` for every task; regression needs its own
   default (likely `none`) through the per-task spec, decided when Training is built (M2.3).
 - The decision audit log: whether a person entry that cites a superseded rule entry blocks
-  register until a person confirms it (today it is only flagged at replay).
+  register until a person confirms it (today nothing flags it: the flag at replay is planned,
+  [replay](#from-entries-to-code-replay)).
 - The log folder is keyed by the short data-definition hash, so a change of the hash recipe
   (`HASH_VERSION`) would leave an old log where no reader looks; a `definition.json` beside
   `decisions/` carrying the full hash, `hash_version` and `schema_version` would let a later

@@ -13,7 +13,9 @@ summary shows the labels up to the window's last period, the `all` row's over th
 """
 
 import calendar
+import io
 from collections.abc import Callable
+from contextlib import redirect_stdout
 from datetime import date
 
 import pandas as pd
@@ -445,12 +447,21 @@ def test_upstream_value_in_the_first_of_the_last_w_periods_is_refused(
         load_targets(cfg, "entity_a", env, spark)
 
 
+@pytest.fixture(scope="module")
+def card_run(
+    spark: SparkSession, unit_env: EnvironmentConfig, cc_config: UseCaseConfig
+) -> tuple[TargetSummary, str]:
+    """The card config's Target Factory on the unit preset, run once: the summary and what it
+    printed."""
+    with redirect_stdout(io.StringIO()) as printed:
+        summary = run_target_factory(cc_config, "entity_a", unit_env, spark)
+    return summary, printed.getvalue()
+
+
 def test_run_target_factory_summary(
-    spark: SparkSession,
     unit: tuple[pd.DataFrame, pd.DataFrame, dict],
-    unit_env: EnvironmentConfig,
     cc_config: UseCaseConfig,
-    capsys: pytest.CaptureFixture,
+    card_run: tuple[TargetSummary, str],
 ) -> None:
     """One row per period plus `all`; rows add up; the last w periods are null, their null-value
     share unknown; no complete window held a null (the synthetic flags have none); the label
@@ -458,7 +469,7 @@ def test_run_target_factory_summary(
     after it (the validation period among them), the `all` row's over the window; events ≤
     rows."""
     mart, w = unit[0], cc_config.time.target_window
-    summary = run_target_factory(cc_config, "entity_a", unit_env, spark)
+    summary, out = card_run
     assert isinstance(summary, TargetSummary)
     periods, total = summary.per_period.iloc[:-1], summary.per_period.iloc[-1]
     assert total["period"] == "all" and len(periods) == mart["snapshot_month"].nunique()
@@ -477,7 +488,6 @@ def test_run_target_factory_summary(
     assert total["positive_rows"] == in_window["positive_rows"].sum()
     assert (in_window["positive_events"] == in_window["positive_rows"]).all()
     assert 0 < total["positive_events"] < total["positive_rows"]
-    out = capsys.readouterr().out
     assert "label columns up to the observation window's last period" in out
     assert "null_value_share: rows whose window held a null" in out
     assert "the occurrences per period of cc_flag" in out
@@ -518,16 +528,13 @@ def test_regression_occurrences_sum_the_amounts(
 
 
 def test_conversions_equal_the_oracle_acquisitions(
-    spark: SparkSession,
-    unit: tuple[pd.DataFrame, pd.DataFrame, dict],
-    unit_env: EnvironmentConfig,
-    cc_config: UseCaseConfig,
+    unit: tuple[pd.DataFrame, pd.DataFrame, dict], card_run: tuple[TargetSummary, str]
 ) -> None:
     """On the unit preset the conversions in each period up to the window's last + w equal the
     oracle's card acquisitions then: its one-month realised target at t, a non-holder at t
     holding at t+1, counted at t+1."""
     mart = unit[0]
-    occurrences = run_target_factory(cc_config, "entity_a", unit_env, spark).occurrences
+    occurrences = card_run[0].occurrences
     acquired = realised_target(mart, "cc_acquire", 1) == 1
     month = pd.PeriodIndex(pd.to_datetime(mart["snapshot_month"]), freq="M") + 1
     expected = pd.Series(month[acquired]).astype(str).value_counts()

@@ -15,8 +15,8 @@ so users can see and debug what happens under the hood.
    feature sign-off (D-031) included, as an entry in the decision audit log; it is the CLI form of
    `record_decision` (D-125, [config](config.md#decision-audit-log-d-125)). There is no
    automation-level override: a level changes through a config edit or an audit-log entry (D-023).
-2. **Python API:** one function per stage, plus `run(config, stages=...)` taking a config path or a
-   loaded config. These, the CLI commands, the config schema, the audit log's functions
+2. **Python API:** one function per stage, plus `run(config_paths, stages=...)` taking one config
+   path or a list of them. These, the CLI commands, the config schema, the audit log's functions
    (`record_decision`, `show_decisions`, `resolve_config`) and the adapter's Spark-session function
    (public from M2.1, [environment](environment.md)) are the Public API (D-024, the table in
    [architecture](../architecture.md#public-api)); the shipped
@@ -48,17 +48,19 @@ so users can see and debug what happens under the hood.
 ## Interface
 Built in Stage 1 (2026-10-27), in `core_modelling/run.py`, `core_modelling/__main__.py` and
 `notebooks/01_target_factory.ipynb`.
-- `run(config_path, env_path=None, stages=None, entity=None) -> dict` (public, D-024): the
-  stages (default: every built one, in `STAGES` order) for the entities of the config (default:
-  all it lists); per entity and stage what the stage returned. An unknown stage or entity fails
-  before anything runs. `STAGES` is the dict stage name → function `(cfg, entity, env, spark)`;
-  From Stage 2 it holds `target_factory` (`run_target_factory`, then `save_model_input` when the
-  config names a model input, D-131; it returns `{"summary": {use_case: TargetSummary},
-  "model_input": path}`, the path only when one is saved), `eda` (`run_eda`, the paths per use
-  case) and `feature_checks`
-  (`run_feature_checks`), in that order; each stage function resolves the config itself
-  (`resolve_config`) and saves the resolved config with its artifacts (Q422). The later stages
-  join as they are built.
+- `run(config_paths: str | Path | list[str | Path], env_path=None, stages=None, entity=None) ->
+  dict` (public, D-024): the stages (default: every built one; the asked ones always run in
+  `STAGES` order, whatever order they are given in) for the entities (the one given, which every
+  config must list; default: the configs' entities, which must agree) of one config or a list;
+  per entity and stage what the stage returned. An empty list, an unknown stage or an entity
+  some config lacks fails before anything runs. `STAGES` is the dict stage name → function
+  `(cfgs, entity, env, spark)` over the list of configs: `target_factory` (`run_target_factory`
+  per config, then one `save_model_input` for them all when they name a model input, D-131; it
+  returns `{"summary": {use_case: TargetSummary}, "model_input": path}`, the path only when one
+  is saved), `eda` (`run_eda` per config, the paths per use case) and `feature_checks`
+  (`run_feature_checks` per config, the paths per use case), in that order; each stage function
+  resolves the config itself (`resolve_config`) and saves the resolved config with its artifacts
+  (Q422). The later stages join as they are built.
 - CLI: `python -m core_modelling run <config>… [--stages …] [--entity …] [--env …]` and `decide`
   ([config](config.md)), which gains `--keep` and `--findings`; `__main__` parses and calls.
   `init <folder>` is planned for M2.4: it copies the shipped notebooks out of the wheel and
@@ -69,7 +71,9 @@ Built in Stage 1 (2026-10-27), in `core_modelling/run.py`, `core_modelling/__mai
 - `notebooks/01_target_factory.ipynb`: the guide cell, the setup cell (`load_environment`,
   `get_spark_session`, `load_config`), `run_target_factory`, `save_model_input`,
   `build_frames(stage="eda")` with the funnel and the frame's head. `tests/test_run.py` checks
-  it imports from the Public API only and defines nothing.
+  that every shipped notebook imports from the Public API only and defines nothing, and runs
+  every stage on the two example configs at once
+  (`test_run_two_configs_runs_every_stage`).
 
 ## Open questions
 - Where use cases live and how users get the notebooks (OD-02). Leaning: one repo per entity ×

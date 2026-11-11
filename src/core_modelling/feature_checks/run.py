@@ -2,7 +2,8 @@
 docs/components/feature_checks.md "How one run flows".
 
 It resolves the config (the audit log replayed, D-125), reads EDA's artifacts and the ledger for
-the data definition (refusing a missing or stale EDA, whose settings digest no longer matches),
+the data definition (refusing a missing or stale EDA, whose settings digest no longer matches,
+and a ledger whose EDA run token is not `eda.json`'s),
 runs the five steps of `steps.py` in their fixed order, a step left out of a present
 `feature_checks` mapping skipped, and stacks their findings. It then writes the audit log: the
 `flag` entries `decisions.flag_entries` decides (changed feature sets only, so a rerun on
@@ -24,39 +25,37 @@ from pyspark.sql import SparkSession
 
 from core_modelling.artifacts import (
     StageResult,
-    check_upstream,
-    read_stage,
-    settings_meta,
+    lap,
+    new_run_token,
+    read_upstream,
+    stage_identity,
     write_stage,
 )
 from core_modelling.config import UseCaseConfig
 from core_modelling.config.audit_log import (
-    read_entries,
+    load_entries,
     record_stage_entry,
     resolve_config,
     show_decisions,
 )
 from core_modelling.config.replay import open_flags
-from core_modelling.eda.run import HOUSEKEEPING_KEYS, SETTINGS_PATHS
-from core_modelling.environment import EnvironmentConfig, audit_log_dir, feature_dir
+from core_modelling.environment import EnvironmentConfig, feature_dir
 from core_modelling.feature_checks.decisions import (
     flag_entries,
     held_summary,
     proposed_decisions,
 )
-from core_modelling.feature_checks.findings import FINDING_COLUMNS, FINDINGS, step_findings
+from core_modelling.feature_checks.findings import (
+    FINDING_COLUMNS,
+    FINDINGS,
+    UNAVAILABLE_COLUMNS,
+    stack_parts,
+    step_findings,
+)
+from core_modelling.feature_checks.inputs import CheckInputs, check_inputs
 from core_modelling.feature_checks.measures import PERIOD_GROUPS
 from core_modelling.feature_checks.report import build_views, report_sections
-from core_modelling.feature_checks.steps import (
-    CLUSTER_COLUMNS,
-    STEP_COLUMNS,
-    STEPS,
-    UNAVAILABLE_COLUMNS,
-    CheckInputs,
-    StepResult,
-    check_inputs,
-    stack_parts,
-)
+from core_modelling.feature_checks.steps import CLUSTER_COLUMNS, STEP_COLUMNS, STEPS, StepResult
 from core_modelling.ledger import (
     COLUMNS_BY_STAGE,
     add_columns,
@@ -66,8 +65,6 @@ from core_modelling.ledger import (
 )
 from core_modelling.reporting.html import render_report
 
-# Training checks this digest: EDA's settings (the cells the steps read) and the thresholds.
-FEATURE_CHECKS_SETTINGS = [*SETTINGS_PATHS, "feature_checks"]
 # A skipped step's ledger columns are null, typed as the step writes them (float otherwise).
 NULL_DTYPES = {"cluster": "Int64", "partners": object}
 RUN_REASON = "Feature Checks compared these periods: the window, the gap and the latest period."
@@ -90,17 +87,17 @@ def run_feature_checks(
     start = time.perf_counter()
     resolved = resolve_config(cfg, entity, env)
     eda_meta, eda_tables, ledger = _read_eda(resolved, entity, env)
-    seconds["read"], start = _lap(start)
+    seconds["read"], start = lap(start)
     inputs = check_inputs(ledger, eda_tables, eda_meta, resolved)
-    seconds["inputs"], start = _lap(start)
+    seconds["inputs"], start = lap(start)
     outputs = _run_steps(inputs, resolved, seconds)
     start = time.perf_counter()
     findings = stack_parts([out.findings for out in outputs.values()], FINDING_COLUMNS)
     written = _write_entries(cfg, entity, env, findings, list(outputs), resolved, eda_meta)
     after = resolve_config(cfg, entity, env)
-    entries = read_entries(audit_log_dir(env, after, entity))
+    entries = load_entries(after, entity, env)
     flags = open_flags(entries)
-    seconds["audit_log"], start = _lap(start)
+    seconds["audit_log"], start = lap(start)
     tables = {
         "findings": findings,
         "unavailable": stack_parts(
@@ -113,21 +110,15 @@ def run_feature_checks(
     columns = _ledger_columns(inputs.ledger, outputs, findings)
     ledger = add_columns(ledger, columns, "feature_checks")
     held = held_summary(ledger, flags, findings)
-    meta = _stage_meta(resolved, after, eda_meta, list(outputs), findings, held, written)
+    meta = _stage_meta(resolved, eda_meta, list(outputs), findings, held, written)
     meta["timings"] = {"seconds": seconds}
     decided = render_decisions(ledger, after, entries)
     views = build_views(tables, eda_tables["concordance_per_period"], meta, after, decided,
                         held, show_decisions(cfg, entity, env))  # fmt: skip
     result = StageResult(tables=tables, ledger=ledger, log=[], meta=meta, paths={}, views=views,
                          frame=None, config=after)  # fmt: skip
-    _write(result, env, entity)
+    _write(result, env, entity, eda_meta["run_token"])
     return result
-
-
-def _lap(start: float) -> tuple[float, float]:
-    """The seconds since `start`, rounded, and the new start."""
-    now = time.perf_counter()
-    return round(now - start, 2), now
 
 
 def _read_eda(
@@ -135,35 +126,12 @@ def _read_eda(
 ) -> tuple[dict, dict[str, pd.DataFrame], pd.DataFrame]:
     """EDA's json, tables and the ledger of the data definition; a missing artifact is refused
     by its reader ("run the eda stage first", "run EDA first"), an EDA run with other settings
-    than the resolved config's by `check_upstream`, naming the changed path, and a ledger from
-    another EDA run than `eda/` by `_check_same_eda`."""
-    meta, tables = read_stage(feature_dir(env, resolved, entity, "eda"), "eda")
-    check_upstream(meta, resolved, SETTINGS_PATHS)
+    than the resolved config's by `read_upstream`, naming the changed path, and a ledger from
+    another EDA run than `eda/` by `read_ledger` (the run tokens differ)."""
+    meta, tables = read_upstream(env, resolved, entity, "eda")
     ddh = resolved.housekeeping["data_definition_hash"]
-    ledger = read_ledger(feature_dir(env, resolved, entity), ddh)
-    _check_same_eda(ledger, tables["ranking"])
+    ledger = read_ledger(feature_dir(env, resolved, entity), ddh, {"eda": meta["run_token"]})
     return meta, tables, ledger
-
-
-def _check_same_eda(ledger: pd.DataFrame, ranking: pd.DataFrame) -> None:
-    """Refuse a ledger whose `concordance_window` differs from `tables/ranking`'s for a read
-    candidate: one EDA run writes both, so a difference means a crash between EDA's ledger save
-    and its folder write, which a reverted setting hides from the digest check."""
-    read = ledger.loc[
-        ~(ledger["lineage"] | ledger["unsupported"]), ["feature", "concordance_window"]
-    ]
-    both = read.merge(
-        ranking[["feature", "concordance_window"]], on="feature", suffixes=("", "_eda")
-    )
-    left, right = both["concordance_window"], both["concordance_window_eda"]
-    # the same numbers from one run: exact, a missing value equal to a missing one
-    differ = ~((left == right) | (left.isna() & right.isna()))
-    if differ.any():
-        named = both.loc[differ, "feature"].tolist()
-        raise ValueError(
-            f"the feature ledger and eda/ come from different EDA runs: concordance_window "
-            f"differs for {len(named)} features ({', '.join(named[:5])}); rerun EDA (run_eda)"
-        )
 
 
 def _run_steps(
@@ -178,7 +146,7 @@ def _run_steps(
             continue
         start = time.perf_counter()
         outputs[name] = step(inputs, params)
-        seconds[name], _ = _lap(start)
+        seconds[name], _ = lap(start)
     return outputs
 
 
@@ -225,7 +193,7 @@ def _write_entries(
     """The `flag` entries `flag_entries` decides, then one `run` entry with every compared
     period's label and the `replayed_to` and resolved-input hash of the config the run read;
     each written entry's `seq`, `op` and `finding` (None for the run)."""
-    entries = read_entries(audit_log_dir(env, resolved, entity))
+    entries = load_entries(resolved, entity, env, warn_if_missing=False)
     written = [
         record_stage_entry(cfg, entity, env, stage="feature_checks", **entry)
         for entry in flag_entries(findings, entries, ran)
@@ -254,19 +222,19 @@ def _raised_summary(findings: pd.DataFrame, ran: list[str]) -> dict[str, dict]:
 
 def _stage_meta(
     resolved: UseCaseConfig,
-    after: UseCaseConfig,
     eda_meta: dict,
     ran: list[str],
     findings: pd.DataFrame,
     held: pd.DataFrame,
     written: list[dict],
 ) -> dict:
-    """`feature_checks.json` without the timings: the hashes and `replayed_to` of the run's
-    input, the settings digest Training checks, the compared periods, the steps run and
-    skipped, the findings raised, the held features, the entries written and EDA's headline."""
+    """`feature_checks.json` without the timings: the hashes, `replayed_to` and the settings
+    digest Training checks of the run's input (`stage_identity`: the thresholds the steps ran
+    with), the run token, the compared periods, the steps run and skipped, the findings raised,
+    the held features, the entries written and EDA's headline."""
     return {
-        **{key: resolved.housekeeping[key] for key in HOUSEKEEPING_KEYS},
-        **settings_meta(after, FEATURE_CHECKS_SETTINGS),
+        **stage_identity(resolved, "feature_checks"),
+        "run_token": new_run_token(),
         "snapshot_period": eda_meta["snapshot_period"],
         "compared_periods": eda_meta["compared_periods"],
         "steps_run": ran,
@@ -278,15 +246,16 @@ def _stage_meta(
     }
 
 
-def _write(result: StageResult, env: EnvironmentConfig, entity: str) -> None:
-    """Render the report, then write in the commit order: the ledger saved, `feature_checks/`
-    written with `report.html` in it (`feature_checks.json` is the commit marker). A render
-    error leaves the previous ledger and folder as they were, the audit-log entries written."""
+def _write(result: StageResult, env: EnvironmentConfig, entity: str, eda_token: str) -> None:
+    """Render the report, then write in the commit order: the ledger saved with the run tokens
+    of the EDA run it read (`eda_token`) and of this run, `feature_checks/` written with
+    `report.html` in it (`feature_checks.json` is the commit marker). A render error leaves the
+    previous ledger and folder as they were, the audit-log entries written."""
     resolved, meta = result.config, result.meta
     title = f"Feature Checks: {resolved.use_case} ({entity})"
     page = render_report(title, report_sections(result.views))
-    sidecar = {"stage": "feature_checks", "data_definition_hash": meta["data_definition_hash"],
-               "settings_digest": meta["settings_digest"]}  # fmt: skip
+    runs = {"eda": eda_token, "feature_checks": meta["run_token"]}
+    sidecar = {"data_definition_hash": meta["data_definition_hash"], "runs": runs}
     save_ledger(result.ledger, feature_dir(env, resolved, entity), sidecar)
     folder = feature_dir(env, resolved, entity, "feature_checks")
     result.paths = write_stage(result, folder, "feature_checks", texts={"report.html": page})

@@ -4,8 +4,9 @@ The stage collects one period whole (the snapshot) and reads every statistic fro
 counts passes aggregate over the compared periods (`dataset/counts.py`, `statistics/`). The
 modules here compute tables only: `ranking.py` (the per-feature statistics, the ranking and the
 key features), `population.py` (the headline, the funnel, the target per period and by stratum,
-the reference groups) and `deep_dives.py` (the key features' bins, levels, quartiles and
-per-period concordance, the strata pivots). `report.py` turns the tables into the views and the
+the reference groups), `deep_dives.py` (the key features' group tables, quartiles and per-period
+concordance, the strata pivots), `slices.py` (the key features at the decision's slices) and
+`profile.py` (the value profile). `report.py` turns the tables into the views and the
 report, `run.py` orchestrates the stage and `explore.py` holds the functions a reader calls on
 its result (`docs/components/eda.md`). Public API: `run_eda`, `pivot_target`, `lift_by_group`,
 `compare_sides` and `rate_by_period`.

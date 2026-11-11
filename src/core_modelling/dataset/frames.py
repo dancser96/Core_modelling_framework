@@ -10,9 +10,12 @@ of the eligible rows of the compared periods (`counts.compared_periods`), the la
 window only, never collected: a lazy plan, which the EDA stage persists for its counts passes.
 The kinds come from the Spark schema (`detect_kinds`, with the `features.kinds` overrides) and
 the unsupported columns are dropped before anything is collected; the D-088 population counts
-join the meta, since only the frames hold the panel. For Training and Evaluation: train, test
-and validation (the eligible rows with a known target, train sampled when declared), which need
-a validation period. Every stage's meta names each candidate's and lineage column's source
+join the meta, since only the frames hold the panel. For Training: train and test; for
+Evaluation also validation (`STAGE_PARTS`): the eligible rows with a known target, train sampled
+when declared, with the keys, the features the stage passes (`resolve_features`), `target` and
+`split` only, selected in Spark before the collect. Both need a validation period; Training's
+modelling rows stop at the window, so it never gets the validation period (§4.4). Every stage's
+meta names each candidate's and lineage column's source
 (`sources`, from the join entries' `columns`). Before a frame leaves Spark, `collect_frame`
 prints its rows, columns and estimated size, and above the collect budget the callout worded
 for the frame; it never stops.
@@ -26,6 +29,7 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import BooleanType, NumericType, StringType, StructType
 
 from core_modelling.config import UseCaseConfig
+from core_modelling.config.replay import check_resolved
 from core_modelling.config.schema import snapshot_period
 from core_modelling.dataset.counts import compared_periods, population_counts
 from core_modelling.dataset.model_input import read_model_input
@@ -37,7 +41,11 @@ from core_modelling.sources import KEYS, missing_periods
 
 SAMPLE_ROWS = 10_000  # measured for bytes per row before a collect
 GB = 1024**3
-STAGE_FRAMES = {"eda": "snapshot", "training": "modelling", "evaluation": "modelling"}
+STAGE_PARTS = {  # what each stage gets; the other `Frames` fields stay None
+    "eda": ["snapshot", "rows"],
+    "training": ["train", "test"],  # never the validation period (§4.4)
+    "evaluation": ["train", "test", "validation"],
+}
 SPARK_SETTINGS = "spark.driver.maxResultSize caps the collect, spark.driver.memory holds the frame"
 TRAINING_CALLOUT = (
     "declare training.sampling (negative_downsampling for a rare binary target, client_sample "
@@ -59,11 +67,12 @@ CALLOUTS = {
 
 @dataclass
 class Frames:
-    """What a stage works on: the pandas frames and the Spark `rows` (None when the stage didn't
-    ask for them), the log (join, eligibility, contract, compared-periods, null-target, sampling
-    and collect entries, in order) and the meta (hashes, candidates, tags, lineage, the columns'
-    sources, kinds, the unsupported columns, the snapshot period, the population counts, the
-    sampling record, the collect measurements)."""
+    """What a stage works on: the pandas frames and the Spark `rows` (None when the stage
+    doesn't get them, `STAGE_PARTS`), the log (join,
+    eligibility, contract, compared-periods, null-target, sampling and collect entries, in
+    order) and the meta (hashes, candidates, tags, lineage, the columns' sources, kinds, the
+    unsupported columns, the snapshot period, the population counts, the sampling record, the
+    collect measurements)."""
 
     snapshot: pd.DataFrame | None
     rows: DataFrame | None
@@ -75,28 +84,29 @@ class Frames:
 
 
 def build_frames(
-    cfg: UseCaseConfig, entity: str, env: EnvironmentConfig, spark: SparkSession, stage: str
+    cfg: UseCaseConfig,
+    entity: str,
+    env: EnvironmentConfig,
+    spark: SparkSession,
+    stage: str,
+    features: list[str] | None = None,
 ) -> Frames:
-    """The frames `stage` works on (`eda`: the snapshot collected and `rows` left in Spark;
-    `training`, `evaluation`: train, test, validation), from the model input when the config
-    names one, else built in memory with the same logs."""
-    if stage not in STAGE_FRAMES:
-        raise ValueError(f"unknown stage {stage!r}; the frames serve {sorted(STAGE_FRAMES)}")
-    kind = STAGE_FRAMES[stage]
-    if kind == "modelling" and cfg.time.validation_period is None:
-        raise ValueError(
-            "time.validation_period is null: an EDA-only config; Training and Evaluation need it"
-        )
+    """The frames `stage` works on (`STAGE_PARTS`: `eda` the snapshot collected and `rows` left
+    in Spark; `training` train and test; `evaluation` train, test and validation), from the
+    model input when the config names one, else built in memory with the same logs. `features`
+    is the modelling stages' feature set, `resolve_features(ledger, resolved)`: their frames
+    carry the keys, those features, `target` and `split` only; `eda` reads every candidate."""
+    _check_request(cfg, stage, features)
     if cfg.data.model_input is None:
         panel, log, meta = build_panel(cfg, entity, env, spark)
     else:
         panel, log, meta = read_model_input(cfg, entity, env, spark)
     meta["column_sources"] = _column_sources(log, meta["candidates"], meta["lineage"])
     frames: dict = {}
-    if kind == "snapshot":
+    if stage == "eda":
         frames["snapshot"], frames["rows"] = _eda_frames(panel, cfg, env, log, meta)
     else:
-        frames.update(_modelling_frames(panel, cfg, env, log, meta))
+        frames.update(_modelling_frames(panel, cfg, env, log, meta, features, STAGE_PARTS[stage]))
     meta["collect"] = [entry for entry in log if entry["step"] == "collect"]
     return Frames(
         snapshot=frames.get("snapshot"),
@@ -107,6 +117,50 @@ def build_frames(
         log=log,
         meta=meta,
     )
+
+
+def _check_request(cfg: UseCaseConfig, stage: str, features: list[str] | None) -> None:
+    """A stage the frames serve; `eda` without `features`; a modelling stage with a validation
+    period and a non-empty `features` naming each feature once; for Training the resolved
+    config and no held or excluded feature (§4.6; Evaluation reads the features its model was
+    trained on). Checked before the panel is built."""
+    if stage not in STAGE_PARTS:
+        raise ValueError(f"unknown stage {stage!r}; the frames serve {sorted(STAGE_PARTS)}")
+    if stage == "eda":
+        if features is not None:
+            raise ValueError(
+                "eda reads every candidate: build its frames without `features` (Training's and "
+                "Evaluation's feature set)"
+            )
+        return
+    if cfg.time.validation_period is None:
+        raise ValueError(
+            "time.validation_period is null: an EDA-only config; Training and Evaluation need it"
+        )
+    if features is None:
+        raise ValueError(
+            f"the {stage} frames need `features`: pass resolve_features(ledger, resolved)"
+        )
+    if not features:
+        raise ValueError(
+            f"`features` is empty: the {stage} frames need at least one; resolve_features(ledger, "
+            "resolved) is empty when every candidate is excluded, held or unsupported"
+        )
+    if len(set(features)) != len(features):
+        repeated = sorted({name for name in features if features.count(name) > 1})
+        raise ValueError(
+            f"`features` repeats {repeated}: pass each name once, as resolve_features(ledger, "
+            "resolved) does"
+        )
+    if stage == "training":
+        check_resolved(cfg, "build_frames for training")  # a loaded config's lists are empty
+        out = set(cfg.features.held) | set(cfg.features.excluded)
+        barred = [name for name in features if name in out]
+        if barred:
+            raise ValueError(
+                f"`features` names {barred}, held or excluded in the resolved config: Training "
+                "is built without them; pass resolve_features(ledger, resolved)"
+            )
 
 
 def _column_sources(log: list[dict], candidates: list[str], lineage: list[str]) -> dict[str, str]:
@@ -201,23 +255,41 @@ def _compared_entry(periods: dict, cfg: UseCaseConfig, available: list, spec: Pe
 
 
 def _modelling_frames(
-    panel: DataFrame, cfg: UseCaseConfig, env: EnvironmentConfig, log: list[dict], meta: dict
+    panel: DataFrame,
+    cfg: UseCaseConfig,
+    env: EnvironmentConfig,
+    log: list[dict],
+    meta: dict,
+    features: list[str],
+    parts: list[str],
 ) -> dict[str, pd.DataFrame]:
-    """Train (sampled when declared), test and validation collected; the null-target, sampling
-    and collect entries join the log, the sampling record the meta."""
-    modelling, null_log = _modelling_rows(panel, cfg)
+    """The `parts` collected (train, sampled when declared, test and, for Evaluation,
+    validation), with the keys, `features`, `target` and `split` only, selected in Spark before
+    the collect; the null-target, sampling and collect entries join the log, the sampling record
+    the meta. A feature that is no candidate of the panel fails loud."""
+    unknown = [name for name in features if name not in meta["candidates"]]
+    if unknown:
+        raise ValueError(
+            f"features names {unknown}, which are not candidates of the panel (features."
+            "candidates resolved over the sources' columns, minus the lineage and the framework's "
+            "columns); pass resolve_features(ledger, resolved)"
+        )
+    modelling, null_log = _modelling_rows(panel, cfg, "validation" in parts)
     log.append(null_log)
+    # what follows filters on `period` and `split` and draws on the keys and `target`, all kept,
+    # so the select changes no row
+    modelling = modelling.select(*KEYS, *features, "target", "split")
     train, record = sample_train(_window(modelling, cfg).where("split = 'train'"), cfg)
     log.append(record)
     meta["sampling"] = record
-    parts = {
+    planned = {  # lazy plans: only the stage's parts are collected
         "train": train,
         "test": _window(modelling, cfg).where("split = 'test'"),
         "validation": modelling.where(F.col("period") == cfg.time.validation_period),
     }
     frames = {}
-    for name, part in parts.items():
-        frames[name], entry = collect_frame(part, name, env)
+    for name in parts:
+        frames[name], entry = collect_frame(planned[name], name, env)
         log.append(entry)
     return frames
 
@@ -228,15 +300,17 @@ def _window(panel: DataFrame, cfg: UseCaseConfig) -> DataFrame:
     return panel.where(F.col("period").between(window.first, window.last))
 
 
-def _modelling_rows(panel: DataFrame, cfg: UseCaseConfig) -> tuple[DataFrame, dict]:
-    """The eligible rows with a known target, in the window and at the validation period only
-    (the panel carries labels beyond them, which no fit may see, §4.4); the share of eligible
-    rows dropped for a null target, per period, logged and printed."""
+def _modelling_rows(
+    panel: DataFrame, cfg: UseCaseConfig, with_validation: bool
+) -> tuple[DataFrame, dict]:
+    """The eligible rows with a known target, in the window and, `with_validation`, at the
+    validation period only (the panel carries labels beyond them, which no fit may see, §4.4);
+    the share of eligible rows dropped for a null target, per period, logged and printed."""
     eligible = panel.where(F.col("eligible") == 1)
     window, spec = cfg.time.observation_window, period_spec(cfg)
-    periods = F.col("period").between(window.first, window.last) | (
-        F.col("period") == cfg.time.validation_period
-    )
+    periods = F.col("period").between(window.first, window.last)
+    if with_validation:
+        periods |= F.col("period") == cfg.time.validation_period
     eligible = eligible.where(periods)
     counts = (
         eligible.groupBy("period")

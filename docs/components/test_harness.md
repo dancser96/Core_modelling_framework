@@ -69,7 +69,7 @@ will read real data. Stubs hid every environment bug in the crunch (T15).
   perfect model would reach. A model that beats it by more than about two standard errors on
   positive events is leaking (D-100 (e)).
 
-**How it is trusted.** 10 check families compare 1,373 statistics with this spec, and all pass at
+**How it is trusted.** 10 check families compare 1,374 statistics with this spec, and all pass at
 100k (0.6.0, 2026-11-10). The checks are written from the spec and never call the code that makes
 the data. The notebook
 `notebooks/00_synthetic_data.ipynb` gives a visual tour of the data, with the checks in an
@@ -980,11 +980,12 @@ Later (not in M1): an interaction-only feature.
     - for a chain, the required product's leaving chance compounded month by month, and the steady
       share `w / (w + lapse)` at `t+1` when the required product was adopted at `t`.
   - **Checks:** with `w = 1` it equals the recorded chance at `t+1` (tested to 1e-12). The oracle
-    family sets it against the checks' own realised targets: nulls agree, events match the sum of
-    the probabilities, and the AUCs and truth's sizing (expected events in 6 months, the
-    low-confidence flag) are recomputed and equal truth's to 1e-9. Oracle AUCs must lie in
-    [0.5, 1]: a rule for pooled AUCs; per segment it is checked at the canonical size only (a
-    small segment of the 5k preset can dip below 0.5).
+    family first checks that the checks' standard-targets table names the oracle's targets (same
+    event, column and eligibility), then sets it against the checks' own realised targets: nulls
+    agree, events match the sum of the probabilities, and the AUCs and truth's sizing (expected
+    events in 6 months, the low-confidence flag) are recomputed and equal truth's to 1e-9. Oracle
+    AUCs must lie in [0.5, 1]: a rule for pooled AUCs; per segment it is checked at the canonical
+    size only (a small segment of the 5k preset can dip below 0.5).
   - **Not the recorded rows:** multiplying the recorded chances instead conditions on the outcome
     and understates positives (card acquisition AUC ≈ 0.77 instead of ≈ 0.84 at `w = 3`, ≈ 0.72
     instead of ≈ 0.83 at `w = 6`; 30k clients, 2026-10-19).
@@ -1051,8 +1052,9 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
 - `__main__.py`: the CLI. `python -m synthetic …` runs `output.write_mart`, then
   `checks.suite.write_checks`.
 - `generate.py`: the month loop.
-  - `generate_mart` runs it in memory: `start_simulation`, `advance_simulation`,
-    `finish_simulation`.
+  - `run_months` loops over `start_simulation`'s result with `advance_simulation` and
+    `finish_simulation`, so the three drivers (`generate_mart` in memory, `output.write_mart`
+    month by month, and its dirty-data variant) only say what to do with the months that come out.
   - `month_rows` builds the mart and oracle rows.
   - `buffer_month` holds a month until its look-ahead columns exist.
 - `generate.py` also holds `generate_extract`, the feature-store extract of a clean panel (in memory;
@@ -1085,10 +1087,12 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
   - counts, Dirichlet shares and `split_amount`.
 - `accounts.py`: balances (current/savings, deposit, wealth, loans), the flows through the account
   (inflow, spending, booking), and FX.
-- `cards.py`: limit tiers, wanted spend, `step_card` (revolver or transactor).
+- `cards.py`: limit tiers, wanted spend, `step_card` (revolver or transactor) and
+  `step_card_month`, one month of the card from the states, which the monthly mechanism and the
+  regression oracle share.
 - `logins.py`: mobile and online logins, days since the last login.
 - `amounts.py`: `start_amounts`, `step_market` and `step_amounts`, which runs, in order:
-  - the noise steps;
+  - the noise steps (`step_noises`, shared with the regression oracle);
   - the balances;
   - the card;
   - the current/savings flows, which book the card repayment and the loan instalments;
@@ -1102,8 +1106,10 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
   - the per-month trap columns: `trap_columns` and `noise_columns` (the seven 0.5.0 columns);
   - the look-ahead columns, generic over the product (`_shifted`, `_applications`) plus
     `_offer_codes`, the U shape in `_leak`, `_blanked_on_conversion` (the deposit rate),
-    `_application_status` and `_spend_leak`, and `finalize_lookahead`;
-  - every trap column's name and written type (`TRAP_TYPES`), the 0.6.0 ones included;
+    `_application_status` and `_spend_leak`, and `finalize_lookahead(spec, frames, rngs)`;
+  - the buffer's depth, `lookahead_months`: the longest window of any trap row (`trap_window`);
+  - every trap column's name and written type (`TRAP_TYPES`), the 0.6.0 ones included; the
+    allowed kinds (`TRAP_KINDS`) come from the spec's trap rows;
   - the extra columns;
   - `apply_dirty` and `dirty_panel` (dirty data).
 - `controls.py`: `control_columns`, the five monthly control columns (the honest and vendor
@@ -1123,11 +1129,13 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
 - `table.py`:
   - row helpers: share, rule, range, one-sided, events against Σp (`sum_row`), named offenders
     (`offenders_row`);
-  - estimators: Hill, AUC, PSI.
+  - estimators: Hill, AUC, PSI;
+  - `trap_parameters(truth, column)`: a trap row's parameters from `truth["spec"]["traps"]`.
 - `events.py`: the checks' own reading of the data:
   - month-on-month events (`build_panel`, built on `to_panel`);
   - forward-window targets;
-  - spec values restated.
+  - spec values restated;
+  - `months_on_book`, the one tenure computation (`build_panel` and the mart family).
 - `switches.py`: `check_dirty` and `check_extra_columns`, for the off-by-default switches (not a
   family).
 - `extract.py`: `check_extract(mart, oracle, truth, extract)`, the family that also reads the
@@ -1174,7 +1182,9 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
 **How it is checked.**
 - **One table per family.** Each family (`checks/<family>.py`) returns a table with one row per
   check. Its columns are check, stratum, n, expected, realised, tolerance, passed and rule.
-- **Where expected values come from.** They are restated from this spec and read from the mart.
+- **Where expected values come from.** The traps' parameters (AUCs, windows, shares, levels,
+  values) are read from the trap rows of `truth["spec"]` (`trap_parameters`); the thresholds the
+  checks judge by, and the other values, are restated from this spec and read from the mart.
   Where the spec defines a value through hidden inputs, the inputs come from the oracle's columns.
 - **Two generator functions, both under test.** The checks call only:
   - `mechanisms.mart.parse_column`: the mart family checks that every name parses;
@@ -1205,12 +1215,15 @@ numbers without logic, the functions that simulate, the hidden truth, and the ch
   - A spec range is checked as a range.
   - A rule that must always hold has tolerance 0.
 - **Two suites:**
-  - `pytest` (≈ 3 min) runs the rule rows on the 5k preset. It also runs the column snapshot (166
+  - `pytest` (≈ 3 min) runs every family on the 5k preset (`test_synthetic_families`, one test
+    over `CHECK_FAMILIES`) and judges its rule rows; amount levels and seasons have none, so
+    they only have to run. It also runs the column snapshot (166
     names), prefix stability (the look-ahead columns, the three 0.5.0 ones included), the Spark
     recompute of every rollup, the written types and the off-by-default switches: dirty data and
     extra columns, in `checks/switches.py`, which is not a family.
-  - `pytest -m slow` writes the canonical dataset and runs every row of every family at 100k.
-    Each family runs in its own process, because one needs several GB.
+  - `pytest -m slow` writes the canonical dataset and runs every row of every family at 100k
+    (the same parametrised test; the extract included). Each family runs in its own process,
+    because one needs several GB.
 - **The notebook** reads the written canonical dataset and its saved check tables.
   - It opens with a visual tour in Level 2's order: the book, holdings, amounts, time, the mart,
     traps, the ceiling (leakage screen, gains, calibration, regression band) and client stories.

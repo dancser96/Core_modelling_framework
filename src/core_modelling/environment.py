@@ -127,6 +127,17 @@ class EnvironmentConfig(BaseModel):
     collect_budget_gb: float = 1.5
     theme: str | None = None
 
+    @field_validator("theme")
+    @classmethod
+    def _check_theme_null(cls, value: str | None) -> str | None:
+        """Refuse a theme: nothing reads it yet, so a value would be ignored without a word."""
+        if value is not None:
+            raise ValueError(
+                f"theme {value!r}: the report theme is not built yet (reports use the neutral "
+                "theme); leave theme null"
+            )
+        return value
+
 
 def load_environment(path: str | None = None) -> EnvironmentConfig:
     """The environment file at `path`, else at `$CORE_MODELLING_ENVIRONMENT`; neither fails loud."""

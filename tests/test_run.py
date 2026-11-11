@@ -1,6 +1,6 @@
 """`run` and the CLI (D-024): the Target Factory stage through `python -m core_modelling run`,
-one model input saved for the two example configs at once, `--stages eda` on both configs, and
-the guided notebooks calling only the Public API."""
+every stage on the two example configs at once (one model input, then EDA and Feature Checks per
+config), and the guided notebooks calling only the Public API."""
 
 import json
 import re
@@ -14,6 +14,9 @@ from pyspark.sql import SparkSession
 from core_modelling.__main__ import main
 from core_modelling.config import load_config
 from core_modelling.dataset.model_input import METADATA_FILE
+from core_modelling.environment import feature_dir, load_environment
+from core_modelling.feature_checks.findings import STEP_ORDER
+from core_modelling.ledger import COLUMNS_BY_STAGE, read_ledger
 from core_modelling.run import run
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,10 +69,11 @@ def test_run_through_the_cli_prints_the_summary_and_saves_the_model_input(
     unit_output: tuple[str, dict],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """`run <config> --env … --entity entity_a` prints the target summary and the join printout
-    and writes the model input with its metadata."""
+    """`run <config> --env … --entity entity_a --stages target_factory` prints the target summary
+    and the join printout and writes the model input with its metadata."""
     env_file = _environment_file(tmp_path, unit_output)
-    main(["run", str(CONFIG), "--env", str(env_file), "--entity", "entity_a"])
+    command = ["run", str(CONFIG), "--env", str(env_file), "--entity", "entity_a"]
+    main([*command, "--stages", "target_factory"])
     out = capsys.readouterr().out
     assert "run target_factory for entity_a" in out and "positive_events" in out
     assert "model input saved:" in out and "entity_a: ran target_factory" in out
@@ -77,20 +81,44 @@ def test_run_through_the_cli_prints_the_summary_and_saves_the_model_input(
     assert metadata["use_cases"] == ["cc_acquisition"] and metadata["entity"] == "entity_a"
 
 
-def test_run_two_configs_saves_one_table_with_two_target_columns(
+def test_run_two_configs_runs_every_stage(
     spark: SparkSession, tmp_path: Path, unit_output: tuple[str, dict]
 ) -> None:
-    """`run([a, b], stages=["target_factory"])` returns both summaries and saves one model
-    input whose sidecar lists both use cases and whose table carries both target columns."""
+    """`run([a, b])` runs every built stage (a few candidates to keep it short): Target Factory
+    returns both summaries and saves one model input whose sidecar lists both use cases and whose
+    table carries both target columns; EDA and then Feature Checks run per config on it and
+    return the folders they wrote by use case, `eda/` with its json and report, every Feature
+    Checks step run, and the ledger beside them pairs the two runs."""
     env_file = _environment_file(tmp_path, unit_output)
-    out = run([CONFIG, SECOND_CONFIG], env_path=str(env_file), stages=["target_factory"])
-    stage = out["entity_a"]["target_factory"]
+    paths = []
+    for config in (CONFIG, SECOND_CONFIG):
+        raw = yaml.safe_load(config.read_text())
+        raw["features"]["candidates"]["include"] = EDA_CANDIDATES
+        paths.append(tmp_path / config.name)
+        paths[-1].write_text(yaml.safe_dump(raw))
+    out = run(paths, env_path=str(env_file))["entity_a"]
+    stage = out["target_factory"]
     assert sorted(stage["summary"]) == ["cc_acquisition", "td_acquisition"]
     metadata = json.loads(Path(stage["model_input"], METADATA_FILE).read_text())
     assert metadata["use_cases"] == ["cc_acquisition", "td_acquisition"]
     columns = spark.read.parquet(stage["model_input"]).columns
     assert {"target_cc_acquisition", "target_td_acquisition"} <= set(columns)
     assert "target" not in columns and "eligible" not in columns
+    assert sorted(out["eda"]) == sorted(out["feature_checks"]) == sorted(stage["summary"])
+    env = load_environment(str(env_file))
+    for cfg in map(load_config, paths):
+        eda, checks = out["eda"][cfg.use_case], out["feature_checks"][cfg.use_case]
+        assert eda["folder"] == feature_dir(env, cfg, "entity_a", "eda")
+        assert f"/{cfg.use_case}/04_feature/" in eda["folder"]
+        assert Path(eda["eda.json"]).is_file() and Path(eda["report.html"]).is_file()
+        assert checks["folder"] == feature_dir(env, cfg, "entity_a", "feature_checks")
+        meta = json.loads(Path(checks["folder"], "feature_checks.json").read_text())
+        assert meta["steps_run"] == STEP_ORDER
+        eda_token = json.loads(Path(eda["eda.json"]).read_text())["run_token"]
+        tokens = {"eda": eda_token, "feature_checks": meta["run_token"]}
+        folder = feature_dir(env, cfg, "entity_a")
+        ledger = read_ledger(folder, meta["data_definition_hash"], tokens)
+        assert set(COLUMNS_BY_STAGE["feature_checks"]) <= set(ledger.columns)
 
 
 def test_run_refuses_an_unknown_stage_or_entity_or_no_config(
@@ -116,27 +144,6 @@ def test_run_refuses_an_unknown_stage_or_entity_or_no_config(
     )
     with pytest.raises(ValueError, match=different):
         run([CONFIG, second_path], env_path=str(env_file))
-
-
-def test_run_stages_eda_on_two_configs_writes_both_eda_folders(
-    spark: SparkSession, tmp_path: Path, unit_output: tuple[str, dict]
-) -> None:
-    """`run([a, b], stages=["eda"])` runs EDA per config (built in memory, a few candidates to
-    keep it short) and writes each use case's `eda/` with its json and report."""
-    env_file = _environment_file(tmp_path, unit_output)
-    paths = []
-    for config in (CONFIG, SECOND_CONFIG):
-        raw = yaml.safe_load(config.read_text())
-        raw["data"]["model_input"] = None
-        raw["features"]["candidates"]["include"] = EDA_CANDIDATES
-        paths.append(tmp_path / config.name)
-        paths[-1].write_text(yaml.safe_dump(raw))
-    out = run(paths, env_path=str(env_file), stages=["eda"])
-    written = out["entity_a"]["eda"]
-    assert sorted(written) == ["cc_acquisition", "td_acquisition"]
-    for use_case, files in written.items():
-        assert f"/{use_case}/04_feature/" in files["folder"]
-        assert Path(files["eda.json"]).is_file() and Path(files["report.html"]).is_file()
 
 
 @pytest.mark.parametrize("notebook", NOTEBOOKS, ids=lambda path: path.stem)

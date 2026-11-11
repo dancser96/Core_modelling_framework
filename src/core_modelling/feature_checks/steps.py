@@ -1,13 +1,10 @@
 """Feature Checks' five steps over EDA's artifacts, in their fixed order (feature_checks.md
 "The finding table").
 
-`check_inputs` gathers what every step reads: the read candidates' ledger rows (neither lineage
-nor unsupported, which are automatic exclusions and never reach a step), EDA's cells,
-client-constant, correlation, ranking and per-period concordance tables, the compared periods,
-the level encoding's prior on the window and the label-free per-period table
-(`measures.per_period_table`). Each step is one function of those inputs and its own parameters
-and returns a `StepResult`: its findings (`FINDING_COLUMNS`; a flag or a note as `FINDINGS`
-says), its ledger columns for every read candidate, the findings that cannot exist with their
+Each step is one function of what every step reads (`CheckInputs`, which `inputs.check_inputs`
+gathers from EDA's artifacts) and its own parameters and returns a `StepResult`: its findings
+(`FINDING_COLUMNS`; a flag or a note as `FINDINGS` says, the rows built with `findings.py`'s row
+builders), its ledger columns for every read candidate, the findings that cannot exist with their
 reasons, decided before computing (D-035), and, for redundancy, the clusters table. A step
 judges and changes nothing: a flag holds a feature out of training until a person keeps or
 excludes it, a note never does (D-134).
@@ -27,24 +24,18 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from core_modelling.config.schema import (
-    Leakage,
-    Quality,
-    Redundancy,
-    Stability,
-    TimeAlignment,
-    UseCaseConfig,
-)
+from core_modelling.config.schema import Leakage, Quality, Redundancy, Stability, TimeAlignment
 from core_modelling.dataset.counts import POOLED_LEVEL_CAP
-from core_modelling.eda.ranking import NULL_SHARE_RANGE, encoding_prior_rows
-from core_modelling.feature_checks.findings import FINDING_COLUMNS, FINDINGS
-from core_modelling.feature_checks.measures import (
-    PERIOD_GROUPS,
-    effective_se,
-    lagged_concordance,
-    per_period_table,
-    period_psi,
+from core_modelling.feature_checks.findings import (
+    FINDING_COLUMNS,
+    UNAVAILABLE_COLUMNS,
+    finding_frame,
+    finding_rows,
+    stack_parts,
+    unavailable_rows,
 )
+from core_modelling.feature_checks.inputs import CheckInputs
+from core_modelling.feature_checks.measures import effective_se, lagged_concordance, period_psi
 from core_modelling.statistics.association import cluster_features, explained_by_others
 from core_modelling.statistics.cells import (
     null_table,
@@ -53,61 +44,18 @@ from core_modelling.statistics.cells import (
     support_by_bin,
     target_shares,
 )
-from core_modelling.statistics.concordance import (
-    CROSS_FIT_SE_INFLATION,
-    NON_MONOTONE_SE_MULTIPLE,
-    cochran_q,
-    concordance_from_table,
-    concordance_se,
-)
+from core_modelling.statistics.concordance import NON_MONOTONE_SE_MULTIPLE, cochran_q
 from core_modelling.statistics.distributions import new_level_share
+from core_modelling.statistics.scope import NULL_SHARE_RANGE, feature_se, null_concordance
 from core_modelling.tasks import TASK_SPECS
 
-UNAVAILABLE_COLUMNS = ["feature", "finding", "reason"]
 CLUSTER_COLUMNS = ["cluster", "feature", "kind", "concordance", "association_with_best",
                    "explained_by_others", "unavailable"]  # fmt: skip
-EDA_LEDGER_COLUMNS = ["feature", "kind", "levels", "lineage", "unsupported", "concordance",
-                      "concordance_window", "missing_share_window", "null_concordance_window",
-                      "zero_share_window", "dominant_share_window"]  # fmt: skip
-EDA_TABLES = ("cells", "client_constant", "correlation", "ranking", "concordance_per_period")
-EDA_RANKING_COLUMNS = ["feature", "raw_sign_window", "concordance_window",
-                       "concordance_best_order_window", "unavailable"]  # fmt: skip
-EDA_PER_PERIOD_COLUMNS = ["feature", "period", "rows", "support", "concordance", "se",
-                          "unavailable"]  # fmt: skip
-EDA_META_KEYS = ["compared_periods", "snapshot_period", "over_ceiling", "clients", "headline"]
 NO_NULL_ROWS = "not available: no labelled null or no labelled non-null window row"
 NO_LATEST = "not available: no period after the validation period"
 FEW_PERIODS = "not available: fewer than two window periods with a concordance"
 NOT_SIGNIFICANT = "not significant at this support"
 FLIPPED = "read one period earlier it orders clients the other way"
-
-
-@dataclass(frozen=True, eq=False)  # DataFrame fields: no field-wise ==
-class CheckInputs:
-    """What every step reads: the read candidates' ledger rows (identity and EDA columns), EDA's
-    tables (`concordance_per_period` its window concordance per period), the label-free
-    per-period table, `eda.json`'s compared periods, snapshot period and level ceiling list, and
-    the run's settings (`clients` `eda.json`'s window clients that scale a support to effective
-    clients, `exact` that `eda.bins` is null, `prior_rows` the level encoding's prior on the
-    window; the leakage step's `null_concordance_max`, the `nulls_informative` note's upper
-    bound, and `dominant_share_min`, which `near_constant`'s detail reads too)."""
-
-    ledger: pd.DataFrame
-    cells: pd.DataFrame
-    client_constant: pd.DataFrame
-    correlation: pd.DataFrame
-    ranking: pd.DataFrame
-    concordance_per_period: pd.DataFrame
-    per_period: pd.DataFrame
-    periods: dict[str, list[str]]
-    snapshot_period: str
-    over_ceiling: list[str]
-    task: str
-    clients: dict[str, float]
-    exact: bool
-    prior_rows: float
-    null_concordance_max: float
-    dominant_share_min: float
 
 
 @dataclass(frozen=True, eq=False)
@@ -120,77 +68,6 @@ class StepResult:
     columns: pd.DataFrame
     unavailable: pd.DataFrame
     tables: dict[str, pd.DataFrame]
-
-
-def check_inputs(
-    ledger: pd.DataFrame,
-    eda_tables: dict[str, pd.DataFrame],
-    eda_meta: dict,
-    resolved: UseCaseConfig,
-) -> CheckInputs:
-    """The steps' inputs from EDA's ledger as read (`read_ledger`), the json and tables
-    `read_stage` returns and the resolved config: the read candidates only, the encoding's
-    prior on the window, the leakage settings and the label-free per-period table."""
-    _check_eda_artifacts(ledger, eda_tables, eda_meta)
-    read = _read_candidates(ledger, eda_tables)
-    periods = {group: list(eda_meta["compared_periods"][group]) for group in PERIOD_GROUPS}
-    cells, task, snapshot = eda_tables["cells"], resolved.task, eda_meta["snapshot_period"]
-    prior_rows = encoding_prior_rows(cells, task, resolved.strata.min_events, periods["window"])
-    per_period = per_period_table(
-        cells, dict(zip(read["feature"], read["kind"], strict=True)), periods=periods,
-        snapshot_period=snapshot,
-    )  # fmt: skip
-    leakage = resolved.feature_checks.leakage or Leakage()
-    return CheckInputs(
-        ledger=read, cells=cells, client_constant=eda_tables["client_constant"],
-        correlation=eda_tables["correlation"], ranking=eda_tables["ranking"],
-        concordance_per_period=eda_tables["concordance_per_period"], per_period=per_period,
-        periods=periods, snapshot_period=snapshot, over_ceiling=list(eda_meta["over_ceiling"]),
-        task=task, clients=dict(eda_meta["clients"]), exact=resolved.eda.bins is None,
-        prior_rows=prior_rows, null_concordance_max=leakage.null_concordance_max,
-        dominant_share_min=leakage.dominant_share_min,
-    )  # fmt: skip
-
-
-def _check_eda_artifacts(ledger: pd.DataFrame, tables: dict[str, pd.DataFrame], meta: dict) -> None:
-    """Refuse EDA artifacts the steps cannot read, naming what is missing; the ledger's columns
-    are checked before any is read."""
-    ranking = tables.get("ranking", pd.DataFrame(columns=EDA_RANKING_COLUMNS))
-    per_period = tables.get("concordance_per_period", pd.DataFrame(columns=EDA_PER_PERIOD_COLUMNS))
-    missing = {
-        "ledger columns": [column for column in EDA_LEDGER_COLUMNS if column not in ledger],
-        "tables": [name for name in EDA_TABLES if name not in tables],
-        "ranking columns": [column for column in EDA_RANKING_COLUMNS if column not in ranking],
-        "concordance_per_period columns": [
-            column for column in EDA_PER_PERIOD_COLUMNS if column not in per_period
-        ],
-        "eda.json keys": [key for key in EDA_META_KEYS if key not in meta],
-    }
-    missing = {what: names for what, names in missing.items() if names}
-    if missing:
-        raise ValueError(f"Feature Checks: EDA's artifacts lack {missing}: run EDA (run_eda)")
-
-
-def _read_candidates(ledger: pd.DataFrame, tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """The ledger's read candidates (neither lineage nor unsupported: automatic exclusions),
-    refused when there are none or EDA's tables hold no rows for one."""
-    read = ledger.loc[~(ledger["lineage"] | ledger["unsupported"])].reset_index(drop=True)
-    if read.empty:
-        raise ValueError(
-            "Feature Checks: no read candidates (every candidate is lineage or unsupported)"
-        )
-    features = set(read["feature"])
-    uncovered = {
-        name: sorted(features - set(tables[name]["feature"]))
-        for name in ("cells", "client_constant", "ranking", "concordance_per_period")
-    }
-    uncovered = {name: names for name, names in uncovered.items() if names}
-    if uncovered:
-        raise ValueError(
-            f"Feature Checks: EDA's tables hold no rows for the read candidates {uncovered}: "
-            "rerun EDA (run_eda)"
-        )
-    return read
 
 
 def _window_signs(ranking: pd.DataFrame) -> dict[str, int]:
@@ -236,17 +113,17 @@ def check_quality(inputs: CheckInputs, params: Quality) -> StepResult:
     taken = pd.Series(False, index=ledger.index)
     parts = []
     for name, fires, value, threshold, detail in exclusive:
-        parts.append(_flagged(name, ledger, fires & ~taken, value, threshold, detail))
+        parts.append(finding_rows(name, ledger, fires & ~taken, value, threshold, detail))
         taken |= fires
     levels = ledger["levels"]
     wide = (ledger["kind"] == "categorical") & (levels > params.max_levels)
-    parts.append(_flagged("quality.high_cardinality", ledger, wide, levels, params.max_levels))
+    parts.append(finding_rows("quality.high_cardinality", ledger, wide, levels, params.max_levels))
     parts.append(_nulls_may_be_zeros(ledger, params))
     nulls, exists = ledger["null_concordance_window"], _null_rows_exist(inputs)
     informative = (nulls >= params.nulls_informative_min) & (nulls < inputs.null_concordance_max)
     parts.append(_nulls_informative(inputs, exists & informative, params.nulls_informative_min))
     name = "quality.nulls_informative"
-    absent = _unavailable(name, ledger.loc[nulls.notna() & ~exists, "feature"], NO_NULL_ROWS)
+    absent = unavailable_rows(name, ledger.loc[nulls.notna() & ~exists, "feature"], NO_NULL_ROWS)
     return _result(ledger, parts, [absent])
 
 
@@ -258,7 +135,9 @@ def _nulls_may_be_zeros(ledger: pd.DataFrame, params: Quality) -> pd.DataFrame:
     fires = (ledger["kind"] == "numeric") & (missing >= rule.missing_min) & zeros.notna()
     fires &= zeros <= rule.zero_share_max
     detail = zeros.map(lambda share: f"zero share among the values {share:.2%}")
-    return _flagged("quality.nulls_may_be_zeros", ledger, fires, missing, rule.missing_min, detail)
+    return finding_rows(
+        "quality.nulls_may_be_zeros", ledger, fires, missing, rule.missing_min, detail
+    )
 
 
 def _nulls_informative(inputs: CheckInputs, fires: pd.Series, threshold: float) -> pd.DataFrame:
@@ -269,7 +148,7 @@ def _nulls_informative(inputs: CheckInputs, fires: pd.Series, threshold: float) 
     sets = _null_sets(inputs, ledger.loc[fires, "feature"])
     named = ledger["feature"].map({f: _null_set_text(*place) for f, place in sets.items()})
     detail = _joined(named, _null_evidence(inputs, fires, nulls, threshold))
-    rows = _flagged("quality.nulls_informative", ledger, fires, nulls, threshold, detail)
+    rows = finding_rows("quality.nulls_informative", ledger, fires, nulls, threshold, detail)
     number = rows["feature"].map({f: n for f, (n, _) in sets.items()})
     return rows.iloc[np.argsort(number.fillna(np.inf).to_numpy(), kind="stable")]
 
@@ -370,14 +249,14 @@ def check_leakage(inputs: CheckInputs, params: Leakage) -> StepResult:
     rare, rare_unavailable = _rare_value_leaks(inputs, params.rare_effect_max)
     parts = [
         _too_strong(inputs, params.concordance_max),
-        _flagged("leakage.missingness_leak", ledger, leak, nulls, params.null_concordance_max,
-                 _joined(read_below.where(below, ""), evidence)),
+        finding_rows("leakage.missingness_leak", ledger, leak, nulls, params.null_concordance_max,
+                     _joined(read_below.where(below, ""), evidence)),
         rare,
     ]  # fmt: skip
     absent = ledger.loc[(nulls.notna() | below) & ~exists, "feature"]
     unavailable = [
         _eda_unavailable("leakage.too_strong", inputs, ledger["concordance_window"].isna()),
-        _unavailable("leakage.missingness_leak", absent, NO_NULL_ROWS),
+        unavailable_rows("leakage.missingness_leak", absent, NO_NULL_ROWS),
         rare_unavailable,
     ]
     return _result(ledger, parts, unavailable)
@@ -410,15 +289,15 @@ def _too_strong(inputs: CheckInputs, threshold: float) -> pd.DataFrame:
         multiple = NON_MONOTONE_SE_MULTIPLE if best[i] > plain[i] else 2
         evidence[i] = _evidence(support, se, value[i] - threshold, noun, multiple)
     detail = _joined(order, evidence)
-    return _flagged("leakage.too_strong", ledger, fires, value, threshold, detail)
+    return finding_rows("leakage.too_strong", ledger, fires, value, threshold, detail)
 
 
 def _nulls_below_range(inputs: CheckInputs, exists: pd.Series) -> tuple[pd.Series, pd.Series]:
     """Per read candidate, whether its window's missing share is above 0 but below EDA's
     `NULL_SHARE_RANGE`, where EDA reads no null concordance, and that concordance computed as EDA
     computes it where a labelled null and non-null row `exists` and the labelled rows hold two
-    target values (NaN elsewhere). A field blanked when a client converts has a null share near
-    the prevalence, often below the range."""
+    target values (`null_concordance`, NaN elsewhere). A field blanked when a client converts
+    has a null share near the prevalence, often below the range."""
     ledger = inputs.ledger
     missing = ledger["missing_share_window"]
     below = (missing > 0) & (missing < NULL_SHARE_RANGE[0])
@@ -426,10 +305,7 @@ def _nulls_below_range(inputs: CheckInputs, exists: pd.Series) -> tuple[pd.Serie
     values = pd.Series(np.nan, index=ledger.index)
     pools = _window_pools(inputs, ledger.loc[below & exists, "feature"])
     for i in ledger.index[below & exists]:
-        pooled = pools[ledger.at[i, "feature"]]
-        labelled = pooled.loc[pooled["target_bin"].notna() & (pooled["n"] > 0), "target_bin"]
-        if labelled.nunique() >= 2:
-            values[i] = concordance_from_table(null_table(pooled))
+        values[i] = null_concordance(pools[ledger.at[i, "feature"]])
     return below, values
 
 
@@ -438,7 +314,7 @@ def _eda_unavailable(name: str, inputs: CheckInputs, marked: pd.Series) -> pd.Da
     window concordance, with EDA's reason (the ranking table's `unavailable`)."""
     absent = inputs.ledger.loc[marked, "feature"]
     reasons = absent.map(inputs.ranking.set_index("feature")["unavailable"])
-    return _unavailable(name, absent, reasons)
+    return unavailable_rows(name, absent, reasons)
 
 
 def _rare_value_leaks(inputs: CheckInputs, threshold: float) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -459,8 +335,8 @@ def _rare_value_leaks(inputs: CheckInputs, threshold: float) -> tuple[pd.DataFra
     reasons = pd.DataFrame(reasons, columns=["feature", "reason"])
     name = "leakage.rare_value_leak"
     return (
-        _finding_frame(name, rows, threshold),
-        _unavailable(name, reasons["feature"], reasons["reason"]),
+        finding_frame(name, rows, threshold),
+        unavailable_rows(name, reasons["feature"], reasons["reason"]),
     )
 
 
@@ -559,16 +435,17 @@ def check_time_alignment(inputs: CheckInputs, params: TimeAlignment) -> StepResu
     constant = ledger["feature"].map(inputs.client_constant.set_index("feature")["constant_share"])
     stamped = gated & (constant >= params.constant_clients_min)
     parts = [
-        _flagged("time_alignment.lagged_signal_drop", ledger, drop, kept, params.signal_kept_min,
-                 _drop_details(inputs, lagged, drop, kept, params.signal_kept_min)),
-        _flagged("time_alignment.client_constant", ledger, stamped, constant,
-                 params.constant_clients_min),
+        finding_rows("time_alignment.lagged_signal_drop", ledger, drop, kept,
+                     params.signal_kept_min,
+                     _drop_details(inputs, lagged, drop, kept, params.signal_kept_min)),
+        finding_rows("time_alignment.client_constant", ledger, stamped, constant,
+                     params.constant_clients_min),
     ]  # fmt: skip
     unlagged, unknown = gated & (lagged["reason"] != ""), gated & constant.isna()
     unavailable = [
-        _unavailable("time_alignment.lagged_signal_drop", ledger.loc[unlagged, "feature"],
+        unavailable_rows("time_alignment.lagged_signal_drop", ledger.loc[unlagged, "feature"],
                      lagged.loc[unlagged, "reason"]),
-        _unavailable("time_alignment.client_constant", ledger.loc[unknown, "feature"],
+        unavailable_rows("time_alignment.client_constant", ledger.loc[unknown, "feature"],
                      "not available: no client with two non-null values in the window"),
     ]  # fmt: skip
     columns = {
@@ -658,24 +535,25 @@ def check_stability(inputs: CheckInputs, params: Stability) -> StepResult:
     window_noted = (psi_window >= params.psi_note_min) & ~window_large
     latest_noted = (psi_latest >= params.psi_note_min) & ~latest_large
     parts = [
-        _flagged("stability.concordance_unstable", ledger, unstable, q["heterogeneity_p"],
-                 params.heterogeneity_p_max, tested),
-        _flagged("stability.psi_window_large", ledger, window_large, psi_window, params.psi_max,
-                 first_last),
-        _flagged("stability.psi_latest_large", ledger, latest_large, psi_latest, params.psi_max,
-                 last_latest),
-        _flagged("stability.psi_window", ledger, window_noted, psi_window, params.psi_note_min,
-                 first_last),
-        _flagged("stability.psi_latest", ledger, latest_noted, psi_latest, params.psi_note_min,
-                 last_latest),
-        _flagged("stability.new_levels", ledger, new >= params.new_level_share_max, new,
-                 params.new_level_share_max, f"{latest[0]} against the window" if latest else ""),
+        finding_rows("stability.concordance_unstable", ledger, unstable, q["heterogeneity_p"],
+                     params.heterogeneity_p_max, tested),
+        finding_rows("stability.psi_window_large", ledger, window_large, psi_window, params.psi_max,
+                     first_last),
+        finding_rows("stability.psi_latest_large", ledger, latest_large, psi_latest, params.psi_max,
+                     last_latest),
+        finding_rows("stability.psi_window", ledger, window_noted, psi_window, params.psi_note_min,
+                     first_last),
+        finding_rows("stability.psi_latest", ledger, latest_noted, psi_latest, params.psi_note_min,
+                     last_latest),
+        finding_rows("stability.new_levels", ledger, new >= params.new_level_share_max, new,
+                     params.new_level_share_max,
+                     f"{latest[0]} against the window" if latest else ""),
     ]  # fmt: skip
     name, untested = "stability.concordance_unstable", q["heterogeneity_p"].isna()
     absent = ledger["concordance_window"].isna()
     unavailable = [
         _eda_unavailable(name, inputs, untested & absent),
-        _unavailable(name, ledger.loc[untested & ~absent, "feature"], FEW_PERIODS),
+        unavailable_rows(name, ledger.loc[untested & ~absent, "feature"], FEW_PERIODS),
         *drift_unavailable,
     ]
     columns = dict(pd.concat([q, drift], axis=1)[STEP_COLUMNS["stability"]].items())
@@ -719,12 +597,13 @@ def _period_ses(rows: pd.DataFrame, window: float, kind: str, task: str) -> np.n
     false: Kendall's null SE) keeps EDA's `se`."""
     if not TASK_SPECS[task]["period_se_at_window_value"]:
         return rows["se"].to_numpy(dtype=float)
-    value = max(window, 1 - window)
+    # `feature_se` without `clients`: no client scaling; Hanley–McNeil reads no target shares,
+    # which the per-period table does not hold
     ses = [
-        concordance_se(value, support, total - support)
+        feature_se(window, support, total - support, None, kind, task)
         for support, total in zip(rows["support"], rows["rows"], strict=True)
     ]
-    return np.array(ses) * (CROSS_FIT_SE_INFLATION if kind == "categorical" else 1)
+    return np.array(ses)
 
 
 def _drift(inputs: CheckInputs) -> tuple[pd.DataFrame, list[pd.DataFrame]]:
@@ -750,15 +629,17 @@ def _drift(inputs: CheckInputs) -> tuple[pd.DataFrame, list[pd.DataFrame]]:
     if len(window) < 2:
         one = "not available: a one-period window"
         names = ["stability.psi_window_large", "stability.psi_window"]
-        unavailable += [_unavailable(name, features, one) for name in names]
+        unavailable += [unavailable_rows(name, features, one) for name in names]
     if not latest:
         names = ["stability.psi_latest_large", "stability.psi_latest"]
-        unavailable += [_unavailable(name, features, NO_LATEST) for name in names]
-        unavailable.append(_unavailable("stability.new_levels", features[categorical], NO_LATEST))
+        unavailable += [unavailable_rows(name, features, NO_LATEST) for name in names]
+        unavailable.append(
+            unavailable_rows("stability.new_levels", features[categorical], NO_LATEST)
+        )
     else:
         over = f"not available: more than {POOLED_LEVEL_CAP:,} window levels"
         over_ceiling = features[categorical & ~countable]
-        unavailable.append(_unavailable("stability.new_levels", over_ceiling, over))
+        unavailable.append(unavailable_rows("stability.new_levels", over_ceiling, over))
     return values, unavailable
 
 
@@ -811,7 +692,7 @@ def _pair_findings(
         detail = ", ".join(f"{partner} {statistic:.3f}" for partner, statistic in partners)
         rows.append({"feature": feature, "value": sides["strength"].iloc[0], "detail": detail})
     frame = pd.DataFrame(rows, columns=["feature", "value", "detail"])
-    return _finding_frame(name, frame, threshold)
+    return finding_frame(name, frame, threshold)
 
 
 def _partners(pairs: pd.DataFrame, order: pd.Series) -> list[list[str]]:
@@ -889,38 +770,6 @@ def _explained_reasons(
     return reasons
 
 
-def _flagged(
-    name: str,
-    ledger: pd.DataFrame,
-    fires: pd.Series,
-    value: pd.Series,
-    threshold: float,
-    detail: pd.Series | str = "",
-) -> pd.DataFrame:
-    """Finding `name`'s rows for the ledger rows `fires` marks: each feature's `value` and
-    `detail` against `threshold`."""
-    rows = pd.DataFrame({
-        "feature": ledger.loc[fires, "feature"], "value": value[fires].astype(float),
-        "detail": detail[fires] if isinstance(detail, pd.Series) else detail,
-    })  # fmt: skip
-    return _finding_frame(name, rows, threshold)
-
-
-def _finding_frame(name: str, rows: pd.DataFrame, threshold: float) -> pd.DataFrame:
-    """`rows` (`feature`, `value`, `detail`) as finding `name`'s `FINDING_COLUMNS` rows."""
-    out = rows.assign(
-        step=name.split(".")[0], finding=name, kind=FINDINGS[name]["kind"],
-        threshold=float(threshold), text=FINDINGS[name]["text"],
-    )  # fmt: skip
-    return out[FINDING_COLUMNS].reset_index(drop=True)
-
-
-def _unavailable(name: str, features: pd.Series, reason: pd.Series | str) -> pd.DataFrame:
-    """`unavailable` rows of finding `name` for `features`, with one reason or one each."""
-    reasons = reason if isinstance(reason, str) else reason.to_numpy()
-    return pd.DataFrame({"feature": features.to_numpy(), "finding": name, "reason": reasons})
-
-
 def _result(
     ledger: pd.DataFrame,
     findings: list[pd.DataFrame],
@@ -939,16 +788,6 @@ def _result(
         unavailable=stack_parts(unavailable, UNAVAILABLE_COLUMNS),
         tables=tables or {},
     )
-
-
-def stack_parts(parts: list[pd.DataFrame], columns: list[str]) -> pd.DataFrame:
-    """The parts stacked in order; an empty frame of `columns` (numbers as floats) when none
-    holds a row."""
-    parts = [part for part in parts if not part.empty]
-    if parts:
-        return pd.concat(parts, ignore_index=True)[columns]
-    empty = pd.DataFrame(columns=columns)
-    return empty.astype({column: float for column in ("value", "threshold") if column in columns})
 
 
 STEPS: dict[str, Callable[..., StepResult]] = {

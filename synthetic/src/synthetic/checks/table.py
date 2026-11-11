@@ -11,7 +11,8 @@ which assume independent rows, so the families take one row per client: one mont
 chances (`sum_row`, Poisson-binomial standard error); rules over named items (`offenders_row`,
 the first few failing ones in the stratum). Estimators: the Hill tail index, the AUC with its
 Hanley–McNeil standard error, the population stability index (of a number on the reference's
-quantile bins, `psi`; of a categorical on its levels' shares, `categorical_psi`).
+quantile bins, `psi`; of a categorical on its levels' shares, `categorical_psi`). The traps'
+parameters come from the truth's spec rows (`trap_parameters`).
 """
 
 from datetime import date
@@ -75,6 +76,19 @@ def range_row(check: str, stratum: str, n: int, low: float, high: float, realise
 def violations_row(check: str, bad: pd.Series) -> dict:
     """Share of rows breaking a rule that must always hold."""
     return row(check, "all", len(bad), 0, float(bad.mean()), 0, rule=True)
+
+
+def trap_parameters(truth: dict, column: str | None, kind: str | None = None) -> dict:
+    """The parameters of the one trap row of `column` (and `kind`, for a row with no column such
+    as the extra columns') in `truth["spec"]["traps"]`; raises unless there is exactly one."""
+    found = [
+        t["parameters"]
+        for t in truth["spec"]["traps"]
+        if t["column"] == column and (kind is None or t["kind"] == kind)
+    ]
+    if len(found) != 1:
+        raise ValueError(f"the spec has {len(found)} trap rows for column {column!r} kind {kind!r}")
+    return found[0]
 
 
 def profile_of(spec: dict, df: pd.DataFrame) -> pd.Series:

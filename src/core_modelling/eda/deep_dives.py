@@ -1,14 +1,13 @@
 """The key features' deep dives and the strata pivots (docs/components/eda.md).
 
-A deep dive reads the snapshot: `bin_table` merges a numeric's snapshot cells into about ten groups
-(`merged_groups`, a mass point its own group, chart rule 4) and summarises the eligible rows with a
-known target mapped to those groups through the feature's edges, the way the counts table's
-`Bucketizer` buckets them (`bin_orders`); `level_table` gives one row per level instead (a
-categorical, or a numeric with few values); `quartiles_by_target` the feature's box per target class
-and `target_quartiles_by_group` an amount target's box per group of the feature (`box_table`);
-`per_period_concordance` the window periods' concordance read in the window's direction, which
-`concordance_per_period` gives for every ranked candidate (stored, and read by Feature Checks'
-stability step). Every group table carries the per-task summary columns
+A deep dive reads the snapshot: `group_table` summarises the eligible rows with a known target
+per group, a numeric's buckets of its edges (the counts table's `Bucketizer` buckets, `bin_orders`)
+merged into about ten groups (`numeric_groups`, a mass point its own group, chart rule 4), or one
+row per level (a categorical, or a numeric with few values); `quartiles_by_target` the feature's
+box per target class and `target_quartiles_by_group` an amount target's box per group of the
+feature (`box_table`); `per_period_concordance` the window periods' concordance read in the
+window's direction, which `concordance_per_period` gives for every ranked candidate (stored,
+and read by Feature Checks' stability step). Every group table carries the per-task summary columns
 (`population.summarise_groups`) and greys a group below `MIN_BIN_SUPPORT` events (strata cells below
 `strata.min_events`), never hides it. `dive_group_count` is the one rule for how a feature's deep
 dive groups it (by level, or about ten merged groups). `strata_pivots` crosses every key feature's
@@ -26,10 +25,9 @@ from scipy import stats
 from core_modelling.config.schema import Strata
 from core_modelling.dataset.counts import LEVEL_CAP, NULL_BIN
 from core_modelling.eda.population import cap_levels, known_rows, strata_frame, summarise_groups
-from core_modelling.eda.ranking import scope_statistics
-from core_modelling.statistics.cells import pool_periods, target_shares
-from core_modelling.statistics.concordance import CROSS_FIT_SE_INFLATION
+from core_modelling.statistics.cells import group_of_bins
 from core_modelling.statistics.distributions import bin_labels, merge_bins
+from core_modelling.statistics.scope import scope_statistics
 from core_modelling.tasks import TASK_SPECS
 
 MIN_BIN_SUPPORT = 20  # events (units with a non-zero target) below which a group is greyed
@@ -73,21 +71,18 @@ def value_labels(labels: list[str]) -> list[str]:
     return labels
 
 
-def _assign_groups(
-    values: pd.Series, edges: np.ndarray | None, merged: pd.DataFrame, with_null: bool
-) -> pd.Series:
+def _assign_groups(values: pd.Series, edges: np.ndarray | None, merged: pd.DataFrame) -> pd.Series:
     """Each value's group label (`value_labels` of the groups'; an ordered categorical in bin
-    order, `null` last when `with_null`) by its bucket's place among the groups' first
-    buckets."""
+    order, `null` last when a value is null) by its bucket's place among the groups' first
+    buckets; `merged` is cut from the same values, so every bucket has its group."""
     orders = bin_orders(values, edges)
-    place = np.searchsorted(merged["bin_order_first"].to_numpy(), orders, side="right") - 1
     filled = orders >= 0
-    if (filled & (place < 0)).any() or (not with_null and not filled.all()):
-        raise ValueError(f"{values.name}: a row falls outside the groups cut from its own bins")
+    place = np.full(orders.size, -1)  # -1 picks null
+    place[filled] = group_of_bins(merged["bin_order_first"].to_numpy(), orders[filled])
     groups = value_labels(merged["label"].tolist())
-    names = np.array([*groups, NULL_BIN], dtype=object)  # -1 picks null
-    labels = names[np.where(filled, place, -1)]
-    order = [*groups, *([NULL_BIN] if with_null else [])]
+    names = np.array([*groups, NULL_BIN], dtype=object)
+    labels = names[place]
+    order = [*groups, *([] if filled.all() else [NULL_BIN])]
     return pd.Series(pd.Categorical(labels, categories=order, ordered=True), index=values.index)
 
 
@@ -102,7 +97,7 @@ def numeric_groups(values: pd.Series, edges: np.ndarray | None, groups: int | No
         {"bin_order": counts.index, "bin": [labels[o] for o in counts.index], "n": counts.values}
     )
     merged = _merged(per_bin, groups, edges)
-    return _assign_groups(values, edges, merged, bool(values.isna().any()))
+    return _assign_groups(values, edges, merged)
 
 
 def merged_groups(
@@ -129,56 +124,29 @@ def _known_groups(
     return groups.loc[known_rows(snapshot).index]
 
 
-def _group_table(
-    target: pd.Series, groups: pd.Series, feature: str, task: str, base: float
-) -> pd.DataFrame:
-    """One row per category of `groups` in order (`feature, group`, the summary columns),
-    `insufficient` below `MIN_BIN_SUPPORT`; a group without a known target keeps its row with no
-    rows and no support, insufficient."""
-    table = summarise_groups(target, groups.rename("group").to_frame(), task, base, MIN_BIN_SUPPORT)
-    table = table.set_index("group").reindex(groups.cat.categories)
-    table[["rows", "support"]] = table[["rows", "support"]].fillna(0)
-    table["insufficient"] = table["insufficient"].astype("boolean").fillna(True).astype(bool)
-    table = table.rename_axis("group").reset_index()
-    return table.assign(feature=feature)[["feature", *table.columns]]
-
-
-def bin_table(
-    cells: pd.DataFrame,
-    snapshot: pd.DataFrame,
-    feature: str,
-    edges: np.ndarray | None,
-    snapshot_period: str,
-    task: str,
-    base: float,
-    group_count: int,
-) -> pd.DataFrame:
-    """A numeric's deep dive: about `group_count` groups (`dive_group_count`'s; labelled by their
-    outer range, null last) merged from the snapshot period's pooled cells, each summarised on
-    the known rows mapped to it through `edges` against `base`. Columns: `feature, group`, then
-    the task's summary columns."""
-    current = cells.loc[(cells["feature"] == feature) & ~cells["lagged"]]
-    pooled = pool_periods(current, [snapshot_period])
-    with_null = bool(pooled.loc[pooled["is_null"], "n"].sum() > 0)
-    known = known_rows(snapshot)
-    merged = merged_groups(pooled, edges, group_count)
-    groups = _assign_groups(known[feature], edges, merged, with_null)
-    return _group_table(known["target"], groups, feature, task, base)
-
-
-def level_table(
+def group_table(
     snapshot: pd.DataFrame,
     feature: str,
     kind: str,
     edges: np.ndarray | None,
     task: str,
     base: float,
+    group_count: int | None,
 ) -> pd.DataFrame:
-    """A categorical's or a few-valued numeric's deep dive: one row per level (`_known_groups`
-    with no merging), each summarised on the known rows against `base`; columns as
-    `bin_table`'s."""
-    groups = _known_groups(snapshot, feature, kind, edges, None)
-    return _group_table(snapshot.loc[groups.index, "target"], groups, feature, task, base)
+    """A key feature's deep dive: one row per group (`_known_groups`: by level for a
+    `group_count` of None, else about `group_count` merged from the eligible rows' buckets, which
+    the snapshot period's cells count; null last), each summarised on the known rows against
+    `base`, `insufficient` below `MIN_BIN_SUPPORT`; a group without a known target keeps its row
+    with no rows and no support, insufficient. Columns: `feature, group`, then the task's summary
+    columns."""
+    groups = _known_groups(snapshot, feature, kind, edges, group_count)
+    target = snapshot.loc[groups.index, "target"]
+    table = summarise_groups(target, groups.rename("group").to_frame(), task, base, MIN_BIN_SUPPORT)
+    table = table.set_index("group").reindex(groups.cat.categories)
+    table[["rows", "support"]] = table[["rows", "support"]].fillna(0)
+    table["insufficient"] = table["insufficient"].astype("boolean").fillna(True).astype(bool)
+    table = table.rename_axis("group").reset_index()
+    return table.assign(feature=feature)[["feature", *table.columns]]
 
 
 def _box(values: pd.Series) -> dict:
@@ -222,7 +190,7 @@ def target_quartiles_by_group(
     group_count: int | None,
 ) -> pd.DataFrame:
     """An amount target's box per group of one feature (eda.md view 6) on the known rows, its
-    groups `dive_group_count`'s: `level_table`'s for None, else `bin_table`'s, merged into
+    groups `dive_group_count`'s, `group_table`'s: one per level for None, else merged into
     about `group_count` over the eligible rows' buckets (which the snapshot period's cells
     count). Columns: `feature, group`, `BOX_COLUMNS` and `skew` (`box_table`)."""
     groups = _known_groups(snapshot, feature, kind, edges, group_count)
@@ -245,29 +213,22 @@ def per_period_concordance(
     (the ranking's `raw_sign_window`: +1 or −1, so a flip reads below 0.5 and a noise feature
     still sits around 0.5; 0 when the window has no concordance, and then no period has one,
     its rows being a subset of the window's), a categorical's cross-fitted `read=[period]` in
-    its encoding's direction; its SE on the period's own rows (a categorical's times
-    `CROSS_FIT_SE_INFLATION`); `insufficient` below `min_events` support. Columns: `feature,
-    period, rows` (labelled non-null rows), `support, concordance, se, insufficient,
-    unavailable`."""
+    its encoding's direction; its SE the scope's, on the period's own rows (`feature_se`, at
+    max(value, 1 − value), so reading it in the window's direction leaves it as it is);
+    `insufficient` below `min_events` support. Columns: `feature, period, rows` (labelled
+    non-null rows), `support, concordance, se, insufficient, unavailable`."""
     if sign not in (1, -1, 0):
         raise ValueError(f"per_period_concordance: sign must be +1, -1 or 0, got {sign}")
-    spec = TASK_SPECS[task]
     current = cells.loc[(cells["feature"] == feature) & ~cells["lagged"]]
     args = (task, window_periods, prior_rows, exact, None)
     records = []
     for period in window_periods:
         scope = scope_statistics(current, kind, [period], *args)
         events, non_events = scope["events"], scope["non_events"]
-        value, se = np.nan, np.nan
-        if not scope["reason"]:
-            value = _read_in(scope, kind, sign)
-            # Hanley–McNeil is not symmetric in A: a flipped period would look surer
-            shares = target_shares(scope["pooled"])
-            se = spec["concordance_se"](max(value, 1 - value), events, non_events, shares)
-            se *= CROSS_FIT_SE_INFLATION if kind == "categorical" else 1
+        value = np.nan if scope["reason"] else _read_in(scope, kind, sign)
         reason = f"not available: {scope['reason']}" if scope["reason"] else ""
         records.append({"feature": feature, "period": period, "rows": events + non_events,
-                        "support": events, "concordance": value, "se": se,
+                        "support": events, "concordance": value, "se": scope["se"],
                         "insufficient": events < min_events, "unavailable": reason})  # fmt: skip
     return pd.DataFrame.from_records(records)
 

@@ -15,10 +15,12 @@
     (identical predictions, D-051).
 - Config migrations: old configs still load (`CLAUDE.md` §2).
 - Generator validation tests for the synthetic data (`docs/components/test_harness.md`).
-- One end-to-end test on synthetic data with **real local PySpark**: no stubs, and assertions against
-  the generator's ground truth (traps flagged, oracle AUC never beaten by more than about two
-  standard errors on positive events). On the `unit` preset it stays under two minutes; the
-  canonical run is nightly or on request (D-100).
+- One end-to-end test on synthetic data with **real local PySpark**, no stubs:
+  `test_run.py::test_run_two_configs_runs_every_stage` runs every built stage through `run` on
+  the two example configs at once (one model input, then EDA and Feature Checks per config). From
+  Training on it also asserts against the generator's ground truth (oracle AUC never beaten by
+  more than about two standard errors on positive events). On the `unit` preset it stays under
+  two minutes; the canonical run is nightly or on request (D-100).
 - The trap acceptance test (`test_traps.py`, marker `traps`, D-064, D-137): EDA and Feature Checks
   on the `dev` preset (20k clients, generated in the test run) for both example configs, against
   two mappings of `truth.json`'s trap list: every trap is caught by its findings
@@ -38,8 +40,18 @@ Tests import the dev-only `synthetic` package and generate their data from its s
 bank with the tests as code, never as data (D-041). The `dev` dataset (20k) is for daily work and
 the `canonical` one (100k) for the slow tests, notebooks and demos, outside the bank.
 
+A stage runs once per session where several modules read it: `conftest.py` builds EDA's frames
+(`eda_frames`) and the EDA runs of the card config and the regression variant on the unit preset
+(`eda_card`, `eda_regression`, on the data root `eda_env`), and holds the config variants
+(`in_memory`, `regression_cfg`) and the audit-log entry builder (`build_entry`) the modules
+share. A shared value is read-only: a test that changes one, or a file under its data root, works
+on its own copy (Feature Checks' tests copy the EDA runs' root).
+
+`test_code_rules.py` checks the code rules a linter can't: every function has a docstring,
+framework code never names a trap column, and every notebook but `00_synthetic_data` is
+committed without outputs (`notebooks/README.md`).
+
 **By release 1.0:** every function tested, internal CI/CD and Sonar checks passing (D-014). Tests
 are a milestone criterion, not part of a depth level.
 
-Run with `pytest` (configured to collect only this folder; `legacy/` is excluded). "No tests ran" is
-expected until the first tests exist.
+Run with `pytest` (configured to collect only this folder; `legacy/` is excluded).

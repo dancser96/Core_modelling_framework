@@ -328,7 +328,13 @@ def _correlated_noise(
     """
     names = list(spec["profiles"])
     # Cholesky fails loud if a profile's correlation matrix is not positive definite.
-    chol = np.stack([np.linalg.cholesky(c) for c in latent_covariances(spec).values()])
-    codes = clients["profile"].map({name: i for i, name in enumerate(names)}).to_numpy()
+    chol = [np.linalg.cholesky(c) for c in latent_covariances(spec).values()]
+    # A profile outside the spec maps to NaN, and the cast to int raises.
+    codes = clients["profile"].map({name: i for i, name in enumerate(names)}).astype(int).to_numpy()
     eps = rng.standard_normal((len(clients), len(LATENTS)) if shape is None else shape)
-    return np.einsum("nij,n...j->n...i", chol[codes], eps)
+    # One matrix per profile: the same sums as one per client, without building an (n, k, k) copy.
+    noise = np.empty_like(eps)
+    for code, factor in enumerate(chol):
+        rows = codes == code
+        noise[rows] = np.einsum("ij,n...j->n...i", factor, eps[rows])
+    return noise

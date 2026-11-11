@@ -110,11 +110,17 @@ def build_panel(spec: dict, mart: pd.DataFrame, oracle: pd.DataFrame) -> pd.Data
     panel["profile"] = profile_of(spec, panel)
     panel["has_prev"] = panel["client_id"].eq(panel["client_id"].shift())
     panel["known"] = panel["has_prev"] | (panel["snapshot_month"] > panel["snapshot_month"].min())
-    month = pd.to_datetime(panel["snapshot_month"])
-    month_end = month + pd.to_timedelta(month.dt.days_in_month - 1, unit="D")
-    start = month_end - pd.to_timedelta(panel["relationship_days"], unit="D")
-    panel["tenure_months"] = (month.dt.year - start.dt.year) * 12 + month.dt.month - start.dt.month
+    panel["tenure_months"] = months_on_book(panel) - 1
     return panel
+
+
+def months_on_book(mart: pd.DataFrame) -> np.ndarray:
+    """Months on the book, the current one included (1 in the entry month), from the month and
+    `relationship_days`."""
+    month = pd.to_datetime(mart["snapshot_month"])
+    month_end = month + pd.to_timedelta(month.dt.days_in_month - 1, unit="D")
+    start = month_end - pd.to_timedelta(mart["relationship_days"], unit="D")
+    return ((month.dt.year - start.dt.year) * 12 + month.dt.month - start.dt.month + 1).to_numpy()
 
 
 def product_keys(spec: dict, kind: str) -> list[str]:

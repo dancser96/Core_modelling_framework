@@ -8,6 +8,7 @@ on the loaded config.
 from pathlib import Path
 
 import yaml
+from pydantic import ValidationError
 
 from core_modelling.config.levels import apply_level_defaults
 from core_modelling.config.migrations import CURRENT_SCHEMA_VERSION, MIGRATIONS, migrate
@@ -38,10 +39,17 @@ def _refuse_replay_fields(raw: dict, path: str | Path) -> None:
 
 
 def load_config(path: str | Path) -> UseCaseConfig:
-    """Read, migrate, level-resolve and validate one use-case config file."""
-    raw = yaml.safe_load(Path(path).read_text())
+    """Read, migrate, level-resolve and validate one use-case config file; a YAML or schema error
+    names the file."""
+    try:
+        raw = yaml.safe_load(Path(path).read_text())
+    except yaml.YAMLError as exc:
+        raise ValueError(f"config {path} is not valid YAML: {exc}") from exc
     if not isinstance(raw, dict):
         raise ValueError(f"config {path} must be a YAML mapping, got {type(raw).__name__}")
     raw = migrate(raw, MIGRATIONS, CURRENT_SCHEMA_VERSION, "config")
     _refuse_replay_fields(raw, path)
-    return UseCaseConfig.model_validate(apply_level_defaults(raw))
+    try:
+        return UseCaseConfig.model_validate(apply_level_defaults(raw))
+    except ValidationError as exc:
+        raise ValueError(f"config {path}: {exc}") from exc

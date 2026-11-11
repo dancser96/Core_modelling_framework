@@ -1,14 +1,14 @@
-"""The Feature Checks stage end to end on the unit preset (D-134, D-136, D-137): EDA then Feature
-Checks on the card config (every candidate) and on a regression variant (a narrow candidate
-list, with the spend leak: the rare-value leak by Cohen's d), each run once in a module fixture
-on this module's own data root, so its audit-log entries reach no other test module. What a run
-must leave: every file and table of
-`feature_checks/`, `feature_checks.json` with the keys Training and the report read, the ledger
-with every Feature Checks column, the `flag` entries written once (a rerun writes only a `run`
-entry, with the compared periods and never the validation period), a held feature released by a
-`keep`, the refusals of a missing or stale EDA and of a ledger from another EDA run, a report
-with plotly.js once and every section, a skipped step's null columns, and `run(..., stages=["eda",
-"feature_checks"])`.
+"""The Feature Checks stage end to end on the unit preset (D-134, D-136, D-137): Feature Checks on
+the card config (every candidate) and on a regression variant (a narrow candidate list, with the
+spend leak: the rare-value leak by Cohen's d), each run once in a module fixture after the
+session's EDA runs (`conftest.py`), on a copy of their data root, so its audit-log entries reach
+no other test module. What a run must leave: every file and table of `feature_checks/`,
+`feature_checks.json` with the keys Training and the report read, the ledger with every Feature
+Checks column, the `flag` entries written once (a rerun writes only a `run` entry, with the
+compared periods and never the validation period), a held feature released by a `keep`, the
+refusals of a missing or stale EDA and of a ledger from another EDA run, a report with plotly.js
+once and every section, and a skipped step's null columns. EDA then Feature Checks in one root,
+through `run`, is `test_run.py`'s.
 """
 
 import json
@@ -19,7 +19,6 @@ from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 
-import pandas as pd
 import pytest
 import yaml
 from plotly.offline import get_plotlyjs
@@ -30,75 +29,52 @@ from core_modelling.config import UseCaseConfig
 from core_modelling.config.audit_log import read_entries, record_decision
 from core_modelling.config.identities import data_definition_hash
 from core_modelling.config.replay import open_flags
-from core_modelling.eda import run_eda
 from core_modelling.environment import EnvironmentConfig, audit_log_dir, feature_dir
 from core_modelling.feature_checks import run_feature_checks
 from core_modelling.feature_checks.findings import STEP_ORDER
-from core_modelling.feature_checks.run import FEATURE_CHECKS_SETTINGS
 from core_modelling.ledger import COLUMNS_BY_STAGE, read_ledger, resolve_features
 from core_modelling.periods import period_spec
-from core_modelling.run import run
 
 ENTITY = "entity_a"
 TABLES = {"findings", "unavailable", "per_period", "clusters", "proposed_decisions"}
 META_KEYS = {"config_hash", "data_definition_hash", "resolved_input_hash", "replayed_to",
-             "settings_digest", "settings", "compared_periods", "steps_run", "steps_skipped",
-             "findings", "held", "entries_written", "eda_headline", "timings"}  # fmt: skip
+             "run_token", "settings_digest", "settings", "compared_periods", "steps_run",
+             "steps_skipped", "findings", "held", "entries_written", "eda_headline",
+             "timings"}  # fmt: skip
 HEADINGS = ["Summary", "Choices", "How to read", "EDA headline", "Warnings", "Flags and notes",
             "Held features", "Core", "Findings per step", "Quality", "Leakage", "Time alignment",
             "Stability", "Redundancy", "Proposed decisions", "Ledger with decisions", "Extended",
             "Per period", "Appendix",
             "Resolved config", "Decisions", "Entries written", "Timings"]  # fmt: skip
-REGRESSION_CANDIDATES = ["age", "income", "segment", "onboarding_channel", "employment_status",
-                         "cc_active_flag", "cc_bal*", "cc_limit", "spend_cc_*",
-                         "*_trap_spend_leak"]  # fmt: skip
 
 
 @pytest.fixture(scope="module")
-def env(unit_env: EnvironmentConfig, tmp_path_factory: pytest.TempPathFactory) -> EnvironmentConfig:
-    """The unit environment on this module's own data root."""
-    roots = unit_env.roots.model_copy(update={"data": str(tmp_path_factory.mktemp("fc_data"))})
-    return unit_env.model_copy(update={"roots": roots})
-
-
-@pytest.fixture(scope="module")
-def card_cfg(variant: Callable[..., UseCaseConfig]) -> UseCaseConfig:
-    """The card config without a model input."""
-    return variant(data={"model_input": None})
-
-
-@pytest.fixture(scope="module")
-def regression_cfg(variant: Callable[..., UseCaseConfig]) -> UseCaseConfig:
-    """Card spend summed forward for holders, on a narrow candidate list (test_eda's)."""
-    return variant(
-        task="regression",
-        entities={ENTITY: {"sources": {"features": ["retail_mart"], "targets": None}}},
-        data={
-            "model_input": None,
-            "target": {"rule": "forward_sum", "column": "spend_cc_vol"},
-            "eligibility": {
-                "modelling": [
-                    {"name": "holders", "filter": "cc_flag = 1", "reason": "spend needs a card"}
-                ]
-            },
-        },
-        features={"candidates": {"include": REGRESSION_CANDIDATES, "exclude": []}},
+def env(
+    eda_env: EnvironmentConfig,
+    eda_card: StageResult,
+    eda_regression: StageResult,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> EnvironmentConfig:
+    """The shared EDA runs' environment on a copy of their data root (each `eda/` with its
+    ledger and sidecar), this module's own."""
+    root = tmp_path_factory.mktemp("fc_data")
+    shutil.copytree(eda_env.roots.data, root, dirs_exist_ok=True)
+    return eda_env.model_copy(
+        update={"roots": eda_env.roots.model_copy(update={"data": str(root)})}
     )
 
 
 @pytest.fixture(scope="module")
-def card(spark: SparkSession, env: EnvironmentConfig, card_cfg: UseCaseConfig) -> StageResult:
-    """The card config's EDA, then its first Feature Checks run."""
-    run_eda(card_cfg, ENTITY, env, spark)
-    return run_feature_checks(card_cfg, ENTITY, env, spark)
+def card(spark: SparkSession, env: EnvironmentConfig, in_memory: UseCaseConfig) -> StageResult:
+    """The card config's first Feature Checks run."""
+    return run_feature_checks(in_memory, ENTITY, env, spark)
 
 
 @pytest.fixture(scope="module")
 def regression(
     spark: SparkSession, env: EnvironmentConfig, regression_cfg: UseCaseConfig
 ) -> StageResult:
-    """The regression variant's EDA, then its first Feature Checks run."""
-    run_eda(regression_cfg, ENTITY, env, spark)
+    """The regression variant's first Feature Checks run."""
     return run_feature_checks(regression_cfg, ENTITY, env, spark)
 
 
@@ -110,7 +86,7 @@ def result(request: pytest.FixtureRequest) -> StageResult:
 
 def _files(cfg: UseCaseConfig, env: EnvironmentConfig, folder: Path) -> tuple[str, str]:
     """The config (without housekeeping: a file carries intent only) and the environment written
-    as files in `folder`, for `record_decision` and `run`; the data definition is kept, so the
+    as files in `folder`, for `record_decision`; the data definition is kept, so the
     file shares the audit log."""
     config_path, env_path = folder / "config.yml", folder / "environment.yml"
     config_path.write_text(
@@ -128,21 +104,22 @@ def test_the_folder_holds_every_file_and_table(result: StageResult) -> None:
         assert (folder / name).is_file(), name
     meta, tables = read_stage(str(folder), "feature_checks")
     assert set(tables) == TABLES and META_KEYS <= set(meta) and meta["stage"] == "feature_checks"
-    check_upstream(meta, result.config, FEATURE_CHECKS_SETTINGS)
+    check_upstream(meta, result.config)
     assert meta["steps_run"] == STEP_ORDER and meta["steps_skipped"] == []
     assert meta["held"] == result.config.features.held
 
 
 def test_the_ledger_holds_every_feature_checks_column(result: StageResult) -> None:
-    """The saved ledger holds the identity, EDA and Feature Checks columns, its sidecar names the
-    stage and its digest; `flags` and `notes` are the findings each feature raised."""
+    """The saved ledger holds the identity, EDA and Feature Checks columns, its sidecar the run
+    tokens of the EDA run read and of this run; `flags` and `notes` are the findings each feature
+    raised."""
     folder = Path(result.paths["folder"]).parent
-    ledger = read_ledger(str(folder), result.meta["data_definition_hash"])
+    eda_token = json.loads((folder / "eda" / "eda.json").read_text())["run_token"]
+    runs = {"eda": eda_token, "feature_checks": result.meta["run_token"]}
+    ledger = read_ledger(str(folder), result.meta["data_definition_hash"], runs)
     stages = ("identity", "eda", "feature_checks")
     assert ledger.columns.tolist() == [c for stage in stages for c in COLUMNS_BY_STAGE[stage]]
-    sidecar = json.loads((folder / "_ledger.json").read_text())
-    assert sidecar["stage"] == "feature_checks"
-    assert sidecar["settings_digest"] == result.meta["settings_digest"]
+    assert json.loads((folder / "_ledger.json").read_text())["runs"] == runs
     findings, read = (
         result.tables["findings"],
         ledger.loc[~(ledger["lineage"] | ledger["unsupported"])],
@@ -173,12 +150,12 @@ def test_a_rare_spend_marker_is_a_rare_value_leak_by_cohens_d(
 
 
 def test_flag_entries_are_written_once_and_a_rerun_writes_a_run_entry(
-    card: StageResult, card_cfg: UseCaseConfig, env: EnvironmentConfig, spark: SparkSession
+    card: StageResult, in_memory: UseCaseConfig, env: EnvironmentConfig, spark: SparkSession
 ) -> None:
     """The first run writes one `flag` entry per raised flag finding with its features, then one
     `run` entry listing the window, gap and latest periods, never the validation period; an
     unchanged rerun writes only a `run` entry and holds the same features."""
-    log = audit_log_dir(env, card_cfg, ENTITY)
+    log = audit_log_dir(env, in_memory, ENTITY)
     entries = read_entries(log)[: len(card.meta["entries_written"])]  # the first run's
     findings = card.tables["findings"]
     flags = findings.loc[findings["kind"] == "flag"].groupby("finding")["feature"].agg(sorted)
@@ -187,11 +164,11 @@ def test_flag_entries_are_written_once_and_a_rerun_writes_a_run_entry(
     assert len(entries) == len(written) + 1 == len(card.meta["entries_written"])
     periods = card.meta["compared_periods"]
     assert entries[-1].periods == [*periods["window"], *periods["gap"], *periods["latest"]]
-    validation = period_spec(card_cfg).label(card_cfg.time.validation_period)
+    validation = period_spec(in_memory).label(in_memory.time.validation_period)
     assert validation not in entries[-1].periods
     assert entries[-1].replayed_to == 0
     before = len(read_entries(log))
-    rerun = run_feature_checks(card_cfg, ENTITY, env, spark)
+    rerun = run_feature_checks(in_memory, ENTITY, env, spark)
     assert rerun.meta["entries_written"] == [{"seq": before + 1, "op": "run", "finding": None}]
     assert card.config.features.held == sorted(open_flags(entries))
     assert rerun.config.features.held == sorted(open_flags(read_entries(log)))
@@ -199,7 +176,7 @@ def test_flag_entries_are_written_once_and_a_rerun_writes_a_run_entry(
 
 def test_a_keep_releases_the_held_feature(
     card: StageResult,
-    card_cfg: UseCaseConfig,
+    in_memory: UseCaseConfig,
     env: EnvironmentConfig,
     spark: SparkSession,
     tmp_path: Path,
@@ -207,11 +184,11 @@ def test_a_keep_releases_the_held_feature(
     """A `keep` recorded on a held feature (every flag open on it) takes it out of the next run's
     held set and proposed decisions, and `resolve_features` gives it back to Training; the run
     writes no flag entry."""
-    config_path, env_path = _files(card_cfg, env, tmp_path)
-    assert data_definition_hash(card_cfg, ENTITY) == card.meta["data_definition_hash"]
+    config_path, env_path = _files(in_memory, env, tmp_path)
+    assert data_definition_hash(in_memory, ENTITY) == card.meta["data_definition_hash"]
     feature = card.config.features.held[0]
     record_decision(config_path, ENTITY, keep=[feature], reason="known", env_path=env_path)
-    after = run_feature_checks(card_cfg, ENTITY, env, spark)
+    after = run_feature_checks(in_memory, ENTITY, env, spark)
     assert feature in card.config.features.held and feature not in after.config.features.held
     assert feature in after.config.features.kept
     proposed = after.tables["proposed_decisions"]
@@ -223,6 +200,7 @@ def test_a_keep_releases_the_held_feature(
 
 def test_a_missing_or_stale_eda_is_refused(
     card: StageResult,
+    in_memory: UseCaseConfig,
     variant: Callable[..., UseCaseConfig],
     env: EnvironmentConfig,
     tmp_path: Path,
@@ -230,9 +208,8 @@ def test_a_missing_or_stale_eda_is_refused(
     """Without EDA's artifact the stage asks for an EDA run; with EDA run under another `eda.bins`
     it is refused naming the changed setting, before anything is written to the audit log."""
     empty = env.model_copy(update={"roots": env.roots.model_copy(update={"data": str(tmp_path)})})
-    cfg = variant(data={"model_input": None})
     with pytest.raises(FileNotFoundError, match="run the eda stage first"):
-        run_feature_checks(cfg, ENTITY, empty, None)
+        run_feature_checks(in_memory, ENTITY, empty, None)
     other = variant(data={"model_input": None}, eda={"bins": 20})
     log = audit_log_dir(env, other, ENTITY)
     before = len(read_entries(log))
@@ -242,20 +219,18 @@ def test_a_missing_or_stale_eda_is_refused(
 
 
 def test_a_ledger_from_another_eda_run_is_refused(
-    card: StageResult, card_cfg: UseCaseConfig, env: EnvironmentConfig, tmp_path: Path
+    card: StageResult, in_memory: UseCaseConfig, env: EnvironmentConfig, tmp_path: Path
 ) -> None:
-    """A ledger whose `concordance_window` differs from `eda/`'s ranking for one read candidate
-    (a crash between EDA's two writes) is refused, naming the feature and asking for EDA."""
+    """A ledger whose EDA run token is not `eda.json`'s (a crash between EDA's ledger save and its
+    folder write) is refused, asking for EDA."""
     copy = env.model_copy(update={"roots": env.roots.model_copy(update={"data": str(tmp_path)})})
     shutil.copytree(env.roots.data, tmp_path, dirs_exist_ok=True)
-    path = Path(feature_dir(copy, card_cfg, ENTITY), "ledger.parquet")
-    ledger = pd.read_parquet(path)
-    row = ledger.loc[~(ledger["lineage"] | ledger["unsupported"])].index[0]
-    ledger.loc[row, "concordance_window"] += 0.001
-    ledger.to_parquet(path)
-    feature = ledger.loc[row, "feature"]
-    with pytest.raises(ValueError, match=rf"different EDA runs.*{feature}.*rerun EDA"):
-        run_feature_checks(card_cfg, ENTITY, copy, None)
+    path = Path(feature_dir(copy, in_memory, ENTITY), "_ledger.json")
+    sidecar = json.loads(path.read_text())
+    sidecar["runs"]["eda"] = "0" * 12
+    path.write_text(json.dumps(sidecar))
+    with pytest.raises(ValueError, match="ledger .* and eda/ come from different runs.*rerun eda"):
+        run_feature_checks(in_memory, ENTITY, copy, None)
 
 
 def test_the_report_has_plotly_once_and_every_section(result: StageResult) -> None:
@@ -294,18 +269,3 @@ def test_a_step_left_out_is_skipped_with_null_columns(
     assert ledger[["cluster", "explained_by_others", "partners"]].isna().all().all()
     assert "Not run" in out.views["steps"]["redundancy"][0]
     assert [entry["op"] for entry in out.meta["entries_written"]] == ["run"]
-
-
-def test_run_writes_both_folders(
-    regression: StageResult, regression_cfg: UseCaseConfig, env: EnvironmentConfig, tmp_path: Path
-) -> None:
-    """`run(..., stages=["eda", "feature_checks"])` writes `eda/` and then `feature_checks/` for
-    the config and returns their paths by use case."""
-    config_path, env_path = _files(regression_cfg, env, tmp_path)
-    out = run(config_path, env_path, stages=["eda", "feature_checks"], entity=ENTITY)[ENTITY]
-    use_case = regression_cfg.use_case
-    assert out["eda"][use_case]["folder"] == feature_dir(env, regression_cfg, ENTITY, "eda")
-    folder = out["feature_checks"][use_case]["folder"]
-    assert folder == feature_dir(env, regression_cfg, ENTITY, "feature_checks")
-    meta = json.loads(Path(folder, "feature_checks.json").read_text())
-    assert meta["steps_run"] == STEP_ORDER

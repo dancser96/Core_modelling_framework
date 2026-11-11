@@ -1,6 +1,7 @@
 """How numbers read in a report's tables: one format per known column, shared by every report.
 
-`column_formats` gives `style_table` the format of each column it knows by name: counts with
+`format_of` is the one place a column name gets its format, and `column_formats` gives
+`style_table` the format of each column it knows by name: counts with
 thousands separators, the estimate as the task prints it (`TASK_SPECS[task]["estimate_format"]`),
 shares as percentages, concordances, PSI and R² to three decimals, lifts and differences to two,
 a p-value through `p_value` and a finding's value and threshold through `plain_number`, which
@@ -39,8 +40,8 @@ SHARES = ["missing_share", "missing_share_window", "zero_share", "zero_share_win
           "dominant_share", "dominant_share_window", "nonzero_share", "nonzero_low",
           "nonzero_high", "eligible_share", "capture", "inf_share", "signal_kept",
           "constant_share", "new_level_share"]  # fmt: skip
-THREE_DECIMALS = ["psi", "psi_window", "psi_latest", "explained_by_others", "association_min",
-                  "explained_by_others_max"]  # fmt: skip
+THREE_DECIMALS = ["psi", "psi_window", "psi_latest", "explained_by_others", "association",
+                  "association_min", "explained_by_others_max"]  # fmt: skip
 PLAIN = ["value", "threshold"]  # a finding's numeric columns only: a share, a ratio or a p
 P_VALUES = ["heterogeneity_p"]
 ESTIMATES = ["estimate", "low", "high", "median", "nonzero_mean", "nonzero_median", "q1", "q3",
@@ -49,19 +50,27 @@ PREFIXES = {"rows_": COUNT, "share_": SHARE, "median_": plain_number, "p10_": pl
             "p90_": plain_number}  # fmt: skip
 
 
-def column_formats(df: pd.DataFrame, task: str) -> dict[str, str | Callable[[float], str]]:
-    """Each known column's format: counts with separators, the estimate as the task prints it,
-    shares as percentages, concordances, PSI and R² to three decimals, lift and differences to
-    two, a p-value as `p_value` gives it and a finding's value and threshold as plain numbers."""
-    estimate = TASK_SPECS[task]["estimate_format"]
+def format_of(name: str, task: str) -> str | Callable[[float], str] | None:
+    """A column's format by its name: counts with separators, the estimate as the task prints
+    it, shares as percentages, concordances, PSI and R² to three decimals, lift and differences
+    to two, a p-value as `p_value` gives it and a finding's value and threshold as plain
+    numbers; a known prefix's format otherwise, None for any other."""
     rules = {
         **dict.fromkeys(["rows", "support", "positive_rows", "levels", "rank", "n", "size"], COUNT),
-        **dict.fromkeys(ESTIMATES, estimate),
+        **dict.fromkeys(ESTIMATES, TASK_SPECS[task]["estimate_format"]),
         **dict.fromkeys(SHARES, SHARE),
         **dict.fromkeys([*CONCORDANCES, *THREE_DECIMALS], "{:.3f}"),
         **dict.fromkeys(["lift", "smd", "skew"], "{:.2f}"),
         **dict.fromkeys(PLAIN, plain_number),
         **dict.fromkeys(P_VALUES, p_value),
     }
-    prefixed = {c: f for c in df.columns for p, f in PREFIXES.items() if str(c).startswith(p)}
-    return {c: rules.get(c, prefixed.get(c)) for c in df.columns if c in rules or c in prefixed}
+    if name in rules:
+        return rules[name]
+    prefixed = [f for prefix, f in PREFIXES.items() if name.startswith(prefix)]
+    return prefixed[-1] if prefixed else None
+
+
+def column_formats(df: pd.DataFrame, task: str) -> dict[str, str | Callable[[float], str]]:
+    """Each column's format that `format_of` knows by its name."""
+    formats = {column: format_of(str(column), task) for column in df.columns}
+    return {column: f for column, f in formats.items() if f is not None}

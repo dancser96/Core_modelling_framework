@@ -7,8 +7,9 @@ follows through the change-request calendar. One standard for correctness, repro
 maintainability across the whole lifecycle. Package: `core_modelling` (the repo name
 `retail.core_modelling` may change; the framework is domain-agnostic).
 
-**Status:** Phase 2, design baseline done. The package is a skeleton; the working crunch
-implementation is in `legacy/propensity_crunch/` (reference only).
+**Status:** Phase 2, version 0.3.0: Target Factory, EDA and Feature Checks are built; Training
+and Evaluation come next ([UPDATES](docs/UPDATES.md)). The crunch implementation is in
+`legacy/propensity_crunch/` (reference only).
 
 ## Start here
 - New machine: [Windows 11 / WSL2](docs/guides/setup_windows_wsl2.md) or

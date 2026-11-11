@@ -21,7 +21,8 @@ of every live model. Where we start from and where we want to reach: `docs/conte
 - **Integrations (first release):** the feature store upstream; the data observability framework
   only gets a production model's source tables pointed to it at deploy. LLM-assisted modelling
   comes in Phase 3 (D-021).
-- **Current state:** Phase 2, design baseline done; the package is still a skeleton. The crunch
+- **Current state:** Phase 2: Target Factory, EDA and Feature Checks are built (0.3.0);
+  Training and Evaluation come next (M2.3). The crunch
   implementation in `legacy/propensity_crunch/` is reference only. Status: `docs/UPDATES.md`. Plan
   and open decisions: `docs/roadmap.md`. Vocabulary: `docs/glossary.md`. Reading order and the
   stage → component map: `docs/README.md`.
@@ -441,7 +442,7 @@ ruff check . && ruff format <changed files>  # lint; format only files you touch
 
 ```
 CLAUDE.md                  this file (always loaded)
-src/core_modelling/        the package (currently a skeleton)
+src/core_modelling/        the package
 synthetic/src/synthetic/   dev-only synthetic data package: spec/, mechanisms/, truth/, checks/ (not core_modelling)
 conf/base/                 committed configs and examples
 conf/local/                gitignored: environment-specific paths/tables/theme (bank side)
@@ -459,6 +460,5 @@ docs/architecture.md       target design
 docs/decisions.md          decision log
 docs/components/           one doc per component or versioned artifact
 docs/guides/               setup (WSL2 / macOS), Claude Code workflow, skills & agents
-docs/reference/            original roadmap + spine/governance reference (historical)
 .claude/                   project skills, subagents and commands
 ```

@@ -25,12 +25,15 @@ being the rows the tag excludes (`tag = 0`) against the modelling population (`e
   ≥ `SMD_DIFFERS`, a description, not a test); `unavailable` names why `smd` is missing.
 """
 
+from collections.abc import Callable
+
 import numpy as np
 import pandas as pd
 
 from core_modelling.config.schema import Strata
 from core_modelling.dataset.counts import BLANK_LEVEL, NULL_BIN, OTHER, RESERVED_BINS
-from core_modelling.statistics.cells import level_share_difference
+from core_modelling.reporting.formats import COUNT, SHARE, plain_number
+from core_modelling.statistics.cells import level_share_difference, population_cells
 from core_modelling.statistics.distributions import standardised_difference
 from core_modelling.tasks import TASK_SPECS
 
@@ -111,6 +114,26 @@ def summarise_groups(
     return table[columns]
 
 
+HEADLINE_COUNTS = ["eligible_rows", "clients", "snapshot_rows", "snapshot_positives",
+                   "snapshot_nonzero_units", "window_rows", "window_positive_rows",
+                   "window_positive_events"]  # fmt: skip
+HEADLINE_ESTIMATES = ["snapshot_rate", "snapshot_low", "snapshot_high", "snapshot_mean",
+                      "snapshot_median", "snapshot_p10", "snapshot_p90"]  # fmt: skip
+
+
+def headline_formats(task: str) -> dict[str, str | Callable[[float], str]]:
+    """The format of each headline number (`headline_numbers`, both tasks'), as its table column
+    reads: counts with separators, the snapshot's estimate, interval and quantiles as the task
+    prints its estimate, shares as percentages, rows per event plain. EDA's report and Feature
+    Checks', which shows the same headline, both read it."""
+    return {
+        **dict.fromkeys(HEADLINE_COUNTS, COUNT),
+        **dict.fromkeys(HEADLINE_ESTIMATES, TASK_SPECS[task]["estimate_format"]),
+        **dict.fromkeys(["eligible_share", "snapshot_zero_share"], SHARE),
+        "rows_per_event": plain_number,
+    }
+
+
 def headline_numbers(snapshot: pd.DataFrame, per_period: pd.DataFrame, task: str) -> dict:
     """The summary's headline: the snapshot's eligible rows, clients and eligible share, the
     target's headline on its known rows (`base_rate_views`, prefixed `snapshot_`), and the
@@ -188,7 +211,7 @@ def target_per_period(
     `positive_rows`, `support` (units with a non-zero target; for `all` the distinct ones,
     `clients["event_clients"]` of `counts.window_clients`), the estimate with its interval from
     `period_estimate` (binary: the rate and Wilson; regression: `sum_y / rows` of one feature's
-    labelled cells, which cover every eligible row, with its t-interval from `sum_y2`, and the
+    labelled cells (`population_cells`), with its t-interval from `sum_y2`, and the
     non-zero share) and `insufficient` (support below `min_events`). The pooled row's clients
     recur in every period, so its counts are scaled to effective clients (Kish's, as every window
     SE): the estimate stays, the interval widens."""
@@ -196,10 +219,10 @@ def target_per_period(
     empty = list(labelled.index[labelled["known_target"] == 0])
     if empty:
         raise ValueError(f"target_per_period: no known target in the window periods {empty}")
-    current = cells.loc[~cells["lagged"] & cells["target_bin"].notna()]
-    if current.empty:
+    one = population_cells(cells)
+    one = one.loc[one["target_bin"].notna()]
+    if one.empty:
         raise ValueError("target_per_period: the cells hold no labelled current rows")
-    one = current.loc[current["feature"] == current["feature"].iloc[0]]
     sums = one.groupby("period")[["n", "sum_y", "sum_y2"]].sum().reindex(labelled.index)
     if not np.array_equal(sums["n"].to_numpy(float), labelled["known_target"].to_numpy(float)):
         raise ValueError(

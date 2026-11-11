@@ -31,6 +31,7 @@ from synthetic.checks.table import (
     violations_row,
 )
 from synthetic.spec.products import HOLDING_RULES, PRODUCTS
+from synthetic.truth.oracle import STANDARD_TARGETS as ORACLE_TARGETS
 from synthetic.truth.oracle import window_probability
 
 KEYS = ["client_id", "snapshot_month"]
@@ -38,6 +39,8 @@ LOANS = [key for key, p in PRODUCTS.items() if p["kind"] == "loans"]
 SLOTS = range(1, HOLDING_RULES["max_loan_accounts"] + 1)  # loan slots in the oracle
 REGRESSION_TARGET = next(t for t, s in STANDARD_TARGETS.items() if s["event"] == "sum")
 REGRESSION_WINDOW = 3
+EVENT_OF_KIND = {"acquire": "any_flag", "activate": "any_flag", "open": "count_rise",
+                 "regression": "sum"}  # fmt: skip
 QUANTILES = ("mean", "q10", "q50", "q90")
 MART_COLUMNS = [
     *KEYS,
@@ -94,13 +97,26 @@ def check_oracle(mart: pd.DataFrame, oracle: pd.DataFrame, truth: dict) -> pd.Da
     if not mart[KEYS].reset_index(drop=True).equals(oracle[KEYS].reset_index(drop=True)):
         raise ValueError("oracle rows must line up with mart rows")
     months = sorted(mart["snapshot_month"].unique())
-    rows = []
+    rows = [_check_target_tables()]
     for target in BINARY_TARGETS:
         for w in WINDOWS:
             rows += _check_target(mart, oracle, truth, target, w, months)
     rows += _check_regression(mart, oracle, months)
     rows += _check_truth_schema(truth)
     return pd.DataFrame(rows)
+
+
+def _check_target_tables() -> dict:
+    """The checks' standard-targets table names the same targets as the oracle's: each with the
+    same event, column and eligibility (the checks' realised targets are only an independent
+    second reading if both read the same targets)."""
+    mine = {n: (t["event"], t["column"], t["eligible"]) for n, t in STANDARD_TARGETS.items()}
+    theirs = {
+        n: (EVENT_OF_KIND[t["kind"]], t["column"], t["eligible"]) for n, t in ORACLE_TARGETS.items()
+    }
+    names = mine.keys() | theirs.keys()
+    differing = [name for name in sorted(names) if mine.get(name) != theirs.get(name)]
+    return offenders_row("the checks' standard targets are the oracle's", differing, len(names))
 
 
 def _target_metrics(truth: dict, target: str, w: int) -> dict:

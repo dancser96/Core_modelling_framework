@@ -8,13 +8,16 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from conftest import build_entry
 
-from core_modelling.config.replay import By, Entry, replay, validate_raw
+from core_modelling.config.identities import resolved_input_hash
+from core_modelling.config.replay import replay, validate_raw
 from core_modelling.config.schema import UseCaseConfig
 from core_modelling.ledger import (
     COLUMNS_BY_STAGE,
     add_columns,
     create_ledger,
+    read_candidates,
     read_ledger,
     render_decisions,
     resolve_features,
@@ -27,7 +30,20 @@ READ = ["tenure", "bal", "prod", "flag_x"]  # neither lineage nor unsupported
 KINDS = {"tenure": "numeric", "bal": "numeric", "prod": "categorical", "flag_x": "categorical"}
 # Every candidate's source but the lineage column's: an upstream target's, in no source.
 SOURCES = {name: "mart" for name in CANDIDATES if name != "fwd_txn"} | {"prod": "extract"}
-META = {"stage": "feature_checks", "data_definition_hash": "d" * 64, "settings_digest": "abc"}
+META = {"data_definition_hash": "d" * 64, "runs": {"eda": "e1", "feature_checks": "f1"}}
+BARE = {**META, "runs": {}}  # for a ledger without any stage's columns
+
+
+def _as_resolved(cfg: UseCaseConfig, replayed_to: int = 0) -> UseCaseConfig:
+    """The config with the housekeeping keys `resolve_config` adds that the ledger's functions
+    check: the resolved-input hash and the last entry replayed; its replayed lists are the
+    test's own."""
+    cfg.housekeeping = {
+        **cfg.housekeeping,
+        "resolved_input_hash": resolved_input_hash(cfg),
+        "replayed_to": replayed_to,
+    }
+    return cfg
 
 
 def _ledger() -> pd.DataFrame:
@@ -68,6 +84,7 @@ def test_create_ledger_gives_one_row_per_candidate() -> None:
     assert ledger["lineage"].tolist() == [False] * 4 + [True, False]
     assert ledger["unsupported"].tolist() == [False] * 5 + [True]
     assert ledger["source"].tolist() == ["mart", "mart", "extract", "mart", None, "mart"]
+    assert read_candidates(ledger)["feature"].tolist() == READ
 
 
 def test_create_ledger_refuses_what_it_cannot_record() -> None:
@@ -124,30 +141,31 @@ def test_a_rerun_replaces_every_column_the_stage_wrote_before() -> None:
 
 def test_the_ledger_reads_back_as_saved(tmp_path: Path) -> None:
     """List, nullable-int and bool columns survive the parquet round trip unchanged; the sidecar
-    names its version, the stages present and the writer's hash and digest."""
+    holds its version stamp, the data definition and the run token of each stage present."""
     ledger = _with_stages()
     save_ledger(ledger, str(tmp_path), META)
     pd.testing.assert_frame_equal(read_ledger(str(tmp_path), "d" * 64), ledger)
     sidecar = json.loads((tmp_path / "_ledger.json").read_text())
-    assert sidecar["ledger_schema_version"] == 2
-    assert sidecar["stages"] == ["eda", "feature_checks"]
+    assert sidecar["ledger_schema_version"] == 3
+    assert list(sidecar) == ["ledger_schema_version", "framework_version", "written_at", *META]
     assert {k: sidecar[k] for k in META} == META
     assert sorted(path.name for path in tmp_path.iterdir()) == ["_ledger.json", "ledger.parquet"]
 
 
 def test_save_ledger_refuses_a_derived_or_unowned_column_and_a_bad_meta(tmp_path: Path) -> None:
     """A stored decision would go stale with the next entry (V10); a column no stage owns has no
-    place in the file; the meta must name the writer and its data definition, and nothing else."""
+    place in the file; the meta holds the data definition and one run token per stage whose
+    columns the ledger holds, and nothing else."""
     with pytest.raises(ValueError, match=r"\['held'\] are derived"):
-        save_ledger(_ledger().assign(held=False), str(tmp_path), META)
+        save_ledger(_ledger().assign(held=False), str(tmp_path), BARE)
     with pytest.raises(ValueError, match="belong to no stage"):
-        save_ledger(_ledger().assign(note="x"), str(tmp_path), META)
+        save_ledger(_ledger().assign(note="x"), str(tmp_path), BARE)
     with pytest.raises(ValueError, match=r"lacks \['data_definition_hash'\]"):
-        save_ledger(_ledger(), str(tmp_path), {"stage": "eda"})
+        save_ledger(_ledger(), str(tmp_path), {"runs": {}})
     with pytest.raises(ValueError, match=r"may not set \['settings'\]"):
-        save_ledger(_ledger(), str(tmp_path), {**META, "settings": {}})
-    with pytest.raises(ValueError, match="names stage 'training'"):
-        save_ledger(_ledger(), str(tmp_path), {**META, "stage": "training"})
+        save_ledger(_ledger(), str(tmp_path), {**BARE, "settings": {}})
+    with pytest.raises(ValueError, match=r"runs name \['eda'\].*\['eda', 'feature_checks'\]"):
+        save_ledger(_with_stages(), str(tmp_path), {**META, "runs": {"eda": "e1"}})
     assert list(tmp_path.iterdir()) == []
 
 
@@ -156,7 +174,7 @@ def test_a_failed_save_keeps_the_previous_ledger(
 ) -> None:
     """A write failing mid-way leaves the previous ledger and sidecar as they were and no
     temporary file."""
-    save_ledger(_ledger(), str(tmp_path), {**META, "stage": "eda"})
+    save_ledger(_ledger(), str(tmp_path), BARE)
 
     def to_parquet(frame: pd.DataFrame, path: Path, **kwargs: object) -> None:
         """Half a file, then a full disk."""
@@ -178,14 +196,33 @@ def test_read_ledger_refuses_a_missing_ledger_another_version_and_definition(
     is refused, and so is a ledger written for another data definition, naming both."""
     with pytest.raises(FileNotFoundError, match="run EDA first"):
         read_ledger(str(tmp_path))
-    save_ledger(_ledger(), str(tmp_path), META)
+    save_ledger(_ledger(), str(tmp_path), BARE)
     with pytest.raises(ValueError, match="data definition dddddddddddd, the config's is eeee"):
         read_ledger(str(tmp_path), "e" * 64)
     sidecar = tmp_path / "_ledger.json"
-    older = sidecar.read_text().replace('"ledger_schema_version": 2', '"ledger_schema_version": 1')
+    older = sidecar.read_text().replace('"ledger_schema_version": 3', '"ledger_schema_version": 2')
     sidecar.write_text(older)
-    with pytest.raises(ValueError, match="ledger_schema_version 1 .* reads 2: rerun EDA"):
+    with pytest.raises(ValueError, match="ledger_schema_version 2 .* reads 3: rerun EDA"):
         read_ledger(str(tmp_path))
+
+
+def test_read_ledger_refuses_a_ledger_from_another_run_of_a_stage(tmp_path: Path) -> None:
+    """The run tokens the caller read from the stage jsons must be the sidecar's: another token,
+    or a stage the ledger holds no run of, means the ledger and that stage's folder come from
+    different runs (a crash between the two writes, or a sidecar without runs), naming the stage
+    to rerun."""
+    save_ledger(_with_stages(), str(tmp_path), META)
+    read_ledger(str(tmp_path), "d" * 64, {"eda": "e1", "feature_checks": "f1"})
+    with pytest.raises(ValueError, match=r"and eda/ come from different runs .* e2\): rerun eda"):
+        read_ledger(str(tmp_path), "d" * 64, {"eda": "e2"})
+    eda_only = add_columns(_ledger(), pd.DataFrame({"feature": READ, "rank": 1}), "eda")
+    save_ledger(eda_only, str(tmp_path), {**META, "runs": {"eda": "e1"}})
+    with pytest.raises(ValueError, match=r"feature_checks/ come from different .*: rerun feature"):
+        read_ledger(str(tmp_path), expect={"eda": "e1", "feature_checks": "f1"})
+    sidecar = tmp_path / "_ledger.json"
+    sidecar.write_text(sidecar.read_text().replace('"runs"', '"lost"'))  # a sidecar without runs
+    with pytest.raises(ValueError, match=r"and eda/ come from different runs .*: rerun eda"):
+        read_ledger(str(tmp_path), expect={"eda": "e1"})
 
 
 def test_resolve_features_leaves_out_lineage_unsupported_excluded_and_held(
@@ -194,11 +231,24 @@ def test_resolve_features_leaves_out_lineage_unsupported_excluded_and_held(
     """Training's set keeps the ledger's order; a held feature is out like an excluded one, a
     kept one is in, and a held feature that is also kept stays out."""
     ledger = _ledger()
-    assert resolve_features(ledger, variant()) == READ
+    assert resolve_features(ledger, _as_resolved(variant())) == READ
     resolved = variant(features={"excluded": ["flag_x"], "held": ["prod"], "kept": ["tenure"]})
-    assert resolve_features(ledger, resolved) == ["tenure", "bal"]
+    assert resolve_features(ledger, _as_resolved(resolved)) == ["tenure", "bal"]
     both = variant(features={"held": ["tenure"], "kept": ["tenure"]})
-    assert resolve_features(ledger, both) == ["bal", "prod", "flag_x"]
+    assert resolve_features(ledger, _as_resolved(both)) == ["bal", "prod", "flag_x"]
+
+
+def test_resolve_features_refuses_a_config_that_was_only_loaded(
+    variant: Callable[..., UseCaseConfig],
+) -> None:
+    """A loaded config's held and excluded lists are empty until the replay fills them, so it
+    would hand Training every candidate: it is refused, saying what to pass."""
+    with pytest.raises(ValueError, match=r"resolve_features needs the resolved config.*resolve_c"):
+        resolve_features(_ledger(), variant())
+    emptied = _as_resolved(variant(features={"held": ["bal"]}))
+    emptied.features.held = []  # as a saved resolved config edited by hand
+    with pytest.raises(ValueError, match="no longer matches its resolved_input_hash"):
+        resolve_features(_ledger(), emptied)
 
 
 def test_resolve_features_refuses_a_name_that_is_no_ledger_row(
@@ -207,32 +257,16 @@ def test_resolve_features_refuses_a_name_that_is_no_ledger_row(
     """A mistyped exclude would otherwise leave the feature in training without a word."""
     typo = variant(features={"excluded": ["balanse"], "kept": ["tenure", "ghost"]})
     with pytest.raises(ValueError, match=r"'features.excluded': \['balanse'\].*\['ghost'\]"):
-        resolve_features(_ledger(), typo)
-
-
-def _entry(seq: int, op: str, **fields: object) -> Entry:
-    """A person's entry on the test's data definition."""
-    return Entry(
-        seq=seq,
-        time="2026-11-03T10:00:00+00:00",
-        by=By(kind="person", id="ds"),
-        stage="feature_checks",
-        op=op,
-        reason="test",
-        data_definition_hash="d" * 64,
-        hash_version=1,
-        log_schema_version=1,
-        **fields,
-    )
+        resolve_features(_ledger(), _as_resolved(typo))
 
 
 ENTRIES = [
-    _entry(1, "exclude", features=["flag_x"]),
-    _entry(2, "keep", features=["tenure"], findings=["time_alignment.client_constant"]),
-    _entry(3, "exclude", features=["bal"]),
-    _entry(4, "include", features=["bal"]),
-    _entry(5, "exclude", features=["prod"]),
-    _entry(6, "revert", to_seq=4),
+    build_entry(1, "exclude", features=["flag_x"]),
+    build_entry(2, "keep", features=["tenure"], findings=["time_alignment.client_constant"]),
+    build_entry(3, "exclude", features=["bal"]),
+    build_entry(4, "include", features=["bal"]),
+    build_entry(5, "exclude", features=["prod"]),
+    build_entry(6, "revert", to_seq=4),
 ]
 
 
@@ -245,7 +279,7 @@ def test_render_decisions_derives_the_decisions_in_force(
     ledger = _with_stages()
     resolved = validate_raw(replay(cc_config, ENTRIES), "the test's replay")
     resolved.features.held = ["prod", "flag_x"]  # flag_x is excluded, so not held
-    view = render_decisions(ledger, resolved, ENTRIES)
+    view = render_decisions(ledger, _as_resolved(resolved, 6), ENTRIES)
     by_feature = view.set_index("feature")
     assert by_feature["excluded"].tolist() == [pd.NA, pd.NA, pd.NA, 1, pd.NA, pd.NA]
     assert by_feature["kept"].tolist() == [[2], [], [], [], [], []]
@@ -256,14 +290,17 @@ def test_render_decisions_derives_the_decisions_in_force(
     pd.testing.assert_frame_equal(view[ledger.columns], ledger)
 
 
-def test_render_decisions_refuses_entries_of_another_state_and_unknown_names(
+def test_render_decisions_refuses_unknown_names_and_a_loaded_config(
     cc_config: UseCaseConfig,
 ) -> None:
     """Entries other than those the config was resolved from would number another state; a held
-    name that is no ledger row is refused before anything is rendered."""
-    resolved = validate_raw(replay(cc_config, ENTRIES), "the test's replay")
-    with pytest.raises(ValueError, match="disagree on features.excluded"):
+    name that is no ledger row, and a config that was only loaded, are refused before anything is
+    rendered."""
+    resolved = _as_resolved(validate_raw(replay(cc_config, ENTRIES), "the test's replay"), 6)
+    with pytest.raises(ValueError, match="resolved to entry 6 and the entries end at 3"):
         render_decisions(_ledger(), resolved, ENTRIES[:3])
     resolved.features.held = ["ghost"]
     with pytest.raises(ValueError, match=r"'features.held': \['ghost'\]"):
-        render_decisions(_ledger(), resolved, ENTRIES)
+        render_decisions(_ledger(), _as_resolved(resolved, 6), ENTRIES)
+    with pytest.raises(ValueError, match="render_decisions needs the resolved config"):
+        render_decisions(_ledger(), cc_config, [])

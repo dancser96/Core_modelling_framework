@@ -8,8 +8,8 @@ traits (`clients.step_latents`); the card and the chains that require it (`holdi
 on those products alone: leaving, re-adoption with onboarding by tenure, card activity and the
 revolver state, each at risk only with the card at the end of the previous month); the AR(1) noise
 of the current/savings balance (its random part D, which every flow carries) and of card spend
-(`variation`); a new limit for a re-adopted card (`cards.draw_limits`); the wanted spend with its
-travel months, shares and seasons (`cards.wanted_spend`); and the card step (`cards.step_card`).
+(`amounts.step_noises`); and the card's month (`cards.step_card_month`: a new limit for a re-adopted
+card, the wanted spend with its travel months, shares and seasons, and the card step).
 Paths are conditioned on the client staying with the bank (no exits). The oracle columns are the
 mean and the 10%, 50% and 90% quantiles (`np.quantile`, linear) of the 3-month total, null without
 a card. Clients run in chunks to bound memory; every draw comes from the `regression` stream, sized
@@ -18,14 +18,14 @@ by the card holders and the paths, so no other column of the dataset moves with 
 
 import numpy as np
 
-from synthetic.mechanisms.cards import draw_limits, step_card, wanted_spend
+from synthetic.mechanisms.amounts import step_noises
+from synthetic.mechanisms.cards import step_card_month
 from synthetic.mechanisms.clients import profile_codes, step_latents
 from synthetic.mechanisms.holdings import step_holdings
 from synthetic.mechanisms.variation import (
     log_variation,
     measure_offsets,
     measures_of_kind,
-    step_noise,
 )
 from synthetic.spec.presets import LATENTS
 
@@ -147,27 +147,24 @@ def _step_spend(
     `cards.card_amounts`): noise steps, the log variation, the limit, the wanted spend, the card
     step. Returns the new amounts state and the month's card spend."""
     levels = spec["levels"]
-    stock, flow = levels["stock_noise"], levels["flow_noise"]
-    amounts = dict(
-        amounts,
-        stock_noise=step_noise(amounts["stock_noise"], stock["rho"], stock["sd"], rng),
-        flow_noise=step_noise(amounts["flow_noise"], flow["rho"], flow["sd"], rng),
-    )
+    amounts = step_noises(spec, amounts, rng)
     spend_spec = {
         **spec,
         "levels": {**levels, "measures": {m: levels["measures"][m] for m in MEASURES}},
     }
     profiles, income = per_client["profiles"], per_client["income"]
     log_part = log_variation(spend_spec, offsets, amounts, dz, profiles)[MEASURES[1]]
-    held, held_before = holdings[f"{CARD}_held"], amounts["cc_limit"] > 0
-    new_limits = draw_limits(spec, profiles, income, dz[..., LATENTS.index("credit")], rng)
-    limit = np.where(
-        held, np.where(holdings[f"{CARD}_gained"], new_limits, amounts["cc_limit"]), 0.0
+    limit, _, _, step = step_card_month(
+        spec,
+        profiles,
+        income,
+        per_client["repay_share"],
+        log_part,
+        dz,
+        month,
+        holdings=holdings,
+        last_balance=amounts["cc_bal"],
+        last_limit=amounts["cc_limit"],
+        rng=rng,
     )
-    wanted, _ = wanted_spend(spec, profiles, income, log_part, dz, month, rng)
-    step = step_card(
-        amounts["cc_bal"], limit, holdings["cc_revolver_active"], held, held_before,
-        holdings["cc_activity_active"], wanted, per_client["repay_share"],
-        levels["card"]["monthly_interest"],
-    )  # fmt: skip
     return amounts | {"cc_limit": limit, "cc_bal": step["balance"]}, step["spend"]

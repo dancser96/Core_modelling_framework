@@ -34,11 +34,14 @@ import pyarrow as pa
 from scipy.stats import norm
 
 from synthetic.spec.presets import LATENTS
+from synthetic.spec.traps import TRAPS
 
-TRAP_KINDS = ("leak", "upstream_target", "process_leak", "shifted", "null_control",
-              "near_constant", "all_null", "weak", "noise", "high_cardinality", "constant",
-              "redundant", "low_fill", "missing_leak", "lookahead", "spend_leak", "honest",
-              "unstable", "one_value", "drift_window", "drift_moderate")  # fmt: skip
+# The kinds of the spec's trap columns, and the two the extra columns (`extra_columns`) add.
+TRAP_KINDS = tuple(
+    dict.fromkeys(
+        [t["kind"] for t in TRAPS if t["trap_column"] and t["column"]] + ["weak", "noise"]
+    )
+)
 
 
 def trap_name(name: str, kind: str) -> str:
@@ -130,14 +133,21 @@ def trap_summary(spec: dict) -> pd.DataFrame:
     return pd.DataFrame(spec["traps"], columns=SUMMARY_COLUMNS)
 
 
+def trap_window(record: dict) -> int:
+    """Months after its own that a trap row reads: its `w` (the leaks, the upstream target, the
+    missing leaks, the spend leak) or its shift `months`; 0 for a row that looks no month ahead.
+
+    The look-ahead buffer's depth is read from these two names, so a new look-ahead kind must call
+    its window `w` (or be `shifted` with `months`), else its window is cut without a word.
+    """
+    p = record["parameters"]
+    return p["months"] if record["kind"] == "shifted" else p.get("w", 0)
+
+
 def lookahead_months(spec: dict) -> int:
-    """Months after its own that a panel month's look-ahead columns read: the leaks', the upstream
-    target's, the missing leaks' and the spend leak's windows, the shifted columns' shifts, and
-    the process leaks' next month."""
-    windowed = ("leak", "upstream_target", "missing_leak", "spend_leak")
-    windows = [t["parameters"]["w"] for t in spec["traps"] if t["kind"] in windowed]
-    shifts = [t["parameters"]["months"] for t in spec["traps"] if t["kind"] == "shifted"]
-    return max(*windows, *shifts, 1)
+    """Months after its own that a panel month's look-ahead columns read: the longest window of
+    any trap row, and at least the process leaks' next month."""
+    return max([1, *(trap_window(t) for t in spec["traps"])])
 
 
 def _zipf_choice(
@@ -246,23 +256,22 @@ def noise_columns(
 def finalize_lookahead(
     spec: dict,
     frames: list[tuple[pd.DataFrame, pd.DataFrame]],
-    rng: np.random.Generator,
-    card_rng: np.random.Generator,
-    control_rng: np.random.Generator,
+    rngs: dict[str, np.random.Generator],
 ) -> pd.DataFrame:
     """The oldest buffered month's mart rows with the look-ahead columns, placed before the
     month's other trap columns.
 
     `frames` are consecutive panel months as (mart, oracle), the month to finalise first, then up
     to `lookahead_months` later ones (fewer at the panel's end). Draws, per row of the month: one
-    normal per calibrated leak, then the loan application uniform, from `rng` (the `leaks`
-    stream); the card application uniform, the offer fill uniform, then the offer code, from
-    `card_rng` (the `card_leaks` stream, so the 0.4.0 columns keep their draws); the U-shaped
-    leak's normal, then the deposit rate's value and blank uniforms, from `control_rng` (the
-    `control_leaks` stream, so the 0.5.0 columns keep theirs). The status and the spend leak draw
+    normal per calibrated leak, then the loan application uniform, from the `leaks`
+    stream; the card application uniform, the offer fill uniform, then the offer code, from
+    `card_leaks` (so the 0.4.0 columns keep their draws); the U-shaped leak's normal, then the
+    deposit rate's value and blank uniforms, from `control_leaks` (so the 0.5.0 columns keep
+    theirs); `rngs` holds the simulation's streams. The status and the spend leak draw
     nothing.
     """
     mart, n = frames[0][0], len(frames[0][0])
+    rng, card_rng, control_rng = rngs["leaks"], rngs["card_leaks"], rngs["control_leaks"]
     calibrated = [t for t in spec["traps"] if t["kind"] == "leak" and t["column"] != REVIEW_SCORE]
     codes = trap_record(spec, "missing_leak", OFFER_CODE)["parameters"]["codes"]
     normals, u = rng.standard_normal((n, len(calibrated))), rng.random(n)

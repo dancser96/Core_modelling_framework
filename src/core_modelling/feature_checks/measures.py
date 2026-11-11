@@ -19,8 +19,9 @@ import numpy as np
 import pandas as pd
 
 from core_modelling.statistics.cells import group_shares, pool_periods, shares, target_shares
-from core_modelling.statistics.concordance import CROSS_FIT_SE_INFLATION, cross_fitted_concordance
+from core_modelling.statistics.concordance import cross_fitted_concordance
 from core_modelling.statistics.distributions import merge_bins, psi
+from core_modelling.statistics.scope import cross_fit_unavailable, feature_se, unavailable_reason
 from core_modelling.tasks import TASK_SPECS
 
 PSI_GROUPS = 10  # the groups a numeric's bins are merged into for PSI, the null bin beside them
@@ -39,19 +40,14 @@ def effective_se(
     task: str,
     clients: dict[str, float],
 ) -> tuple[float, float]:
-    """A window concordance's SE as EDA computes it (`ranking.scope_statistics`) and its support
-    in effective events.
+    """A window concordance's SE as EDA computes it (`scope.feature_se` on `eda.json`'s
+    `clients`) and its support in effective events (the task's `client_support`).
 
-    `events` and `non_events` are the rows the concordance reads, scaled to effective clients by
-    the task's `client_support` on `eda.json`'s `clients`; the task's `concordance_se` at
-    `max(value, 1 − value)` (Hanley–McNeil is not symmetric in A, so a value below 0.5 would
-    look surer), a categorical's times `CROSS_FIT_SE_INFLATION`. `target_bin_shares` are the
-    read rows' target-bin shares (Kendall's SE reads them).
+    `events` and `non_events` are the rows the concordance reads; `target_bin_shares` their
+    target-bin shares (Kendall's SE reads them).
     """
-    spec = TASK_SPECS[task]
-    events, non_events = spec["client_support"](events, non_events, clients)
-    se = spec["concordance_se"](max(value, 1 - value), events, non_events, target_bin_shares)
-    return se * (CROSS_FIT_SE_INFLATION if kind == "categorical" else 1), float(events)
+    events, non_events = TASK_SPECS[task]["client_support"](events, non_events, clients)
+    return feature_se(value, events, non_events, target_bin_shares, kind, task), float(events)
 
 
 def lagged_concordance(
@@ -101,32 +97,15 @@ def lagged_concordance(
 def _lagged_reason(
     cells: pd.DataFrame, pooled: pd.DataFrame, counts: dict, kind: str, window: list[str], sign: int
 ) -> str:
-    """Why the lagged concordance cannot exist, decided before computing (the ranking's guards
-    on the lagged rows of `window[1:]`, pooled); '' when it can."""
-    if counts["events"] == 0:
-        return "not available: no events among the non-null lagged rows"
-    values = pooled.loc[~pooled["is_null"] & pooled["target_bin"].notna() & (pooled["n"] > 0)]
-    if values["target_bin"].nunique() < 2:
-        return "not available: a single target value among the non-null lagged rows"
-    if kind == "categorical":
-        return _lagged_cross_fit_reason(cells, window)
-    if sign == 0:
-        return "not available: no window concordance to take the direction from"
-    return ""
-
-
-def _lagged_cross_fit_reason(cells: pd.DataFrame, window: list[str]) -> str:
-    """Why a categorical's lagged cross-fit cannot exist: the encoding needs labelled current
-    values of the window in two client folds, and Somers' D a fold whose lagged rows of
-    `window[1:]` hold two target values."""
-    labelled = cells.loc[~cells["is_null"] & cells["target_bin"].notna() & (cells["n"] > 0)]
-    current = labelled.loc[~labelled["lagged"] & labelled["period"].isin(window)]
-    if current["fold"].nunique() < 2:
-        return "not available: labelled values in fewer than two client folds"
-    lagged = labelled.loc[labelled["lagged"] & labelled["period"].isin(window[1:])]
-    if not (lagged.groupby("fold")["target_bin"].nunique() >= 2).any():
-        return "not available: no client fold with two target values among the non-null lagged rows"
-    return ""
+    """Why the lagged concordance cannot exist, decided before computing (the scope's guards
+    on the lagged rows of `window[1:]`, pooled, a categorical's encoding fitted on the window's
+    current cells; a numeric's direction from the window's concordance); '' when it can."""
+    reason = unavailable_reason(pooled, counts, lagged=True)
+    if not reason and kind == "categorical":
+        reason = cross_fit_unavailable(cells, window[1:], window, lagged=True)
+    elif not reason and sign == 0:
+        reason = "no window concordance to take the direction from"
+    return f"not available: {reason}" if reason else ""
 
 
 def period_psi(cells: pd.DataFrame, kind: str, expected: str, actual: str) -> float:
@@ -141,21 +120,36 @@ def period_psi(cells: pd.DataFrame, kind: str, expected: str, actual: str) -> fl
     """
     current = cells.loc[~cells["lagged"]]
     first, second = (pool_periods(current, [period]) for period in (expected, actual))
-    return _pooled_psi(first, second, kind)
+    return _psi_against(_psi_reference(first, kind), second, kind)
 
 
-def _pooled_psi(first: pd.DataFrame, second: pd.DataFrame, kind: str) -> float:
-    """`period_psi` on two periods' pooled cells."""
+def _psi_reference(
+    cells: pd.DataFrame, kind: str
+) -> tuple[pd.Series | np.ndarray, pd.DataFrame | None]:
+    """The expected side of `period_psi` on one period's cells: a categorical's bin shares, or a
+    numeric's group shares with the groups (`_value_groups`) the actual period is cut by."""
     if kind == "categorical":
-        a, b = _bin_shares(first).align(_bin_shares(second), fill_value=0)
+        return _bin_shares(cells), None
+    groups = _value_groups(cells)
+    return group_shares(cells, groups), groups
+
+
+def _psi_against(
+    reference: tuple[pd.Series | np.ndarray, pd.DataFrame | None], cells: pd.DataFrame, kind: str
+) -> float:
+    """`period_psi` from a `_psi_reference` to another period's cells."""
+    expected, groups = reference
+    if kind == "categorical":
+        a, b = expected.align(_bin_shares(cells), fill_value=0)
         return psi(a.to_numpy(), b.to_numpy())
-    groups = _value_groups(first)
-    return psi(group_shares(first, groups), group_shares(second, groups))
+    return psi(expected, group_shares(cells, groups))
 
 
 def _bin_shares(pooled: pd.DataFrame) -> pd.Series:
     """Each bin's share of the pooled rows, the null bin included."""
     by_bin = pooled.groupby("bin")["n"].sum()
+    if by_bin.sum() == 0:
+        raise ValueError("period_psi: a period's cells hold no rows")
     return by_bin / by_bin.sum()
 
 
@@ -182,25 +176,30 @@ def per_period_table(
     latest), `rows` (all of the period's rows), `missing_share` and `psi` against the snapshot
     period (`period_psi`). The window's concordance per period is EDA's `concordance_per_period`.
     """
-    current = cells.loc[~cells["lagged"]]
-    by_feature = dict(tuple(current.groupby("feature")))
     compared = [(group, period) for group in PERIOD_GROUPS for period in periods[group]]
+    chosen = cells["feature"].isin(list(kinds)) & cells["period"].isin([p for _, p in compared])
+    current = cells.loc[~cells["lagged"] & chosen]
+    # one split, not a `pool_periods` per feature and period: the PSI helpers sum by bin anyway
+    by_cell = dict(tuple(current.groupby(["feature", "period"])))
+    absent = [(name, p) for name in kinds for _, p in compared if (name, p) not in by_cell]
+    if absent:
+        raise ValueError(f"per_period_table: no current cells for (feature, period) {absent[:5]}")
     rows = []
     for name, kind in kinds.items():
-        pooled = {period: pool_periods(by_feature[name], [period]) for _, period in compared}
+        # the snapshot's PSI groups are the same against every period: cut once per feature
+        reference = _psi_reference(by_cell[name, snapshot_period], kind)
         rows += [
-            _label_free_row(name, kind, group, period, pooled[period], pooled[snapshot_period])
+            {"feature": name, "period": period, "group": group,
+             "psi": _psi_against(reference, by_cell[name, period], kind)}
             for group, period in compared
-        ]
-    return pd.DataFrame(rows, columns=PER_PERIOD_COLUMNS)
+        ]  # fmt: skip
+    table = pd.DataFrame(rows, columns=["feature", "period", "group", "psi"])
+    return table.join(_period_rows(current), on=["feature", "period"])[PER_PERIOD_COLUMNS]
 
 
-def _label_free_row(
-    name: str, kind: str, group: str, period: str, pooled: pd.DataFrame, snapshot: pd.DataFrame
-) -> dict:
-    """One feature's label-free numbers in one period: its rows, missing share and PSI from the
-    snapshot period."""
-    counts = shares(pooled)
-    return {"feature": name, "period": period, "group": group, "rows": counts["rows"],
-            "missing_share": counts["missing_share"],
-            "psi": _pooled_psi(snapshot, pooled, kind)}  # fmt: skip
+def _period_rows(current: pd.DataFrame) -> pd.DataFrame:
+    """Per feature and period of the current cells, in one groupby: `rows` (all of the period's
+    rows) and `missing_share` (null rows / rows)."""
+    filled = current["n"].where(~current["is_null"], 0)
+    counts = current.assign(filled=filled).groupby(["feature", "period"])[["n", "filled"]].sum()
+    return pd.DataFrame({"rows": counts["n"], "missing_share": 1 - counts["filled"] / counts["n"]})

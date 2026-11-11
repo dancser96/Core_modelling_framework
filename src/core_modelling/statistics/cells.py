@@ -6,8 +6,10 @@ feature over some periods is a sum over its cells: `pool_periods` sums the perio
 `two_way_table` and `null_table` give the count tables the concordance reads and
 `target_shares` the table's target bins' shares, which its SE reads; `shares` gives the shares
 and counts the ledger and the quality findings read; `group_shares` and
-`level_share_difference` compare two distributions. Rows without a label (`target_bin` null:
-the gap and latest periods, unknown targets) count in the shares only (N4, N6).
+`level_share_difference` compare two distributions, `group_of_bins` placing bins in
+`merge_bins`' groups; `population_cells` gives one feature's cells, which count every eligible
+row. Rows without a label (`target_bin` null: the gap and latest periods, unknown targets)
+count in the shares only (N4, N6).
 
 Target bins are ordered by their mean target, `sum_y / n`: they are disjoint intervals of the
 target, so their means order them exactly (binary: `0` then `1`; regression: the quantile bins,
@@ -50,18 +52,12 @@ def pool_periods(cells: pd.DataFrame, periods: list[str], lagged: bool = False) 
     return pooled[["n", "sum_y", "sum_y2"]].sum(min_count=1)  # min_count: a null sum stays null
 
 
-def two_way_table(cells: pd.DataFrame, order: list[str] | None = None) -> np.ndarray:
-    """The labelled non-null rows as counts: feature bins (in `bin_order`, or in `order`, a list
-    of bin labels such as the levels sorted by their encoding) × target bins in target order."""
+def two_way_table(cells: pd.DataFrame) -> np.ndarray:
+    """The labelled non-null rows as counts: feature bins in `bin_order` × target bins in target
+    order."""
     labelled = _labelled(cells, "two_way_table")
     values = labelled.loc[~labelled["is_null"]]
-    if order is None:
-        order = list(values.sort_values("bin_order")["bin"].drop_duplicates())
-    elif len(set(order)) < len(order):
-        raise ValueError("two_way_table: `order` names a bin twice")
-    unplaced = sorted(set(values["bin"]) - set(order))
-    if unplaced:
-        raise ValueError(f"two_way_table: bins {unplaced[:5]} are not in `order`")
+    order = list(values.sort_values("bin_order")["bin"].drop_duplicates())
     table = values.pivot(index="bin", columns="target_bin", values="n")
     columns = _target_order(labelled)
     return table.reindex(index=order, columns=columns).fillna(0).to_numpy(dtype=float)
@@ -139,10 +135,37 @@ def group_shares(cells: pd.DataFrame, groups: pd.DataFrame) -> np.ndarray:
     if total == 0:
         raise ValueError("group_shares: the cells hold no rows")
     values = cells.loc[~cells["is_null"]]
-    group = np.searchsorted(firsts, values["bin_order"].to_numpy(), side="right") - 1
-    group = np.clip(group, 0, firsts.size - 1)
+    group = group_of_bins(firsts, values["bin_order"].to_numpy(), join_outer=True)
     counts = np.bincount(group, weights=values["n"].to_numpy(dtype=float), minlength=firsts.size)
     return np.append(counts, cells.loc[cells["is_null"], "n"].sum()) / total
+
+
+def group_of_bins(
+    firsts: np.ndarray | pd.Series, orders: np.ndarray | pd.Series, join_outer: bool = False
+) -> np.ndarray:
+    """Each bin order's place among the groups' first bin orders (`merge_bins`'
+    `bin_order_first`, ascending): the last group starting at or below it. A bin below the first
+    group joins it with `join_outer` (another period's bins may lie below the groups cut from
+    one period's), and is refused without; nothing lies above the last group."""
+    place = np.searchsorted(firsts, orders, side="right") - 1
+    if join_outer:
+        return np.maximum(place, 0)
+    if (place < 0).any():
+        below = sorted(set(np.asarray(orders)[place < 0].tolist()))
+        raise ValueError(
+            f"group_of_bins: bin orders {below[:5]} lie below the first group, which starts at "
+            f"{np.asarray(firsts)[0]}"
+        )
+    return place
+
+
+def population_cells(cells: pd.DataFrame) -> pd.DataFrame:
+    """One feature's current cells: every feature's count every eligible row (its null bin
+    included), so the first feature's give the population's labelled rows and targets."""
+    current = cells.loc[~cells["lagged"]]
+    if current.empty:
+        raise ValueError("population_cells: the cells hold no current rows")
+    return current.loc[current["feature"] == current["feature"].iloc[0]]
 
 
 def level_share_difference(a_cells: pd.DataFrame, b_cells: pd.DataFrame) -> float:

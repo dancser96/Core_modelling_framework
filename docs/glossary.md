@@ -87,11 +87,11 @@ Whether this glossary is also published to the wider unit is part of the open do
   `define` names a boolean condition that the entries after it, in either list, reuse by name
   and is dropped before the candidates are resolved; a `filter` keeps the rows where its
   condition is true (a null counts as false), with a required reason, and logs rows in → out.
-- **Frames:** what the dataset hands a stage: `Frames(snapshot, rows, train, test, validation,
-  log, meta)`. `snapshot` is the one period EDA collects (every unit of it after the analysis
-  filters, the modelling tags as columns, labels included); `rows` is the Spark frame of the
-  compared periods' eligible rows, never collected; train / test / validation serve Training on
-  (D-030, D-135; `docs/components/dataset.md`).
+- **Frames:** what the dataset hands a stage: `Frames(snapshot, rows, train, test, validation, log,
+  meta)`. `snapshot` is the one period EDA collects (every unit of it after the analysis filters,
+  the modelling tags as columns, labels included); `rows` is the Spark frame of the compared
+  periods' eligible rows, never collected; train / test serve Training, plus validation for
+  Evaluation (D-030, D-135; `docs/components/dataset.md`).
 - **Snapshot:** `eda.snapshot`, the one period EDA collects and analyses, default the window's
   last. Every snapshot statistic is that period's (D-135).
 - **Last labelled period:** the validation period, or the window's last period when
@@ -117,9 +117,14 @@ Whether this glossary is also published to the wider unit is part of the open do
   target's distribution per group), and one pivot table per stratum variable
   (`docs/components/eda.md`).
 - **Settings digest:** a short hash of the settings a stage's output depends on outside the
-  data-definition hash (EDA's: `features.kinds`, `strata`, `eda`, `time.validation_period`),
+  data-definition hash (EDA's: `features.kinds`, `strata`, `eda`, `time.validation_period`,
+  `decision`, `evaluation.slices`; Feature Checks' adds `feature_checks`),
   stored in the stage's json; a later stage refuses to read artifacts whose digest differs from
   the current resolved config's (`artifacts.check_upstream`, D-137).
+- **Run token:** a random 12-hex-character id one EDA or Feature Checks run writes into its stage
+  json (`run_token`) and into the feature ledger's sidecar (`runs`), so a reader can tell that the
+  ledger and a stage folder come from the same run (`read_ledger(..., expect=…)`;
+  `docs/components/feature_ledger.md`). It identifies a run, not its inputs: the hashes do that.
 - **Model input:** one saved table per name (`data.model_input`), written by `save_model_input`
   from the Target Factory notebook or `run a.yml b.yml --stages target_factory` for one or
   several use cases that share the entity's feature sources, keys and period: the sources
@@ -226,12 +231,13 @@ Whether this glossary is also published to the wider unit is part of the open do
   reruns EDA onwards and keeps the saved table (D-125). The **resolved config** is the config with the
   audit-log entries replayed: saved with every artifact and report, it reproduces a run and is what
   `recipe_hash` covers (D-125). "Frozen config" is the retired name for the resolved config.
-- **Housekeeping block:** the part of the resolved config that records the framework and key-library
-  versions, when the run was made and the run's identities. The config hash excludes it
-  (`docs/components/config.md` req. 2, D-088).
+- **Housekeeping block:** the part of the resolved config that records the framework version, when
+  it was resolved, the environment values used and the identities (the hashes, the last entry
+  replayed); the key-library versions and the run id join with Training's run. The config hash
+  excludes it (`docs/components/config.md` req. 2, D-088).
 - **Environment file:** `conf/local/environment.yml` (gitignored), the one file of environment
   facts: Spark settings, roots, the physical sources per entity by logical name, the collect
-  budget, the theme. It has its own schema (an unknown key fails loud), is loaded beside the
+  budget, the theme (null until the theme is built). It has its own schema (an unknown key fails loud), is loaded beside the
   config by a path argument or `CORE_MODELLING_ENVIRONMENT`, is never merged into it and sits
   outside every hash (D-130). `conf/base/` holds the committed use-case configs, the template and
   the environment file's example. "Base / local config" and the merge are retired.
@@ -427,8 +433,7 @@ Whether this glossary is also published to the wider unit is part of the open do
 
 - **Crunch:** the 2–3 week prototype (`legacy/propensity_crunch/`). **Phase 2:** the current
   build-out (`docs/context/project.md`).
-- **Depth levels:** full · deep · thin · stub (definitions in `docs/roadmap.md`). Not to be confused
-  with STUB / BUILD / MIN in `docs/reference/`.
+- **Depth levels:** full · deep · thin · stub (definitions in `docs/roadmap.md`).
 - **Walking skeleton:** every stage built thin end to end before any is deepened.
 - **Deepening round:** a milestone after the walking skeleton that takes chosen components from
   thin towards deep; at most 2–3 per phase (`docs/roadmap.md`).

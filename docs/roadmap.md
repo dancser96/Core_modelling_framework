@@ -15,7 +15,7 @@ Roles and the daily Lead DS sync: `docs/context/project.md` → People and rhyth
 
 | Phase | Ends when | Status |
 |---|---|---|
-| Original plan, Phases 0–1 (`docs/reference/`) | — | Overtaken by the crunch |
+| Original plan, Phases 0–1 | — | Overtaken by the crunch |
 | Crunch | First products scored end to end | Done (`legacy/propensity_crunch/`) |
 | **Phase 2** | The definition of done below is met and the code is moved into the bank | **In progress** |
 | Phase 3+ | — | [Phase 3 wishlist](#phase-3-wishlist) below |
@@ -228,6 +228,9 @@ the first cut. Stage 5 (integrations and release) runs in M4 and both run-throug
   (D-007, D-023, D-043, D-088), and so are the decision audit log (D-125), the level mapping (D-132), the
   layout, the environment file and the model input (D-129–D-131); built in M2.1, under the
   LDS's review (`worknotes/m2_1_foundation/review_guide.md`) — `config.md`
+- Config spine (M4): the replay flags the person entries that cite a superseded rule or stage
+  entry; `show_decisions`' default view hides run outputs and resolved flags and filters by
+  stage and by who decided — `config.md`
 - Artifact inventory: one table in `architecture.md` (artifact, owner doc, version field, writer,
   readers, compatibility rule) at M2.1 (D-007)
 - A `dev` preset of 20k clients in `synthetic/` for daily work on the skeleton: built (M2.1,
@@ -313,7 +316,7 @@ direction or needs people outside the team.
 | OD-08 | **Lifecycle:** MLflow for the registry and experiment tracking in Phase 2: is it available inside the bank? | The shape is settled (D-111): M2.4's own records map one-to-one onto MLflow; MLflow goes in with the other integrations in M4 once confirmed; `production.json` stays the pointer through major version 1, MLflow a store beside the own records. Its default flavors pickle, which is fine in the sandpit but not for what is promoted (D-051). Confirm availability at the platform learn session (by 11-06). MLflow fits the registry and experiment tracking better than monitoring (OD-13) | SDS + LDS, with the platform / MLOps team (D-079, OD-23) | `components/lifecycle.md` |
 | OD-12 | **Reporting:** the mandatory "core" views per task of the Evaluation report | The structure is shared by the three reports (summary page + core + extended, D-036). EDA's and Feature Checks' core views are settled with Stage 2's design (2026-11-02; `eda.md`, `feature_checks.md`, D-135); Evaluation's are needed when it is built (M2.3); proposal for binary in `evaluation.md` → Open questions | SDS + LDS | `components/evaluation.md` |
 | OD-18 | **Inference:** separate manifests from score files? | The format part is settled (D-016): the framework writes its own traceable scores table, the master layer, and consumable tables are built outside it. Still open: whether manifests sit beside or inside the score files; leaning: separate them, since manifests beside the score files break a Hive table over the scores (`inference.md`), with the layout from the LDS; designed with Inference (round 1a) | SDS + LDS | `components/inference.md` |
-| OD-23 | **Lifecycle:** who builds the registry and deployment, and at what point they join the project | The CDS routes downstream questions to the platform / MLOps team (D-079); to agree with that team whether they build these or advise. Until then, register / promote / deploy are thin but real (D-033). The original plan had a part-time ML engineering lane for registration, the deployment path and drift alerting (`docs/reference/`) | SDS + LDS, with the platform / MLOps team | `components/lifecycle.md` |
+| OD-23 | **Lifecycle:** who builds the registry and deployment, and at what point they join the project | The CDS routes downstream questions to the platform / MLOps team (D-079); to agree with that team whether they build these or advise. Until then, register / promote / deploy are thin but real (D-033). The original plan had a part-time ML engineering lane for registration, the deployment path and drift alerting | SDS + LDS, with the platform / MLOps team | `components/lifecycle.md` |
 
 ### Medium-term
 

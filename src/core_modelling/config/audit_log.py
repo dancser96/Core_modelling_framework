@@ -6,18 +6,17 @@ data definition (`audit_log_dir`, which carries the entity through the hash). En
 edited: a reversal is a new entry. The entry model and the replay (entries → resolved config) are
 in `replay.py`; this module stores and writes entries and holds the public functions
 `record_decision`, `resolve_config` and `show_decisions` (the CLI command `decide` is in
-`__main__`), `read_resolved_config` for a saved resolved config, and `record_stage_entry`, the
-writer of a stage's `flag` and `run` entries. The log is on the local filesystem only; the HDFS
-transport comes with M2.4.
+`__main__`), `read_resolved_config` for a saved resolved config, `load_entries`, a log's checked
+entries, and `record_stage_entry`, the writer of a stage's `flag` and `run` entries. The log is on
+the local filesystem only; the HDFS transport comes with M2.4.
 """
 
 import copy
 import getpass
 import json
 import logging
-import re
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import date
 from pathlib import Path
 from typing import Literal
 
@@ -26,6 +25,7 @@ import yaml
 from pydantic import ValidationError
 
 from core_modelling import __version__
+from core_modelling.artifacts import local_path, utc_now, write_json
 from core_modelling.config import load_config
 from core_modelling.config.identities import (
     HASH_VERSION,
@@ -35,6 +35,7 @@ from core_modelling.config.identities import (
     short,
 )
 from core_modelling.config.levels import level_filled
+from core_modelling.config.migrations import CURRENT_SCHEMA_VERSION, MIGRATIONS, migrate
 from core_modelling.config.replay import (
     LOGGABLE_SETTINGS,
     By,
@@ -52,11 +53,12 @@ from core_modelling.config.replay import (
 from core_modelling.config.schema import UseCaseConfig
 from core_modelling.dataset.model_input import saved_candidates
 from core_modelling.environment import EnvironmentConfig, audit_log_dir, load_environment
-from core_modelling.periods import period_spec
+from core_modelling.periods import Period, period_spec
 
 __all__ = [
     "Entry",
     "LOGGABLE_SETTINGS",
+    "load_entries",
     "read_resolved_config",
     "record_decision",
     "resolve_config",
@@ -65,25 +67,8 @@ __all__ = [
 
 LOG_SCHEMA_VERSION = 1
 COLUMNS = ["seq", "time", "by", "stage", "op", "what", "reason", "evidence"]
-# The labels `periods.PERIODS` writes (2025-06 · 2025-W23 · 2025-06-15), part of the entry
-# format: a run's `periods` compare with the validation period's label.
-PERIOD_LABEL_FORMS = {
-    "month": r"\d{4}-(0[1-9]|1[0-2])",
-    "week": r"\d{4}-W(0[1-9]|[1-4]\d|5[0-3])",
-    "day": r"\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])",
-}
 
 logger = logging.getLogger(__name__)
-
-
-def _local_folder(log_dir: str) -> Path:
-    """The log folder as a local path; a URI never reaches `pathlib` (T2)."""
-    if "://" in log_dir:
-        raise NotImplementedError(
-            f"audit log at {log_dir}: the hdfs:// transport arrives with M2.4; use a local "
-            "roots.data until then"
-        )
-    return Path(log_dir)
 
 
 def _read_entry(path: Path) -> Entry:
@@ -110,7 +95,7 @@ def _read_entry(path: Path) -> Entry:
 def read_entries(log_dir: str) -> list[Entry]:
     """Every entry of a log folder in `seq` order; a gap or a duplicate fails loud, a missing
     folder is an empty log."""
-    folder = _local_folder(log_dir)
+    folder = local_path(log_dir)
     if not folder.is_dir():
         return []
     entries = sorted((_read_entry(path) for path in folder.glob("*.json")), key=lambda e: e.seq)
@@ -120,14 +105,16 @@ def read_entries(log_dir: str) -> list[Entry]:
     return entries
 
 
-def _load_entries(
-    cfg: UseCaseConfig, entity: str, env: EnvironmentConfig, *, warn_if_missing: bool = False
+def load_entries(
+    cfg: UseCaseConfig, entity: str, env: EnvironmentConfig, *, warn_if_missing: bool = True
 ) -> list[Entry]:
-    """The log's entries; one written under another data definition fails citing its `seq`. A
-    reader warns when the folder is missing, since a wrong root looks like an empty log."""
+    """The entries of the use case's log on `entity`, checked: one written under another data
+    definition fails citing its `seq`. A reader warns when the folder is missing, since a wrong
+    root looks like an empty log; a writer, which starts a new log there, passes
+    `warn_if_missing=False`."""
     log_dir = audit_log_dir(env, cfg, entity)
     entries = read_entries(log_dir)
-    if warn_if_missing and not _local_folder(log_dir).is_dir():
+    if warn_if_missing and not local_path(log_dir).is_dir():
         logger.warning("no audit log at %s: 0 entries replayed", log_dir)
     expected = data_definition_hash(cfg, entity)
     for entry in entries:
@@ -139,15 +126,19 @@ def _load_entries(
     return entries
 
 
-def _now() -> str:
-    """The UTC time as an ISO string to the second, with its offset."""
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
 def read_resolved_config(path: str | Path) -> UseCaseConfig:
-    """A resolved config saved by `resolve_config`, read back as is: no level defaults to apply,
-    and its replayed lists and housekeeping are the replay's own."""
-    return UseCaseConfig.model_validate(yaml.safe_load(Path(path).read_text()))
+    """A resolved config saved by `resolve_config` or a stage, migrated like every config load
+    (§2) and otherwise read back as is: no level defaults to apply, and its replayed lists and
+    housekeeping are the replay's own; a schema error names the file. The stored `housekeeping`
+    (its hashes among them) describes the config as it was resolved, before any migration."""
+    raw = yaml.safe_load(Path(path).read_text())
+    if not isinstance(raw, dict):
+        raise ValueError(f"resolved config {path} must be a YAML mapping, got {type(raw).__name__}")
+    raw = migrate(raw, MIGRATIONS, CURRENT_SCHEMA_VERSION, f"resolved config {path}")
+    try:
+        return UseCaseConfig.model_validate(raw)
+    except ValidationError as exc:
+        raise ValueError(f"resolved config {path}: {exc}") from exc
 
 
 def resolve_config(
@@ -158,8 +149,15 @@ def resolve_config(
     save_to: str | Path | None = None,
 ) -> UseCaseConfig:
     """The config with entries 1–`upto` (default: all) replayed and validated, its housekeeping
-    filled; with `save_to`, also written as one YAML file."""
-    entries = _load_entries(cfg, entity, env, warn_if_missing=True)
+    filled; with `save_to`, also written as one YAML file. `cfg` is the config as loaded: a
+    resolved one is refused, since replaying onto its replayed values would give another input
+    than the file's whenever the log has changed since."""
+    if "resolved_input_hash" in (cfg.housekeeping or {}):
+        raise ValueError(
+            "resolve_config takes the config as loaded (load_config), not a resolved one: the "
+            "replay starts from the file's values"
+        )
+    entries = load_entries(cfg, entity, env)
     if upto is not None and not 0 <= upto <= len(entries):
         raise ValueError(f"upto={upto} is outside the log, which has {len(entries)} entries")
     entries = entries[:upto]
@@ -168,7 +166,7 @@ def resolve_config(
     _check_not_compared(resolved, entries, "the replayed config is stale")
     resolved.housekeeping = {
         "framework_version": __version__,
-        "resolved_at": _now(),
+        "resolved_at": utc_now(),
         "entity": entity,
         "config_hash": config_hash(cfg),
         "data_definition_hash": data_definition_hash(cfg, entity),
@@ -211,17 +209,13 @@ def _check_includable(entries: list[Entry], current: dict, features: list[str]) 
     """`include` reverses a person's `exclude` only: the feature is excluded now, and no effective
     entry (one no revert undid) is a rule's exclude of it, since a rule's exclude is reversed by
     changing the rule. Any rule's exclude counts, not only the last: a person's later re-exclude
-    is a no-op that must not hide it."""
+    is a no-op that must not hide it. An excluded feature always has an effective exclude:
+    the replay writes `features.excluded` from the effective excludes alone."""
     effective = effective_entries(entries)
     for feature in features:
         if feature not in current["features"]["excluded"]:
             raise ValueError(f"{feature!r} is not excluded, so there is nothing to include")
         excludes = [e for e in effective if e.op == "exclude" and feature in e.features]
-        if not excludes:
-            raise ValueError(
-                f"{feature!r} is excluded by the config file itself, not by an entry; "
-                "edit the config"
-            )
         by_rule = next((e for e in excludes if e.by.kind == "rule"), None)
         if by_rule is not None:
             raise ValueError(
@@ -359,12 +353,11 @@ def _revert_fields(cfg: UseCaseConfig, current: dict, entries: list[Entry], to_s
 def _write_entry(entry: Entry, log_dir: str) -> Entry:
     """Create `<seq>.json`, never overwriting: a number another writer took meanwhile fails, and
     the decision is re-run against the log as it is then."""
-    folder = _local_folder(log_dir)
+    folder = local_path(log_dir)
     folder.mkdir(parents=True, exist_ok=True)
-    text = json.dumps(entry.model_dump(mode="json", by_alias=True, exclude_unset=True), indent=2)
+    data = entry.model_dump(mode="json", by_alias=True, exclude_unset=True)
     try:
-        with open(folder / f"{entry.seq:04d}.json", "x") as file:
-            file.write(text)
+        write_json(data, folder / f"{entry.seq:04d}.json", exclusive=True)
     except FileExistsError:
         raise RuntimeError(
             f"audit log {log_dir}: entry {entry.seq} was written by another writer meanwhile; "
@@ -401,7 +394,7 @@ def record_decision(
     if not reason or not reason.strip():
         raise ValueError("a decision needs a non-empty reason")
     cfg, env = load_config(config_path), load_environment(env_path)
-    entries = _load_entries(cfg, entity, env)
+    entries = load_entries(cfg, entity, env, warn_if_missing=False)
     current = replay(cfg, entries)
     if op == "set":
         fields = _set_fields(current, entries, operand)
@@ -414,7 +407,7 @@ def record_decision(
     default_stage = fields.pop("stage")
     entry = Entry(
         seq=len(entries) + 1,
-        time=_now(),
+        time=utc_now(),
         by=By(kind="person", id=getpass.getuser()),
         stage=stage or default_stage,
         op=op,
@@ -428,17 +421,31 @@ def record_decision(
     return _write_entry(entry, audit_log_dir(env, cfg, entity))
 
 
+def _is_period_label(label: str, spec: Period) -> bool:
+    """Whether `label` is one `spec.label` writes: read as an ISO date (a month's from its first
+    day; a week's `2025-W23` is an ISO form `date.fromisoformat` reads from Python 3.11), it is
+    that date's label."""
+    for written in (label, f"{label}-01"):
+        try:
+            day = date.fromisoformat(written)
+        except ValueError:  # not this form; the other may read it
+            continue
+        if spec.label(day) == label:
+            return True
+    return False
+
+
 def _check_period_labels(cfg: UseCaseConfig, periods: list[str] | None) -> None:
-    """A run's `periods`: a non-empty list of labels in the form the config's period is written
-    (`PERIOD_LABEL_FORMS`), so each compares with the validation period's label."""
+    """A run's `periods`: a non-empty list of labels as `periods.PERIODS` writes them for the
+    config's period, so each compares with the validation period's label."""
     if not periods:
         raise ValueError(
             "a `run` entry needs `periods`, a non-empty list of the period labels the run compared"
         )
-    form = PERIOD_LABEL_FORMS[cfg.time.period]
-    bad = [label for label in periods if not re.fullmatch(form, label)]
+    spec = period_spec(cfg)
+    bad = [label for label in periods if not _is_period_label(label, spec)]
     if bad:
-        example = period_spec(cfg).label(cfg.time.observation_window.last)
+        example = spec.label(cfg.time.observation_window.last)
         raise ValueError(
             f"run refused: periods {bad} are not {cfg.time.period} labels as the framework writes "
             f"them, e.g. {example!r}"
@@ -473,7 +480,7 @@ def record_stage_entry(
         raise ValueError("a stage entry needs a non-empty reason")
     if features:
         check_candidates(cfg, features, f"{op} {finding} refused")
-    entries = _load_entries(cfg, entity, env)
+    entries = load_entries(cfg, entity, env, warn_if_missing=False)
     operands = {
         "features": features,
         "finding": finding,
@@ -484,7 +491,7 @@ def record_stage_entry(
     }
     entry = Entry(
         seq=len(entries) + 1,
-        time=_now(),
+        time=utc_now(),
         by=By(kind="stage", id=stage),
         stage=stage,
         op=op,
@@ -530,6 +537,6 @@ def show_decisions(cfg: UseCaseConfig, entity: str, env: EnvironmentConfig) -> p
             "reason": entry.reason,
             "evidence": "; ".join(entry.evidence),
         }
-        for entry in _load_entries(cfg, entity, env, warn_if_missing=True)
+        for entry in load_entries(cfg, entity, env)
     ]
     return pd.DataFrame(rows, columns=COLUMNS)

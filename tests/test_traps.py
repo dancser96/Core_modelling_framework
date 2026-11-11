@@ -28,10 +28,10 @@ from pyspark.sql import SparkSession
 
 from core_modelling.artifacts import read_stage
 from core_modelling.config import UseCaseConfig, load_config
-from core_modelling.eda.ranking import NULL_SHARE_RANGE
 from core_modelling.feature_checks.findings import FINDINGS
 from core_modelling.ledger import read_ledger
 from core_modelling.run import run
+from core_modelling.statistics.scope import NULL_SHARE_RANGE
 from synthetic.mechanisms.mart import parse_column
 from synthetic.output import read_output
 from synthetic.truth.oracle import STANDARD_TARGETS, realised_target
@@ -203,12 +203,10 @@ def _asserted_on(trap: dict, target: str) -> bool:
 
 def _may_leak_by_design(trap: dict) -> bool:
     """Whether a trap row's columns may raise a `NEVER_ON_LEGITIMATE` flag by design: a trap
-    column, a row not asserted (`NOT_CHECKS`, `KIND_CHECKS`), or a real-column row whose own
-    findings include one."""
-    key = _key(trap)
-    own = set(TRAP_FINDINGS.get(key, ()))
-    listed = key in NOT_CHECKS or key in KIND_CHECKS
-    return trap["trap_column"] or listed or bool(own & NEVER_ON_LEGITIMATE)
+    column, or a real-column row whose own findings include one. A row only listed (`NOT_CHECKS`,
+    `KIND_CHECKS`) is not exempt: its real columns (`income`, `age`, `cc_limit`, …) stay guarded."""
+    own = set(TRAP_FINDINGS.get(_key(trap), ()))
+    return trap["trap_column"] or bool(own & NEVER_ON_LEGITIMATE)
 
 
 def test_every_trap_row_is_mapped_or_listed(dev_output: tuple[str, dict]) -> None:

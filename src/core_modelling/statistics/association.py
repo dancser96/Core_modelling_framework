@@ -49,20 +49,6 @@ def spearman_matrix(frame: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(matrix, index=frame.columns, columns=frame.columns)
 
 
-def cramers_v(a: pd.Series, b: pd.Series) -> float:
-    """Cramér's V of two categoricals, null a level; NaN ("not compared") with one level."""
-    return _cramers_v(_codes(a), _codes(b))
-
-
-def correlation_ratio(numeric: pd.Series, categorical: pd.Series) -> float:
-    """η of the numeric's ranks on the categorical's levels (null a level), over the rows where
-    the numeric is filled; NaN with fewer than `MIN_SHARED_ROWS` of them or one level."""
-    if len(numeric) != len(categorical):
-        raise ValueError("correlation_ratio: the two columns differ in length")
-    ranks = numeric.astype(float).rank(na_option="keep").to_numpy()
-    return _eta(ranks, _codes(categorical))
-
-
 def pairwise_sample(frame: pd.DataFrame) -> pd.DataFrame:
     """The rows the pairwise association reads: a seeded sample of `PAIRWISE_ROWS` rows above the
     cap, else the frame as it is (so a capped frame passes unchanged)."""

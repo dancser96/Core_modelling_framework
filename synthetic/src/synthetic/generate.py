@@ -3,8 +3,9 @@
 The month loop is three functions every driver shares: `start_simulation` draws the starting book
 (holdings drawn from each client's history) and calibrates the products on it;
 `advance_simulation` runs one month and returns the panel months that are final;
-`finish_simulation` returns what is still buffered at the end. `generate_mart` collects the months
-in memory; `output.write_mart` writes each to disk as it comes. `generate_extract` builds the
+`finish_simulation` returns what is still buffered at the end. `run_months` loops over them, so
+a driver only says what to do with the months that come out: `generate_mart` collects them in
+memory; `output.write_mart` writes each to disk as it comes. `generate_extract` builds the
 feature-store extract from the finished clean panel.
 
 Each month: clients leave and new clients join (rates per profile), the hidden traits take one
@@ -18,6 +19,8 @@ windows read have run; burn-in months run but come out nowhere. Dirty data is pl
 finished panel. Each mechanism draws from its own random stream (`STREAMS`), so a new stream never
 changes another stream's columns; within a stream, a new draw moves every later one.
 """
+
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -110,10 +113,7 @@ def generate_mart(
     """
     sim = start_simulation(preset, n_clients, seed, n_months, n_extra_columns)
     frames = []
-    while sim["month"] < sim["last_month"]:
-        sim, final = advance_simulation(sim)
-        frames += final
-    frames += finish_simulation(sim)
+    sim = run_months(sim, frames.extend)
     mart = pd.concat([m for m, _ in frames], ignore_index=True)
     oracle = pd.concat([o for _, o in frames], ignore_index=True)
     if not dirty:
@@ -121,6 +121,19 @@ def generate_mart(
     sim, planted = dirty_panel(sim, frames)
     truth = complete_truth(sim, mart, oracle)
     return pd.concat([m for m, _ in planted], ignore_index=True), oracle, truth
+
+
+def run_months(
+    sim: dict, on_final: Callable[[list[tuple[pd.DataFrame, pd.DataFrame]]], None]
+) -> dict:
+    """Run the simulation to its last month, then empty the look-ahead buffer; return the finished
+    simulation. `on_final` gets the (mart, oracle) months that are final after each step, oldest
+    first."""
+    while sim["month"] < sim["last_month"]:
+        sim, final = advance_simulation(sim)
+        on_final(final)
+    on_final(finish_simulation(sim))
+    return sim
 
 
 def generate_extract(mart: pd.DataFrame, oracle: pd.DataFrame, truth: dict) -> pd.DataFrame:
@@ -246,9 +259,8 @@ def finish_simulation(sim: dict) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
     """The months still buffered when the panel ends, oldest first, their look-ahead columns
     from the months that follow inside the panel (truncated windows)."""
     spec, buffer, rngs = sim["spec"], sim["buffer"], sim["rngs"]
-    draws = rngs["leaks"], rngs["card_leaks"], rngs["control_leaks"]
     return [
-        (finalize_lookahead(spec, buffer[start:], *draws), buffer[start][1])
+        (finalize_lookahead(spec, buffer[start:], rngs), buffer[start][1])
         for start in range(len(buffer))
     ]
 
@@ -339,8 +351,7 @@ def buffer_month(
     buffer = [*sim["buffer"], month_rows(sim, chances, mart_amounts, oracle_values, traps)]
     if len(buffer) <= lookahead_months(spec):
         return sim | {"buffer": buffer}, []
-    draws = rngs["leaks"], rngs["card_leaks"], rngs["control_leaks"]
-    final = (finalize_lookahead(spec, buffer, *draws), buffer[0][1])
+    final = (finalize_lookahead(spec, buffer, rngs), buffer[0][1])
     return sim | {"buffer": buffer[1:]}, [final]
 
 

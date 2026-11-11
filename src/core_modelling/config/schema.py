@@ -69,10 +69,16 @@ class Decision(StrictModel):
     ] = Field(default=["population_base_rate"], min_length=1)
 
     @model_validator(mode="after")
-    def _check_top_n_has_n(self) -> "Decision":
-        """A top-N decision needs the list size."""
+    def _check_n_matches_type(self) -> "Decision":
+        """A top-N decision needs the list size, and only a top-N decision reads it, so an `n`
+        under another type would be ignored."""
         if self.type == "top_n" and self.n is None:
             raise ValueError("decision.type 'top_n' needs decision.n (the list size)")
+        if self.type != "top_n" and self.n is not None:
+            raise ValueError(
+                f"decision.n is read only when decision.type is 'top_n'; decision.type is "
+                f"{self.type!r}: leave decision.n null"
+            )
         return self
 
 

@@ -1,33 +1,16 @@
 """Synthetic data: the feature mart (names, column order, null rule, written types),
 with every rollup, recency and ratio recomputed independently by Spark window functions."""
 
-from collections.abc import Callable
-
 import pandas as pd
 import pytest
 from pyspark.sql import Column, SparkSession, Window, WindowSpec
 from pyspark.sql import functions as F
 
 from synthetic.checks.mart import snapshot_columns
-from synthetic.checks.suite import run_checks
 from synthetic.mechanisms.mart import parse_column
 from synthetic.spec.presets import PRESETS
 
 TOLERANCE = 1e-6
-
-
-def test_mart_rules_hold_on_unit(unit_output: tuple[str, dict]) -> None:
-    """On the unit preset, every row of the mart family (all rules) passes."""
-    checks = run_checks(unit_output[0], ["mart"])["mart"]
-    rules = checks[checks["rule"]]
-    assert len(rules) == len(checks) and rules["passed"].all(), rules[~rules["passed"]].to_string()
-
-
-@pytest.mark.slow
-def test_mart_checks_pass_on_canonical(canonical_checks: Callable[..., pd.DataFrame]) -> None:
-    """Every row passes at the canonical size, on a fifth of the clients (every column is read)."""
-    checks = canonical_checks("mart")
-    assert checks["passed"].all(), checks[~checks["passed"]].to_string()
 
 
 def test_mart_columns_follow_the_snapshot(unit: tuple[pd.DataFrame, pd.DataFrame, dict]) -> None:

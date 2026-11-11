@@ -28,6 +28,7 @@ from synthetic.checks.table import (
     row,
     share_row,
     side_row,
+    trap_parameters,
     violations_row,
 )
 from synthetic.truth.oracle import window_probability
@@ -39,23 +40,13 @@ WAIT = "support_wait_min_trap_drift_window"
 CHANNEL = "contact_channel_trap_drift_moderate"
 CONTROL_COLUMNS = [HONEST, VENDOR, STATEMENT, WAIT, CHANNEL]
 
-# Restated from the trap summary (docs/components/test_harness.md).
+# The columns' parameters (loadings, noise, shares, levels, step months) come from the spec rows
+# (`trap_parameters`); what is set here is the checks' own: thresholds and the target's window.
 SCORE = "score_cc"  # the oracle score both scores read, standardised over the month's clients
 TARGET, WINDOW = "cc_acquire", 3
-HONEST_LOADING, HONEST_SIGMA = 1.0, {"even": 0.3, "odd": 0.9}
-VENDOR_LOADING = 0.6  # in even months; noise alone in odd ones
 VENDOR_EVEN_AUC_MIN = 0.58
-STATEMENT_VALUE, STATEMENT_NULL_SHARE = "e-statement", 0.02
-NEW_STATEMENT, NEW_STATEMENT_SHARE, NEW_STATEMENT_MONTH = "paper", 0.004, "2026-03"
-WAIT_NULL_SHARE, WAIT_STEP_MONTH = 0.3, "2025-06"
 STEP_PSI_MIN, STABLE_PSI_MAX = 0.25, 0.1
-CHANNEL_STEP_MONTH = "2025-06"
-CHANNEL_SHARES = {  # until the step month, and from it
-    "before": {"branch": 0.4, "phone": 0.3, "web": 0.2, "app": 0.1},
-    "after": {"branch": 0.25, "phone": 0.3, "web": 0.25, "app": 0.2},
-}
 CHANNEL_PSI_RANGE = (0.10, 0.25)
-NEW_CHANNEL, NEW_CHANNEL_SHARE, NEW_CHANNEL_MONTH = "chat", 0.03, "2026-03"
 
 # What `oracle.window_probability` reads for cc_acquire: the profile, tenure and the card flag.
 MART_COLUMNS = [*KEYS, "subsegment", "relationship_days", "cc_flag", *CONTROL_COLUMNS]
@@ -71,11 +62,11 @@ def check_controls(mart: pd.DataFrame, oracle: pd.DataFrame, truth: dict) -> pd.
     target = realised_target(panel, TARGET, WINDOW)
     chance = window_probability(panel[mart.columns], panel[oracle.columns], truth, TARGET, WINDOW)
     rows = (
-        _check_honest(panel, month, parity, target, chance)
-        + _check_vendor(panel, month, parity, target)
-        + _check_statement(panel, month)
-        + _check_wait(panel, month)
-        + _check_channel(panel, month)
+        _check_honest(truth, panel, month, parity, target, chance)
+        + _check_vendor(truth, panel, month, parity, target)
+        + _check_statement(truth, panel, month)
+        + _check_wait(truth, panel, month)
+        + _check_channel(truth, panel, month)
     )
     return pd.DataFrame(rows)
 
@@ -98,6 +89,7 @@ def _correlation(panel: pd.DataFrame, column: str, this: np.ndarray) -> float:
 
 
 def _check_honest(
+    truth: dict,
     panel: pd.DataFrame,
     month: pd.Series,
     parity: dict[str, pd.Timestamp],
@@ -108,12 +100,13 @@ def _check_honest(
     loading / √(loading² + σ²) (the standardised score has variance 1, the noise is independent),
     and its AUC for card acquisition is below the oracle's; that AUC is higher in the even month,
     whose noise is quieter."""
+    p = trap_parameters(truth, HONEST)
     rows, aucs, n = [], {}, 0
     for name, at in parity.items():
         this = (month == at).to_numpy()
         stratum = f"{name} month {at:%Y-%m}"
-        sigma = HONEST_SIGMA[name]
-        expected = HONEST_LOADING / np.sqrt(HONEST_LOADING**2 + sigma**2)
+        loading, sigma = p["loading"], p["sigma"][name]
+        expected = loading / np.sqrt(loading**2 + sigma**2)
         check = f"honest {HONEST}: correlation with {SCORE}"
         rows.append(
             fisher_row(check, stratum, this.sum(), expected, _correlation(panel, HONEST, this))
@@ -131,12 +124,17 @@ def _check_honest(
 
 
 def _check_vendor(
-    panel: pd.DataFrame, month: pd.Series, parity: dict[str, pd.Timestamp], target: pd.Series
+    truth: dict,
+    panel: pd.DataFrame,
+    month: pd.Series,
+    parity: dict[str, pd.Timestamp],
+    target: pd.Series,
 ) -> list[dict]:
     """The vendor score: correlated with the oracle score at loading / √(loading² + 1) in the even
     month and not at all in the odd one, where its AUC for card acquisition is 0.5; in the even
     month that AUC is above 0.58."""
-    expected = {"even": VENDOR_LOADING / np.sqrt(VENDOR_LOADING**2 + 1), "odd": 0.0}
+    loading = trap_parameters(truth, VENDOR)["loading"]  # in even months; noise alone in odd ones
+    expected = {"even": loading / np.sqrt(loading**2 + 1), "odd": 0.0}
     rows = []
     for name, at in parity.items():
         this = (month == at).to_numpy()
@@ -155,51 +153,49 @@ def _check_vendor(
     return rows
 
 
-def _check_statement(panel: pd.DataFrame, month: pd.Series) -> list[dict]:
+def _check_statement(truth: dict, panel: pd.DataFrame, month: pd.Series) -> list[dict]:
     """The one-value column: the value or null before the new level's month, the value, the new
-    level or null from it; nulls on 2% of the rows; the new level on 0.4% of the filled rows from
-    its month."""
+    level or null from it; nulls on the spec's share of the rows; the new level on its share of
+    the filled rows from its month."""
+    p = trap_parameters(truth, STATEMENT)
+    only, new, new_month = p["value"], p["new_level"], p["new_level_month"]
     value = panel[STATEMENT]
     filled = value.notna().to_numpy()
-    late = (month >= pd.Timestamp(NEW_STATEMENT_MONTH)).to_numpy()
-    allowed = np.where(late, value.isin([STATEMENT_VALUE, NEW_STATEMENT]), value == STATEMENT_VALUE)
+    late = (month >= pd.Timestamp(new_month)).to_numpy()
+    allowed = np.where(late, value.isin([only, new]), value == only)
     bad = pd.Series(filled & ~allowed)
     check = f"one value {STATEMENT}"
     return [
-        violations_row(
-            f"{check}: {STATEMENT_VALUE!r} or null before {NEW_STATEMENT_MONTH}", bad[~late]
-        ),
-        violations_row(
-            f"{check}: {STATEMENT_VALUE!r}, {NEW_STATEMENT!r} or null from {NEW_STATEMENT_MONTH}",
-            bad[late],
-        ),
-        share_row(f"{check}: null", "all", STATEMENT_NULL_SHARE, (~filled).sum(), len(value)),
+        violations_row(f"{check}: {only!r} or null before {new_month}", bad[~late]),
+        violations_row(f"{check}: {only!r}, {new!r} or null from {new_month}", bad[late]),
+        share_row(f"{check}: null", "all", p["null_share"], (~filled).sum(), len(value)),
         share_row(
-            f"{check}: {NEW_STATEMENT!r} among the filled rows",
-            f"from {NEW_STATEMENT_MONTH}",
-            NEW_STATEMENT_SHARE,
-            (value[late] == NEW_STATEMENT).sum(),
+            f"{check}: {new!r} among the filled rows",
+            f"from {new_month}",
+            p["new_level_share"],
+            (value[late] == new).sum(),
             (filled & late).sum(),
         ),
     ]
 
 
-def _check_wait(panel: pd.DataFrame, month: pd.Series) -> list[dict]:
-    """The wait: null on 30% of the rows, never 0; the PSI of its values in the three months from
-    the step against the three before is at least 0.25, and between two later months, the third
-    after the step and the panel's last, below 0.1.
+def _check_wait(truth: dict, panel: pd.DataFrame, month: pd.Series) -> list[dict]:
+    """The wait: null on the spec's share of the rows, never 0; the PSI of its values in the three
+    months from the step against the three before is at least 0.25, and between two later months,
+    the third after the step and the panel's last, below 0.1.
 
     PSI bins are the earlier sample's deciles (`table.psi`).
     """
+    p = trap_parameters(truth, WAIT)
     wait = panel[WAIT].to_numpy(dtype=float)
     null = np.isnan(wait)
-    step, latest = pd.Timestamp(WAIT_STEP_MONTH), month.max()
+    step, latest = pd.Timestamp(p["step_month"]), month.max()
     earlier, later = step - pd.DateOffset(months=3), step + pd.DateOffset(months=3)
     before, after = (_values_in(wait, month, start, 3) for start in (earlier, step))
     reference, current = (_values_in(wait, month, start, 1) for start in (later, latest))
     check = f"window drift {WAIT}"
     return [
-        share_row(f"{check}: null", "all", WAIT_NULL_SHARE, null.sum(), len(wait)),
+        share_row(f"{check}: null", "all", p["null_share"], null.sum(), len(wait)),
         violations_row(f"{check}: no zero among the values", pd.Series(wait[~null] == 0)),
         side_row(
             f"{check}: PSI of the values across the step",
@@ -227,12 +223,15 @@ def _values_in(
     return values[inside & ~np.isnan(values)]
 
 
-def _check_channel(panel: pd.DataFrame, month: pd.Series) -> list[dict]:
+def _check_channel(truth: dict, panel: pd.DataFrame, month: pd.Series) -> list[dict]:
     """The contact channel: its level shares in the month before the step and the month after,
-    the PSI between those two months within [0.10, 0.25]; the new level on 3% of the rows from
-    its month, never before."""
+    the PSI between those two months within [0.10, 0.25]; the new level on its share of the rows
+    from its month, never before."""
+    p = trap_parameters(truth, CHANNEL)
+    shares = {side: dict(zip(p["levels"], p[side], strict=True)) for side in ("before", "after")}
+    new_level, new_month = p["new_level"], p["new_level_month"]
     channel = panel[CHANNEL]
-    step = pd.Timestamp(CHANNEL_STEP_MONTH)
+    step = pd.Timestamp(p["step_month"])
     sides = {"before": step - pd.DateOffset(months=1), "after": step + pd.DateOffset(months=1)}
     in_month = {side: channel[(month == at).to_numpy()] for side, at in sides.items()}
     check = f"moderate drift {CHANNEL}"
@@ -245,9 +244,9 @@ def _check_channel(panel: pd.DataFrame, month: pd.Series) -> list[dict]:
             len(in_month[side]),
         )
         for side, at in sides.items()
-        for level, share in CHANNEL_SHARES[side].items()
+        for level, share in shares[side].items()
     ]
-    new = (month >= pd.Timestamp(NEW_CHANNEL_MONTH)).to_numpy()
+    new = (month >= pd.Timestamp(new_month)).to_numpy()
     rows += [
         range_row(
             f"{check}: PSI of the level shares across the step",
@@ -257,14 +256,12 @@ def _check_channel(panel: pd.DataFrame, month: pd.Series) -> list[dict]:
             categorical_psi(in_month["before"], in_month["after"]),
         ),
         share_row(
-            f"{check}: share of {NEW_CHANNEL!r}",
-            f"from {NEW_CHANNEL_MONTH}",
-            NEW_CHANNEL_SHARE,
-            (channel[new] == NEW_CHANNEL).sum(),
+            f"{check}: share of {new_level!r}",
+            f"from {new_month}",
+            p["new_level_share"],
+            (channel[new] == new_level).sum(),
             new.sum(),
         ),
-        violations_row(
-            f"{check}: no {NEW_CHANNEL!r} before {NEW_CHANNEL_MONTH}", channel[~new] == NEW_CHANNEL
-        ),
+        violations_row(f"{check}: no {new_level!r} before {new_month}", channel[~new] == new_level),
     ]
     return rows

@@ -1,5 +1,5 @@
 # Evaluation
-**Status:** legacy-only · **Legacy:** `src/evaluate.py`, `src/importance.py`, `src/analysis.py`
+**Status:** designing · **Legacy:** `src/evaluate.py`, `src/importance.py`, `src/analysis.py`
 **Related:** [reporting](reporting.md) · [training](training.md) · [dataset](dataset.md) · [lifecycle](lifecycle.md)
 (gates) · D-030, D-035, D-036, D-037, D-038, D-049, D-050, D-082, D-083, D-091, D-098, D-100 · OD-12
 

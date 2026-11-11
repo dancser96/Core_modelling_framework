@@ -43,18 +43,17 @@ over a non-positive whisker, T30); an empty section reads "Not available: <reaso
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-import yaml
 from pandas.io.formats.style import Styler
 
-from core_modelling.config.identities import short
 from core_modelling.config.schema import UseCaseConfig
 from core_modelling.dataset.frames import GB, SNAPSHOT_CALLOUT
 from core_modelling.eda.deep_dives import MIN_BIN_SUPPORT
+from core_modelling.eda.population import headline_formats
 from core_modelling.eda.profile import QUANTILES, TOP_LEVELS
 from core_modelling.eda.slices import RANDOM, skipped_slices
 from core_modelling.reporting import blocks, charts
-from core_modelling.reporting.formats import COUNT, SHARE, column_formats, plain_number
-from core_modelling.reporting.html import paragraph, preformatted, style_table
+from core_modelling.reporting.formats import COUNT, SHARE, column_formats, format_of, plain_number
+from core_modelling.reporting.html import paragraph, style_table
 from core_modelling.reporting.theme import THEME
 from core_modelling.statistics.association import PAIRWISE_ROWS
 from core_modelling.tasks import TASK_SPECS
@@ -110,7 +109,7 @@ def build_views(
             tables["reference_groups"], tables["funnel"], resolved.task
         ),
         "correlation": _correlation_view(
-            tables["correlation"], ranking, resolved.eda.key_features.max_correlation
+            tables["correlation"], ranking, resolved.eda.key_features.max_correlation, resolved.task
         ),
         "profile": _profile_views(tables["profile"]),
         "concordance_per_period": _per_period_view(
@@ -133,23 +132,49 @@ def _summary_views(meta: dict, resolved: UseCaseConfig) -> dict:
         "slices": list(meta["slices"]),
         "snapshot": f"{resolved.eda.snapshot}: {meta['snapshot_period']}",
         "pairwise_cap": f"{PAIRWISE_ROWS:,}",
-        "replayed_to": meta["replayed_to"],
-        "config_hash": short(meta["config_hash"]),
-        "data_definition_hash": short(meta["data_definition_hash"]),
+        **blocks.identity_values(meta),
     }
-    choices = [
-        {**blocks.CHOICES[name], **({"value": values[name]} if name in values else {})}
-        for name in CHOICE_NAMES
-    ]
-    numbers = {name.replace("_", " "): value for name, value in meta["headline"].items()}
     spec = TASK_SPECS[resolved.task]
     notes = (resolved.eda.bins, spec["estimate_noun"], spec["support_name"], MIN_BIN_SUPPORT)
     return {
-        "choices": blocks.choices_block(resolved, choices),
-        "how_to_read": blocks.how_to_read(*notes),
-        "headline": blocks.headline(numbers),
+        "choices": blocks.choices_block(resolved, CHOICE_NAMES, values),
+        "how_to_read": _how_to_read(*notes),
+        "headline": blocks.headline(meta["headline"], headline_formats(resolved.task)),
         "warnings": blocks.warnings_block(meta["warnings"]),
     }
+
+
+def _how_to_read(
+    bins: int | None, estimate_noun: str, support_name: str, group_support: int
+) -> list[str]:
+    """The five how-to-read notes of a report that shows concordance, lift and intervals
+    (reporting.md req. 8).
+
+    `bins` is `eda.bins`; with None every statistic is exact and the binning sentence is left
+    out. `estimate_noun` and `support_name` are the task's words for its estimate (`rate`,
+    `mean`) and its support; `group_support` is the support a key feature's group needs.
+    """
+    concordance = (
+        "Concordance says how well a feature orders clients by the target: 0.5 is no better "
+        "than chance, 1 a perfect ordering, whichever way round (the direction column says "
+        "which). For a yes/no target it is the AUC of that feature alone."
+    )
+    if bins is not None:
+        concordance += (
+            f" Numerics are read on {bins} quantile bins; pairs inside one bin count half."
+        )
+    notes = [
+        concordance,
+        f"Lift is a group's {estimate_noun} divided by the snapshot's base {estimate_noun}: 1 is "
+        "the base, 2 twice the base.",
+        "Intervals are 95%: Wilson for a rate, Student t for a mean. On charts they are the "
+        "error bars.",
+        f"Grey means too little support, still shown: fewer than strata.min_events "
+        f"{support_name} ({group_support} in a key feature's groups). Read the interval, not "
+        "the point.",
+        "null is the clients without a value: their own bar or level, always last.",
+    ]
+    return [paragraph(note) for note in notes]
 
 
 def _target_views(tables: dict[str, pd.DataFrame], resolved: UseCaseConfig) -> dict:
@@ -270,7 +295,7 @@ def _concordance_row(name: str, tables: dict[str, pd.DataFrame], task: str) -> l
     if periods["concordance"].isna().all():
         reasons = periods.loc[periods["unavailable"] != "", "unavailable"]
         why = "; ".join(dict.fromkeys(reasons.str.removeprefix("not available: ")))
-        chart = paragraph(f"Not available: {name}'s concordance per period ({why}).")
+        chart = blocks.not_available(f"{name}'s concordance per period ({why})")
     else:
         chart = charts.grouped_lines(
             periods, "period", "concordance", support="support", reference=0.5, from_zero=False,
@@ -375,7 +400,7 @@ def _stratum_pivot(
         f"{name} × {variable}: the target per group and level, coloured by lift, greyed below "
         f"strata.min_events = {min_events} {spec['support_name']}"
     )
-    formats = dict.fromkeys(shown.columns, spec["estimate_format"])
+    formats = dict.fromkeys(shown.columns, format_of("estimate", task))
     return style_table(shown, formats, lift, greyed, caption=caption)
 
 
@@ -425,7 +450,7 @@ def _section_rows(part: pd.DataFrame, section: str) -> pd.DataFrame:
 
 
 def _correlation_view(
-    correlation: pd.DataFrame, ranking: pd.DataFrame, max_correlation: float
+    correlation: pd.DataFrame, ranking: pd.DataFrame, max_correlation: float, task: str
 ) -> list:
     """The association heatmap of the key features, the method on hover (one without a compared
     pair among them left out and counted; "Not available" when fewer than two have one, D-035),
@@ -434,10 +459,10 @@ def _correlation_view(
     inside = correlation["a"].isin(keys) & correlation["b"].isin(keys)
     pairs = correlation.loc[inside & correlation["statistic"].notna()]
     compared = [name for name in keys if name in set(pairs["a"]) | set(pairs["b"])]
-    represented = _represented_view(correlation, ranking, max_correlation)
+    represented = _represented_view(correlation, ranking, max_correlation, task)
     if len(compared) < 2:
-        why = "Not available: fewer than two key features have a compared pair."
-        return [paragraph(why), represented]
+        why = "fewer than two key features have a compared pair"
+        return [blocks.not_available(why), represented]
     both = pd.concat([pairs, pairs.rename(columns={"a": "b", "b": "a"})], ignore_index=True)
     matrix, hover = (
         both.pivot(index="a", columns="b", values=column)
@@ -456,7 +481,7 @@ def _correlation_view(
 
 
 def _represented_view(
-    correlation: pd.DataFrame, ranking: pd.DataFrame, max_correlation: float
+    correlation: pd.DataFrame, ranking: pd.DataFrame, max_correlation: float, task: str
 ) -> Styler | str:
     """The candidates the key-feature rule skipped, in rank order, each with the key feature that
     represents it and their association; a line saying none when it skipped nothing."""
@@ -474,7 +499,7 @@ def _represented_view(
         f"{rule} with the key feature named, on the same capped rows"
     )
     shown = table[["candidate", "represented_by", "association", "method"]]
-    return style_table(shown, {"association": "{:.3f}"}, caption=caption)
+    return style_table(shown, column_formats(shown, task), caption=caption)
 
 
 def _slices_views(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseConfig) -> dict:
@@ -485,7 +510,7 @@ def _slices_views(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCase
     note = _decision_paragraph(resolved, rows, support, meta["snapshot_base"])
     slices = tables["slices"]
     if slices.empty:
-        return {"decision_note": note, "slices": [paragraph("Not available: no key feature.")]}
+        return {"decision_note": note, "slices": [blocks.not_available("no key feature")]}
     curve = _capture_chart(tables["capture_curve"], slices, resolved.task)
     return {"decision_note": note, "slices": [_slices_table(slices, resolved, rows), curve]}
 
@@ -550,7 +575,7 @@ def _capture_chart(curve: pd.DataFrame, slices: pd.DataFrame, task: str) -> go.F
     if curve.empty:
         reasons = slices.loc[slices["unavailable"] != "", "unavailable"]
         why = "; ".join(dict.fromkeys(reasons.str.removeprefix("not available: ")))
-        return paragraph(f"Not available: the capture curve ({why}).")
+        return blocks.not_available(f"the capture curve ({why})")
     fig = charts.grouped_lines(
         curve, "share", "capture", group="feature", insufficient=None, x_numeric=True,
         title="Capture by share of rows<br><sup>each key feature alone, best first; random: a "
@@ -583,7 +608,7 @@ def _profile_views(profile: pd.DataFrame) -> list:
     for kind, view in {"numeric": numeric, "categorical": categorical}.items():
         part = profile.loc[profile["kind"] == kind, view["columns"]].reset_index(drop=True)
         if part.empty:
-            views.append(paragraph(f"Not available: no {kind} candidate."))
+            views.append(blocks.not_available(f"no {kind} candidate"))
         else:
             views.append(style_table(part, formats, caption=view["caption"]))
     return views
@@ -606,7 +631,7 @@ def _per_period_view(
         f"{resolved.strata.min_events} {support}; blank where not available "
         "(tables/concordance_per_period's unavailable says why)"
     )
-    formats = dict.fromkeys(shown.columns, "{:.3f}")
+    formats = dict.fromkeys(shown.columns, format_of("concordance", resolved.task))
     # a period the reindex adds (none in the table) is blank, not greyed
     greyed = greyed.astype("boolean").fillna(False).astype(bool)
     return style_table(shown, formats, greyed=greyed, caption=caption)
@@ -616,7 +641,7 @@ def _sources_view(sources: pd.DataFrame) -> Styler | str:
     """The sources' matched shares per compared period; "Not available" when the table holds no
     joined source (decided from its columns, D-035)."""
     if sources.columns.tolist() == ["period", "rows"]:
-        return paragraph("Not available: the spine is the only source.")
+        return blocks.not_available("the spine is the only source")
     caption = (
         "The spine's rows per compared period (window, gap, latest) and over them all, and the "
         "share of them each joined feature source matched: a share well below 1 means that "
@@ -638,20 +663,18 @@ def _appendix_views(
     )
     collect = pd.DataFrame(meta["collect"]).drop(columns="step")
     counts = dict.fromkeys(collect.columns.drop("frame"), COUNT)
-    config = yaml.safe_dump(resolved.model_dump(mode="json"), sort_keys=False, allow_unicode=True)
     times = meta["timings"]
     seconds = {**times["seconds"], "association (within statistics)": times["association_seconds"]}
-    timings = pd.DataFrame({"phase": list(seconds), "seconds": list(seconds.values())})
     kinds_caption = "Kinds from the schema (override: features.kinds) and each column's source"
-    timed = (f"Seconds per phase; {times['cells_estimate']:,} cells estimated, "
+    estimate = times["cells_estimate"]  # null unless eda.bins is null (exact statistics)
+    estimated = "" if estimate is None else f" ({estimate:,} estimated before the passes)"
+    timed = (f"Seconds per phase; {times['cells']:,} cells counted{estimated}, "
              f"{times['numeric_null_masks']:,} distinct numeric null masks")  # fmt: skip
     return {
         "kinds": style_table(kinds, caption=kinds_caption),
         "ledger": style_table(ledger, column_formats(ledger, resolved.task), caption="The ledger"),
-        "resolved_config": preformatted(config),
-        "decisions": style_table(decisions, caption="The audit log's entries, replayed in order"),
         "collect": style_table(collect, counts, caption="Collected frames (bytes)"),
-        "timings": style_table(timings, {"seconds": "{:.1f}"}, caption=timed),
+        **blocks.appendix(resolved, decisions, seconds, timed),
     }
 
 
@@ -691,7 +714,7 @@ def eda_warnings(
 
 def _nested(views: dict[str, list], reason: str) -> list:
     """Each entry as its own subsection, or one "Not available" line when there is none."""
-    return list(views.items()) or [paragraph(f"Not available: {reason}.")]
+    return list(views.items()) or [blocks.not_available(reason)]
 
 
 def report_sections(views: dict) -> list[tuple[str, list]]:

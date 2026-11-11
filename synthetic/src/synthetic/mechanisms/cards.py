@@ -131,6 +131,38 @@ def step_card(
     }
 
 
+def step_card_month(
+    spec: dict,
+    profiles: np.ndarray,
+    income: np.ndarray,
+    repay_share: np.ndarray,
+    log_part: np.ndarray,
+    dz: np.ndarray,
+    month: np.datetime64,
+    holdings: dict[str, np.ndarray],
+    last_balance: np.ndarray,
+    last_limit: np.ndarray,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, np.ndarray]]:
+    """One month of the card from last month's balance and limit: (limit, wanted spend, its parts,
+    `step_card`'s result).
+
+    A new card gets a new limit; a card held at the end of last month is the one with a limit.
+    Shared by the monthly mechanism and the regression oracle, whose arrays carry a paths axis.
+    Draws: limit tiers, then the wanted spend (travel month, shares).
+    """
+    held, held_before = holdings["cc_held"], last_limit > 0
+    new_limits = draw_limits(spec, profiles, income, dz[..., LATENTS.index("credit")], rng)
+    limit = np.where(held, np.where(holdings["cc_gained"], new_limits, last_limit), 0.0)
+    wanted, parts = wanted_spend(spec, profiles, income, log_part, dz, month, rng)
+    step = step_card(
+        last_balance, limit, holdings["cc_revolver_active"], held, held_before,
+        holdings["cc_activity_active"], wanted, repay_share,
+        spec["levels"]["card"]["monthly_interest"],
+    )  # fmt: skip
+    return limit, wanted, parts, step
+
+
 def capped_parts(parts: np.ndarray, wanted: np.ndarray, spend: np.ndarray) -> np.ndarray:
     """The wanted parts scaled down to the spend actually made, in cents adding up to it."""
     shares = parts / np.where(wanted > 0, wanted, 1.0)[..., None]
@@ -168,16 +200,10 @@ def card_amounts(
     A new card gets a new limit; a card held at the end of last month is the one with a limit.
     Draws: limit tiers, the wanted spend (travel month, shares), then the spend count.
     """
-    card, held = spec["levels"]["card"], holdings["cc_held"]
-    held_before = state["cc_limit"] > 0
     income = clients["true_income"].to_numpy(dtype=float)
-    new_limits = draw_limits(spec, profiles, income, dz[:, LATENTS.index("credit")], rng)
-    limit = np.where(held, np.where(holdings["cc_gained"], new_limits, state["cc_limit"]), 0.0)
-    wanted, parts = wanted_spend(spec, profiles, income, log_part, dz, month, rng)
-    step = step_card(
-        state["cc_bal"], limit, holdings["cc_revolver_active"], held, held_before,
-        holdings["cc_activity_active"], wanted, clients["repay_share"].to_numpy(dtype=float),
-        card["monthly_interest"],
+    limit, wanted, parts, step = step_card_month(
+        spec, profiles, income, clients["repay_share"].to_numpy(dtype=float), log_part, dz, month,
+        holdings=holdings, last_balance=state["cc_bal"], last_limit=state["cc_limit"], rng=rng,
     )  # fmt: skip
     parts = capped_parts(parts, wanted, step["spend"])
     counts = spec["levels"]["counts"]

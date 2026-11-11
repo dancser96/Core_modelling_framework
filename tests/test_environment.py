@@ -94,6 +94,15 @@ def test_source_takes_the_locator_of_its_format() -> None:
         Source(format="feature_store")
 
 
+def test_a_theme_is_refused_until_it_is_built() -> None:
+    """Nothing reads `theme` yet, so a value would be ignored; null loads."""
+    with pytest.raises(
+        ValidationError, match="the report theme is not built yet.*leave theme null"
+    ):
+        EnvironmentConfig(schema_version=1, roots=Roots(data="/data"), theme="corporate.yml")
+    assert EnvironmentConfig(schema_version=1, roots=Roots(data="/data")).theme is None
+
+
 def test_spark_extra_refuses_named_and_fixed_keys() -> None:
     """A key with a named field, or one the framework fixes, is refused with the way to set it."""
     with pytest.raises(ValidationError, match="use the named field 'shuffle_partitions'"):

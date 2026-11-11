@@ -8,18 +8,22 @@ the tables written), `resolved_config.yml`, `log.json` and the text files the st
 temporary sibling and swapped in only once every file is written, so a crash leaves the previous
 run's folder (or none), never half a stage. A stage renders its report first, saves the ledger
 next and writes its folder last, so `<stage>.json` is the commit marker.
-The next stage reads it with `read_stage` and refuses it with `check_upstream` when its data
-definition or the settings it was computed from (`settings_meta`, a digest plus the values, so the
-refusal names the changed path) no longer match the resolved config. `write_parquet`, `write_json`
-and `read_parquet` are shared with the ledger (`ledger.py`). Local paths only in 0.x, so `pathlib`
-is used and a URI is refused (T2); the HDFS transport comes for every artifact at once in M2.4
-(D-136).
+A stage's meta opens with `stage_identity` (the resolved config's hashes, and the digest and values
+of the settings in `SETTINGS_PATHS_BY_STAGE`) and carries the run's `new_run_token`, which the
+ledger's sidecar records too, so `read_ledger` pairs the two exactly. The next stage reads it with
+`read_upstream`: `read_stage`, then `check_upstream`, which refuses it when its data definition or
+its settings (named by path) no longer match the resolved config. `local_path`, `utc_now`,
+`write_parquet`, `write_json` and `read_parquet` are shared with the ledger, the audit log and the
+model input. Local paths only in 0.x, so `pathlib` is used and a URI is refused (T2); the HDFS
+transport comes for every artifact at once in M2.4 (D-136).
 """
 
 import hashlib
 import json
 import os
+import secrets
 import shutil
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -28,15 +32,28 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-import yaml
 
 from core_modelling import __version__
 from core_modelling.config.identities import canonical_json, short
-from core_modelling.config.replay import get_at
+from core_modelling.config.replay import check_resolved, dump_resolved, get_at
 from core_modelling.config.schema import UseCaseConfig
+from core_modelling.environment import EnvironmentConfig, feature_dir
 
-STAGE_SCHEMA_VERSION = 1
+STAGE_SCHEMA_VERSION = 2  # 2: the meta carries the run's `run_token` (11-10)
 STAMP_KEYS = ("schema_version", "stage", "framework_version", "written_at", "tables")
+HOUSEKEEPING_KEYS = ("entity", "config_hash", "data_definition_hash", "resolved_input_hash",
+                     "hash_version", "replayed_to")  # fmt: skip
+# EDA's settings: the validation period decides the compared periods and the population counts
+# yet is outside the data-definition hash (D-088); `decision` and `evaluation.slices` shape its
+# decision-slices view.
+_EDA_SETTINGS = ["features.kinds", "strata", "eda", "time.validation_period", "decision",
+                 "evaluation.slices"]  # fmt: skip
+# The settings each stage's digest covers, which the next stage checks; Feature Checks': EDA's
+# (the cells its steps read) and its thresholds.
+SETTINGS_PATHS_BY_STAGE: dict[str, list[str]] = {
+    "eda": _EDA_SETTINGS,
+    "feature_checks": [*_EDA_SETTINGS, "feature_checks"],
+}
 
 
 @dataclass
@@ -56,11 +73,12 @@ class StageResult:
 
 
 def local_path(folder: str) -> Path:
-    """A local folder as a `Path`; a URI is refused until the HDFS transport (T2, D-136)."""
+    """A local folder or file as a `Path`; a URI is refused until the HDFS transport (T2,
+    D-136)."""
     if "://" in folder:
         raise NotImplementedError(
-            f"{folder}: artifacts are written to local paths only until the HDFS transport "
-            "arrives with M2.4 (D-136); use a local roots.data"
+            f"{folder}: local paths only until the HDFS transport arrives with M2.4 (D-136); "
+            "use a local roots.data or source path"
         )
     return Path(folder)
 
@@ -68,6 +86,18 @@ def local_path(folder: str) -> Path:
 def utc_now() -> str:
     """The UTC time as an ISO string to the second, with its offset."""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def lap(start: float) -> tuple[float, float]:
+    """The seconds since `start` (a `time.perf_counter()`), rounded, and the new start."""
+    now = time.perf_counter()
+    return round(now - start, 2), now
+
+
+def new_run_token() -> str:
+    """A short random hex token naming one stage run, written into its `<stage>.json` and the
+    ledger's sidecar so the two are paired exactly."""
+    return secrets.token_hex(6)
 
 
 def _to_json(value: object) -> object:
@@ -88,16 +118,18 @@ def _to_json(value: object) -> object:
     raise TypeError(f"{type(value).__name__} is not JSON-serialisable: {value!r}")
 
 
-def write_json(data: dict | list, path: Path) -> None:
+def write_json(data: dict | list, path: Path, exclusive: bool = False) -> None:
     """`data` as indented JSON, dates as ISO strings and numpy values as Python; a NaN or inf
-    fails loud, since strict JSON readers reject it."""
+    fails loud, since strict JSON readers reject it. `exclusive` never overwrites: an existing
+    file raises `FileExistsError` (the audit log's entries)."""
     try:
         text = json.dumps(data, indent=2, default=_to_json, allow_nan=False)
     except ValueError as err:
         raise ValueError(
             f"{path}: {err}; write None for a missing value, never NaN or inf"
         ) from err
-    path.write_text(text)
+    with open(path, "x" if exclusive else "w") as file:
+        file.write(text)
 
 
 def write_parquet(frame: pd.DataFrame, path: Path) -> None:
@@ -134,10 +166,7 @@ def _write_files(result: StageResult, temporary: Path, name: str) -> list[str]:
     write_json({**stamp, **result.meta}, temporary / f"{name}.json")
     write_json(result.log, temporary / "log.json")
     # The same body as `write_resolved`, without its header: the entries are not in the result.
-    config = yaml.safe_dump(
-        result.config.model_dump(mode="json"), sort_keys=False, allow_unicode=True
-    )
-    (temporary / "resolved_config.yml").write_text(config)
+    (temporary / "resolved_config.yml").write_text(dump_resolved(result.config))
     return [*written, f"{name}.json", "log.json", "resolved_config.yml"]
 
 
@@ -180,7 +209,8 @@ def write_stage(
     rendered `report.html`), committed with the rest. Returns the paths written by their path
     relative to the folder, plus `folder` itself. The stage saves the ledger before calling it,
     so `<name>.json` is the commit marker: a crash in between leaves a new ledger beside the old
-    json, which `check_upstream` then refuses, never an old ledger beside a new json."""
+    json, whose run tokens then differ and `read_ledger(..., expect=...)` refuses, never an old
+    ledger beside a new json."""
     reserved = sorted(set(STAMP_KEYS) & set(result.meta))
     if reserved:
         raise ValueError(f"stage {name}: the meta may not set {reserved}; write_stage stamps them")
@@ -246,8 +276,8 @@ def _settings(resolved: UseCaseConfig, paths: list[str]) -> dict[str, object]:
 
 
 def settings_digest(resolved: UseCaseConfig, paths: list[str]) -> str:
-    """A short sha256 of the canonical JSON of the values at the dotted `paths` (EDA's:
-    `features.kinds`, `strata`, `eda`, `time.validation_period`)."""
+    """A short sha256 of the canonical JSON of the values at the dotted `paths` (a stage's are in
+    `SETTINGS_PATHS_BY_STAGE`)."""
     text = canonical_json(_settings(resolved, paths))
     return short(hashlib.sha256(text.encode("utf-8")).hexdigest())
 
@@ -261,22 +291,33 @@ def settings_meta(resolved: UseCaseConfig, paths: list[str]) -> dict:
     }
 
 
-def check_upstream(meta: dict, resolved: UseCaseConfig, paths: list[str]) -> None:
+def stage_identity(resolved: UseCaseConfig, stage: str) -> dict:
+    """The head of a stage's meta: the resolved config's `HOUSEKEEPING_KEYS`, then the digest and
+    values of the stage's settings (`SETTINGS_PATHS_BY_STAGE`), the ones the run used."""
+    check_resolved(resolved, f"stage_identity for {stage}")
+    return {
+        **{key: resolved.housekeeping[key] for key in HOUSEKEEPING_KEYS},
+        **settings_meta(resolved, SETTINGS_PATHS_BY_STAGE[stage]),
+    }
+
+
+def check_upstream(meta: dict, resolved: UseCaseConfig) -> None:
     """Refuse an upstream stage's artifacts that no longer fit the resolved config: written for
-    another data definition, or computed with other values at `paths` (naming the first one)."""
-    missing = [k for k in ("stage", "data_definition_hash", "settings_digest") if k not in meta]
+    another data definition, or computed with other values at the stage's settings paths
+    (`SETTINGS_PATHS_BY_STAGE`, naming the first one that changed)."""
+    check_resolved(resolved, "check_upstream")
+    required = ("stage", "data_definition_hash", "settings_digest", "run_token")
+    missing = [k for k in required if k not in meta]
     if missing:
+        stage = meta.get("stage", "the upstream stage")
         raise ValueError(
-            f"the upstream stage's meta lacks {missing}: write_stage stamps `stage`, and the "
-            "stage's meta carries its data_definition_hash and settings_meta(...); rerun it"
+            f"{stage}'s meta lacks {missing}: write_stage stamps `stage`, and the stage's meta "
+            "carries stage_identity(...) and its run_token (an older framework's artifacts lack "
+            f"some); rerun {stage}"
         )
     stage = meta["stage"]
-    expected = (resolved.housekeeping or {}).get("data_definition_hash")
-    if expected is None:
-        raise ValueError(
-            "check_upstream needs the resolved config, whose housekeeping carries the "
-            "data-definition hash (resolve_config fills it)"
-        )
+    paths = SETTINGS_PATHS_BY_STAGE[stage]
+    expected = resolved.housekeeping["data_definition_hash"]
     stored = meta["data_definition_hash"]
     if stored != expected:
         raise ValueError(
@@ -296,6 +337,16 @@ def check_upstream(meta: dict, resolved: UseCaseConfig, paths: list[str]) -> Non
         f"{stage} ran with {changed} = {recorded.get(changed, '(not recorded)')!r}; the resolved "
         f"config has {current[changed]!r}: rerun {stage}"
     )
+
+
+def read_upstream(
+    env: EnvironmentConfig, resolved: UseCaseConfig, entity: str, stage: str
+) -> tuple[dict, dict[str, pd.DataFrame]]:
+    """An upstream stage's json and tables from its folder of the data definition, refused by
+    `read_stage` when missing and by `check_upstream` when stale."""
+    meta, tables = read_stage(feature_dir(env, resolved, entity, stage), stage)
+    check_upstream(meta, resolved)
+    return meta, tables
 
 
 def remove_stage(folder: str) -> None:

@@ -62,7 +62,10 @@ notebook headless and in place (`jupyter execute --inplace <notebook>`; the SDS,
 2026-11-10).
 
 A package that other packages pull in must be pinned even before our code uses it: without the
-pins, pip resolved scipy 1.17.1 and plotly 7.1.0 locally (2026-10-14).
+pins, pip resolved scipy 1.17.1 and plotly 7.1.0 locally (2026-10-14). The package's own
+`pyproject.toml` declares what `core_modelling` imports, scipy, plotly and jinja2 among them, with
+ranges that hold the pins, so a wheel installed into the base image from the package index
+imports the reports' modules.
 
 **Installed on top, like FLAML:** optuna 5.0.0 (the version `pip install optuna` resolves to inside
 the bank; the predefined-model tuning path, Phase 3, D-020). Its API is unverified here: check
@@ -127,7 +130,9 @@ environment file `conf/local/environment.yml` (D-130):
 - Root paths for data, models, registry and outputs (per entity where needed, OD-06)
 - Source resolution: logical source → Hive table or path (the synthetic dataset on a laptop), or the
   feature store (OD-26)
-- The report theme file (the mechanism in Phase 2; the corporate look after internalisation)
+- The report theme file (not built: the environment file's `theme` must stay null; the theme
+  file is release 1.0's reporting depth, roadmap → Depth per component; the corporate look after
+  internalisation)
 
 The framework code never branches on "am I inside the bank". It calls the adapter, and the config
 decides.

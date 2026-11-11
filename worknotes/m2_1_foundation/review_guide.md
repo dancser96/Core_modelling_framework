@@ -10,7 +10,7 @@ the environment adapter; 10-27 Target Factory; 10-28 Target Factory and the data
 then the second round whose answers became the addendum, built the same day; 10-29 questions
 answered, two changes made, the second example use case added). Every remark is applied.
 What remains for Stage 1: the LDS's read of the data code and the deletion of this folder at
-sign-off. Version 0.2.0 is Stage 1's label until then.
+sign-off. Stage 1 was built as version 0.2.0; the package is at 0.3.0 since Stage 2.
 
 **What Stage 1 is.** One config file per use case, validated at load with the automation
 level's defaults, hashed (D-088) and frozen in its data part once the model input is saved
@@ -65,9 +65,11 @@ Docs first, then the configs, then the tests (they say what the code promises), 
     and earlier defines only) and `resolve_candidates`.
 12. `src/core_modelling/dataset/split.py` (one hash draw in [0, 1), salted, T20), `contract.py`
     (the shared checks and the null callout, fed by the saved share, around the task's),
-    `frames.py` (`build_frames` top down: the window for EDA, its eligible rows for Feature
-    Checks, the modelling frames; `collect_frame`), `model_input.py` (`save_model_input` for one
-    config or a list, the sidecar at schema 3, `read_model_input_metadata`'s refusal order,
+    `frames.py` (`build_frames(cfg, entity, env, spark, stage, features=None)` top down,
+    `STAGE_PARTS`: the snapshot and the Spark `rows` for EDA; train and test for Training and
+    also validation for Evaluation, with the features passed only; Feature Checks gets no frame;
+    `collect_frame`), `model_input.py` (`save_model_input` for one
+    config or a list, the sidecar at schema 4, `read_model_input_metadata`'s refusal order,
     `read_model_input` returning the prepared panel, `saved_candidates` without Spark).
 13. `src/core_modelling/config/replay.py` and `audit_log.py`: the entry model, `replay` with
     `revert` restarting from the slice, `resolve_config(upto=…)`, `record_decision`,
@@ -139,12 +141,14 @@ The dataset:
   AND of the tags. A define in either list serves the steps after it. A condition that names
   the target, a key, the split, `eligible` or another filter's tag, or a non-deterministic
   function, fails naming the step; a null condition counts as false.
-- The window frame (EDA) holds every client of the window after the analysis filters, the
-  holders present with `non_holders = 0` and `eligible = 0`; Feature Checks' frame is its
-  eligible rows; the lineage column `cc_flag` is gone; the tag and the helper columns are not
-  candidates.
-- The modelling frames hold eligible rows with a known target only, from the window and the
-  validation period; no client is in both train and test; every frame has the same columns.
+- EDA's snapshot holds every client of its period after the analysis filters, the holders
+  present with `non_holders = 0` and `eligible = 0`, and `rows` the eligible rows of the
+  compared periods; Feature Checks reads EDA's artifacts and gets no frame; the lineage column
+  `cc_flag` is gone; the tag and the helper columns are not candidates.
+- The modelling frames hold eligible rows with a known target only: train and test from the
+  window for Training, which never gets the validation period, and also validation for
+  Evaluation; no client is in both train and test; every frame has the same columns (the keys,
+  the features passed, `target`, `split`).
 - The log's order is the invariants' order: join, eligibility (analysis then modelling),
   contract (on the eligible window before the split and any sampling), null-target, sampling
   (only when declared), collect.
@@ -171,8 +175,9 @@ The audit log:
 ## What the reviews changed
 Every major step and the addendum were reviewed by fresh-context reviewers (code review,
 silent-failure audit, compatibility review, ML audit at the highest effort) before the SDS saw
-them; every finding was fixed on the main thread and re-tested. The full lists are in
-`worknotes/log.md` (10-26, 10-27, 10-28). What matters for a reader of the code:
+them; every finding was fixed on the main thread and re-tested. The full lists were in
+`worknotes/log.md` (entries of 10-26 to 10-28, which git keeps). What matters for a reader of
+the code:
 - **The addendum (10-28):** four reviews on the merged state (code review, silent-failure
   audit, compatibility review, ML audit at the highest effort): no invariant violated, no
   blocking code finding. Taken: `task` in both hashes (an upstream column read as binary
@@ -216,8 +221,9 @@ them; every finding was fixed on the main thread and re-tested. The full lists a
   use-case repo writes its own absolute path); `Frames` keeps positional fields; a per-row test
   for `negative_downsampling` (a test idea, not a bug).
 - **Deferred, with a row:** a migration hook for the model input's sidecar (roadmap backlog);
-  the `definition.json` question for the audit log's folder (`config.md` → Open questions); a
-  `label_free_periods` helper for Feature Checks (`feature_checks.md` → Open questions, M2.2).
+  the `definition.json` question for the audit log's folder (`config.md` → Open questions). The
+  label-free periods Feature Checks needed are built: `feature_checks/measures.py` →
+  `per_period_table`.
 
 ## The SDS's rounds, in short
 - **10-26 (step 1):** Q388–Q390 applied: the loggable settings widened, the pre-release
@@ -235,7 +241,7 @@ them; every finding was fixed on the main thread and re-tested. The full lists a
   target column per use case, everything else derived on read; `target_<use_case>`; one shape
   for one or several configs); the unit of analysis as `time.period` with the renamed fields;
   `revert` built now rather than in M2.2; the id cast found by the hash check.
-- **10-29:** seven questions answered in chat and in `worknotes/log.md`; a source column
+- **10-29:** seven questions answered in chat and in `worknotes/log.md` (git keeps the entry); a source column
   named like the framework's own is renamed `source_<name>` instead of refused, and the own
   upstream target column is dropped on the read side, which also closes an eligibility
   condition naming the label; missing periods as a Phase 3 wish; the use case's name freed

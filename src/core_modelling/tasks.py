@@ -55,7 +55,14 @@ from core_modelling.statistics.concordance import (
     effective_count,
     kendall_null_se,
 )
-from core_modelling.statistics.distributions import quantile_edges
+from core_modelling.statistics.distributions import (
+    cohens_d,
+    cohens_h,
+    d_unavailable,
+    h_unavailable,
+    quantile_edges,
+    variance_from_sums,
+)
 from core_modelling.statistics.intervals import t_interval, wilson_interval
 
 SHOWN_VALUES = 3  # bad target values named in the error
@@ -346,72 +353,6 @@ def _regression_group(target: pd.Series, base: float) -> dict[str, float]:
     return _with_lift(summary, base)
 
 
-def _cohens_h(
-    minority: pd.DataFrame, dominant: pd.DataFrame, sizes: tuple[float, float]
-) -> tuple[float, float]:
-    """The rare effect: Cohen's h of the minority's rate against the dominant value's,
-    `2·asin√p₁ − 2·asin√p₂` (signed), from both sides' labelled cells, and its SE
-    `√(1/n₁ + 1/n₂)`, `sizes` the sides' rows in effective clients. Defined for any two rates:
-    the arcsine-square-root scale keeps a proportion's variance independent of the proportion.
-    Call only when `_h_unavailable` says '' (D-035)."""
-    reason = _h_unavailable(minority, dominant)
-    if reason:
-        raise ValueError(f'rare_effect: {reason}; decide "not available" before calling')
-    h = 2 * np.arcsin(np.sqrt(_mean(minority))) - 2 * np.arcsin(np.sqrt(_mean(dominant)))
-    return float(h), float(np.sqrt(1 / sizes[0] + 1 / sizes[1]))
-
-
-def _cohens_d(
-    minority: pd.DataFrame, dominant: pd.DataFrame, sizes: tuple[float, float]
-) -> tuple[float, float]:
-    """The rare effect: Cohen's d, the minority's mean minus the dominant value's over their
-    pooled standard deviation (from the cells' `sum_y2`, on the rows), and its SE
-    `√((n₁ + n₂)/(n₁n₂) + d²/(2(n₁ + n₂)))`, `sizes` the sides' rows in effective clients. Call
-    only when `_d_unavailable` says '' (D-035)."""
-    reason = _d_unavailable(minority, dominant)
-    if reason:
-        raise ValueError(f'rare_effect: {reason}; decide "not available" before calling')
-    n1, n2 = sizes
-    d = (_mean(minority) - _mean(dominant)) / np.sqrt(_pooled_variance(minority, dominant))
-    return float(d), float(np.sqrt((n1 + n2) / (n1 * n2) + d**2 / (2 * (n1 + n2))))
-
-
-def _mean(side: pd.DataFrame) -> float:
-    """The mean target (a rate or a mean) of one side's labelled cells."""
-    return side["sum_y"].sum() / side["n"].sum()
-
-
-def _pooled_variance(minority: pd.DataFrame, dominant: pd.DataFrame) -> float:
-    """The two sides' pooled variance from the cells' sums, the one-pass
-    `Σ(Σy² − (Σy)²/n) / (n₁ + n₂ − 2)`, floored at 0 (rounding)."""
-    squares = sum(
-        side["sum_y2"].sum() - side["sum_y"].sum() ** 2 / side["n"].sum()
-        for side in (minority, dominant)
-    )
-    return max(squares / (minority["n"].sum() + dominant["n"].sum() - 2), 0.0)
-
-
-def _h_unavailable(minority: pd.DataFrame, dominant: pd.DataFrame) -> str:
-    """Why Cohen's h cannot exist ('' when it can): a side without labelled rows."""
-    if minority["n"].sum() == 0 or dominant["n"].sum() == 0:
-        return "a side without labelled rows"
-    return ""
-
-
-def _d_unavailable(minority: pd.DataFrame, dominant: pd.DataFrame) -> str:
-    """Why Cohen's d cannot exist ('' when it can): fewer than two labelled rows a side, or no
-    spread (the pooled variance at the one-pass formula's rounding, relative to the mean
-    square)."""
-    if minority["n"].sum() < 2 or dominant["n"].sum() < 2:
-        return "fewer than two labelled rows a side"
-    mean_square = (minority["sum_y2"].sum() + dominant["sum_y2"].sum()) / (
-        minority["n"].sum() + dominant["n"].sum()
-    )
-    if _pooled_variance(minority, dominant) <= 1e-12 * max(mean_square, 1.0):
-        return "no spread in the target on both sides"
-    return ""
-
-
 def _binary_se(value: float, events: float, non_events: float, target_shares: np.ndarray) -> float:
     """Hanley–McNeil's standard error (D-082); the target shares go unread, since it conditions
     on the split into events and non-events already."""
@@ -518,16 +459,13 @@ def _regression_period_estimate(
     known: np.ndarray, positive_rows: np.ndarray, sum_y: np.ndarray, sum_y2: np.ndarray
 ) -> dict[str, np.ndarray]:
     """Per period, the mean (`sum_y` / rows with a known target) with its t-interval from the
-    sum of squares (NaN under two rows), and the non-zero share with its Wilson interval.
-
-    The variance is the one-pass `(Σy² − (Σy)² / n) / (n − 1)`, all the cells hold: it loses
-    precision when the mean is far above the spread, and the floor at 0 keeps it defined.
-    """
+    sum of squares (`variance_from_sums`; NaN under two rows), and the non-zero share with its
+    Wilson interval."""
     estimate = sum_y / known
     low, high = np.full(np.shape(known), np.nan), np.full(np.shape(known), np.nan)
     enough = known >= 2  # `t_interval` refuses fewer rows
-    variance = (sum_y2[enough] - sum_y[enough] ** 2 / known[enough]) / (known[enough] - 1)
-    sd = np.sqrt(np.maximum(variance, 0))  # one-pass formula: rounding can take it below 0
+    n, y, y2 = known[enough], sum_y[enough], sum_y2[enough]
+    sd = np.sqrt(variance_from_sums(n[None], y[None], y2[None]))  # each period its own sample
     low[enough], high[enough] = t_interval(estimate[enough], sd, known[enough])
     nonzero_low, nonzero_high = wilson_interval(positive_rows, known)
     return {"estimate": estimate, "low": low, "high": high,
@@ -568,8 +506,8 @@ TASK_SPECS = {
         "target_bins": _binary_target_bins,
         "summarise_group": _binary_group,
         "summary_columns": SUMMARY_COLUMNS,  # the columns of a group table
-        "rare_effect": _cohens_h,  # (minority, dominant, effective sizes) -> (effect, SE)
-        "rare_effect_unavailable": _h_unavailable,  # why the effect cannot exist, or ''
+        "rare_effect": cohens_h,  # (minority, dominant, effective sizes) -> (effect, SE)
+        "rare_effect_unavailable": h_unavailable,  # why the effect cannot exist, or ''
         "rare_effect_name": "Cohen's h",
         "concordance_se": _binary_se,
         "client_support": _binary_client_support,
@@ -599,8 +537,8 @@ TASK_SPECS = {
         "target_bins": _regression_target_bins,
         "summarise_group": _regression_group,
         "summary_columns": AMOUNT_SUMMARY_COLUMNS,
-        "rare_effect": _cohens_d,
-        "rare_effect_unavailable": _d_unavailable,
+        "rare_effect": cohens_d,
+        "rare_effect_unavailable": d_unavailable,
         "rare_effect_name": "Cohen's d",
         "concordance_se": _regression_se,
         "client_support": _regression_client_support,

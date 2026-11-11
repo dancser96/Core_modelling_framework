@@ -54,7 +54,9 @@ def apply_eligibility(
     steps = [(step, "analysis") for step in eligibility.analysis]
     steps += [(step, "modelling") for step in eligibility.modelling]
     for step, kind in steps:
-        if step.name in panel.columns or step.name in (*KEYS, *HELPER_COLUMNS):
+        # ignoring case, as Spark matches names: `Income` would replace the column `income`
+        taken = {name.lower() for name in (*panel.columns, *KEYS, *HELPER_COLUMNS)}
+        if step.name.lower() in taken:
             raise ValueError(
                 f"eligibility step {step.name!r} is named like a column of the panel or one the "
                 f"dataset adds ({', '.join(HELPER_COLUMNS)})"
@@ -139,13 +141,17 @@ def step_names(cfg: UseCaseConfig) -> list[str]:
 
 def resolve_candidates(columns: list[str], cfg: UseCaseConfig, lineage: list[str]) -> list[str]:
     """The columns matching an include pattern and no exclude pattern, minus the keys, the
-    helper columns, the lineage (T12) and the eligibility steps' names (tags and defines)."""
+    helper columns, the lineage (T12; matched ignoring case, as Spark matches names, so a
+    lineage entry `cc_limit` excludes the column `CC_Limit`) and the eligibility steps' names
+    (tags and defines)."""
     patterns = cfg.features.candidates
     reserved = {*KEYS, *HELPER_COLUMNS, *lineage, *step_names(cfg)}
+    lineage_names = {name.lower() for name in lineage}
     candidates = [
         column
         for column in columns
         if column not in reserved
+        and column.lower() not in lineage_names
         and any(fnmatchcase(column, pattern) for pattern in patterns.include)
         and not any(fnmatchcase(column, pattern) for pattern in patterns.exclude)
     ]

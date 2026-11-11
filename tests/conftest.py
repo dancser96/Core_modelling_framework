@@ -1,4 +1,6 @@
-"""Shared fixtures: one real local Spark session (never a stub, T15) and the synthetic datasets.
+"""Shared fixtures: one real local Spark session (never a stub, T15), the synthetic datasets, the
+config variants several modules read, EDA's frames and EDA's runs on the unit preset, and an
+audit-log entry builder.
 
 The unit preset is generated in memory once and written to disk once. The dev preset is written
 once per session by a separate process, for the trap acceptance test (`test_traps.py`), with an
@@ -7,6 +9,11 @@ environment file on it. The canonical dataset is written once per session by a s
 of it in a separate process too: a family's working set at the canonical size reaches several GB
 (the panel is sorted, joined and turned into bools, copies of the columns read), so the test run
 itself stays small and every family's memory goes back to the system when it ends.
+
+EDA's frames and the two EDA runs (the card config and the regression variant) are built once per
+session and shared: `test_eda.py` reads the runs and Feature Checks' tests run on a copy of their
+data root. A shared value is read-only; a test that changes one, or a file under it, works on its
+own copy.
 """
 
 import os
@@ -21,15 +28,38 @@ import pytest
 import yaml
 from pyspark.sql import DataFrame, SparkSession
 
+from core_modelling.artifacts import StageResult
 from core_modelling.config import UseCaseConfig, load_config
+from core_modelling.config.audit_log import LOG_SCHEMA_VERSION
+from core_modelling.config.identities import HASH_VERSION
+from core_modelling.config.replay import Entry
+from core_modelling.dataset import Frames, build_frames
+from core_modelling.eda import run_eda
 from core_modelling.environment import (
     EnvironmentConfig,
     Roots,
     Source,
+    feature_dir,
     get_spark_session,
 )
 from synthetic.generate import generate_mart
 from synthetic.output import load_truth, write_mart
+
+ENTITY = "entity_a"
+# The regression variant's sections: card spend summed forward for holders, on the mart alone.
+REGRESSION = {
+    "task": "regression",
+    "entities": {ENTITY: {"sources": {"features": ["retail_mart"], "targets": None}}},
+    "data": {
+        "model_input": None,
+        "target": {"rule": "forward_sum", "column": "spend_cc_vol"},
+        "eligibility": {
+            "modelling": [
+                {"name": "holders", "filter": "cc_flag = 1", "reason": "spend needs a card"}
+            ]
+        },
+    },
+}
 
 
 @pytest.fixture(scope="session")
@@ -109,6 +139,74 @@ def _merged(base: dict, change: dict) -> dict:
         nested = isinstance(value, dict) and isinstance(out.get(key), dict)
         out[key] = _merged(out[key], value) if nested else value
     return out
+
+
+@pytest.fixture(scope="session")
+def in_memory(variant: Callable[..., UseCaseConfig]) -> UseCaseConfig:
+    """The skeleton's config without a model input: its frames are built in memory."""
+    return variant(data={"model_input": None})
+
+
+@pytest.fixture(scope="session")
+def regression_cfg(variant: Callable[..., UseCaseConfig]) -> UseCaseConfig:
+    """`REGRESSION` on a narrow candidate list that keeps the spend leak."""
+    include = ["age", "income", "segment", "onboarding_channel", "employment_status",
+               "cc_active_flag", "cc_bal*", "cc_limit", "spend_cc_*",
+               "*_trap_spend_leak"]  # fmt: skip
+    return variant(**REGRESSION, features={"candidates": {"include": include, "exclude": []}})
+
+
+@pytest.fixture(scope="session")
+def eda_frames(
+    spark: SparkSession, unit_env: EnvironmentConfig, in_memory: UseCaseConfig
+) -> Frames:
+    """EDA's frames of `in_memory` on the unit preset, built once for every module."""
+    return build_frames(in_memory, ENTITY, unit_env, spark, "eda")
+
+
+@pytest.fixture(scope="session")
+def eda_env(
+    unit_env: EnvironmentConfig, tmp_path_factory: pytest.TempPathFactory
+) -> EnvironmentConfig:
+    """The unit environment on a data root that only the shared EDA runs write."""
+    roots = unit_env.roots.model_copy(update={"data": str(tmp_path_factory.mktemp("eda_data"))})
+    return unit_env.model_copy(update={"roots": roots})
+
+
+def _run_with_stale_checks(
+    cfg: UseCaseConfig, env: EnvironmentConfig, spark: SparkSession
+) -> StageResult:
+    """EDA after planting a Feature Checks folder, as an earlier run would have left it."""
+    stale = Path(feature_dir(env, cfg, ENTITY, "feature_checks"))
+    stale.mkdir(parents=True, exist_ok=True)
+    (stale / "feature_checks.json").write_text("{}")
+    return run_eda(cfg, ENTITY, env, spark)
+
+
+@pytest.fixture(scope="session")
+def eda_card(
+    spark: SparkSession, eda_env: EnvironmentConfig, in_memory: UseCaseConfig
+) -> StageResult:
+    """The card config's EDA (every candidate, built in memory), run once on `eda_env`."""
+    return _run_with_stale_checks(in_memory, eda_env, spark)
+
+
+@pytest.fixture(scope="session")
+def eda_regression(
+    spark: SparkSession, eda_env: EnvironmentConfig, regression_cfg: UseCaseConfig
+) -> StageResult:
+    """The regression variant's EDA, run once on `eda_env`."""
+    return _run_with_stale_checks(regression_cfg, eda_env, spark)
+
+
+def build_entry(seq: int, op: str, **fields: object) -> Entry:
+    """Audit-log entry `seq` built in code at the current hash and log versions: a person's, on
+    Feature Checks' stage, unless `fields` say otherwise."""
+    defaults = {"time": "2026-11-06T10:00:00+00:00", "by": {"kind": "person", "id": "someone"},
+                "stage": "feature_checks", "reason": "r",
+                "data_definition_hash": "d" * 64}  # fmt: skip
+    versions = {"hash_version": HASH_VERSION, "log_schema_version": LOG_SCHEMA_VERSION}
+    return Entry(seq=seq, op=op, **versions, **{**defaults, **fields})
 
 
 @pytest.fixture

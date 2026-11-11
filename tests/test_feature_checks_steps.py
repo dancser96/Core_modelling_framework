@@ -18,6 +18,7 @@ from core_modelling.config import UseCaseConfig
 from core_modelling.config.schema import Leakage, Quality, Redundancy, Stability, TimeAlignment
 from core_modelling.eda.deep_dives import per_period_concordance
 from core_modelling.feature_checks.findings import FINDING_COLUMNS, FINDINGS, STEP_ORDER
+from core_modelling.feature_checks.inputs import CheckInputs, check_inputs
 from core_modelling.feature_checks.measures import (
     PER_PERIOD_COLUMNS,
     per_period_table,
@@ -31,8 +32,6 @@ from core_modelling.feature_checks.steps import (
     NOT_SIGNIFICANT,
     STEP_COLUMNS,
     STEPS,
-    CheckInputs,
-    check_inputs,
     check_leakage,
     check_quality,
     check_redundancy,

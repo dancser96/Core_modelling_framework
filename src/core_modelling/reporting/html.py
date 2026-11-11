@@ -54,8 +54,12 @@ def figure_html(fig: go.Figure, div_id: str) -> str:
 
 
 def table_html(styler: Styler, uuid: str) -> str:
-    """A Styler as an HTML fragment; the uuid keeps its CSS ids apart from the other tables'."""
-    return styler.set_uuid(uuid).to_html()
+    """A Styler as an HTML fragment; the uuid keeps its CSS ids apart from the other tables'.
+
+    `to_html(table_uuid=…)` renders a copy, so the caller's Styler, which a notebook also
+    displays, keeps its own uuid.
+    """
+    return styler.to_html(table_uuid=uuid)
 
 
 def _lift_css(lift: float) -> str:
@@ -168,9 +172,6 @@ a {{ color: {t["accent"]}; }}
 .table-scroll th, .table-scroll td {{ border-bottom: 1px solid {t["border"]}; padding: 4px 8px;
   text-align: left; vertical-align: top; }}
 .table-scroll th {{ background: {t["surface"]}; }}
-dl.kv {{ display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }}
-dl.kv dt {{ font-weight: 600; color: {t["muted"]}; }}
-dl.kv dd {{ margin: 0; }}
 div.headline {{ display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }}
 div.headline .stat {{ background: {t["surface"]}; border: 1px solid {t["border"]};
   border-radius: 6px; padding: 8px 16px; min-width: 120px; }}
@@ -185,18 +186,12 @@ def _render_block(block: object, counter: Iterator[int]) -> str:
     """One block as an HTML fragment; an unknown type fails naming it."""
     if isinstance(block, str):
         return block
-    if isinstance(block, dict):
-        items = "".join(
-            f"<dt>{escape(str(key))}</dt><dd>{escape(str(value))}</dd>"
-            for key, value in block.items()
-        )
-        return f'<dl class="kv">{items}</dl>'
     if isinstance(block, Styler):
         return f'<div class="table-scroll">{table_html(block, f"t{next(counter)}")}</div>'
     if isinstance(block, go.Figure):
         return figure_html(block, f"fig{next(counter)}")
     raise TypeError(
-        f"a report block must be a Styler, a plotly figure, a str, a dict or a (heading, blocks) "
+        f"a report block must be a Styler, a plotly figure, a str or a (heading, blocks) "
         f"subsection; got {type(block).__name__}"
     )
 
@@ -240,8 +235,8 @@ def _render_section(
 def render_report(title: str, sections: list[tuple[str, list]]) -> str:
     """The sections as one self-contained HTML page; the caller writes it with its artifacts.
 
-    A block is a Styler, a plotly figure, a str (an HTML fragment, inserted as is), a dict (a
-    key-value list) or a `(heading, blocks)` tuple (a subsection with its own anchor).
+    A block is a Styler, a plotly figure, a str (an HTML fragment, inserted as is) or a
+    `(heading, blocks)` tuple (a subsection with its own anchor).
     """
     counter = itertools.count(1)
     bodies, tocs = [], []

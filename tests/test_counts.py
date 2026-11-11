@@ -7,9 +7,9 @@ through the `Bucketizer` (T25) on the eligible rows, `-0.0`, null and NaN in the
 level pooling and its ceiling, reserved level names, the refusals and the kinds from the Spark
 schema.
 
-The unit preset gives the real frames once; the lag and client-constant semantics, the level
-pooling and the Bucketizer corner cases run on hand-made frames, so each case is visible in the
-test.
+The unit preset gives the real frames (`conftest.py`'s, built once for the session); the lag and
+client-constant semantics, the level pooling and the Bucketizer corner cases run on hand-made
+frames, so each case is visible in the test.
 """
 
 from collections.abc import Callable
@@ -23,7 +23,7 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from core_modelling.config import UseCaseConfig
-from core_modelling.dataset import Frames, build_frames, counts
+from core_modelling.dataset import Frames, counts
 from core_modelling.dataset.counts import (
     CELL_COLUMNS,
     LEVEL_CAP,
@@ -56,45 +56,33 @@ ROWS_SCHEMA = "unit_id string, period date, x double, target double"  # a double
 
 
 @pytest.fixture(scope="module")
-def cfg(variant: Callable[..., UseCaseConfig]) -> UseCaseConfig:
-    """The skeleton's config without a model input."""
-    return variant(data={"model_input": None})
-
-
-@pytest.fixture(scope="module")
-def frames(spark: SparkSession, unit_env: EnvironmentConfig, cfg: UseCaseConfig) -> Frames:
-    """EDA's frames on the unit preset, built once."""
-    return build_frames(cfg, ENTITY, unit_env, spark, "eda")
-
-
-@pytest.fixture(scope="module")
-def window(cfg: UseCaseConfig) -> list[date]:
+def window(in_memory: UseCaseConfig) -> list[date]:
     """The window periods as dates."""
-    first, last = cfg.time.observation_window.first, cfg.time.observation_window.last
+    first, last = in_memory.time.observation_window.first, in_memory.time.observation_window.last
     return [MONTH.from_index(i) for i in range(MONTH.index(first), MONTH.index(last) + 1)]
 
 
 @pytest.fixture(scope="module")
-def edges(frames: Frames, cfg: UseCaseConfig) -> dict[str, np.ndarray | None]:
+def edges(eda_frames: Frames, in_memory: UseCaseConfig) -> dict[str, np.ndarray | None]:
     """The two numerics' edges at the config's bins, from the snapshot."""
-    kinds = {name: frames.meta["kinds"][name] for name in FEATURES}
-    return bin_edges(frames.snapshot, kinds, cfg.eda.bins)
+    kinds = {name: eda_frames.meta["kinds"][name] for name in FEATURES}
+    return bin_edges(eda_frames.snapshot, kinds, in_memory.eda.bins)
 
 
 @pytest.fixture(scope="module")
-def levels(frames: Frames, window: list[date]) -> dict[str, list[str]]:
+def levels(eda_frames: Frames, window: list[date]) -> dict[str, list[str]]:
     """The categorical's window levels (far below the ceiling)."""
-    levels, over_ceiling = window_levels(frames.rows, ["segment"], window)
+    levels, over_ceiling = window_levels(eda_frames.rows, ["segment"], window)
     assert over_ceiling == []
     return levels
 
 
 @pytest.fixture(scope="module")
-def collected(frames: Frames) -> pd.DataFrame:
+def collected(eda_frames: Frames) -> pd.DataFrame:
     """The three features' rows of every compared period with each client's fold, collected for
     the pandas oracle (the unit preset's eligible rows are small)."""
     fold = F.pmod(F.xxhash64("unit_id"), F.lit(counts.ENCODING_FOLDS)).alias("fold")
-    return frames.rows.select("unit_id", "period", *FEATURES, "target", fold).toPandas()
+    return eda_frames.rows.select("unit_id", "period", *FEATURES, "target", fold).toPandas()
 
 
 def _expected_cells(frame: pd.DataFrame, edges: dict, levels: dict, lagged: bool) -> pd.DataFrame:
@@ -172,14 +160,14 @@ def _same_cells(actual: pd.DataFrame, expected: pd.DataFrame) -> None:
 
 
 def test_cells_equal_a_pandas_groupby_on_the_collected_rows(
-    frames: Frames, window: list[date], edges: dict, levels: dict, collected: pd.DataFrame
+    eda_frames: Frames, window: list[date], edges: dict, levels: dict, collected: pd.DataFrame
 ) -> None:
     """Pass 1 on three features (a numeric, a categorical, one with nulls) over the window's
     first and the latest period, `n`, `sum_y` and `sum_y2` alike, equals the pandas groupby on
     the same rows: the Bucketizer's buckets are `np.digitize`'s, the levels the window's, the null
     bin its own, the target bin null in the latest period."""
     periods = [window[0], collected["period"].max()]
-    rows = frames.rows.select("unit_id", "period", *FEATURES, "target")
+    rows = eda_frames.rows.select("unit_id", "period", *FEATURES, "target")
     cells = count_cells(
         rows.where(F.col("period").isin(periods)), edges, levels, [], None, window, MONTH
     )
@@ -199,12 +187,12 @@ def test_cells_equal_a_pandas_groupby_on_the_collected_rows(
 
 
 def test_lagged_cells_equal_a_shift_by_client(
-    frames: Frames, window: list[date], edges: dict, levels: dict, collected: pd.DataFrame
+    eda_frames: Frames, window: list[date], edges: dict, levels: dict, collected: pd.DataFrame
 ) -> None:
     """Pass 2 equals the pandas shift by client on the same rows: the previous row's value where
     its period index is the current one minus one, binned alike and counted against the current
     period's target in the window periods; the window's first period has only null lagged cells."""
-    rows = frames.rows.select("unit_id", "period", *FEATURES, "target")
+    rows = eda_frames.rows.select("unit_id", "period", *FEATURES, "target")
     cells = count_lagged_cells(rows, edges, levels, [], None, window, MONTH)
     ordered = collected.sort_values(["unit_id", "period"]).reset_index(drop=True)
     index = ordered["period"].map(MONTH.index)
@@ -245,7 +233,7 @@ def test_lag_by_period_index_and_client_constant_shares(spark: SparkSession) -> 
 
 
 def test_window_clients_count_each_client_once(
-    frames: Frames, window: list[date], collected: pd.DataFrame
+    eda_frames: Frames, window: list[date], collected: pd.DataFrame
 ) -> None:
     """The window's labelled rows and Kish's effective clients by class and in all equal pandas'
     on the same rows: below the rows, since the same clients are labelled in several periods."""
@@ -258,13 +246,13 @@ def test_window_clients_count_each_client_once(
         expected[f"{prefix}rows"] = float(per_client.sum())
         expected[f"{prefix}effective"] = per_client.sum() ** 2 / (per_client**2).sum()
     expected["event_clients"] = float(labelled.loc[labelled["event"], "unit_id"].nunique())
-    assert window_clients(frames.rows, window) == pytest.approx(expected)
+    assert window_clients(eda_frames.rows, window) == pytest.approx(expected)
     assert expected["effective"] < expected["rows"]
 
 
-def test_client_constant_shares_on_the_unit_preset(frames: Frames, window: list[date]) -> None:
+def test_client_constant_shares_on_the_unit_preset(eda_frames: Frames, window: list[date]) -> None:
     """A static attribute reads 1, a balance below 1, every eligible client counted."""
-    table = client_constant_shares(frames.rows, ["salary_transfer_flag", "casa_bal"], window)
+    table = client_constant_shares(eda_frames.rows, ["salary_transfer_flag", "casa_bal"], window)
     shares = table.set_index("feature")["constant_share"]
     assert shares["salary_transfer_flag"] == 1.0 and shares["casa_bal"] < 1.0
     assert (table["clients"] > 0).all()
@@ -298,50 +286,53 @@ def test_population_counts_equal_target_factorys_summary_where_both_exist(
 
 
 def test_compared_periods_with_and_without_a_validation_period(
-    cfg: UseCaseConfig, variant: Callable[..., UseCaseConfig]
+    in_memory: UseCaseConfig, variant: Callable[..., UseCaseConfig]
 ) -> None:
     """Window 2025-03 … 2025-08, v 2025-11: the gap is 2025-09 and 2025-10, the latest the last
     period after v, never v itself and none when no period lies after v; with a null v no gap
     and the latest after the window; a window period the panel lacks is simply absent."""
     months = [MONTH.from_index(MONTH.index(date(2025, 1, 31)) + i) for i in range(14)]
-    labels = {g: [MONTH.label(p) for p in ps] for g, ps in compared_periods(cfg, months).items()}
+    labels = {
+        g: [MONTH.label(p) for p in ps] for g, ps in compared_periods(in_memory, months).items()
+    }
     assert labels == {
         "window": ["2025-03", "2025-04", "2025-05", "2025-06", "2025-07", "2025-08"],
         "gap": ["2025-09", "2025-10"],
         "latest": ["2026-02"],
     }
-    v = cfg.time.validation_period
-    up_to_v = compared_periods(cfg, [month for month in months if month <= v])
+    v = in_memory.time.validation_period
+    up_to_v = compared_periods(in_memory, [month for month in months if month <= v])
     assert up_to_v["latest"] == [] and v not in [p for group in up_to_v.values() for p in group]
     eda_only = compared_periods(variant(time={"validation_period": None}), months)
     assert eda_only == {"window": months[2:8], "gap": [], "latest": [months[-1]]}
-    lacking = compared_periods(cfg, [month for month in months if month != months[4]])
+    lacking = compared_periods(in_memory, [month for month in months if month != months[4]])
     assert lacking["window"] == [months[i] for i in (2, 3, 5, 6, 7)]
 
 
 def test_estimate_cells_refuses_bins_null_above_the_cap(
-    frames: Frames, window: list[date], monkeypatch: pytest.MonkeyPatch
+    eda_frames: Frames, window: list[date], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The estimate is a positive count that grows with the lagged pass's window periods; with
-    `eda.bins: null` above a planted `MAX_CELLS` of 10 it fails naming `eda.bins`."""
-    rows = frames.rows.select("unit_id", "period", *FEATURES, "target")
-    kinds = {name: frames.meta["kinds"][name] for name in FEATURES}
-    both_passes = estimate_cells(rows, kinds, 100, window)
-    assert both_passes > estimate_cells(rows, kinds, 100, []) > 0
+    """The estimate (of `eda.bins: null`, every distinct value a bin) is a positive count that
+    grows with the lagged pass's window periods; above a planted `MAX_CELLS` of 10 it fails
+    naming `eda.bins`."""
+    rows = eda_frames.rows.select("unit_id", "period", *FEATURES, "target")
+    kinds = {name: eda_frames.meta["kinds"][name] for name in FEATURES}
+    both_passes = estimate_cells(rows, kinds, window)
+    assert both_passes > estimate_cells(rows, kinds, []) > 0
     monkeypatch.setattr(counts, "MAX_CELLS", 10)
     with pytest.raises(ValueError, match=r"eda.bins: null would give about [\d,]+ cells over"):
-        estimate_cells(rows, kinds, None, window)
+        estimate_cells(rows, kinds, window)
 
 
-def test_bins_null_gives_one_bin_per_distinct_value(frames: Frames, window: list[date]) -> None:
+def test_bins_null_gives_one_bin_per_distinct_value(eda_frames: Frames, window: list[date]) -> None:
     """`eda.bins: null` on `product_cnt` (eight values): every value its own `= v` bin, the
     snapshot period's cells exactly the values its eligible rows hold, no other bin."""
-    edges = bin_edges(frames.snapshot, {"product_cnt": "numeric"}, None)
-    rows = frames.rows.select("unit_id", "period", "product_cnt", "target")
+    edges = bin_edges(eda_frames.snapshot, {"product_cnt": "numeric"}, None)
+    rows = eda_frames.rows.select("unit_id", "period", "product_cnt", "target")
     cells = count_cells(
         rows.where(F.col("period") == window[-1]), edges, {}, [], None, window, MONTH
     )
-    eligible = frames.snapshot[frames.snapshot["eligible"] == 1]
+    eligible = eda_frames.snapshot[eda_frames.snapshot["eligible"] == 1]
     assert set(cells["bin"]) == {f"= {value:g}" for value in eligible["product_cnt"].unique()}
     assert cells.groupby("bin")["n"].sum().sum() == len(eligible)
 
@@ -550,8 +541,8 @@ def test_kinds_come_from_the_spark_schema_with_overrides(
     }
 
 
-def test_frames_rows_is_a_spark_frame(frames: Frames) -> None:
+def test_frames_rows_is_a_spark_frame(eda_frames: Frames) -> None:
     """`rows` never leaves Spark: a DataFrame with the keys, the supported candidates and the
     target."""
-    assert isinstance(frames.rows, DataFrame)
-    assert frames.rows.columns == ["unit_id", "period", *frames.meta["kinds"], "target"]
+    assert isinstance(eda_frames.rows, DataFrame)
+    assert eda_frames.rows.columns == ["unit_id", "period", *eda_frames.meta["kinds"], "target"]

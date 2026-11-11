@@ -1,5 +1,5 @@
 # Training
-**Status:** legacy-only · **Legacy:** `src/run.py`, `src/dataset.py`, `src/calibration.py`, `src/contract.py`
+**Status:** designing · **Legacy:** `src/run.py`, `src/dataset.py`, `src/calibration.py`, `src/contract.py`
 **Related:** [dataset](dataset.md) · [feature ledger](feature_ledger.md) · [evaluation](evaluation.md) ·
 [config](config.md) · [lifecycle](lifecycle.md) · [monitoring](monitoring.md) (drift reference) · D-020, D-030, D-031, D-032, D-033,
 D-037, D-049, D-050, D-051, D-052, D-054, D-082, D-083, D-088, D-094, D-100, D-106, D-117, D-134, D-135 · OD-27
@@ -61,9 +61,12 @@ model results report comes from [evaluation](evaluation.md) (D-036).
    (D-134, owned by [feature checks](feature_checks.md)); in effect a held feature is, for
    Training, an excluded feature without a final decision, and the run log says so in those
    words. The set is read through `resolve_features(ledger,
-   resolved)` (it reads `features.held` and `features.excluded` from the resolved config). The
-   floor uses the plain `concordance`, or `concordance_best_order` for a feature marked
-   `non_monotone` (the same rule as EDA's ranking), recomputed on the train split (D-030, D-135).
+   resolved)` (it reads `features.held` and `features.excluded` from the resolved config) and
+   passed to `build_frames(…, "training", features=…)`, whose train and test carry only the
+   keys, those features, `target` and `split`; Training gets no validation frame (§4.4,
+   [dataset](dataset.md#frames-d-030-d-131-d-135)). The floor uses the plain `concordance`, or
+   `concordance_best_order` for a feature marked `non_monotone` (the same rule as EDA's ranking,
+   `statistics/scope.py`), recomputed on the train split (D-030, D-135).
    The ledger's `cluster` column is label-free but computed on the snapshot's rows, test clients
    included, so the "top member per cluster" rule ranks inside a cluster on the train split only
    (D-030). The per-run part of the ledger is a separate file under
@@ -152,6 +155,21 @@ T9, T14; downsampling, calibration and FLAML-search lessons in `docs/context/les
 *(fill when built)*
 
 ## Open questions
+- **The gate must also check that the Feature Checks run is still in force** (the ML audit of
+  the codebase review, 2026-11-10; to build with the gate, M2.3). `check_upstream` compares the
+  data definition and the settings only, and `resolve_features` trusts the resolved config's
+  `held` list. So a held feature reaches Training with every check green whenever the resolved
+  config does not carry the run's flags: after a person's `revert` to before or inside them,
+  with `resolve_config(upto=…)`, or with a resolved config saved before the run. Measured on a
+  stored run: after `revert_to=0` the gate passes 170 features, all 48 held ones among them.
+  The check: the run's own `run` entry (`feature_checks.json` → `entries_written`, the last
+  one's `seq`) is among the effective entries of the log the config was resolved from; else
+  "rerun feature_checks", which rewrites the undone flags. Not a regression: no code trains yet.
+- Two smaller gaps the same audit found in the gate's inputs, to settle with it: the
+  environment's physical sources are in no hash and no digest, so pointing the sources at other
+  data under the same root leaves EDA's and Feature Checks' artifacts passing as current; and
+  `build_frames(…, "evaluation", features)` accepts a config that was only loaded and any
+  candidate, so Evaluation must check its feature list against the model bundle's.
 - Training's D-088 count check against EDA's `population` table compares `eligible_rows`,
   `known_target` and `positive_rows`, never `rows` (which counts ineligible rows after the analysis
   filters too); its due-diligence check also compares EDA's recorded kinds (`meta["kinds"]`, from

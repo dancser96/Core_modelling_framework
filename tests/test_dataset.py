@@ -29,7 +29,6 @@ from core_modelling.config.schema import Eligibility
 from core_modelling.dataset.eligibility import apply_eligibility, modelling_tags, resolve_candidates
 from core_modelling.dataset.panel import (
     DROP_REASONS,
-    PANEL_META_KEYS,
     build_panel,
     load_panel,
     prepare_panel,
@@ -183,9 +182,9 @@ def test_two_configs_give_two_target_columns_each_prepared_for_its_own(
 @pytest.mark.parametrize(
     "change, field",
     [
-        ({"entities": {"entity_a": ONE_SOURCE}}, "sources.features"),
-        ({"data": {"keys": {"unit_id": "customer_id", "period": "snapshot_month"}}}, "keys"),
-        ({"data": {"model_input": "other_input"}}, "model_input"),
+        ({"entities": {"entity_a": ONE_SOURCE}}, "entities.entity_a.sources.features"),
+        ({"data": {"keys": {"unit_id": "customer_id", "period": "snapshot_month"}}}, "data.keys"),
+        ({"data": {"model_input": "other_input"}}, "data.model_input"),
         ({"time": {"period": "week"}}, "time.period"),
     ],
     ids=["sources", "keys", "model_input", "period"],
@@ -496,6 +495,26 @@ def test_eligibility_never_names_the_own_upstream_target_column(
         build_panel(cfg, "entity_a", env, spark)
 
 
+def test_a_lineage_entry_naming_no_source_column_is_refused(
+    spark: SparkSession,
+    write_sources: Callable[..., EnvironmentConfig],
+    variant: Callable[..., UseCaseConfig],
+    sources: dict[str, DataFrame],
+) -> None:
+    """A `data.target.lineage` entry that names no column of any source (a misspelt one) is
+    refused, since it would exclude nothing (§4.6); an entry in another case names its column,
+    as Spark matches names, and that column is no candidate."""
+    sources["retail_mart"] = _labelled_spine(sources["retail_mart"], "target")
+    env = write_sources(sources)
+    upstream = {"column": "target", "rule": None}
+    misspelt = _upstream(variant, "target", target={**upstream, "lineage": ["incme"]})
+    with pytest.raises(ValueError, match=r"lineage of 'cc_acquisition' names \['incme'\]"):
+        build_panel(misspelt, "entity_a", env, spark)
+    cased = _upstream(variant, "target", target={**upstream, "lineage": ["Income"]})
+    _, _, meta = build_panel(cased, "entity_a", env, spark)
+    assert "income" not in meta["candidates"] and "segment" in meta["candidates"]
+
+
 def test_built_target_over_a_spine_column_named_target_keeps_it_as_lineage(
     spark: SparkSession,
     write_sources: Callable[..., EnvironmentConfig],
@@ -575,10 +594,11 @@ def test_read_side_columns_drop_labels_in_the_panel_and_rename_the_rest(
     `income` is a candidate (§4.6). Pure Python, no Spark."""
     columns = ["unit_id", "period", "income", *extra, *[t["column"] for t in targets.values()]]
     plan = read_side_columns(columns, targets, OWN, ["retail_mart", "extra"])
-    assert plan == (dropped, {**renamed, OWN_COLUMN: "target"})
+    assert plan[:2] == (dropped, {**renamed, OWN_COLUMN: "target"})
     assert list(plan[1])[-1] == OWN_COLUMN  # applied last
-    read = [plan[1].get(c, c) for c in columns if c not in plan[0]]
-    lineage = [plan[1].get(c, c) for c in targets[OWN]["lineage"]]
+    read, lineage = plan[2:]
+    assert read == [plan[1].get(c, c) for c in columns if c not in plan[0]]
+    assert lineage == [plan[1].get(c, c) for c in targets[OWN]["lineage"]]
     assert resolve_candidates(read, cc_config, lineage) == ["income"]
 
 
@@ -626,7 +646,7 @@ def test_build_panel_prepares_the_one_config(
 ) -> None:
     """`build_panel` is `load_panel` of the one config then `prepare_panel`: the keys, the
     candidates, `eligible`, `target` and `split`, the join log then the preparation's, the
-    meta with `PANEL_META_KEYS`; a name in `features.excluded` that no source has, or that
+    meta's keys; a name in `features.excluded` that no source has, or that
     is the framework's own column, fails loud."""
     env = write_sources(sources)
     panel, log, meta = build_panel(_config(variant), "entity_a", env, spark)
@@ -635,7 +655,10 @@ def test_build_panel_prepares_the_one_config(
     assert rows["a"].target == 1 and rows["c"].target == 0 and rows["a"].eligible == 1
     steps = [entry["step"] for entry in log]
     assert steps == ["join", "join", "join", "contract", "contract", "contract", "contract"]
-    assert tuple(meta) == PANEL_META_KEYS and meta["lineage"] == ["value"]
+    assert list(meta) == [
+        "data_definition_hash", "target_spec_hash", "hash_version", "lineage", "candidates", "tags"
+    ]  # fmt: skip
+    assert meta["lineage"] == ["value"]
     cfg = _config(variant).model_copy(deep=True)
     cfg.features.excluded = ["incom"]
     with pytest.raises(ValueError, match=r"features.excluded names columns .* \['incom'\]"):
@@ -742,12 +765,13 @@ def test_condition_may_reference_source_columns_and_defines_only(
 
 
 def test_condition_must_be_boolean_and_step_names_must_be_new(keyed_panel: DataFrame) -> None:
-    """A non-boolean expression, a step named like a column and a step named like a column the
-    dataset adds (`split`, `eligible`) all fail naming the step."""
+    """A non-boolean expression, a step named like a column (in any case, as Spark matches
+    names) and a step named like a column the dataset adds (`split`, `eligible`) all fail naming
+    the step."""
     rich = _eligibility(analysis=[{"name": "rich", "define": "income"}])
     with pytest.raises(TypeError, match="eligibility step 'rich': 'income' is double, not a bool"):
         apply_eligibility(keyed_panel, rich, MONTH)
-    for name in ("income", "split", "eligible"):
+    for name in ("income", "Income", "split", "eligible"):
         taken = _eligibility(analysis=[{"name": name, "filter": "income > 0", "reason": "r"}])
         with pytest.raises(ValueError, match=f"step '{name}' is named like a column"):
             apply_eligibility(keyed_panel, taken, MONTH)
@@ -789,6 +813,7 @@ def test_candidates_follow_the_patterns_minus_the_reserved_names(
                "non_holders", "eligible", "target", "split"]  # fmt: skip
     assert resolve_candidates(columns, cfg, ["cc_flag"]) == ["income", "segment", "score", "x_trap"]
     assert "carded" not in resolve_candidates([*columns, "carded"], cfg, ["cc_flag"])
+    assert "CC_Limit" not in resolve_candidates([*columns, "CC_Limit"], cfg, ["cc_limit"])
     patterns = variant(features={"candidates": {"include": ["s*"], "exclude": ["*_trap"]}})
     assert resolve_candidates(columns, patterns, ["cc_flag"]) == ["segment", "score"]
     with pytest.raises(ValueError, match=r"matches none of \[\]; never candidates: .*'cc_flag'"):

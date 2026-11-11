@@ -22,7 +22,7 @@ decision:                                # required · set before any result, ne
   # how the scores are used: top_n: a fixed-size list | threshold: act above a cut | ranking:
   # order only | probability: a calibrated score, comparable across products (D-049)
   type: probability                      # required
-  n: null                                # top_n only, and required there: the list size
+  n: null                                # top_n only (required there, refused elsewhere): the list size
   metric: null                           # null: derived from the type; else a FLAML name (T9)
   gate_metric: null                      # null: derived from the type; the promotion gate's metric
   # add previous_model (a successor model), historic_predicted_rate (a rate already in use)
@@ -82,6 +82,7 @@ data:                                    # required
     # value upstream. The count and amount rules come later
     rule: null
     lineage: []                          # upstream only: the columns it was built from, excluded
+                                         # from the candidates; a name of no source column is refused
   split: {test_share: 0.3, seed: 42}     # the client split, a seeded hash; smaller for few clients
   rate_band: {max: 0.5}                  # the target rate's ceiling; above it the data is suspect
 

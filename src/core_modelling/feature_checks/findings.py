@@ -9,10 +9,16 @@ holds (the held features' `flag_values` key). The text names no threshold, since
 a config leaf the run states in the findings' `threshold` column; it is a `flag` entry's reason.
 A step's findings are rows of `FINDING_COLUMNS`: `finding` the full name, `value` the feature's
 statistic, `threshold` the parameter it was compared with, `detail` what the row adds to the
-text ('' when nothing), such as a rare value's bin or a pair's partners.
+text ('' when nothing), such as a rare value's bin or a pair's partners. The row builders a step
+assembles its findings with (`finding_rows`, `finding_frame`, `unavailable_rows`:
+`UNAVAILABLE_COLUMNS`, the findings that cannot exist with their reasons) and `stack_parts` live
+here too.
 """
 
+import pandas as pd
+
 FINDING_COLUMNS = ["feature", "step", "finding", "kind", "value", "threshold", "text", "detail"]
+UNAVAILABLE_COLUMNS = ["feature", "finding", "reason"]
 STEP_ORDER = ["quality", "leakage", "time_alignment", "stability", "redundancy"]
 REDUNDANT = "Near-duplicates; the cluster table shows which carries the signal."
 
@@ -106,3 +112,45 @@ def step_findings(step: str) -> list[str]:
     if step not in STEP_ORDER:
         raise ValueError(f"unknown Feature Checks step {step!r}; the steps are {STEP_ORDER}")
     return [name for name in FINDINGS if name.split(".")[0] == step]
+
+
+def finding_rows(
+    name: str,
+    ledger: pd.DataFrame,
+    fires: pd.Series,
+    value: pd.Series,
+    threshold: float,
+    detail: pd.Series | str = "",
+) -> pd.DataFrame:
+    """Finding `name`'s rows for the ledger rows `fires` marks: each feature's `value` and
+    `detail` against `threshold`."""
+    rows = pd.DataFrame({
+        "feature": ledger.loc[fires, "feature"], "value": value[fires].astype(float),
+        "detail": detail[fires] if isinstance(detail, pd.Series) else detail,
+    })  # fmt: skip
+    return finding_frame(name, rows, threshold)
+
+
+def finding_frame(name: str, rows: pd.DataFrame, threshold: float) -> pd.DataFrame:
+    """`rows` (`feature`, `value`, `detail`) as finding `name`'s `FINDING_COLUMNS` rows."""
+    out = rows.assign(
+        step=name.split(".")[0], finding=name, kind=FINDINGS[name]["kind"],
+        threshold=float(threshold), text=FINDINGS[name]["text"],
+    )  # fmt: skip
+    return out[FINDING_COLUMNS].reset_index(drop=True)
+
+
+def unavailable_rows(name: str, features: pd.Series, reason: pd.Series | str) -> pd.DataFrame:
+    """`unavailable` rows of finding `name` for `features`, with one reason or one each."""
+    reasons = reason if isinstance(reason, str) else reason.to_numpy()
+    return pd.DataFrame({"feature": features.to_numpy(), "finding": name, "reason": reasons})
+
+
+def stack_parts(parts: list[pd.DataFrame], columns: list[str]) -> pd.DataFrame:
+    """The parts stacked in order; an empty frame of `columns` (numbers as floats) when none
+    holds a row."""
+    parts = [part for part in parts if not part.empty]
+    if parts:
+        return pd.concat(parts, ignore_index=True)[columns]
+    empty = pd.DataFrame(columns=columns)
+    return empty.astype({column: float for column in ("value", "threshold") if column in columns})

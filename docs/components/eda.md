@@ -48,8 +48,9 @@ window is never collected (D-135).
 - **What later stages reuse.** Feature Checks reads the counts table, the client-constant table,
   the correlation table, `tables/ranking` (`raw_sign_window`, `concordance_best_order_window`),
   `tables/concordance_per_period`, the ledger and `eda.json` (with `clients`); it collects
-  nothing and refuses to run when EDA's settings digest differs from the current resolved config
-  or an older EDA run lacks one of those tables or columns. Training reads the ledger
+  nothing and refuses to run when EDA's settings digest differs from the current resolved config,
+  when the ledger is another EDA run's (its run token), or when an older EDA run lacks one of
+  those tables or columns. Training reads the ledger
   (`kind`, `levels`, both concordances) and compares its per-period counts with `eda.json`
   (D-088). An EDA rerun removes Feature Checks' folder and ledger columns.
 - **The per-task spec** (`tasks.py`, D-050) supplies every task-specific piece: the target bins,
@@ -170,9 +171,9 @@ client is ever plotted and nothing needs sampling ([reporting](reporting.md) req
 - **`eda.snapshot`:** `last` (default, the window's last period: the most recent features with
   matured labels) or a period date inside the observation window, checked at load. Frames:
   [dataset](dataset.md).
-- **The snapshot's columns:** the keys, `period_label`, `target`, `eligible` (0/1), the
-  modelling tag columns, the strata columns and the supported candidates. Lineage and
-  unsupported columns are dropped before the collect. The D-133 printout and budget callout apply;
+- **The snapshot's columns:** the keys (`unit_id`, `period`), the supported candidates (a
+  stratum is one of them), the modelling tag columns, `eligible` (0/1), `target` and `split`.
+  Lineage and unsupported columns are dropped before the collect. The D-133 printout and budget callout apply;
   the callout names `training.sampling` for the training frames only.
 - **The compared periods** (`Frames.rows`, eligible rows only): every window period, the gap
   periods between the window and the validation period, and the latest period the data holds;
@@ -189,26 +190,28 @@ fold, bin, bin_order, is_null, target_bin, n, sum_y, sum_y2`; one row per cell. 
 target's sum of squares, gives a regression mean its interval from the counts.
 
 **Edges and levels** (from the snapshot's eligible rows):
-- **Numeric** (`quantile_edges(values, bins)`, T25): first the **mass points**, the non-null
-  values whose share is at least `1 / bins` (0 and the dominant value among them whenever they
-  reach it), each a singleton bin; 0 is a singleton bin whenever it occurs at all, so `zero_share`
-  is read from the `= 0` cell; then the remaining values are cut into `bins − n_mass` equal-share
-  bins (quantile edges, deduplicated), so a continuous column gets exactly `bins` bins (`bins` is
-  a target, a column may get one or two more). ±infinity is a value: it takes no edge and lands in
-  the outer bins (N2). Plain quantile edges collapse on a zero-inflated or discrete column (90% zeros
-  put ninety edges on 0 and leave one bucket for the rest, the legacy symptom), and fixed-width
-  edges put a skewed column into its first bucket; the rule guarantees that no bin except a
-  singleton holds more than about `2 / bins` of the non-null rows. A numeric with at most
-  `eda.bins` distinct values uses its values as bins. `eda.bins: null` turns the binning off:
-  every distinct value is a bin. A test asserts the bin count on constructed columns and the
-  acceptance test on every numeric candidate of the synthetic data. The setting is meant for small populations: before the pass EDA
-  estimates the cell count (a cell is one row of the counts table) from `approx_count_distinct`
-  per column over `rows` and fails loud above `MAX_CELLS = 50_000_000`, naming `eda.bins`.
-  **Range labels:** a bin reads `< e`, `[e, e')`, `≥ e` or, a singleton, `= v` (`bin_labels`);
-  merged bins read their outer range (`range_label`: `[374, 419)`, `[13, 15]`, `< 50`, `≥ 900`,
-  `(0, 7)`). No thousands separator (a comma would read like the bounds' separator); integral
-  values below 1e15 print whole, others to six significant digits; when that would make two of
-  a feature's labels read alike or out of order, all of its labels use the shortest exact text.
+- **Numeric** (`quantile_edges(values, bins)`, T25): first the **mass points**, the non-null values
+  whose share is at least `1 / bins` (0 and the dominant value among them whenever they reach it),
+  each a singleton bin; 0 is a singleton bin whenever it occurs at all, so `zero_share` is read from
+  the `= 0` cell; then the remaining values are cut into `bins − n_mass` equal-share bins (quantile
+  edges, deduplicated), so a continuous column gets exactly `bins` bins (`bins` is a target, a
+  column may get one or two more). ±infinity is a value: it takes no edge and lands in the outer
+  bins (N2). Plain quantile edges collapse on a zero-inflated or discrete column (90% zeros put
+  ninety edges on 0 and leave one bucket for the rest, the legacy symptom), and fixed-width edges
+  put a skewed column into its first bucket; the rule guarantees that no bin except a singleton
+  holds more than about `2 / bins` of the non-null rows. A numeric with at most `eda.bins` distinct
+  values uses its values as bins. `eda.bins: null` turns the binning off: every distinct value is a
+  bin. A test asserts the bin count on constructed columns and the acceptance test on every numeric
+  candidate of the synthetic data. The setting is meant for small populations: with it, and only
+  then, EDA estimates the cell count before the pass (a cell is one row of the counts table) from
+  `approx_count_distinct` per column over `rows` and fails loud above `MAX_CELLS = 50_000_000`,
+  naming `eda.bins`; with bins set the cells are bounded and the estimate's scan of `rows`, about as
+  long as a counts pass, is not run. **Range labels:** a bin reads `< e`, `[e, e')`, `≥ e` or, a
+  singleton, `= v` (`bin_labels`); merged bins read their outer range (`range_label`: `[374, 419)`,
+  `[13, 15]`, `< 50`, `≥ 900`, `(0, 7)`). No thousands separator (a comma would read like the
+  bounds' separator); integral values below 1e15 print whole, others to six significant digits; when
+  that would make two of a feature's labels read alike or out of order, all of its labels use the
+  shortest exact text.
 - **Categorical:** the levels seen in any window period, the 50 most frequent kept
   (`LEVEL_CAP = 50`), the rest `__other__`; a level unseen in the window is `__new__`; null is a
   level (a NaN in a numeric column declared categorical is null too). `window_levels` returns the
@@ -267,19 +270,18 @@ definitions; Feature Checks uses the ones marked FC.
 | `concordance_best_order` | bins merged to ten, ordered by shrunk rate, then the concordance; not computed for categoricals (equal to the plain value by definition) |
 | `non_monotone` | best-order ≥ plain + max(0.03, 4 · SE), all three on the snapshot period's cells (the SE on its own rows) |
 
-- **Concordance** (`concordance_from_table(table, sign=None)` on `two_way_table(cells,
-  order=None)`: bins in `bin_order`, or a categorical's levels in the order given, × target bins
-  ordered by their mean target `sum_y / n`, null excluded; `pool_periods(cells, periods,
-  lagged=False)` sums the periods first). D = (concordant − discordant) / pairs in different
-  target bins; concordance = (1 + |D|) / 2, direction = sign of D
-  (`direction_from_table(table, se)`); with `sign` (the window's direction) a per-period or
-  lagged value is read in that direction, `(1 + sign · D) / 2`, so a flip reads below 0.5. For a
-  0/1 target this is exactly the AUC of the binned feature (pairs inside one bin count half); for
-  a binned regression target the pairs tied on the target bin are left out (exact on the binned
-  rows, about 0.01 from the raw rows' value against the 20 target bins, T32); with `eda.bins:
-  null` and a regression target `concordance_exact(cells)` expands the cells and computes Somers'
-  D from Kendall's τ-b and the tie counts (`scipy.stats.kendalltau`, Q427), equal to the table's
-  value without the dense table.
+- **Concordance** (`concordance_from_table(table, sign=None)` on `two_way_table(cells)`: bins in
+  `bin_order` × target bins ordered by their mean target `sum_y / n`, null excluded;
+  `pool_periods(cells, periods, lagged=False)` sums the periods first). D = (concordant −
+  discordant) / pairs in different target bins; concordance = (1 + |D|) / 2, direction = sign of D
+  (`scope.concordance_direction(value, signed, se)`, none below 0.5 + 2 SE); with `sign` (the
+  window's direction) a per-period or lagged value is read in that direction, `(1 + sign · D) / 2`,
+  so a flip reads below 0.5. For a 0/1 target this is exactly the AUC of the binned feature (pairs
+  inside one bin count half); for a binned regression target the pairs tied on the target bin are
+  left out (exact on the binned rows, about 0.01 from the raw rows' value against the 20 target
+  bins, T32); with `eda.bins: null` and a regression target `concordance_exact(cells)` expands the
+  cells and computes Somers' D from Kendall's τ-b and the tie counts (`scipy.stats.kendalltau`,
+  Q427), equal to the table's value without the dense table.
 - **The binning, stated honestly:** at 100 quantile bins a continuous feature's concordance is
   pulled towards 0.5 by at most 1% of its distance from 0.5 (a true 0.70 reads no lower than
   0.698), usually far less; it is exact for numerics with at most 100 distinct values, for
@@ -314,7 +316,7 @@ definitions; Feature Checks uses the ones marked FC.
 - **Level encoding** (`encode_levels(cells, k_rows)`, Micci-Barreca): a level's value is
   (sum_y + k × base) / (n + k), shrinkage in pseudo-events: the prior weight in rows `k_rows =
   strata.min_events / base_rate` at the window's base (regression: `strata.min_events` rows;
-  `ranking.encoding_prior_rows`), null excluded. Read on the rows it was fitted
+  `scope.encoding_prior_rows`), null excluded. Read on the rows it was fitted
   on, the order flatters noise: a null 20–50-level code reads 0.53–0.57 at about 190 events a
   period, above Training's floor, and 0.60 on a panel where the same clients keep their labels.
   Fitting it on the other periods does not help on a panel (0.57): they hold the same clients.
@@ -391,71 +393,67 @@ definitions; Feature Checks uses the ones marked FC.
   `pool_periods` keeps an unlabelled cell's `sum_y` null.
 - **Intervals:** `wilson_interval(k, n)` (closed form, 95%, vectorised); `t_interval(mean, sd,
   n)`.
-- **Association** (on the snapshot's eligible rows, a seeded cap of 50,000 rows,
-  `PAIRWISE_ROWS`, for the pairwise matrix only, stated in the report; `pairwise_sample(frame)`
-  draws it with `PAIRWISE_SEED`, once in `run_eda`, which counts the numerics' null masks, the
-  timings line, on it): `spearman_matrix(frame)` (the exact pairwise-complete
-  Spearman: columns grouped by null mask, ranked once inside a group and once per group pair
-  across groups, T28; at least 500 shared rows else "not compared", NaN), `cramers_v(a, b)`
-  (plain, null a level, "not compared" with one level, T29), `correlation_ratio(numeric,
-  categorical)` (η on ranks over the numeric's filled rows, null a level);
-  `association_table(frame, kinds)` (it applies `pairwise_sample`, a no-op on a capped frame) →
-  long table `a, b, statistic, method (spearman |
-  cramers_v | eta), rows` (a mixed pair has its numeric as `a`); `cluster_features(table,
-  max_assoc)` (average linkage on 1 − |statistic|, a "not compared" pair at distance 1, members
-  of clusters of two or more only) and `explained_by_others(table, members)` (FC): per member
-  the R² on the other numeric members from their Spearman pairs alone, by least squares so an
-  exact identity reads 1. NaN, "not available", for a member without a Spearman pair among the
-  members ("mixed kinds": a categorical, or the one numeric of a mixed cluster) and for every
-  member when a Spearman pair among them is not compared (NaN in the table), decided before
-  solving; the caller names the reason from the pairs' methods. An R² beyond 1e-9 of [0, 1]
-  (pairwise-complete correlations, each on its own rows, need not form a positive
-  semi-definite matrix) is refused, not clipped.
+- **Association** (on the snapshot's eligible rows, a seeded cap of 50,000 rows, `PAIRWISE_ROWS`,
+  for the pairwise matrix only, stated in the report; `pairwise_sample(frame)` draws it with
+  `PAIRWISE_SEED`, once in `run_eda`, which counts the numerics' null masks, the timings line, on
+  it): `spearman_matrix(frame)` (the exact pairwise-complete Spearman: columns grouped by null mask,
+  ranked once inside a group and once per group pair across groups, T28; at least 500 shared rows
+  else "not compared", NaN), Cramér's V (plain, null a level, "not compared" with one level, T29)
+  and the correlation ratio η (on ranks over the numeric's filled rows, null a level), all three in
+  `association_table(frame, kinds)` (it applies `pairwise_sample`, a no-op on a capped frame) → long
+  table `a, b, statistic, method (spearman | cramers_v | eta), rows` (a mixed pair has its numeric
+  as `a`); `cluster_features(table, max_assoc)` (average linkage on 1 − |statistic|, a "not
+  compared" pair at distance 1, members of clusters of two or more only) and
+  `explained_by_others(table, members)` (FC): per member the R² on the other numeric members from
+  their Spearman pairs alone, by least squares so an exact identity reads 1. NaN, "not available",
+  for a member without a Spearman pair among the members ("mixed kinds": a categorical, or the one
+  numeric of a mixed cluster) and for every member when a Spearman pair among them is not compared
+  (NaN in the table), decided before solving; the caller names the reason from the pairs' methods.
+  An R² beyond 1e-9 of [0, 1] (pairwise-complete correlations, each on its own rows, need not form a
+  positive semi-definite matrix) is refused, not clipped.
 - **Support rules:** `strata.min_events` for strata tables and every per-period statistic (events
   for binary, units with a non-zero target for regression); `MIN_BIN_SUPPORT = 20` for bins and
   levels in the deep dives. Below support a cell is greyed as insufficient, never dropped, and
   Feature Checks computes on whatever support there is
   ([feature checks](feature_checks.md#the-finding-table)).
-- **Per-task spec entries:** `target_bins(known, exact)` (binary: none, the two values are the
-  bins; regression: the edges of 20 quantile bins, every value with `eda.bins: null`, 0 always
-  its own bin); `summarise_group(target, base)` on a group's known targets (binary: support =
-  positive events, estimate = rate, Wilson interval, lift = rate / base rate; regression: support
-  = units with a non-zero target, estimate = mean, t-interval, lift = mean / overall mean, median
-  beside it, and the non-zero share with a Wilson interval and the mean and median of the
-  non-zero values); `summary_columns`, a group table's columns (binary: `rows`, `support`,
-  `estimate`, `low`, `high`, `lift`, `insufficient`; regression adds `median`,
-  `nonzero_share`, `nonzero_low`, `nonzero_high`, `nonzero_mean`, `nonzero_median`), so
-  `tables/bins`, `levels` and `strata` keep their columns whatever the data;
-  `rare_effect(minority, dominant, sizes) -> (effect, se)` on two sides' labelled cells, `sizes`
-  their rows in effective clients (binary: **Cohen's h**, 2·asin√p₁ − 2·asin√p₂, SE √(1/n₁ +
-  1/n₂); regression: **Cohen's d**, the mean difference over the pooled SD from the cells'
-  `sum_y2`, SE √((n₁ + n₂)/(n₁n₂) + d²/(2(n₁ + n₂)))), `rare_effect_unavailable(minority,
-  dominant)` (why it cannot exist, '' when it can: a side without labelled rows; for d fewer
-  than two a side or no spread, so the caller decides "not available" before calling) and
-  `rare_effect_name`; Feature Checks' `rare_value_leak` reads them. The regression lift is a
-  mean ratio and is computed only when the overall mean is positive; for a signed or zero-mean
-  amount it is "not available: mean not positive" (D-035), decided by the per-task spec before
-  running (`lift_available(base)`; `summarise_group` leaves `lift` out then);
-  `concordance_se(value, events, non_events, target_shares)` (the shares from
-  `cells.target_shares`, read by regression only); `events_warning(events)` and `support_name`
-  (one support name per task, used by both);
+- **Per-task spec entries:** `target_bins(known, exact)` (binary: none, the two values are the bins;
+  regression: the edges of 20 quantile bins, every value with `eda.bins: null`, 0 always its own
+  bin); `summarise_group(target, base)` on a group's known targets (binary: support = positive
+  events, estimate = rate, Wilson interval, lift = rate / base rate; regression: support = units
+  with a non-zero target, estimate = mean, t-interval, lift = mean / overall mean, median beside it,
+  and the non-zero share with a Wilson interval and the mean and median of the non-zero values);
+  `summary_columns`, a group table's columns (binary: `rows`, `support`, `estimate`, `low`, `high`,
+  `lift`, `insufficient`; regression adds `median`, `nonzero_share`, `nonzero_low`, `nonzero_high`,
+  `nonzero_mean`, `nonzero_median`), so `tables/bins`, `levels` and `strata` keep their columns
+  whatever the data; `rare_effect(minority, dominant, sizes) -> (effect, se)` on two sides' labelled
+  cells, `sizes` their rows in effective clients (binary: **Cohen's h**, 2·asin√p₁ − 2·asin√p₂, SE
+  √(1/n₁ + 1/n₂); regression: **Cohen's d**, the mean difference over the SD pooled by degrees of
+  freedom from the cells' `sum_y2`, SE √((n₁ + n₂)/(n₁n₂) + d²/(2(n₁ + n₂))); both in
+  `statistics/distributions.py`), `rare_effect_unavailable(minority, dominant)` (why it cannot
+  exist, '' when it can: a side without labelled rows; for d fewer than two a side or no spread, so
+  the caller decides "not available" before calling) and `rare_effect_name`; Feature Checks'
+  `rare_value_leak` reads them. The regression lift is a mean ratio and is computed only when the
+  overall mean is positive; for a signed or zero-mean amount it is "not available: mean not
+  positive" (D-035), decided by the per-task spec before running (`lift_available(base)`;
+  `summarise_group` leaves `lift` out then); `concordance_se(value, events, non_events,
+  target_shares)` (the shares from `cells.target_shares`, read by regression only);
+  `events_warning(events)` and `support_name` (one support name per task, used by both);
   `base_rate_views(target)` (the headline: binary rows, positives, rate and Wilson interval;
   regression rows, mean, median, p10, p90, zero share, units with a non-zero target);
-  `shrinkage_rows(min_events, base)` (the level encoding's `k_rows`). EDA's tables add nine
-  entries: `cells_concordance(cells, exact, sign)` (a feature's concordance from its pooled
-  cells: the two-way table for binary; for regression `concordance_exact` when `eda.bins` is
-  null); `period_estimate(known, positive_rows, sum_y, sum_y2)` (the estimate per window period
-  from the counts: binary the rate with its Wilson interval, regression the mean with its
-  t-interval from the sum of squares and the non-zero share with its Wilson interval);
-  `target_class(target)` (`'0'` / `'1'`, or `'zero'` / `'non-zero'`, which the box plots group
-  by); `estimate_format` (how an estimate is printed); `axis_format` (the d3 format of an
-  estimate's axis and hover: binary percent, regression plotly's default; lift and concordance
-  axes stay plain); `estimate_noun` (`rate` / `mean`, which names the y axes and the how-to-read
-  notes); `target_distribution` (whether the target is shown per group: regression yes);
-  `capture_noun` (`positives` / `amount`: what a slice captures, the share of `sum_y`, a 0/1
-  target summing to its positives); `perfect_list(n, support)` (the decision paragraph's
-  sentence on a perfect list of `n` rows; regression none: an amount's perfect list depends on
-  the amounts' spread, which the counts lack).
+  `shrinkage_rows(min_events, base)` (the level encoding's `k_rows`). EDA's tables add nine entries:
+  `cells_concordance(cells, exact, sign)` (a feature's concordance from its pooled cells: the
+  two-way table for binary; for regression `concordance_exact` when `eda.bins` is null);
+  `period_estimate(known, positive_rows, sum_y, sum_y2)` (the estimate per window period from the
+  counts: binary the rate with its Wilson interval, regression the mean with its t-interval from the
+  sum of squares and the non-zero share with its Wilson interval); `target_class(target)` (`'0'` /
+  `'1'`, or `'zero'` / `'non-zero'`, which the box plots group by); `estimate_format` (how an
+  estimate is printed); `axis_format` (the d3 format of an estimate's axis and hover: binary
+  percent, regression plotly's default; lift and concordance axes stay plain); `estimate_noun`
+  (`rate` / `mean`, which names the y axes and the how-to-read notes); `target_distribution`
+  (whether the target is shown per group: regression yes); `capture_noun` (`positives` / `amount`:
+  what a slice captures, the share of `sum_y`, a 0/1 target summing to its positives);
+  `perfect_list(n, support)` (the decision paragraph's sentence on a perfect list of `n` rows;
+  regression none: an amount's perfect list depends on the amounts' spread, which the counts lack).
 
 ### The views
 Report order (A25 in the record; structure owned by [reporting](reporting.md)): summary → core →
@@ -520,18 +518,20 @@ embedded once.
     first for a `top_n` decision (a count equal to it is not repeated), then
     `evaluation.slices.top_pct` (`top 1%`) and `top_n` (`n = 10,000`), as shares of the
     snapshot's labelled rows; a count above those rows is skipped and named in the caption.
-  - **The list order**, the rule a person could apply, the null bin last in every list: a
-    numeric by value in its snapshot raw sign (`tables/ranking` `raw_sign`; a non-monotone
-    feature's list takes one end only); a categorical per client fold by the shrunk level
-    encoding fitted on the other folds' window cells (its prior mean too; a level unseen there
-    at their base), each fold cut at the share on its own and the counts summed: cross-fitted
-    as the ranking's categorical concordance, so a one-period window works. A key feature
-    without a snapshot concordance (`raw_sign` 0) has one row with the ranking's reason.
-  - **Per slice** (`capture_table`): `rows`, `support`, the task's estimate with its interval
-    (`period_estimate`), `lift` over the snapshot's base, and `capture`, the slice's share of
-    `sum_y` (the positives, or the amount), all cut linearly inside the boundary bin;
-    `insufficient` below `MIN_BIN_SUPPORT`. No capture or lift without a positive base; no
-    capture (lift stays) when a target bin sums below 0, an amount that can be negative.
+  - **The list order**, the rule a person could apply, the null bin last in every list: a numeric by
+    value in its snapshot raw sign (`tables/ranking` `raw_sign`; a non-monotone feature's list takes
+    one end only); a categorical per client fold by the shrunk level encoding fitted on the other
+    folds' window cells (`fold_encodings`, with the run's prior, so the list follows the order the
+    concordance read; a level unseen there at their base), each fold cut at the share on its own and
+    the counts summed: cross-fitted as the ranking's categorical concordance, so a one-period window
+    works. A key feature without a snapshot concordance (`raw_sign` 0) has one row with the
+    ranking's reason.
+  - **Per slice** (`statistics/capture.py`'s `capture_table`): `rows`, `support`, the task's
+    estimate with its interval (`period_estimate`), `lift` over the snapshot's base, and `capture`,
+    the slice's share of `sum_y` (the positives, or the amount), all cut linearly inside the
+    boundary bin; `insufficient` below `MIN_BIN_SUPPORT` (EDA's, set by `slice_tables`). No capture
+    or lift without a positive base; no capture (lift stays) when a target bin sums below 0, an
+    amount that can be negative.
   - **The views:** the decision paragraph (a `top_n` decision's share of the labelled rows, the
     task's perfect list and a random one; other decision types "no fixed list size; the
     evaluation slices stand in"; what the view is and is not; the leak cue: a key feature whose
@@ -698,30 +698,30 @@ and the hashes.
   report, ledger, artifacts.
 - `eda/population.py`: the headline, funnel, `sources_per_period`, target per period, target by
   stratum and reference groups, from `Frames.log`, the population counts and the snapshot.
-- `eda/ranking.py`: `count_levels`, `encoding_prior_rows` (the level encoding's prior weight in
-  rows), `feature_statistics`, `scope_statistics`,
-  `rank_features` (the ranking table from the cells) and `select_key_features(ranking,
-  association, rule)`.
-- `eda/deep_dives.py`: `MIN_BIN_SUPPORT = 20`; one deep dive per key feature (bin and level
-  tables, quartiles, `target_quartiles_by_group`, the per-period concordance);
+- `eda/ranking.py`: `count_levels`, `feature_statistics` (on `statistics/scope.py`'s
+  `scope_statistics`), `rank_features` (the ranking table from the cells) and
+  `select_key_features(ranking, association, rule)`.
+- `eda/deep_dives.py`: `MIN_BIN_SUPPORT = 20`; one deep dive per key feature (`group_table`,
+  quartiles, `target_quartiles_by_group`, the per-period concordance);
   `concordance_per_period` (every ranked candidate's, stored); `strata_pivots`
   (every key feature × each stratum variable but itself); `dive_group_count` (by level or about
   ten groups), `numeric_groups`, `merged_groups`, `value_labels`, `box_table`.
 - `eda/slices.py`: `slice_shares`, `skipped_slices`, `ordered_numeric_bins`,
-  `ordered_categorical_bins`, `capture_table`, `capture_curve`, `slice_tables` (the decision
-  slices over the key features).
+  `ordered_categorical_bins`, `slice_tables` (the decision slices over the key features, cut by
+  `statistics/capture.py`).
 - `eda/profile.py`: `value_profile` (the value profile).
 - `eda/report.py`: `build_views`, `report_sections` (the four parts), `eda_warnings`; the chart
   builders the exploration functions share (`group_chart`, `strata_chart`, `boxes`).
 - `eda/explore.py`: `pivot_target`, `lift_by_group`, `compare_sides`, `rate_by_period`.
 - Imported: `dataset/frames.py` (`build_frames`), `dataset/counts.py` (edges and levels, the two
-  passes, the population counts), `statistics/` (`cells.py`, `concordance.py`,
-  `distributions.py`, `intervals.py`, `association.py`), `tasks.py`, `reporting/` (`html.py`,
-  `charts.py`, `blocks.py`, `theme.py`), `artifacts.py`, `ledger.py`.
+  passes, the population counts), `statistics/` (`cells.py`, `concordance.py`, `scope.py`,
+  `capture.py`, `distributions.py`, `intervals.py`, `association.py`), `tasks.py`, `reporting/`
+  (`html.py`, `charts.py`, `blocks.py`, `theme.py`), `artifacts.py`, `ledger.py`.
 
 Call flow: Level 2's numbered list. Reading order for review: `statistics/concordance.py` →
-`statistics/cells.py` → `dataset/counts.py` → `eda/ranking.py` → `eda/slices.py` → `eda/run.py` →
-`eda/report.py` → `eda/deep_dives.py` → `eda/population.py` → `eda/explore.py`.
+`statistics/cells.py` → `statistics/scope.py` → `dataset/counts.py` → `eda/ranking.py` →
+`eda/slices.py` → `eda/run.py` → `eda/report.py` → `eda/deep_dives.py` → `eda/population.py` →
+`eda/explore.py`.
 
 ### Interface
 - **Public** (`core_modelling.eda`; the exploration functions are described under "The views",
@@ -731,8 +731,8 @@ Call flow: Level 2's numbered list. Reading order for review: `statistics/concor
   None) -> Styler`; `lift_by_group(result, feature: str, by: str | None = None) -> go.Figure`;
   `compare_sides(result, feature: str, tag: str) -> go.Figure`; `rate_by_period(result, feature:
   str) -> go.Figure`; the result is a `StageResult` (`core_modelling.artifacts`, D-137).
-- **CLI:** `python -m core_modelling run <config> [<config> …] --stages eda` (`feature_checks`
-  joins with major step 3).
+- **CLI:** `python -m core_modelling run <config> [<config> …] --stages eda` (`--stages eda
+  feature_checks` runs Feature Checks after it).
 - **`StageResult(tables, ledger, log, meta, paths, views, frame, config)`:** `views` the Stylers
   and figures the report embeds (the keys and what each holds: `eda/report.py`'s module
   docstring);
@@ -750,28 +750,33 @@ Call flow: Level 2's numbered list. Reading order for review: `statistics/concor
 | `features.kinds` | `{}` | `{column: numeric \| categorical}` overrides |
 
   EDA also reads `strata.variables`, `strata.max_levels` and `strata.min_events`, and for the
-  decision slices `evaluation.slices` and `decision` (`type`, `n`); these are not in EDA's
-  settings digest, since Feature Checks reads neither slices table.
+  decision slices `evaluation.slices` and `decision` (`type`, `n`); all of them are in EDA's
+  settings digest, so a change to any makes `eda/` stale and its report is never out of date
+  with the config.
 - **Artifacts** under `<use_case>/04_feature/<ddh>/eda/` (`environment.feature_dir(env, cfg,
   entity, "eda")`, D-136), written by `artifacts.write_stage` to a temporary folder renamed on
   success (leftover `.tmp-*` / `.old-*` siblings from a crash make it fail loud). The report is
   rendered before anything is written; then Feature Checks' folder is removed, the ledger saved
-  (`save_ledger(ledger, folder, {"stage": "eda", "data_definition_hash": ddh,
-  "settings_digest": …})`) and the stage folder written last, `report.html` passed as one of
+  (`save_ledger(ledger, folder, {"data_definition_hash": ddh, "runs": {"eda": run_token}})`, a
+  fresh sidecar) and the stage folder written last, `report.html` passed as one of
   `write_stage`'s `texts` so the rename commits it with the rest; `eda.json` is the commit
   marker:
-  - `eda.json` (`schema_version: 1`, `stage`, `tables`, plus the stamped framework version and
-    time): `entity`, `config_hash`, `data_definition_hash`, `resolved_input_hash`, `hash_version`,
-    `replayed_to`, `settings_digest` and `settings` (the digested values,
-    `artifacts.settings_meta(resolved, ["features.kinds", "strata", "eda",
-    "time.validation_period"])`; the validation period decides the compared periods and the
-    D-088 counts yet sits outside the data-definition hash, so a changed one makes EDA stale for
-    Feature Checks), `snapshot_period`, `compared_periods` (`window`, `gap`, `latest`),
-    `population` (the counts per period), `window_levels`, `over_ceiling`, `clients`,
-    `key_features` (`{feature: top_n | listed}`), `represented_by`, `candidates`, `kinds`,
-    `kind_overrides`, `unsupported`, `lineage`, `collect`, `snapshot_base`, `slices` (label →
-    share of the snapshot's labelled rows), `warnings`, `headline`, `timings` (seconds per
-    phase, `concordance_per_period` its own); `log.json` beside it holds the run's log entries;
+  - `eda.json` (`schema_version: 2`, since the json carries its `run_token`; an older one is refused
+    by `read_stage`, "rerun the eda stage"; `stage`, `tables`, plus the stamped framework version
+    and time): `artifacts.stage_identity(resolved, "eda")`, that is `entity`, `config_hash`,
+    `data_definition_hash`, `resolved_input_hash`, `hash_version`, `replayed_to`, `settings_digest`
+    and `settings` (the digested values at `SETTINGS_PATHS_BY_STAGE["eda"]`: `features.kinds`,
+    `strata`, `eda`, `time.validation_period`, `decision`, `evaluation.slices`; the validation
+    period decides the compared periods and the D-088 counts yet sits outside the data-definition
+    hash, so a changed one makes EDA stale for Feature Checks); `run_token`
+    (`artifacts.new_run_token`, also in the ledger's sidecar), `snapshot_period`, `compared_periods`
+    (`window`, `gap`, `latest`), `population` (the counts per period), `window_levels`,
+    `over_ceiling`, `clients`, `key_features` (`{feature: top_n | listed}`), `represented_by`,
+    `candidates`, `kinds`, `kind_overrides`, `unsupported`, `lineage`, `collect`, `snapshot_base`,
+    `slices` (label → share of the snapshot's labelled rows), `warnings`, `headline`, `timings`
+    (seconds per phase, `concordance_per_period` its own; `cells`, the cells counted;
+    `cells_estimate`, the estimate before the passes, null unless `eda.bins` is null); `log.json`
+    beside it holds the run's log entries;
   - `tables/*.parquet`: `cells` (`CELL_COLUMNS`, `sum_y2` among them), `client_constant`,
     `population`, `funnel`, `sources`, `target_per_period`, `ranking`, `correlation`,
     `concordance_per_period` (every candidate), `slices`, `capture_curve`, `profile`, `bins`,

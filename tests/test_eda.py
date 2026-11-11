@@ -1,15 +1,16 @@
 """The EDA stage end to end on the unit preset (D-135, D-136): the card config (every candidate)
-and a regression variant (a narrow candidate list), each run once in a module fixture. What a
-run must leave: every file and table of the stage, `eda.json` with the D-088 population counts
-and the settings digest Feature Checks checks, the ledger with every EDA column, a report with
-plotly.js once and every section, no stale Feature Checks folder, and no label outside the
-window nor any validation-period cell in the counts table (§4.1, §4.4). The views follow the
-report's layout, and the exploration functions cut the deep dives' groups and refuse what they
-cannot draw.
+and a regression variant (a narrow candidate list), each run once for the session in
+`conftest.py`. What a run must leave: every file and table of the stage, `eda.json` with the
+D-088 population counts and the settings digest Feature Checks checks, the ledger with every EDA
+column, a report with plotly.js once and every section, no stale Feature Checks folder, and no
+label outside the window nor any validation-period cell in the counts table (§4.1, §4.4). The
+views follow the report's layout, and the exploration functions cut the deep dives' groups and
+refuse what they cannot draw.
 """
 
 import json
 import re
+import shutil
 from collections.abc import Callable
 from dataclasses import replace
 from html import unescape
@@ -21,17 +22,23 @@ import plotly.graph_objects as go
 import pytest
 from pandas.io.formats.style import Styler
 from plotly.offline import get_plotlyjs
-from pyspark.sql import SparkSession
 
-from core_modelling.artifacts import StageResult, check_upstream, read_stage, settings_digest
+from core_modelling.artifacts import (
+    SETTINGS_PATHS_BY_STAGE,
+    StageResult,
+    check_upstream,
+    read_stage,
+    settings_digest,
+)
 from core_modelling.config import UseCaseConfig
+from core_modelling.config.identities import resolved_input_hash
 from core_modelling.dataset import Frames
 from core_modelling.dataset.counts import bin_edges
-from core_modelling.eda import compare_sides, lift_by_group, pivot_target, rate_by_period, run_eda
+from core_modelling.eda import compare_sides, lift_by_group, pivot_target, rate_by_period
 from core_modelling.eda.deep_dives import (
     DEEP_DIVE_GROUPS,
     dive_group_count,
-    level_table,
+    group_table,
     strata_pivots,
     target_quartiles_by_group,
 )
@@ -49,7 +56,7 @@ from core_modelling.periods import period_spec
 from core_modelling.tasks import TASK_SPECS
 
 ENTITY = "entity_a"
-SETTINGS = ["features.kinds", "strata", "eda", "time.validation_period"]
+SETTINGS = SETTINGS_PATHS_BY_STAGE["eda"]
 TABLES = {"cells", "client_constant", "population", "funnel", "sources", "target_per_period",
           "ranking", "correlation", "slices", "capture_curve", "profile", "bins", "levels",
           "quartiles", "per_period", "strata", "reference_groups",
@@ -62,54 +69,11 @@ HEADINGS = ["Summary", "Choices", "How to read", "Headline", "Warnings", "Core",
             "Correlation overview", "Value profile", "Concordance per period", "Appendix", "Kinds",
             "Feature ledger", "Resolved config", "Decisions", "Collect log",
             "Timings"]  # fmt: skip
-REGRESSION_CANDIDATES = ["age", "income", "segment", "onboarding_channel", "employment_status",
-                         "cc_active_flag", "cc_bal*", "cc_limit", "spend_cc_*",
-                         "*_trap_spend_leak"]  # fmt: skip
 
 
-def _run_with_stale_checks(
-    cfg: UseCaseConfig, env: EnvironmentConfig, spark: SparkSession
-) -> StageResult:
-    """EDA after planting a Feature Checks folder, as an earlier run would have left it."""
-    stale = Path(feature_dir(env, cfg, ENTITY, "feature_checks"))
-    stale.mkdir(parents=True, exist_ok=True)
-    (stale / "feature_checks.json").write_text("{}")
-    return run_eda(cfg, ENTITY, env, spark)
-
-
-@pytest.fixture(scope="module")
-def card(
-    spark: SparkSession, unit_env: EnvironmentConfig, variant: Callable[..., UseCaseConfig]
-) -> StageResult:
-    """The card config's EDA, built in memory (no model input)."""
-    return _run_with_stale_checks(variant(data={"model_input": None}), unit_env, spark)
-
-
-@pytest.fixture(scope="module")
-def regression(
-    spark: SparkSession, unit_env: EnvironmentConfig, variant: Callable[..., UseCaseConfig]
-) -> StageResult:
-    """Card spend summed forward for holders, on a narrow candidate list."""
-    cfg = variant(
-        task="regression",
-        entities={ENTITY: {"sources": {"features": ["retail_mart"], "targets": None}}},
-        data={
-            "model_input": None,
-            "target": {"rule": "forward_sum", "column": "spend_cc_vol"},
-            "eligibility": {
-                "modelling": [
-                    {"name": "holders", "filter": "cc_flag = 1", "reason": "spend needs a card"}
-                ]
-            },
-        },
-        features={"candidates": {"include": REGRESSION_CANDIDATES, "exclude": []}},
-    )
-    return _run_with_stale_checks(cfg, unit_env, spark)
-
-
-@pytest.fixture(params=["card", "regression"])
+@pytest.fixture(params=["eda_card", "eda_regression"], ids=["card", "regression"])
 def result(request: pytest.FixtureRequest) -> StageResult:
-    """Each config's result in turn."""
+    """Each config's result in turn (the shared runs, `conftest.py`)."""
     return request.getfixturevalue(request.param)
 
 
@@ -138,7 +102,7 @@ def test_eda_json_carries_the_population_counts_and_the_digest(result: StageResu
     window = [row for row in meta["population"] if row["period"] in periods["window"]]
     assert all(row["known_target"] is not None and row["eligible_rows"] > 0 for row in window)
     assert meta["settings_digest"] == settings_digest(result.config, SETTINGS)
-    check_upstream(meta, result.config, SETTINGS)
+    check_upstream(meta, result.config)
     assert set(meta["key_features"].values()) <= {"top_n", "listed"}
     assert len(meta["key_features"]) == result.config.eda.key_features.top_n
     assert list(meta["slices"]) == list(dict.fromkeys(result.tables["slices"]["slice"].dropna()))
@@ -149,7 +113,8 @@ def test_the_ledger_holds_every_eda_column(result: StageResult) -> None:
     """One row per candidate and lineage column, the identity and EDA columns only, saved
     beside `eda/` for this data definition."""
     folder = str(Path(result.paths["folder"]).parent)
-    ledger = read_ledger(folder, result.meta["data_definition_hash"])
+    runs = {"eda": result.meta["run_token"]}
+    ledger = read_ledger(folder, result.meta["data_definition_hash"], runs)
     assert ledger.columns.tolist() == [*COLUMNS_BY_STAGE["identity"], *COLUMNS_BY_STAGE["eda"]]
     assert set(ledger.loc[ledger["lineage"], "feature"]) == set(result.meta["lineage"])
     read = ledger.loc[~(ledger["lineage"] | ledger["unsupported"])]
@@ -166,6 +131,10 @@ def test_the_report_has_plotly_once_and_every_section(result: StageResult) -> No
     assert [h for h in headings if h in HEADINGS] == HEADINGS and "Strata pivots" not in headings
     assert set(result.views["deep_dives"]) == set(result.meta["key_features"]) <= set(headings)
     assert isinstance(result.views["timings"], Styler)
+    # with eda.bins set the cells are counted, never estimated (the estimate is one more scan)
+    timings = result.meta["timings"]
+    assert timings["cells"] == len(result.tables["cells"]) and timings["cells_estimate"] is None
+    assert f"{timings['cells']:,} cells counted," in text
     print(f"{result.config.task} report: {Path(result.paths['report.html']).stat().st_size:,} B")
 
 
@@ -181,14 +150,14 @@ def test_no_label_outside_the_window_and_no_validation_cell(result: StageResult)
     assert set(cells.loc[cells["lagged"], "period"]) <= set(periods["window"])
 
 
-def test_target_boxes_share_the_deep_dives_groups(regression: StageResult) -> None:
+def test_target_boxes_share_the_deep_dives_groups(eda_regression: StageResult) -> None:
     """An amount target's boxes per group: a binned key feature's cover its bin table's groups
     with the same rows, each box ordered; by level, a categorical's boxes are the known rows'
     target per level."""
-    bins = regression.tables["bins"]
+    bins = eda_regression.tables["bins"]
     feature = bins["feature"].iloc[0]
     groups = bins.loc[(bins["feature"] == feature) & (bins["rows"] > 0), ["group", "rows"]]
-    boxes = regression.tables["target_quartiles"]
+    boxes = eda_regression.tables["target_quartiles"]
     boxes = boxes.loc[boxes["feature"] == feature].reset_index(drop=True)
     pd.testing.assert_frame_equal(
         boxes[["group", "rows"]], groups.reset_index(drop=True), check_dtype=False
@@ -196,7 +165,7 @@ def test_target_boxes_share_the_deep_dives_groups(regression: StageResult) -> No
     ordered = boxes["lower_whisker"] <= boxes["q1"]
     ordered &= (boxes["q1"] <= boxes["median"]) & (boxes["median"] <= boxes["q3"])
     assert (ordered & (boxes["q3"] <= boxes["upper_whisker"])).all()
-    snapshot = regression.frame
+    snapshot = eda_regression.frame
     known = snapshot.loc[(snapshot["eligible"] == 1) & snapshot["target"].notna()]
     by_level = target_quartiles_by_group(snapshot, "segment", "categorical", None, None)
     expected = known.groupby(known["segment"].fillna("null"))["target"].median()
@@ -206,44 +175,45 @@ def test_target_boxes_share_the_deep_dives_groups(regression: StageResult) -> No
 
 
 def test_a_stratum_named_like_a_framework_column_is_refused(
-    spark: SparkSession, unit_env: EnvironmentConfig, variant: Callable[..., UseCaseConfig]
+    eda_frames: Frames, variant: Callable[..., UseCaseConfig]
 ) -> None:
-    """A stratum `target` is refused once the snapshot is collected, with the `source_<name>`
-    hint."""
+    """A stratum `target` is refused on the collected snapshot, with the `source_<name>` hint."""
     cfg = variant(data={"model_input": None}, strata={"variables": ["segment", "target"]})
     with pytest.raises(ValueError, match="'source_target'"):
-        run_eda(cfg, ENTITY, unit_env, spark)
+        _check_frame_names(cfg, eda_frames)
 
 
-def test_a_changed_validation_period_makes_eda_stale(card: StageResult) -> None:
+def test_a_changed_validation_period_makes_eda_stale(eda_card: StageResult) -> None:
     """The validation period decides the compared periods and the population counts yet is
     outside the data-definition hash (D-088): Feature Checks' upstream check refuses EDA's meta
     once it changes, naming it."""
-    meta = json.loads(Path(card.paths["eda.json"]).read_text())
-    time = card.config.time.model_copy(update={"validation_period": None})
-    moved = card.config.model_copy(update={"time": time})
+    meta = json.loads(Path(eda_card.paths["eda.json"]).read_text())
+    time = eda_card.config.time.model_copy(update={"validation_period": None})
+    moved = eda_card.config.model_copy(update={"time": time})
+    # as the changed config resolved again: its hash is its content's
+    moved.housekeeping = {**moved.housekeeping, "resolved_input_hash": resolved_input_hash(moved)}
     with pytest.raises(ValueError, match=r"eda ran with time\.validation_period"):
-        check_upstream(meta, moved, SETTINGS)
+        check_upstream(meta, moved)
 
 
-def test_a_numeric_stratum_outside_the_candidates_is_checked(regression: StageResult) -> None:
+def test_a_numeric_stratum_outside_the_candidates_is_checked(eda_regression: StageResult) -> None:
     """A stratum without a kind (here `income` with its kind taken away) is judged numeric by its
     dtype and refused above strata.max_levels values; a modelling tag as a stratum is refused
     (constant on the eligible rows); a log without the `compared_periods` entry fails naming
     it."""
-    kinds = {name: kind for name, kind in regression.meta["kinds"].items() if name != "income"}
+    kinds = {name: kind for name, kind in eda_regression.meta["kinds"].items() if name != "income"}
     meta = {"kinds": kinds, "tags": ["holders"]}
-    frames = Frames(regression.frame, None, None, None, None, [], meta)
-    strata = regression.config.strata.model_copy(update={"variables": ["income"]})
-    cfg = regression.config.model_copy(update={"strata": strata})
+    frames = Frames(eda_regression.frame, None, None, None, None, [], meta)
+    strata = eda_regression.config.strata.model_copy(update={"variables": ["income"]})
+    cfg = eda_regression.config.model_copy(update={"strata": strata})
     with pytest.raises(ValueError, match=r"the numeric strata \{'income'"):
         _check_frame_names(cfg, frames)
-    strata = regression.config.strata.model_copy(update={"variables": ["segment", "holders"]})
-    cfg = regression.config.model_copy(update={"strata": strata})
+    strata = eda_regression.config.strata.model_copy(update={"variables": ["segment", "holders"]})
+    cfg = eda_regression.config.model_copy(update={"strata": strata})
     with pytest.raises(ValueError, match=r"the modelling tags \['holders'\]"):
         _check_frame_names(cfg, frames)
     with pytest.raises(ValueError, match="no `compared_periods` entry"):
-        _compared_periods(regression.config, [])
+        _compared_periods(eda_regression.config, [])
 
 
 def test_dive_tables_keep_their_columns(result: StageResult) -> None:
@@ -324,136 +294,148 @@ def test_estimate_axes_take_the_task_format_and_lift_axes_stay_plain(result: Sta
 
 
 def test_the_correlation_overview_shows_the_key_features_and_whom_they_represent(
-    card: StageResult,
+    eda_card: StageResult,
 ) -> None:
     """The heatmap's names are the key features with a compared pair among them, in rank order;
     the table beneath lists the candidates the key-feature rule skipped, each above
     max_correlation with the key feature that represents it."""
-    heatmap, represented = card.views["correlation"]
-    keys, correlation = list(card.meta["key_features"]), card.tables["correlation"]
+    heatmap, represented = eda_card.views["correlation"]
+    keys, correlation = list(eda_card.meta["key_features"]), eda_card.tables["correlation"]
     pairs = correlation.loc[correlation["a"].isin(keys) & correlation["b"].isin(keys)]
     named = set(pairs.dropna(subset=["statistic"])[["a", "b"]].stack())
     assert list(heatmap.data[0].x) == [name for name in keys if name in named]
     table = represented.data
-    assert table["candidate"].tolist() == list(card.meta["represented_by"])
-    rule = card.config.eda.key_features.max_correlation
+    assert table["candidate"].tolist() == list(eda_card.meta["represented_by"])
+    rule = eda_card.config.eda.key_features.max_correlation
     assert (table["association"].abs() > rule).all()
 
 
-def test_the_exploration_functions_cut_the_deep_dives_groups(card: StageResult) -> None:
+def test_the_exploration_functions_cut_the_deep_dives_groups(eda_card: StageResult) -> None:
     """On a binned key feature, `lift_by_group` draws the deep dive's groups and, by a stratum,
     one line per level; `rate_by_period` one line per deep-dive group over the window periods,
     at the snapshot period the deep dive's estimate; `compare_sides` two boxes for a numeric and
     two lines for a categorical."""
-    bins = card.tables["bins"]
+    bins = eda_card.tables["bins"]
     feature = bins["feature"].iloc[0]
     groups = bins.loc[bins["feature"] == feature, ["group", "rows"]]
     shown = groups.loc[groups["rows"] > 0, "group"].tolist()
-    assert list(lift_by_group(card, feature).data[0].x) == shown
-    strata = card.tables["strata"]
+    assert list(lift_by_group(eda_card, feature).data[0].x) == shown
+    strata = eda_card.tables["strata"]
     levels = strata.loc[strata["feature"].isna() & (strata["variable"] == "segment"), "level"]
-    by_segment = lift_by_group(card, feature, by="segment")
+    by_segment = lift_by_group(eda_card, feature, by="segment")
     assert sorted(trace.name for trace in by_segment.data) == sorted(levels)
-    lines = rate_by_period(card, feature)
+    lines = rate_by_period(eda_card, feature)
     names = [trace.name for trace in lines.data if trace.name != "null"]
     assert len(lines.data) == len(groups)  # labelled by the buckets each receives (ML1)
     assert names[0].startswith(("<", "≤")) and names[-1].startswith((">", "≥"))
-    window = card.meta["compared_periods"]["window"]
+    window = eda_card.meta["compared_periods"]["window"]
     assert all(list(trace.x) == window for trace in lines.data)
-    at_snapshot = window.index(card.meta["snapshot_period"])
+    at_snapshot = window.index(eda_card.meta["snapshot_period"])
     estimates = bins.loc[bins["feature"] == feature, "estimate"].tolist()
     shown = [trace.y[at_snapshot] for trace in lines.data]
     assert shown == pytest.approx(estimates, nan_ok=True)
     for name in ("age", "segment"):  # a numeric: two boxes; a categorical: two lines
-        sides = compare_sides(card, name, "non_holders").data
+        sides = compare_sides(eda_card, name, "non_holders").data
         assert [trace.name for trace in sides] == ["excluded", "eligible"], name
 
 
-def test_a_numeric_is_cut_by_level_up_to_strata_max_levels(card: StageResult) -> None:
+def test_a_numeric_is_cut_by_level_up_to_strata_max_levels(eda_card: StageResult) -> None:
     """One rule (`dive_group_count`) decides a numeric's deep-dive groups: with `strata.max_levels`
     raised to a binned key feature's distinct values, `lift_by_group`, `rate_by_period` and the
-    strata pivots cut it by level, one group per bucket as `level_table` gives it; a few-valued
+    strata pivots cut it by level, one group per bucket as `group_table` gives it; a few-valued
     numeric reads its values (`1`, not `= 1`), as a feature and as a `by`."""
-    feature = card.tables["bins"]["feature"].iloc[0]
-    levels = int(card.tables["ranking"].set_index("feature").loc[feature, "levels"])
+    feature = eda_card.tables["bins"]["feature"].iloc[0]
+    levels = int(eda_card.tables["ranking"].set_index("feature").loc[feature, "levels"])
     assert dive_group_count("numeric", levels, levels - 1) == DEEP_DIVE_GROUPS
     assert dive_group_count("numeric", levels, levels) is None
     assert dive_group_count("categorical", levels, 2) is None
-    strata = card.config.strata.model_copy(update={"max_levels": levels})
-    wide = replace(card, config=card.config.model_copy(update={"strata": strata}))
-    edges = bin_edges(card.frame, {feature: "numeric"}, card.config.eda.bins)[feature]
-    base = card.meta["snapshot_base"]
-    table = level_table(card.frame, feature, "numeric", edges, card.config.task, base)
+    strata = eda_card.config.strata.model_copy(update={"max_levels": levels})
+    wide = replace(eda_card, config=eda_card.config.model_copy(update={"strata": strata}))
+    edges = bin_edges(eda_card.frame, {feature: "numeric"}, eda_card.config.eda.bins)[feature]
+    base = eda_card.meta["snapshot_base"]
+    table = group_table(eda_card.frame, feature, "numeric", edges, eda_card.config.task, base, None)
     shown = table.loc[table["rows"] > 0, "group"].tolist()
     assert list(lift_by_group(wide, feature).data[0].x) == shown
     assert len(rate_by_period(wide, feature).data) == len(table)
-    pivots = strata_pivots(card.frame, [feature], {feature: edges}, strata, card.config.task)
+    pivots = strata_pivots(
+        eda_card.frame, [feature], {feature: edges}, strata, eda_card.config.task
+    )
     assert set(pivots["feature_group"]) <= set(table["group"])
-    few = replace(card, frame=card.frame.assign(few=[i % 3 for i in range(len(card.frame))]))
+    few = replace(
+        eda_card, frame=eda_card.frame.assign(few=[i % 3 for i in range(len(eda_card.frame))])
+    )
     assert {trace.name for trace in lift_by_group(few, "segment", by="few").data} == {"0", "1", "2"}
     assert list(lift_by_group(few, "few").data[0].x) == ["0", "1", "2"]  # by value, not "= 0"
-    levels = card.tables["levels"]
-    by_level = levels.loc[levels["feature"].map(card.meta["kinds"]) == "numeric"]
+    levels = eda_card.tables["levels"]
+    by_level = levels.loc[levels["feature"].map(eda_card.meta["kinds"]) == "numeric"]
     name = by_level["feature"].iloc[0]  # a by-level numeric key feature of the card
-    lines = [trace.name for trace in rate_by_period(card, name).data]
+    lines = [trace.name for trace in rate_by_period(eda_card, name).data]
     assert not any(line.startswith("= ") for line in lines)  # its value, or the range received
     assert set(lines) & set(by_level.loc[by_level["feature"] == name, "group"])
 
 
-def test_the_exploration_functions_refuse_what_they_cannot_draw(card: StageResult) -> None:
+def test_the_exploration_functions_refuse_what_they_cannot_draw(eda_card: StageResult) -> None:
     """An unknown column, a column by itself, a snapshot column without cells in
     `rate_by_period`, an unknown tag and a tag with an empty side each fail naming why."""
     with pytest.raises(ValueError, match="not columns of the stage result's snapshot"):
-        lift_by_group(card, "no_such_column")
+        lift_by_group(eda_card, "no_such_column")
     with pytest.raises(ValueError, match="is the feature itself"):
-        lift_by_group(card, "segment", by="segment")
+        lift_by_group(eda_card, "segment", by="segment")
     with pytest.raises(ValueError, match="is not a candidate with cells; the candidates"):
-        rate_by_period(card, "eligible")
+        rate_by_period(eda_card, "eligible")
     with pytest.raises(ValueError, match="is not a modelling tag; the tags"):
-        compare_sides(card, "age", "no_such_tag")
-    every_row_kept = replace(card, frame=card.frame.assign(non_holders=1))
+        compare_sides(eda_card, "age", "no_such_tag")
+    every_row_kept = replace(eda_card, frame=eda_card.frame.assign(non_holders=1))
     with pytest.raises(ValueError, match="the excluded side of non_holders has no"):
         compare_sides(every_row_kept, "segment", "non_holders")
 
 
 def test_the_exploration_functions_draw_a_regression_and_a_categorical(
-    card: StageResult, regression: StageResult
+    eda_card: StageResult, eda_regression: StageResult
 ) -> None:
     """On the regression preset the four functions draw a mean, by a binned key feature's groups;
     a categorical candidate draws by its levels, capped as its deep dive caps it alone and at
     `strata.max_levels` when crossed with a stratum (as the strata pivots cap it)."""
-    bins = regression.tables["bins"]
+    bins = eda_regression.tables["bins"]
     feature = bins["feature"].iloc[0]
     groups = bins.loc[bins["feature"] == feature]
     shown = groups.loc[groups["rows"] > 0, "group"].tolist()
-    assert list(lift_by_group(regression, feature).data[0].x) == shown
-    assert {t.name for t in lift_by_group(regression, feature, by="segment").data} <= set(
-        regression.frame["segment"].fillna("null")
+    assert list(lift_by_group(eda_regression, feature).data[0].x) == shown
+    assert {t.name for t in lift_by_group(eda_regression, feature, by="segment").data} <= set(
+        eda_regression.frame["segment"].fillna("null")
     )
-    lines = rate_by_period(regression, feature)
+    lines = rate_by_period(eda_regression, feature)
     assert len(lines.data) == len(groups) and lines.layout.yaxis.title.text == "Target mean"
-    assert not pivot_target(regression, feature, "segment").data.empty
-    assert [t.name for t in compare_sides(regression, "age", "holders").data] == [
+    assert not pivot_target(eda_regression, feature, "segment").data.empty
+    assert [t.name for t in compare_sides(eda_regression, "age", "holders").data] == [
         "excluded",
         "eligible",
     ]
-    levels = regression.frame.loc[regression.frame["eligible"] == 1, "employment_status"]
+    levels = eda_regression.frame.loc[eda_regression.frame["eligible"] == 1, "employment_status"]
     labels = {*levels.dropna().astype(str), "null", "__other__"}
-    assert set(lift_by_group(regression, "employment_status").data[0].x) <= labels
-    assert {t.name for t in rate_by_period(regression, "employment_status").data} <= labels
-    strata = card.config.strata.model_copy(update={"max_levels": 1})
-    narrow = replace(card, config=card.config.model_copy(update={"strata": strata}))
+    assert set(lift_by_group(eda_regression, "employment_status").data[0].x) <= labels
+    assert {t.name for t in rate_by_period(eda_regression, "employment_status").data} <= labels
+    strata = eda_card.config.strata.model_copy(update={"max_levels": 1})
+    narrow = replace(eda_card, config=eda_card.config.model_copy(update={"strata": strata}))
     alone = lift_by_group(narrow, "employment_status").data[0].x
     crossed = lift_by_group(narrow, "employment_status", by="segment").layout.xaxis.categoryarray
     assert len(alone) > 2 and set(crossed) <= {alone[0], "__other__", "null"}
 
 
 def test_a_render_failure_leaves_the_previous_stage(
-    card: StageResult, unit_env: EnvironmentConfig, monkeypatch: pytest.MonkeyPatch
+    eda_card: StageResult,
+    eda_env: EnvironmentConfig,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The report is rendered before anything is written: a render error leaves `eda/`, its
-    report, its tables, the ledger and a Feature Checks folder as the last runs wrote them."""
-    folder = Path(card.paths["folder"])
+    report, its tables, the ledger and a Feature Checks folder as the last runs wrote them (on a
+    copy of the shared runs' data root)."""
+    shutil.copytree(eda_env.roots.data, tmp_path, dirs_exist_ok=True)
+    copy = eda_env.model_copy(
+        update={"roots": eda_env.roots.model_copy(update={"data": str(tmp_path)})}
+    )
+    folder = Path(feature_dir(copy, eda_card.config, ENTITY, "eda"))
     planted = folder.parent / "feature_checks" / "x"
     planted.parent.mkdir(exist_ok=True)
     planted.write_text("planted")
@@ -468,8 +450,6 @@ def test_a_render_failure_leaves_the_previous_stage(
 
     monkeypatch.setattr("core_modelling.eda.run.render_report", fail)
     with pytest.raises(ValueError, match="planted"):
-        _write(card, unit_env, ENTITY)
+        _write(eda_card, copy, ENTITY)
     assert {path: path.read_bytes() for path in before} == before
     assert planted.read_text() == "planted"
-    planted.unlink()
-    planted.parent.rmdir()

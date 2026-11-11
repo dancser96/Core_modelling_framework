@@ -80,7 +80,7 @@ pip install -r requirements-dev.txt
 # numpy 2 + PySpark 3.4 needs the NaN alias before flaml/pyspark.pandas import (trap T1)
 python -c "import numpy as np; np.NaN = np.nan; import flaml, pyspark; print('imports ok')"
 python -c "from pyspark.sql import SparkSession; s = SparkSession.builder.master('local[2]').getOrCreate(); print('spark ok', s.range(3).count())"
-pytest                        # 'no tests ran' is expected until the first tests exist
+pytest                        # includes a real local-Spark round trip (tests/test_spark_roundtrip.py)
 ```
 
 ## 9. VS Code + Claude Code

@@ -9,7 +9,7 @@ from typing import get_args, get_origin
 
 import pytest
 import yaml
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter
 from pydantic.fields import FieldInfo
 
 from core_modelling.config import UseCaseConfig, load_config
@@ -59,8 +59,8 @@ def _load(tmp_path: Path, raw: dict) -> UseCaseConfig:
 
 
 def _error(tmp_path: Path, raw: dict) -> str:
-    """The validation error message a raw dict produces."""
-    with pytest.raises(ValidationError) as info:
+    """The validation error message a raw dict produces (`load_config` names the file in it)."""
+    with pytest.raises(ValueError, match=r"^config .*config\.yml: \d+ validation error") as info:
         _load(tmp_path, raw)
     return str(info.value)
 
@@ -198,6 +198,18 @@ def test_unknown_key_fails_naming_it(tmp_path: Path, raw: dict) -> None:
     raw["training"]["max_iters"] = 10
     message = _error(tmp_path, raw)
     assert "profile" in message and "max_iters" in message
+
+
+def test_a_yaml_or_schema_error_names_the_file(tmp_path: Path, raw: dict) -> None:
+    """Both errors start with the config file's path, as the environment file's do."""
+    broken = tmp_path / "broken.yml"
+    broken.write_text("use_case: [unclosed\n")
+    with pytest.raises(ValueError, match=rf"^config {re.escape(str(broken))} is not valid YAML"):
+        load_config(broken)
+    raw["training"]["max_iters"] = 10
+    path = re.escape(str(tmp_path / "config.yml"))
+    with pytest.raises(ValueError, match=rf"^config {path}: 1 validation error(?s:.*)max_iters"):
+        _load(tmp_path, raw)
 
 
 def test_window_first_after_last_refused(tmp_path: Path, raw: dict) -> None:
@@ -339,6 +351,15 @@ def test_top_n_decision_needs_n(tmp_path: Path, raw: dict) -> None:
     """A top-N decision without a list size is refused."""
     raw["decision"]["type"] = "top_n"
     assert "decision.n" in _error(tmp_path, raw)
+
+
+def test_n_without_a_top_n_decision_is_refused(tmp_path: Path, raw: dict) -> None:
+    """Only a top-N decision reads `decision.n`, so an `n` under another type is refused naming
+    both fields."""
+    raw["decision"]["n"] = 500
+    error = _error(tmp_path, raw)
+    assert "decision.n is read only when decision.type is 'top_n'" in error
+    assert "decision.type is 'probability'" in error
 
 
 def test_metric_must_be_a_flaml_name(tmp_path: Path, raw: dict) -> None:

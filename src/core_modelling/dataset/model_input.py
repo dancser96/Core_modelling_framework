@@ -22,20 +22,26 @@ the configs freeze (D-125). The path is local until the M2.4 transport.
 """
 
 import json
-from datetime import date, datetime, timezone
+from datetime import date
 from pathlib import Path
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from core_modelling import __version__
+from core_modelling.artifacts import local_path, utc_now, write_json
 from core_modelling.config import UseCaseConfig
 from core_modelling.config.identities import HASH_VERSION, target_spec_hash
 from core_modelling.dataset.eligibility import resolve_candidates
-from core_modelling.dataset.panel import load_panel, prepare_panel, read_side_columns
+from core_modelling.dataset.panel import (
+    join_definition,
+    load_panel,
+    prepare_panel,
+    read_side_columns,
+)
 from core_modelling.environment import EnvironmentConfig
 from core_modelling.periods import period_spec
-from core_modelling.sources import feature_source_names, feature_sources_dump
+from core_modelling.sources import feature_source_names
 from core_modelling.target_factory import last_labelled_period
 
 # Bumped when the sidecar's keys, the log entries' keys or a column's meaning change: an older
@@ -47,7 +53,6 @@ from core_modelling.target_factory import last_labelled_period
 # in [0, 1) (10-28).
 MODEL_INPUT_SCHEMA_VERSION = 4
 METADATA_FILE = "_model_input.json"  # never `_metadata…`: Spark reads that as a parquet summary
-JOIN_FIELDS = ("sources", "keys", "period")  # the sidecar's definition a reader must share
 
 
 def _model_input_path(cfg: UseCaseConfig, entity: str, env: EnvironmentConfig) -> str:
@@ -68,11 +73,7 @@ def _model_input_path(cfg: UseCaseConfig, entity: str, env: EnvironmentConfig) -
     source = sources[name]
     if source.format != "parquet":
         raise ValueError(f"model input {name!r} must be a parquet source, not {source.format!r}")
-    if "://" in source.path:
-        raise NotImplementedError(
-            f"model input at {source.path}: the hdfs:// transport arrives with M2.4; use a local "
-            "path until then"
-        )
+    local_path(source.path)  # a URI is refused until the HDFS transport (M2.4)
     return source.path
 
 
@@ -97,7 +98,7 @@ def save_model_input(
     metadata = {
         "schema_version": MODEL_INPUT_SCHEMA_VERSION,
         "framework_version": __version__,
-        "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "built_at": utc_now(),
         "entity": entity,
         "model_input": cfgs[0].data.model_input,
         "use_cases": [cfg.use_case for cfg in cfgs],
@@ -105,7 +106,7 @@ def save_model_input(
         "columns": table.columns,
         "log": log,
     }
-    Path(path, METADATA_FILE).write_text(json.dumps(metadata, indent=2))
+    write_json(metadata, local_path(path) / METADATA_FILE)
     print(f"model input saved: {path} ({', '.join(metadata['use_cases'])})")
     return path
 
@@ -146,17 +147,13 @@ def read_model_input_metadata(cfg: UseCaseConfig, entity: str, env: EnvironmentC
 
 
 def _check_join_definition(metadata: dict, cfg: UseCaseConfig, entity: str, path: str) -> None:
-    """The table was joined from the config's feature sources, keys and period."""
-    mine = {
-        "sources": {"features": feature_sources_dump(cfg, entity)},
-        "keys": cfg.data.keys.model_dump(),
-        "period": cfg.time.period,
-    }
-    for field in JOIN_FIELDS:
-        if metadata[field] != mine[field]:
+    """The table was joined from the config's definition (`join_definition`: the feature
+    sources, the keys, the period)."""
+    for field, mine in join_definition(cfg, entity).items():
+        if metadata[field] != mine:
             raise ValueError(
                 f"model input at {path} was built with {field} {metadata[field]}, the config "
-                f"{cfg.use_case!r} has {mine[field]}; rebuild it with save_model_input"
+                f"{cfg.use_case!r} has {mine}; rebuild it with save_model_input"
             )
 
 
@@ -222,11 +219,9 @@ def saved_candidates(cfg: UseCaseConfig, entity: str, env: EnvironmentConfig) ->
     if not Path(_model_input_path(cfg, entity, env), METADATA_FILE).is_file():
         return None
     metadata = read_model_input_metadata(cfg, entity, env)
-    dropped, renames = read_side_columns(
+    _, _, columns, lineage = read_side_columns(
         metadata["columns"], metadata["targets"], cfg.use_case, feature_source_names(cfg, entity)
     )
-    columns = [renames.get(c, c) for c in metadata["columns"] if c not in dropped]
-    lineage = [renames.get(c, c) for c in metadata["targets"][cfg.use_case]["lineage"]]
     return resolve_candidates(columns, cfg, lineage)
 
 

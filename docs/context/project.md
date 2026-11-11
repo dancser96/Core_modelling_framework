@@ -155,7 +155,7 @@ versions write to the same shared tables (`CLAUDE.md` §2).
 
 ## History
 
-1. **Original plan** (`docs/reference/`): a phased roadmap built on a spine (feature/target contract
+1. **Original plan**: a phased roadmap built on a spine (feature/target contract
    → population/eligibility → feature checks → model production → OOT evaluation → model card →
    batch scoring), with three shared agreements (config shape, component interface, card shape)
    checked automatically. It was reviewed with the Chief DS around August 2026. It had two sponsors: retail model delivery, and an LLM-assisted modelling

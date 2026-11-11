@@ -9,8 +9,10 @@ skewed column into its first bucket (T25). `bin_labels` names the bins the edges
 the `bin` column of the counts table; `range_label` names a run of them by its outer range.
 `merge_bins` merges cells into the groups a chart shows, by cumulative row share, a mass point
 its own group (chart rule 4). `psi`, `new_level_share` and `standardised_difference` compare
-two periods' distributions for Feature Checks. Everything is pure: numpy and pandas in, numbers
-and frames out, no Spark.
+two periods' distributions for Feature Checks. `cohens_h` and `cohens_d` compare two sides'
+labelled cells (the per-task spec's rare effect) and `variance_from_sums` gives the one-pass
+variance the cells' sums allow. Everything is pure: numpy and pandas in, numbers and frames out,
+no Spark.
 
 A bin is `(-inf, e_1)`, `[e_i, e_{i+1})` or `[e_m, +inf)` over the interior edges `e_1 < … <
 e_m`, exactly what `pyspark.ml.feature.Bucketizer` does with `splits = [-inf, *edges, +inf]`
@@ -220,9 +222,11 @@ def new_level_share(cells: pd.DataFrame, window_levels: list[str], period: str) 
 def standardised_difference(a: np.ndarray, b: np.ndarray) -> float:
     """Cohen's d of `a` against `b` on their non-null values; never NaN.
 
-    `(mean_a − mean_b) / sqrt((sd_a² + sd_b²) / 2)` with sample standard deviations. When both
-    sides are constant it is 0 for equal constants and ±inf (the sign of the difference) for
-    different ones, so a report can say "differs".
+    `(mean_a − mean_b) / sqrt((sd_a² + sd_b²) / 2)` with sample standard deviations, averaged
+    unweighted as a balance check does, so a small group's spread counts as a large one's
+    (`cohens_d` pools by degrees of freedom, as its SE assumes). When both sides are constant
+    it is 0 for equal constants and ±inf (the sign of the difference) for different ones, so a
+    report can say "differs".
     """
     a, b = _validated_sample(a, "a"), _validated_sample(b, "b")
     if a.min() == a.max() and b.min() == b.max():
@@ -242,3 +246,77 @@ def _validated_sample(values: np.ndarray, name: str) -> np.ndarray:
     if not np.isfinite(values).all():
         raise ValueError(f"standardised_difference: {name} holds infinite values")
     return values
+
+
+def cohens_h(
+    minority: pd.DataFrame, dominant: pd.DataFrame, sizes: tuple[float, float]
+) -> tuple[float, float]:
+    """The rare effect: Cohen's h of the minority's rate against the dominant value's,
+    `2·asin√p₁ − 2·asin√p₂` (signed), from both sides' labelled cells, and its SE
+    `√(1/n₁ + 1/n₂)`, `sizes` the sides' rows in effective clients. Defined for any two rates:
+    the arcsine-square-root scale keeps a proportion's variance independent of the proportion.
+    Call only when `h_unavailable` says '' (D-035)."""
+    reason = h_unavailable(minority, dominant)
+    if reason:
+        raise ValueError(f'rare_effect: {reason}; decide "not available" before calling')
+    h = 2 * np.arcsin(np.sqrt(_mean(minority))) - 2 * np.arcsin(np.sqrt(_mean(dominant)))
+    return float(h), float(np.sqrt(1 / sizes[0] + 1 / sizes[1]))
+
+
+def cohens_d(
+    minority: pd.DataFrame, dominant: pd.DataFrame, sizes: tuple[float, float]
+) -> tuple[float, float]:
+    """The rare effect: Cohen's d, the minority's mean minus the dominant value's over their
+    pooled standard deviation (from the cells' `sum_y2`, on the rows), and its SE
+    `√((n₁ + n₂)/(n₁n₂) + d²/(2(n₁ + n₂)))`, `sizes` the sides' rows in effective clients. Call
+    only when `d_unavailable` says '' (D-035). The SD is pooled by degrees of freedom, Cohen's
+    own, which that SE assumes (`standardised_difference` averages the two variances instead)."""
+    reason = d_unavailable(minority, dominant)
+    if reason:
+        raise ValueError(f'rare_effect: {reason}; decide "not available" before calling')
+    n1, n2 = sizes
+    d = (_mean(minority) - _mean(dominant)) / np.sqrt(_pooled_variance(minority, dominant))
+    return float(d), float(np.sqrt((n1 + n2) / (n1 * n2) + d**2 / (2 * (n1 + n2))))
+
+
+def _mean(side: pd.DataFrame) -> float:
+    """The mean target (a rate or a mean) of one side's labelled cells."""
+    return side["sum_y"].sum() / side["n"].sum()
+
+
+def _pooled_variance(minority: pd.DataFrame, dominant: pd.DataFrame) -> float:
+    """The two sides' pooled variance from their cells' sums (`variance_from_sums`)."""
+    sums = {c: np.array([minority[c].sum(), dominant[c].sum()]) for c in ("n", "sum_y", "sum_y2")}
+    return float(variance_from_sums(sums["n"], sums["sum_y"], sums["sum_y2"]))
+
+
+def variance_from_sums(n: np.ndarray, sum_y: np.ndarray, sum_y2: np.ndarray) -> np.ndarray:
+    """The pooled variance of the k samples along the first axis from their sums, the one-pass
+    `Σ(Σy² − (Σy)²/n) / (Σn − k)` (one sample: its variance), floored at 0.
+
+    The sums are all the cells hold: the one-pass formula loses precision when the mean is far
+    above the spread, and rounding can take it below 0.
+    """
+    squares = (sum_y2 - sum_y**2 / n).sum(axis=0)
+    return np.maximum(squares / (n.sum(axis=0) - n.shape[0]), 0)
+
+
+def h_unavailable(minority: pd.DataFrame, dominant: pd.DataFrame) -> str:
+    """Why Cohen's h cannot exist ('' when it can): a side without labelled rows."""
+    if minority["n"].sum() == 0 or dominant["n"].sum() == 0:
+        return "a side without labelled rows"
+    return ""
+
+
+def d_unavailable(minority: pd.DataFrame, dominant: pd.DataFrame) -> str:
+    """Why Cohen's d cannot exist ('' when it can): fewer than two labelled rows a side, or no
+    spread (the pooled variance at the one-pass formula's rounding, relative to the mean
+    square)."""
+    if minority["n"].sum() < 2 or dominant["n"].sum() < 2:
+        return "fewer than two labelled rows a side"
+    mean_square = (minority["sum_y2"].sum() + dominant["sum_y2"].sum()) / (
+        minority["n"].sum() + dominant["n"].sum()
+    )
+    if _pooled_variance(minority, dominant) <= 1e-12 * max(mean_square, 1.0):
+        return "no spread in the target on both sides"
+    return ""

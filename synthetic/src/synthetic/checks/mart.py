@@ -5,7 +5,7 @@ Expectations are restated from the spec ("Feature mart" in docs/components/test_
 taken from the generator: columns are classified by the spec's name grammar (rollups
 `{base}_{a}_{b}_months_{agg}`, ratios, recency, `_trap_{kind}`), and each nullable column's cases
 are recomputed from other mart columns. Months on the book come from `relationship_days` and the
-month, as `events.build_panel`'s tenure + 1 (1 in the entry month). A rollup over months 0–b is null
+month, as `events.months_on_book` (1 in the entry month). A rollup over months 0–b is null
 while fewer than b + 1 months are on the book (a ratio needs 6); a utilisation rollup also while no
 month of its window had a card, a ratio also when its 3–5 average is 0. A "since last" column is
 null until a first non-zero month since joining. Earlier months come from
@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from synthetic.checks.events import values_at
+from synthetic.checks.events import months_on_book, values_at
 from synthetic.checks.table import offenders_row, row
 from synthetic.mechanisms.mart import parse_column
 
@@ -149,15 +149,6 @@ def _check_null_rule(mart: pd.DataFrame, spec: dict) -> list[dict]:
     return rows
 
 
-def _months_on_book(mart: pd.DataFrame) -> np.ndarray:
-    """Months on the book, the current one included (1 in the entry month): `build_panel`'s
-    tenure + 1."""
-    month = pd.to_datetime(mart["snapshot_month"])
-    month_end = month + pd.to_timedelta(month.dt.days_in_month - 1, unit="D")
-    start = month_end - pd.to_timedelta(mart["relationship_days"], unit="D")
-    return ((month.dt.year - start.dt.year) * 12 + month.dt.month - start.dt.month + 1).to_numpy()
-
-
 def _numbers(mart: pd.DataFrame, column: str) -> np.ndarray:
     """A numeric column as floats, NaN for nulls."""
     return mart[column].to_numpy(dtype=float, na_value=np.nan)
@@ -166,7 +157,7 @@ def _numbers(mart: pd.DataFrame, column: str) -> np.ndarray:
 def _rollup_cases(mart: pd.DataFrame) -> dict[str, tuple[str, np.ndarray]]:
     """Rollups and ratios: null while the window reaches before relationship start; utilisation's
     also with no card month in the window, ratios also with a zero 3–5 average."""
-    on_book, cases = _months_on_book(mart), {}
+    on_book, cases = months_on_book(mart), {}
     for column in mart.columns:
         rollup, ratio = ROLLUP.match(column), RATIO.match(column)
         if rollup:

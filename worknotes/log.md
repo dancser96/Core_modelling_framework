@@ -2,6 +2,69 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-11-10 — Codebase review: ten clusters of findings, planned and executed
+- Full review of the committed state `0083989` (architecture, refactoring, simplification,
+  performance), asked for by the SDS: eleven read-only reviewers on disjoint areas (ten Opus, one
+  Sonnet for the docs check), the main thread verifying the main findings in the code. No code
+  changed.
+- Verdict: sound. No blocking defect, no import cycle, no cross-module private import, no
+  function over 60 lines, every §4 invariant Stage 1–2 can break pinned by a test.
+- Baseline: full suite 621 passed, 10 deselected, 17 min 33 s (`test_traps` 279 s,
+  `test_feature_checks` 144 s, `test_run` 99 s). Profiled on `dev` with the model input: Target
+  Factory and the save 24 s and 44 Spark jobs; EDA 100 s and 59 jobs; Feature Checks 25 s, no
+  Spark job.
+- Main findings: `build_frames` hands Training every candidate column and the validation frame;
+  a loaded config passes where a resolved one is needed (`resolve_features`); the concordance SE
+  rule, the resolved-config writer and the decisions-in-force walk each exist four times; replay
+  cost doubles per revert; `estimate_cells` takes 13–16 s of EDA's 59 s of Spark time on `dev`
+  for a caption number when `eda.bins` is set; `per_period_table` is 7 of Feature Checks' 11 s;
+  about 3 minutes of repeated stage runs in the tests; `pyproject.toml` lacks scipy, plotly and
+  jinja2; notebook 02's committed outputs hold a hostname and a home path; `docs/reference/`
+  was deleted in `0083989` and is still cited in six places.
+- Files: `worknotes/codebase_review_plan.md` (the plan, since replaced by the review guide: clusters A–J, each with its execution plan,
+  models and effort; the waves; what is not recommended), `worknotes/README.md` (one row).
+- 2026-11-10, the SDS's selection: all ten clusters with every item. Q563–Q572 take their
+  defaults, except Q570: one review by the SDS at the end and no commits by Claude. The golden
+  manifest stays, as the before-and-after check of the refactors (nothing of it enters the repo).
+- 2026-11-10, routing readjusted to the SDS's allowance (6–9M tokens, Fable up to 25–35% where
+  the task requires it): A at Opus `xhigh`; C in two builders, its core at Opus `xhigh` from a
+  rule the main thread reconciles first; D with its own builder; E and F on Opus; a second ML
+  audit after wave 2. Estimate about 7.5M tokens: Opus 58%, Sonnet 15%, Fable 27% (the main
+  thread and the two audits; no Fable builder, C's core as the one reserve).
+- 2026-11-10, executed on the SDS's go, all ten clusters. Each builder worked in its own copy of
+  the tree (no commit between clusters, Q570) and the main thread merged each as a patch. From
+  wave 2 on no builder ran Spark: waiting on the one Spark slot made an agent re-write its whole
+  context each time (cluster B cost 2.16M tokens that way, cluster D 0.41M without).
+  - Wave 1: A (Training's frames), B (the artifact seam, ledger schema 3), I (synthetic package,
+    byte-identical), the golden manifest, J1 and J2.
+  - Wave 2: C (one statistics engine, in two builders from a reconciled rule), D (one-pass
+    replay), G3 (one join definition); G2 measured and dropped (the persist made the frames
+    build 12–35% slower on `dev`); G1 by the main thread.
+  - Wave 3: E (reporting blocks), F (Feature Checks: the per-period table 6.9 s → 1.05 s at 100k).
+  - Wave 4: H (the test suite), J3 with a docs agent, G4.
+  - Checks: one code review per cluster; ML audit 1 on A, C and G and ML audit 2 on B, D and F
+    (Fable, xhigh): no defect in the change; the compatibility check: safe as 0.x. The full
+    suite: 646 passed in 13 min 10 s (621 in 17 min 33 s before). Against the committed state
+    10 of 97 artifacts differ, all intended (two ledger sidecars, four stage jsons, four report
+    pages). Both synthetic datasets byte-identical to fresh generations; 1,374 checks pass at
+    canonical.
+  - Found beyond the plan and fixed: a config built in code with a replayed list filled was
+    dropped without a word; `render_decisions` accepted entries from another state; an
+    eligibility step or a lineage entry differing from a column by case only; a misspelt
+    lineage entry excluded nothing (Q574: refused); a resolved config handed back to
+    `resolve_config` gave another input after a revert; the ledger's two renames in the order
+    that passed a crash.
+  - Not done: fitting a categorical's fold encodings once per feature (a parameter without a
+    caller); sharing the dotted-path walk of `levels.py` and `replay.py` (an import cycle); the
+    look-ahead buffer's refusal (it could never fire once the depth is derived).
+- Files: `worknotes/codebase_review_guide.md` (replaces the plan), the two Stage 2 review
+  guides rewritten with the helper notebook's sections, `notebooks/00_eda_fc_helper.ipynb`,
+  `docs/UPDATES.md`, D-029, D-030, D-117, D-136, D-137, D-138, the roadmap backlog.
+- Still open: the SDS's review of the whole change (nothing is committed); Q575 (the version
+  stamp), Q576 and Q577 (Training's gate: the Feature Checks run still in force; the
+  environment's sources in no hash), Q578 (worknotes to delete); `sync.md` still lists OD-01
+  (closed into D-022) and this log's entries of 10-27 to 10-30 leave at the next `/brief`.
+
 ### 2026-11-10 — Synthetic 0.6.0: a trap and a control for every Feature Checks finding
 - Built from `worknotes/synthetic_trap_coverage_plan.md` with the SDS's defaults to Q548–Q559
   (the plan's Q546 and Q547 renumbered to Q558 and Q559: the Feature Checks session had used

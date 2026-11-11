@@ -29,8 +29,9 @@ package functions and a way to learn how things work under the hood (D-039,
      short markdown cell saying what to check in its output.
   4. **Display cells** that render the artifacts the functions produced.
 - Reports are produced by package functions from the resolved config, not assembled here.
-- Clear outputs before committing (they may contain data). Exception: `00_synthetic_data` is
-  committed with its outputs, since it only ever shows synthetic data (D-064).
+- Clear outputs before committing (they may contain data, a machine's name or a home path).
+  Exception: `00_synthetic_data` is committed with its outputs, since it only ever shows
+  synthetic data (D-064). `tests/test_code_rules.py` enforces both.
 
 **Exploring in your own copy is encouraged.** Copy a notebook and play: pivots, filters, extra
 charts. But nothing a production run, registered model or report depends on may live in a notebook.

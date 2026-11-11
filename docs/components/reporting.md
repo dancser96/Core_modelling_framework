@@ -57,14 +57,16 @@ explain, not the report's (D-032).
 - `charts.py`: `bar_with_intervals`, `lift_chart`, `box_from_quartiles`, `grouped_lines`,
   `heatmap`, each returning a plotly figure with the chart rules applied, and `side_by_side`,
   which sets two of them as one figure of two panels (details under "The chart primitives");
-- `formats.py`: how numbers read in a table, shared by every report: `column_formats(df, task)`
-  (each known column's format by name, from the shared column lists `CONCORDANCES`, `SHARES`,
-  `THREE_DECIMALS`, `PLAIN`, `P_VALUES`, `ESTIMATES` and the prefixes), `plain_number(x)` and
-  `p_value(x)`;
-- `blocks.py`: `CHOICES` (31 rows), `choices_block(resolved, choices) -> Styler`,
-  `headline(numbers)`, `warnings_block(items)` (numbered), `how_to_read(bins, estimate_noun,
-  support_name, group_support)`; there is no `appendix` function: a stage composes its appendix
-  from these blocks;
+- `formats.py`: how numbers read in a table, shared by every report: `format_of(name, task)`
+  (a column's format by name, from the shared column lists `CONCORDANCES`, `SHARES`,
+  `THREE_DECIMALS`, `PLAIN`, `P_VALUES`, `ESTIMATES` and the prefixes; the one place a name gets
+  its format, a pivot's cells included), `column_formats(df, task)` (`format_of` per column),
+  `plain_number(x)` and `p_value(x)`;
+- `blocks.py`: `CHOICES` (31 rows), `choices_block(resolved, names, values) -> Styler`,
+  `identity_values(meta)`, `headline(numbers, formats)`, `warnings_block(items)` (numbered),
+  `not_available(reason)` and `appendix(resolved, decisions, seconds, caption)`, the resolved
+  config, the audit log and the timings every report ends with; a stage adds its own appendix
+  parts beside them;
 - `theme.py`: `THEME`, the neutral palette, fonts, the colour sequence and the heatmap scales as a
   dict.
 
@@ -114,9 +116,9 @@ and recorded in the log (Q455).
    notebook (D-039). Decisions are read from the audit log when the report is written, never
    stored ([feature ledger](feature_ledger.md)).
 8. **How-to-read notes,** in the summary of every report that shows a concordance, five short
-   paragraphs. EDA's (`how_to_read`) are below; the Feature Checks report writes its own five
-   (concordance read in the window's direction, a flag, a note, grey, `null`;
-   [feature checks](feature_checks.md) "The report"):
+   paragraphs. EDA's (`_how_to_read`, beside its report) are below; the Feature Checks report writes
+   its own five (concordance read in the window's direction, a flag, a note, grey, `null`; [feature
+   checks](feature_checks.md) "The report"):
    - concordance: "Concordance says how well a feature orders clients by the target: 0.5 is no
      better than chance, 1 a perfect ordering, whichever way round (the direction column says
      which). For a yes/no target it is the AUC of that feature alone.", then "Numerics are read
@@ -169,17 +171,22 @@ columns and wording: [feature checks](feature_checks.md) "The report".
 
 ### The renderer
 - A section is `(heading, blocks)`; a block is a Styler, a plotly figure, a str (an HTML
-  fragment, inserted as is: `paragraph`, `preformatted`, `headline`, `warnings_block`), a dict (a
-  key-value list) or a `(heading, blocks)` tuple, a subsection with its own anchor. The four
-  parts are the top-level sections.
+  fragment, inserted as is: `paragraph`, `preformatted`, `headline`, `warnings_block`,
+  `not_available`) or a `(heading, blocks)` tuple, a subsection with its own anchor; anything
+  else, a views dict passed unconverted among them, fails naming its type. The four parts are
+  the top-level sections.
 - plotly.js is embedded once from `plotly.offline.get_plotlyjs()` in one `<script>`; each figure
   is rendered with `include_plotlyjs=False, full_html=False` and its own `div_id`
   (`figure_html`). `include_plotlyjs=False` with `full_html=True` gives a broken page.
-- Tables go through `Styler.to_html()`; Styler raises above `styler.render.max_elements` =
-  262,144 cells (the ledger is far below). Numbers read by `formats.column_formats`: a value
-  column (quantiles, medians, a finding's value and threshold) prints through `plain_number`,
-  with thousands separators from 1,000 and four significant digits below, never in scientific
-  notation; a p-value below 0.0001 reads "< 0.0001".
+- Tables go through `Styler.to_html(table_uuid=…)`, which renders a copy: the caller's Styler, which
+  a notebook also displays, keeps its own uuid and CSS ids. Styler raises above
+  `styler.render.max_elements` = 262,144 cells (the ledger is far below). Numbers read by
+  `formats.format_of`: a value column (quantiles, medians, a finding's value and threshold) prints
+  through `plain_number`, with thousands separators from 1,000 and four significant digits below,
+  never in scientific notation; a p-value below 0.0001 reads "< 0.0001". The headline reads like the
+  tables below it: each number takes the format its table column uses, passed by the caller (the
+  task's estimate format for a rate or a mean, the share format for a share; EDA's headline through
+  `eda.population.headline_formats`), and a number without a format fails.
 - A table's caption is styled inside its Styler (`style_table`'s `caption`, `html.CAPTION_CSS`:
   top, left, bold, 1.1em, the theme's muted colour), so a notebook shows it as the report does.
   The page's headings step down from h1 1.6rem and h2 1.3rem to h3 1.2rem and h4 1.1rem, above
@@ -287,9 +294,10 @@ cannot follow the page's text colour, and the report page is white. The path
   `side_by_side`.
 - `reporting/blocks.py`: `CHOICES` (plain data: label, config path, alternatives),
   `choices_block` (the "metric" row shows `decision.metric`, or "derived from decision.type" until
-  Training derives it, M2.3), `headline`, `warnings_block`, `how_to_read(bins, estimate_noun,
-  support_name, group_support)`.
-- `reporting/formats.py`: `column_formats`, `plain_number`, `p_value` and the shared column lists.
+  Training derives it, M2.3), `identity_values`, `headline`, `warnings_block`, `not_available`,
+  `appendix`.
+- `reporting/formats.py`: `format_of`, `column_formats`, `plain_number`, `p_value` and the shared
+  column lists.
 - `reporting/theme.py`: `THEME`.
 - Each stage builds its own sections from its tables ([EDA](eda.md),
   [feature checks](feature_checks.md)).
@@ -307,10 +315,16 @@ def figure_html(fig: go.Figure, div_id: str) -> str: ...
 def table_html(styler: Styler, uuid: str) -> str: ...
 def style_table(df, formats=None, lift=None, greyed=None, bar=None, caption=None,
                 bar_min=0.0) -> Styler: ...
-def choices_block(resolved: UseCaseConfig, choices: list[dict]) -> Styler: ...
-def how_to_read(bins: int | None, estimate_noun: str, support_name: str,
-                group_support: int) -> list[str]: ...
+def choices_block(resolved: UseCaseConfig, names: list[str],
+                  values: dict[str, object]) -> Styler: ...
+def identity_values(meta: dict) -> dict[str, object]: ...
+def headline(numbers: dict[str, object],
+             formats: dict[str, str | Callable[[float], str]]) -> str: ...
+def not_available(reason: str) -> str: ...
+def appendix(resolved: UseCaseConfig, decisions: pd.DataFrame, seconds: dict[str, float],
+             caption: str) -> dict[str, str | Styler]: ...
 def side_by_side(left: go.Figure, right: go.Figure, height: int = 380) -> go.Figure: ...
+def format_of(name: str, task: str) -> str | Callable[[float], str] | None: ...
 def column_formats(df: pd.DataFrame, task: str) -> dict[str, str | Callable[[float], str]]: ...
 def plain_number(x: float) -> str: ...
 def p_value(x: float) -> str: ...

@@ -40,13 +40,12 @@ significant at its support.
 
 ### What drives what
 - **EDA computes, Feature Checks judges.** Every number a step reads is an EDA ledger column or a
-  function of EDA's cells computed with `statistics/` and EDA's own functions (`measures.py`: the
-  lagged concordance, a window SE in effective clients, PSI; then Cochran's Q on EDA's
-  concordance per period, new levels). Feature Checks bins,
-  ranks and collects nothing itself, so its numbers and EDA's differ by data, never by method
-  (D-135). It refuses to run without EDA's artifact for the same data-definition hash, when EDA's
-  settings digest differs from the current resolved config, or when the ledger and `eda/` come
-  from two EDA runs.
+  function of EDA's cells computed with `statistics/` (`measures.py`: the lagged concordance, a
+  window SE in effective clients, PSI; then Cochran's Q on EDA's concordance per period, new
+  levels). Feature Checks bins, ranks and collects nothing itself, so its numbers and EDA's differ
+  by data, never by method (D-135). It refuses to run without EDA's artifact for the same
+  data-definition hash, when EDA's settings digest differs from the current resolved config, or when
+  the ledger and `eda/` come from two EDA runs.
 - **The config sets the thresholds**: one typed mapping per step under `feature_checks:`, each
   threshold a loggable leaf, identical at both levels (D-132).
 - **The audit log carries the flags and the decisions** (D-125). Feature Checks writes `flag`
@@ -89,20 +88,22 @@ significant at its support.
 ### Function structure
 `src/core_modelling/feature_checks/`:
 - `findings.py`: the finding table as plain data (`FINDINGS`: each finding's kind, measure and
-  text).
+  text) and the row builders the steps assemble their findings and unavailable rows with.
+- `inputs.py`: `check_inputs`, which gathers and checks EDA's artifacts into `CheckInputs`.
 - `measures.py`: the numbers read from EDA's cells that EDA does not store (a window
   concordance's SE in effective clients, the lagged concordance, PSI between two periods, the
-  label-free per-period table).
-- `steps.py`: `check_inputs`, the five `check_<step>(inputs, params) -> StepResult` and `STEPS`
-  (name → function, in run order).
+  label-free per-period table, one groupby for its rows and missing shares, the snapshot's PSI
+  groups cut once per feature).
+- `steps.py`: the five `check_<step>(inputs, params) -> StepResult` and `STEPS` (name →
+  function, in run order).
 - `decisions.py`: `flag_entries` (which entries this run writes), `proposed_decisions` (the review
   view), `held_summary`.
 - `report.py`: `build_views`, `report_sections`.
 - `run.py`: `run_feature_checks`, the stage function, which orchestrates only.
 
-It imports `statistics/` and EDA's functions (every calculation), `ledger.py`, `artifacts.py`,
-`reporting/` and `config` (the entry writer, the replay). It saves the ledger first and writes
-its folder last (the stage json is the commit marker, D-136).
+It imports `statistics/` (every calculation), `ledger.py`, `artifacts.py`, `reporting/` and `config`
+(the entry writer, the replay). It saves the ledger first and writes its folder last (the stage json
+is the commit marker, D-136).
 
 ### How it is checked
 - **The hold-out:** `resolve_features` leaves held features out and takes them back after a
@@ -172,12 +173,12 @@ its folder last (the stage json is the commit marker, D-136).
 All under `<use_case>/04_feature/<ddh>/` (D-136); the columns and how each statistic is computed
 are owned by [EDA](eda.md) and the [feature ledger](feature_ledger.md).
 - **`eda.json`:** the hashes (`config_hash`, `data_definition_hash`, `resolved_input_hash`),
-  `replayed_to`, `settings_digest` and `settings` (the digested values: `features.kinds`,
-  `strata`, `eda` and `time.validation_period`, which decides the compared periods and sits
-  outside the data-definition hash), `snapshot_period`, `compared_periods` (`window`, `gap`,
-  `latest`), `window_levels`, `over_ceiling`, `clients` (the window's clients, which scale a
-  support to effective clients: a client labelled in several periods counts about once),
-  `population` (the counts per period, nullable integers, null outside the window), `headline`.
+  `replayed_to`, `settings_digest` and `settings` (the digested values, the paths of the digest
+  check below), `run_token` (the ledger's sidecar holds the same for `eda`), `snapshot_period`,
+  `compared_periods` (`window`, `gap`, `latest`), `window_levels`, `over_ceiling`, `clients` (the
+  window's clients, which scale a support to effective clients: a client labelled in several periods
+  counts about once), `population` (the counts per period, nullable integers, null outside the
+  window), `headline`.
 - **The ledger's EDA columns:** `kind`, `levels`, `lineage`, `unsupported`, `concordance` (the
   clusters' order), and the window twins the findings cite: `concordance_window`,
   `missing_share_window`, `null_concordance_window`, `zero_share_window`,
@@ -204,13 +205,15 @@ are owned by [EDA](eda.md) and the [feature ledger](feature_ledger.md).
   (`feature, period, rows, support, concordance, se, unavailable`), a missing `eda.json` key
   (`compared_periods`, `snapshot_period`, `over_ceiling`, `clients`, `headline`), and a read
   candidate without rows in `cells`, `client_constant`, `ranking` or `concordance_per_period`.
-- **The digest check:** Feature Checks recomputes the digest of `features.kinds`, `strata`, `eda`
-  and `time.validation_period` from the current resolved config and refuses on a difference,
-  naming the changed path. An EDA run removes `feature_checks/` and Feature Checks' ledger
-  columns, so a stale judgement cannot survive it.
-- **One EDA run:** a ledger whose `concordance_window` differs from `tables/ranking`'s for a read
-  candidate is refused (a crash between EDA's ledger save and its folder write, which a reverted
-  setting would hide from the digest check).
+- **The digest check:** Feature Checks recomputes the digest of `features.kinds`, `strata`, `eda`,
+  `time.validation_period`, `decision` and `evaluation.slices` (`SETTINGS_PATHS_BY_STAGE["eda"]`)
+  from the current resolved config and refuses on a difference, naming the changed path; an
+  `eda.json` lacking `stage`, the digest or `run_token` is refused naming the stage ("rerun eda").
+  An EDA run removes `feature_checks/` and Feature Checks' ledger columns, so a stale judgement
+  cannot survive it.
+- **One EDA run:** a ledger whose sidecar's EDA run token is not `eda.json`'s `run_token` is
+  refused (a crash between EDA's ledger save and its folder write, which a reverted setting would
+  hide from the digest check).
 
 ### The finding table
 The table is plain data in `findings.py` (`FINDINGS`: each finding's full name
@@ -243,7 +246,7 @@ once: the task's `client_support` on `eda.json`'s `clients`), and taken **at the
 at the estimate, since an SE at an estimate near 0 or 1 is tiny on any support:
 - a window concordance (`too_strong`; the null indicator's for `missingness_leak` and
   `nulls_informative`): `measures.effective_se` at the threshold, the task's SE as EDA's ranking
-  computes a window's (EDA stores none), at max(A, 1 − A), a categorical's times
+  computes a window's (`scope.feature_se`; EDA stores none), at max(A, 1 − A), a categorical's times
   `CROSS_FIT_SE_INFLATION`. A `too_strong` read in best order is significant only more than
   `NON_MONOTONE_SE_MULTIPLE` = 4 SE past the threshold, EDA's margin for the in-sample gain of
   ordering the bins by the data; a plain value 2 SE;
@@ -713,6 +716,15 @@ against the ground truth"); in short:
     - `FINDING_COLUMNS` (`feature, step, finding, kind, value, threshold, text, detail`),
       `STEP_ORDER`, `FINDINGS` (full name → `kind`, `measure`, `text`, in run order);
       `step_findings(step) -> list[str]`.
+    - The row builders: `finding_rows(name, ledger, fires, value, threshold, detail)` and
+      `finding_frame(name, rows, threshold)` (`FINDING_COLUMNS` rows),
+      `unavailable_rows(name, features, reason)` (`UNAVAILABLE_COLUMNS`: `feature, finding,
+      reason`), `stack_parts(parts, columns)`.
+  - `inputs.py`: what every step reads.
+    - `CheckInputs` (frozen dataclass: the read candidates' ledger rows, EDA's tables, the
+      per-period table, the compared periods and the run's settings) and `check_inputs(ledger,
+      eda_tables, eda_meta, resolved) -> CheckInputs`, which refuses incomplete EDA artifacts;
+      `EDA_TABLES` and the column lists it refuses without.
   - `measures.py`: the numbers from EDA's cells that EDA does not store.
     - `effective_se(value, events, non_events, target_bin_shares, *, kind, task, clients) ->
       tuple[float, float]` (the SE and the support in effective events);
@@ -723,9 +735,6 @@ against the ground truth"); in short:
     - `per_period_table(cells, kinds, *, periods, snapshot_period) -> pd.DataFrame`
       (`PER_PERIOD_COLUMNS`, label-free).
   - `steps.py`: the five checks, one job each.
-    - `CheckInputs` (frozen dataclass: the read candidates' ledger rows, EDA's tables, the
-      per-period table, the compared periods and the run's settings) and `check_inputs(ledger,
-      eda_tables, eda_meta, resolved) -> CheckInputs`, which refuses incomplete EDA artifacts.
     - `StepResult(findings, columns, unavailable, tables)`: the findings rows, the step's ledger
       columns for every read candidate, what it could not compute with the reason, and its own
       tables (redundancy's `clusters`).
@@ -733,8 +742,7 @@ against the ground truth"); in short:
       `check_leakage`, `check_time_alignment`, `check_stability`, `check_redundancy`, each with
       its step's Pydantic parameter model.
     - `STEPS` (name → function, the dict order being the run order), `STEP_COLUMNS` (each step's
-      ledger columns), `stack_parts(parts, columns)`; `EDA_TABLES` and the column lists
-      `check_inputs` refuses without.
+      ledger columns).
   - `decisions.py`: from findings to the log and the review.
     - `flag_entries(findings: pd.DataFrame, entries: list[Entry], steps: list[str]) ->
       list[dict]`: the `flag` entries this run writes (changed sets only; empty sets close).
@@ -754,21 +762,24 @@ against the ground truth"); in short:
 - `core_modelling/statistics/`: `pool_periods`, `shares`, `group_shares`, `support_by_bin`,
   `target_shares`, `null_table`, `concordance_from_table`, `cross_fitted_concordance`,
   `cochran_q`, `merge_bins`, `psi`, `new_level_share`, `cluster_features`,
-  `explained_by_others`; from EDA, `encoding_prior_rows` and `NULL_SHARE_RANGE`; from `tasks.py`'s
+  `explained_by_others`, and from `scope.py` `encoding_prior_rows`, `NULL_SHARE_RANGE`,
+  `feature_se`, `null_concordance` and the availability guards; from `tasks.py`'s
   per-task spec, `rare_effect`, `rare_effect_unavailable`, `rare_effect_name`, `concordance_se`
   and `client_support` ([EDA](eda.md)).
-- `core_modelling/artifacts.py`: `read_stage`, `check_upstream` (the digest check), `write_stage`
-  (the temporary folder).
+- `core_modelling/artifacts.py`: `read_upstream` (`read_stage`, then `check_upstream`, the digest
+  check), `stage_identity` (the meta's head), `new_run_token`, `lap`, `write_stage` (the
+  temporary folder).
 
-**Call flow of one run:** `run_feature_checks` → `resolve_config` → `read_stage` and
-`check_upstream` on `eda/`, `read_ledger`, the one-EDA-run check → `check_inputs` → `STEPS` in
+**Call flow of one run:** `run_feature_checks` → `resolve_config` → `read_upstream` on `eda/`,
+`read_ledger(..., expect={"eda": eda.json's run_token})` → `check_inputs` → `STEPS` in
 order → `stack_parts` → `flag_entries` → `record_stage_entry` (flags, then the `run` entry) →
 `resolve_config` again → `open_flags` → `proposed_decisions` → `add_columns` → `held_summary` →
 `render_decisions` → `build_views` → `render_report` → `save_ledger` → `write_stage`.
 
 **Reading order for review:** `config/replay.py` (`open_flags`) and `ledger.resolve_features`,
 the hold-out being the stage's correctness core; then `decisions.py`; then `findings.py` and
-`steps.py` against the finding table, with `measures.py`; then `run.py`; then `report.py`.
+`steps.py` against the finding table, with `inputs.py` and `measures.py`; then `run.py`; then
+`report.py`.
 
 ### Interface
 - **Public:** `run_feature_checks(cfg, entity, env, spark) -> StageResult` (D-137; resolves the
@@ -811,14 +822,16 @@ the hold-out being the stage's correctness core; then `decisions.py`; then `find
   `finding`; the features may be empty) and the stage `run` entry (with `periods`); reads `keep`
   (with `findings`), `exclude`, `include`, `set` and `revert` through the replay.
 - **Artifacts** (`<use_case>/04_feature/<ddh>/feature_checks/`, D-136):
-  - `feature_checks.json`: the stamp (`schema_version: 1`, `stage`, `framework_version`,
-    `written_at`, `tables`); `entity`, `config_hash`, `data_definition_hash`,
-    `resolved_input_hash`, `hash_version`, `replayed_to` of the run's input; `settings_digest` and
-    `settings` over EDA's paths plus `feature_checks` (Training checks it); `snapshot_period`,
-    `compared_periods`, `steps_run`, `steps_skipped`; `findings` (per finding of the steps that
-    ran: `kind`, `count`, `features`; the values stay in the table);
-    `held`; `entries_written` (`seq`, `op`, `finding` of each entry this run wrote);
-    `eda_headline`; `timings`.
+  - `feature_checks.json`: the stamp (`schema_version: 2`, since the json carries its `run_token`;
+    an older one is refused by `read_stage`; `stage`, `framework_version`, `written_at`, `tables`);
+    `entity`, `config_hash`, `data_definition_hash`, `resolved_input_hash`, `hash_version`,
+    `replayed_to` of the run's input; `settings_digest` and `settings` over EDA's paths plus
+    `feature_checks`, the values the steps ran with (`stage_identity(resolved, "feature_checks")`;
+    Training checks it); `run_token` (the ledger's sidecar records it beside EDA's);
+    `snapshot_period`, `compared_periods`, `steps_run`, `steps_skipped`; `findings` (per finding of
+    the steps that ran: `kind`, `count`, `features`; the values stay in the table); `held`;
+    `entries_written` (`seq`, `op`, `finding` of each entry this run wrote); `eda_headline`;
+    `timings`.
   - `tables/`:
     - `findings` (`FINDING_COLUMNS`);
     - `unavailable` (`feature, finding, reason`, decided before computing);
@@ -831,8 +844,11 @@ the hold-out being the stage's correctness core; then `decisions.py`; then `find
       list, None where this run did not raise it), `threshold` (float), `text, keep_call,
       exclude_call` (with `evidence=["feature_checks: <finding>"]`)).
   - `log.json`, `resolved_config.yml` (the body, without the origins header), `report.html`.
-  - Plus the ledger's columns ([feature ledger](feature_ledger.md)), saved first with Feature
-    Checks' sidecar; a skipped step's columns are null.
+    The folder holds two states on purpose: the json's hashes, `replayed_to` and settings are
+    the config the steps ran with, while `resolved_config.yml` is the config after the run's
+    own `flag` and `run` entries (its `features.held` filled).
+  - Plus the ledger's columns ([feature ledger](feature_ledger.md)), saved first, the sidecar's
+    `runs` holding the EDA run's token and this run's; a skipped step's columns are null.
   - A rerun rewrites the folder whole; the latest run per data definition is the one Training
     reads. A render failure raises before the ledger or the folder is written: the entries stay
     written and the previous ledger and folder stay; the next run then writes no new `flag`
