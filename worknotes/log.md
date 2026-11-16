@@ -31,6 +31,23 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
 - **Unverified until it happens:** a real auto-compaction through the gate. Its logic is tested
   on real and constructed transcripts; the harness side has not been triggered yet.
 
+### 2026-11-16 — Stage 3 major step 1: review 1 answered and applied; ready for step 2
+- The EDS reviewed step 1 (committed as `fa84160`). No default A65–A81 was vetoed. Q658: the
+  roadmap's dates are left alone until the EDS's time split with another project is known.
+  Q659: `config/schema.py` stays one file, split past 1,000 lines (roadmap backlog). Q660: no
+  stricter coercion. Q661: the local card config rebuilt from the base plus the EDS's two
+  additions.
+- From the remarks: the encoder uses the literal `"unit_id"` and `ENCODER_SCHEMA_VERSION`
+  (Q662); one file per model library stays. Added to the plan's lists: Training logs a
+  declared level without a train row (step 2, Q663); prediction threads on an executor are
+  measured and pinned inside `score_spark` (step 3, Q664; no family's `predict` sets them).
+- **The floor at few events (Q666).** At z = 2 a feature with a true concordance of 0.55 is
+  dropped 61% of the time at 100 converting train clients and 16% at 300. The default stays
+  2; the template, `config.md` and `training.md` (with the table) say to use 1 or `null`
+  below about 300, which is the corporate case.
+- The record: `worknotes/m2_3_modelling/answers.md` → "Review 1 of major step 1". Step 2
+  starts from `worknotes/handovers/m2-3-training.md`.
+
 ### 2026-11-13 → 2026-11-14 — Stage 3 major step 1 (the spec and Foundations): built, with the EDS for review 1
 - The EDS approved the plan by starting the build (`worknotes/m2_3_modelling/plan.md`, the
   status table). Fable holds the main thread; Opus builds and reviews, Sonnet propagates.

@@ -349,6 +349,24 @@ features, and in a sign-off list a person can defend.
       read it (about 0.509 at 3,870 events, 0.533 at 300). The concordance is the plain one, or
       the best-order one for a feature EDA marked `non_monotone` (that marker saw test labels, the
       cost D-030 states). `null` switches the floor off.
+      - **When to lower it.** The default suits many candidates and plenty of events. With few
+        converting train clients the floor is high and drops real but weak features often,
+        and a use case with few, expert-chosen candidates (corporate) loses more by a wrong
+        drop than by a kept noise feature: below about 300 converting train clients set
+        `floor_z` to 1 or `null` and rely on kept features and pruning. The value is never
+        derived from the event count: a person sets it. The chance that a feature is dropped
+        at z = 2, by its true concordance (normal approximation, SE ≈ 0.29 / √converting
+        clients):
+
+        | Converting train clients | Floor | True 0.53 | True 0.55 | True 0.60 | True 0.65 |
+        |---|---|---|---|---|---|
+        | 50 | 0.582 | 90% | 78% | 33% | 5% |
+        | 100 | 0.558 | 83% | 61% | 7% | under 1% |
+        | 300 | 0.533 | 58% | 16% | under 1% | under 1% |
+        | 1,000 | 0.518 | 10% | under 1% | under 1% | under 1% |
+
+        At z = 1 and 100 converting clients a true 0.55 is dropped about one time in four,
+        and about one noise feature in six passes.
    3. **Importance pruning** (`training.selection.prune`): does the model still need the feature
       once the others are there?
 2. **Train-split statistics only,** on the train frame as collected: a rank statistic is

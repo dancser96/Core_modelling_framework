@@ -31,11 +31,10 @@ import pandas as pd
 
 from core_modelling.statistics.distributions import level_text
 
-SCHEMA_VERSION = 1
+ENCODER_SCHEMA_VERSION = 1
 ENCODER_KEYS = ("schema_version", "unordered", "features")  # what `check_encoder` reads
 CLIP = 1e30  # every family keeps it apart from null and beyond every real value (Q601)
 OTHER = "__other__"
-CLIENT = "unit_id"  # the frames' client key: levels are kept by distinct clients, not rows
 UNORDERED_MODES = ("native", "codes")
 NUMERIC_OBJECTS = ("decimal", "empty")  # infer_dtype of `Decimal` objects or an all-null column
 SHARE_COLUMNS = ["feature", "kind", "null_share", "infinite_share", "other_share", "unseen_share"]
@@ -62,9 +61,9 @@ def fit_encoder(
             entries.append(_fit_ordered(_level_texts(train[name]), name, order[name]))
         else:
             texts = _level_texts(train[name])
-            entries.append(_fit_unordered(texts, train[CLIENT], name, min_level_client_count))
+            entries.append(_fit_unordered(texts, train["unit_id"], name, min_level_client_count))
     return {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": ENCODER_SCHEMA_VERSION,
         "unordered": unordered,
         "min_level_client_count": min_level_client_count,
         "features": entries,
@@ -111,12 +110,12 @@ def _check_fit_inputs(
     if unkinded:
         raise ValueError(f"the features {unkinded} have no kind numeric or categorical in {kinds}")
     _check_order(order, features, kinds)
-    _check_columns(train, [*features, CLIENT], "the train frame")
+    _check_columns(train, [*features, "unit_id"], "the train frame")
     if train.empty:
         raise ValueError("the train frame is empty: no row to fit the encoder on")
-    if train[CLIENT].isna().any():
+    if train["unit_id"].isna().any():
         raise ValueError(
-            f"the train frame has a null {CLIENT}; a level's clients would be under-counted"
+            "the train frame has a null unit_id; a level's clients would be under-counted"
         )
 
 
@@ -156,11 +155,11 @@ def check_encoder(encoder: dict) -> None:
             f"the encoder lacks the keys {missing}; an encoder holds {list(ENCODER_KEYS)}, as "
             "fit_encoder writes it"
         )
-    if encoder["schema_version"] != SCHEMA_VERSION:
+    if encoder["schema_version"] != ENCODER_SCHEMA_VERSION:
         raise ValueError(
             f"the encoder's schema_version is {encoder['schema_version']}; this version of the "
-            f"framework reads {SCHEMA_VERSION}: train the model again with this version, or "
-            "raise the use case's framework pin when the bundle is newer"
+            f"framework reads {ENCODER_SCHEMA_VERSION}: train the model again with this version, "
+            "or raise the use case's framework pin when the bundle is newer"
         )
     if encoder["unordered"] not in UNORDERED_MODES:
         raise ValueError(

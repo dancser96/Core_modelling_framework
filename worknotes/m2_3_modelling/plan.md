@@ -15,7 +15,7 @@ Sonnet build the rest (§7).
 
 | Major step | State | Chat | Review 1 | Review 2 | Closed |
 |---|---|---|---|---|---|
-| 1 The spec and Foundations | built 2026-11-14; in review 1 (`review_guide.md`) | chat 1 | with the EDS since 2026-11-14 | | |
+| 1 The spec and Foundations | built 2026-11-14; committed (`fa84160`); review 1's remarks applied 2026-11-16 | chat 1 | done 2026-11-16: A65–A81 not vetoed, Q658–Q666 answered (`answers.md`) | | |
 | 2 Training | — | | | | |
 | 3 Evaluation | — | | | | |
 
@@ -329,6 +329,9 @@ signature or a few lines, none reopens the design):
   the rules take that table beside the ledger's clusters.
 - **`prune_by_importance` runs under the run's constraints,** so it takes LightGBM's fixed
   parameters (or the encoder and the constraints); `level_factor` takes the replicates.
+- **A declared level without a train row is logged** (review 1): Training's log lists, per
+  ordered feature, each level of `features.order` that no train row holds; it keeps its
+  position and is allowed.
 - **One frame per family for the search** (`training.md` → "The encoder and the families", 7):
   CatBoost's wrapper wants `category` columns, LightGBM and XGBoost the integer codes; and
   `check_order` and `check_params` run before the first trial.
@@ -502,6 +505,9 @@ before its first training (A21); review guide 2.
   step's orchestrator before m3.1 and m3.3 are briefed, with the shape of `client_weights`
   (one weight per replicate: an array column, or one column per replicate) and the
   signatures `metric_tables(…)` and `feature_table(…)`.
+- **Prediction threads on an executor** (review 1): no family's `predict` sets a thread
+  count. Measure what each library uses inside `score_spark` and pin it to the task's cores,
+  before the first scoring at volume.
 - **A part without rows fails loud** when the cells are aggregated; **the log loss clips**
   a probability of exactly 0 or 1.
 - **From step 1's ML audit** (each is a requirement in `evaluation.md`):

@@ -256,8 +256,10 @@ training:
   #   a constant: {lgbm: {monotone_constraints_method: {value: intermediate}}}
   selection:                             # automated selection by rule, on the train split only
     cluster: true                        # keep one representative per redundancy cluster
-    # drop a feature below a train concordance of 0.5 + floor_z · SE; lower it to keep weaker
-    # features; null: off
+    # drop a feature below a train concordance of 0.5 + floor_z · SE (SE is about
+    # 0.29 / sqrt(converting train clients)); null: off. Below about 300 converting train
+    # clients set 1 or null: at 2 a real but weak feature is dropped more often than kept
+    # there (the table in training.md); a feature kept by decision is never dropped
     floor_z: 2.0
     prune: true                          # drop features no more important than noise columns
   categoricals:

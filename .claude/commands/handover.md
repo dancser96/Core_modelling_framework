@@ -15,10 +15,14 @@ copying:
 - **State:** done / in progress / not started; uncommitted files (`git status`).
 - **Decisions in this chat** not yet in `docs/decisions.md` (or their D-numbers if they are).
 - **Open questions,** with the user's latest leaning.
+- **Running agents:** each background agent still working: its name, what it is doing and what to
+  do with its result. "None" when there are none.
 - **Next steps:** the next 1–3 concrete actions, with files and functions.
 - **Gotchas:** dead ends, things tried that failed, constraints that are easy to forget.
 - **Read first:** the docs and files to load on resume, in order.
 
 Keep it under ~150 lines. It is committed and visible to the Lead DS: no bank data, internal
-identifiers or people's names. Then add a one-line entry to `worknotes/log.md`, and tell the user the exact resume command:
+identifiers or people's names. Add the one-line entry to `worknotes/log.md` first and write the
+handover file last: auto-compaction is let through only when the handover is the last tool call
+(`.claude/hooks/compact_gate.py`). Then tell the user the exact resume command:
 `/resume $ARGUMENTS`.

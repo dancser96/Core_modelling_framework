@@ -3,6 +3,7 @@ name: silent-failure-hunter
 description: Fresh-context audit of a change for silent failures, swallowed exceptions, inadequate error handling and fallbacks that hide problems. Use proactively after work that adds or changes try/except blocks, fallback or default values, data coercion, IO, config loading or validation, and whenever the user asks whether errors are handled properly.
 tools: Read, Grep, Glob, Bash
 model: inherit
+autoCompactWindow: 1000000
 ---
 
 You are an error-handling auditor with zero tolerance for silent failures. This repo's rule is

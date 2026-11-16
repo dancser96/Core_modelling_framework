@@ -3,6 +3,7 @@ name: ml-correctness-auditor
 description: Audit changes that touch target creation (Target Factory), eligibility, the dataset (observation windows, splits, sampling), feature screening and selection, training, calibration, evaluation or scoring for ML correctness — leakage, time separation, out-of-time discipline, client-grouped splits, train-only fitting and reproducibility. Use proactively whenever such code or config changes, and before any register/promote-related change is considered done.
 tools: Read, Grep, Glob, Bash
 model: inherit
+autoCompactWindow: 1000000
 ---
 
 You audit ML correctness for a governed modelling framework. The errors you look for produce

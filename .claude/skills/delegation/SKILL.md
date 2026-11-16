@@ -43,41 +43,43 @@ looks. A cheaper model takes only mechanical work that a test, a command or the 
 reading the whole diff checks in full. Anything that feeds a decision, anything the EDS or LDS
 reads as the record, and anything touching §4 runs on a strong model.
 
-- **Strong** means Opus: the session model when it is Opus, otherwise pass `model: opus`. On a
-  Fable session, Fable keeps the main thread and the `ml-correctness-auditor`; any other
-  subagent runs on Fable only when the routing plan says why (D-072 (l)). The review agents
-  inherit the session model, so pass `model: opus` to the others.
-- **Always pass `effort`** on the `Agent` call. What a subagent runs at without one isn't
-  documented, and the default for Opus 5.5, Sonnet 5.5 and Haiku 5.5 is `medium`.
+- **The repo's worker agents pin their tools, model and effort** (D-072 (o)): `builder` (Opus,
+  `high`), `researcher` (Sonnet, `high`), `doc-writer` (Opus, `high`). Pass `model` or `effort`
+  on the `Agent` call only to deviate, as the tables say. They start at less than half the
+  context of `general-purpose`, which is left for a piece none of them fits.
+- **Strong** means Opus. On a Fable session, Fable keeps the main thread and the
+  `ml-correctness-auditor`; any other subagent runs on Fable only when the routing plan says why
+  (D-072 (l)). The review agents inherit the session model, so pass them `model: opus` and an
+  `effort`: what an agent runs at without one isn't documented.
 - Never set `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` or `CLAUDE_CODE_EFFORT_LEVEL`: they override every
   agent, the auditors included.
 
 **Research**
 
-| Piece | Agent type | Model, effort |
+| Piece | Agent type | Model, effort to pass |
 |---|---|---|
 | Locate: where something lives in the repo or on a docs site | `Explore` | haiku, low |
-| Fact check: one API or behaviour in the pinned version, quoting `file:line` of the installed package or the tagged source | `general-purpose` | sonnet, high |
-| Fact check that traces behaviour through several code paths or libraries | `general-purpose` | strong, high |
-| Best practice and literature: options and their evidence (§1 step 0, `brainstorming`) | `general-purpose` | strong, high; xhigh for a major step |
+| Fact check: one API or behaviour in the pinned version, quoting `file:line` of the installed package or the tagged source | `researcher` | none (sonnet, high) |
+| Fact check that traces behaviour through several code paths or libraries | `researcher` | `model: opus` |
+| Best practice and literature: options and their evidence (§1 step 0, `brainstorming`) | `researcher` | `model: opus`; `effort: xhigh` for a major step |
 
 **Code and tests**
 
-| Piece | Agent type | Model, effort |
+| Piece | Agent type | Model, effort to pass |
 |---|---|---|
-| Mechanical change: rename, move, apply an established pattern | `general-purpose` | sonnet, medium |
-| A minor step from a complete brief, with the signatures given | `general-purpose` | sonnet, high |
-| Code in Target Factory, dataset and splits, features, training, calibration, evaluation or inference, or any §4 path | `general-purpose` | strong, high |
-| Tests for a specified function | `general-purpose` | sonnet, high |
-| Tests for a §4 invariant or a §2 migration path | `general-purpose` | strong, high |
+| Mechanical change: rename, move, apply an established pattern | `builder` | `model: sonnet`, `effort: medium` |
+| A minor step from a complete brief, with the signatures given | `builder` | `model: sonnet` |
+| Code in Target Factory, dataset and splits, features, training, calibration, evaluation or inference, or any §4 path | `builder` | none (opus, high); `effort: xhigh` where the routing plan says so |
+| Tests for a specified function | `builder` | `model: sonnet` |
+| Tests for a §4 invariant or a §2 migration path | `builder` | none (opus, high) |
 
 **Docs.** They are how the EDS and the LDS see the work, so the cheaper model only propagates
 text whose substance is already settled.
 
-| Piece | Agent type | Model, effort |
+| Piece | Agent type | Model, effort to pass |
 |---|---|---|
-| Propagation: a renamed term, cross-references, index and inventory rows, text the main thread wrote | `general-purpose` | sonnet, medium |
-| Component doc content: a design section or a three-level rewrite, from substance given in the brief | `general-purpose` | strong, high |
+| Propagation: a renamed term, cross-references, index and inventory rows, text the main thread wrote | `doc-writer` | `model: sonnet`, `effort: medium` |
+| Component doc content: a design section or a three-level rewrite, from substance given in the brief | `doc-writer` | none (opus, high) |
 | `worknotes/sync.md` and `log.md`, `docs/decisions.md` rows, OD rows, `docs/UPDATES.md`, review guides, the report to the EDS | main thread | session |
 
 **Reviews and design**
@@ -102,19 +104,18 @@ the plan, almost every token goes to Fable.
 Every brief has these parts, in this order. Short is fine; missing is not.
 
 1. **Goal**: one sentence, plus why, so the agent can make the small calls itself.
-2. **Read first**: the exact files and sections: `CLAUDE.md` §1 and the relevant §, the component
-   doc, the trap numbers in `docs/context/lessons.md`, the legacy reference if any.
+2. **Read first**: the exact files and sections: the component doc and which of its three levels,
+   the trap numbers in `docs/context/lessons.md`, the legacy reference if any. `CLAUDE.md` is
+   already in every agent's context: name the § that matters and never ask for a re-read.
 3. **Files you own**, and files you must not touch.
-4. **Constraints**: the §1 rules in one line (functions first, ≤ ~50 lines, type hints and a
-   docstring on every function, names from `docs/glossary.md`, fail loud, no new dependency, no
-   bank names, no cwd-relative paths), plus the function names and signatures from the plan.
+4. **Specifics**: the function names and signatures from the plan, and anything this piece must
+   not do. The worker agents already carry the §1 rules, the test and no-Spark rules, the report
+   format and the stop rule; spell those out only for `general-purpose`.
 5. **Acceptance**: the commands to run and the expected result (`pytest tests/test_x.py`,
    `ruff check <files>`): only the tests of the files the agent owns, never the full suite
    (D-072 (m)). The agent runs them and reports the output, not a claim.
-6. **Report format**: at most ~15 lines: files and functions changed, the tail of the test and
-   ruff output, open questions. No pasted files, no narrative.
-7. **Stop rule**: if a constraint can't be met or something unexpected appears, stop and report;
-   never work around it.
+6. **Report and stop rule**: the worker agents' own (at most ~15 lines, no pasted files; stop and
+   report when a constraint can't be met). Add only what this piece needs reported on top.
 
 Two variants:
 - **Research brief**: parts 3–5 become the question (what is true, or what the options are), the
@@ -130,6 +131,10 @@ Two variants:
   poll; the result arrives as a notification.
 - Long shell jobs (data generation, slow tests) run in the background meanwhile.
 - One memory-heavy job at a time (local Spark, the full test suite): the 8 GB Mac is the limit.
+- A subagent's prompt cache lasts five minutes, so a wait or a command past that re-writes its
+  whole context. Subagents run no Spark and no command over about four minutes; the main thread
+  runs those in one batch per wave. A hook keeps the Mac awake while agents work, and the lid
+  stays open (`docs/context/lessons.md`, T41).
 - The review subagents run together, in one message, once the merged state passes its tests and
   `ruff`. They run no tests themselves beyond those of the files under review.
 - A subagent can spawn its own subagents, three levels deep. Hand a whole minor step to one
@@ -147,6 +152,11 @@ Two variants:
    fact, edited in place, nothing restated, roles only. A doc the EDS has to rewrite cost more
    than it saved.
 5. Docs per §8 (`doc-sync`).
+6. Checkpoint. End the minor step by writing `worknotes/handovers/<topic>.md` (state, decisions
+   not yet in a repo file, running agents, next step) as the last tool call, after the log line.
+   Auto-compaction is let through only there, and the checkpoint is added back after it, so the
+   main thread stays small across a long build without losing what matters (D-072 (p),
+   `.claude/hooks/compact_gate.py`).
 
 ## 7. Report to the EDS
 
@@ -158,7 +168,7 @@ main thread changed. Then what to review first and the open risks.
 - Planning the pieces and then doing them yourself.
 - A design question sent out as research ("which sampling method should we use?").
 - A cheaper model writing what the EDS or LDS reads as the record.
-- Omitting `effort`, so the agent runs at a level nobody chose.
+- `general-purpose` for a piece a worker agent covers, or a review agent with no `effort`.
 - Vague briefs ("improve the tests", "clean this up").
 - Two agents on one file.
 - Forcing every agent to one model, or letting every agent inherit Fable.
@@ -170,6 +180,9 @@ main thread changed. Then what to review first and the open risks.
 
 - Precedent: the synthetic data generator, built in one go as independent stages with independent
   checks (`synthetic/REVIEW.md`).
-- Agents live in `.claude/agents/`; a new one needs a session restart. If dedicated worker agents
-  are added there, route to them instead of `general-purpose` plus `model`.
+- Agents live in `.claude/agents/`; a new or changed file is picked up within seconds. Each sets
+  `autoCompactWindow: 1000000`, so the 300k window applies to the main thread only: a subagent
+  has no checkpoint to compact at.
+- `/efficiency` reports where the tokens went. Run it after each major step and give the EDS the
+  Fable share and the cache rewrites (D-072 (q)).
 - Nothing a subagent writes is done until the main thread has verified it (§1 workflow).

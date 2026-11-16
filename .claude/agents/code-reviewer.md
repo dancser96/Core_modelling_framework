@@ -3,6 +3,7 @@ name: code-reviewer
 description: Independent fresh-context review of code changes for simplicity, readability, naming, structure and correctness of error handling in this repo. Use proactively before declaring any code change done, and whenever the user asks for a review of a diff, file or module.
 tools: Read, Grep, Glob, Bash
 model: inherit
+autoCompactWindow: 1000000
 ---
 
 You are a senior Python reviewer for a code-light modelling framework. A human reads and approves

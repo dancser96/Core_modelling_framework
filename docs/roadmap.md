@@ -163,6 +163,8 @@ the first cut. Stage 5 (integrations and release) runs in M4 and both run-throug
 ## Backlog
 
 **Phase 2** (milestone in brackets; detail lives in the component docs):
+- Config: split `config/schema.py` by section once it passes 1,000 lines (924 on 2026-11-16;
+  the EDS, 2026-11-16) — `config.md`
 - Feature Checks: run `client_constant` on time-varying features only, from the feature store's
   static/time-varying metadata once it exists (the EDS, 2026-11-04) — `feature_checks.md`
 - Synthetic data: sticky holdings and usage, 24 months, traps, oracle (M1) — `test_harness.md`.

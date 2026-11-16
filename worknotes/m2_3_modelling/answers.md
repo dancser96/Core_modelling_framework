@@ -2361,3 +2361,68 @@ the quick run's search.
 - **The wishlist.** FLAML's BlendSearch, its Bayesian variant on Optuna, is on the Phase 3
   wishlist in `docs/roadmap.md`.
 - **Fewer folds.** Recorded: the warning does not advise them (Q600, Q649).
+
+## Review 1 of major step 1 (asked 2026-11-14, answered 2026-11-16)
+
+### Q658. The roadmap's dates
+The M2.3 row (11-16 to 11-24), its risk trigger and "a spike fails before 11-16" are stale.
+*Default:* M2.3 as 11-13 to 12-02 and M2.4 as 12-03 to 12-10.
+
+**The EDS:** "Ignore roadmap dates for now; especially because going onwards my time allocation
+will be split with another project (tbd percentages) which will redraw the whole timeline
+anyways"
+
+**Outcome.** The roadmap's dates are left as they are; no date is edited until the EDS's time
+split is known and the timeline is redrawn.
+
+### Q659. Split `config/schema.py`?
+It is 924 lines. *Default:* keep one file.
+
+**The EDS:** "Keep as-is for now, but will have to be split at some point if it goes above 1000
+lines"
+
+**Outcome.** One file. The split is due when the file passes 1,000 lines.
+
+### Q660. Stricter type coercion in the config?
+`folds: "5"` loads as 5, in every section. *Default:* leave as is.
+
+**The EDS:** "Default"
+
+**Outcome.** Left as is.
+
+### Q661. `conf/local/cc_acquisition.yml`
+A gitignored copy from 11-11 that used six removed fields and no longer loaded. *Default:*
+delete it.
+
+**The EDS:** "Fix it so that my additions stay but is up to date"
+
+**Outcome.** Rebuilt on 2026-11-16 from the current `conf/base/cc_acquisition.yml` plus the
+EDS's two additions (the `established_client` analysis filter and the three listed
+`eda.key_features.include` features); it loads.
+
+### Remarks of review 1 (answered in chat, 2026-11-16)
+The encoder's local constants and `unit_id`; the unordered coding; where `ENCODE_BY_KIND`
+sits; a declared level absent from the data; the families under a single chosen family; one
+file per family (kept, the EDS left it to Claude); scoring for a deployed model; "salted
+hash"; how the folds are dealt; A67, A69, A76. No default A65–A81 was vetoed.
+
+### Q662–Q665. The edits from the remarks
+Q662: the encoder uses the literal `"unit_id"` and `ENCODER_SCHEMA_VERSION`. Q663: Training's
+log lists each declared level without a train row (step 2's list in the plan). Q664: measure
+prediction threads on an executor and pin them inside `score_spark` (step 3's list). Q665: the
+split of `config/schema.py` past 1,000 lines as a roadmap backlog line.
+
+**The EDS:** "All questions go with the default"
+
+**Outcome.** All four applied on 2026-11-16.
+
+### Q666. Guidance beside `floor_z` (from the A69 follow-up)
+**The EDS:** "My concern is also a bit from the other side, that of a low amount of converting
+clients with a "true signal" but "unlucky" concordance would get filtered, could this happen a
+lot? Also, back to a previous comment of mine with regards to Corporate models, with few
+converting clients this floor could be a bit too high, no?" Then: "Apply Q666".
+
+**Outcome.** Yes to both: at 50 to 100 converting clients a true 0.55 is dropped more often
+than kept at z = 2. The default stays 2 and is never derived from the event count; the
+template, the config table and `training.md` (with the table) say to set 1 or `null` below
+about 300 converting train clients.

@@ -3,6 +3,7 @@ name: compat-guardian
 description: Check changes for forward-compatibility breaks — config schema changes, public API changes, and artifact format changes (model bundle, model card, manifest, scores schema, feature ledger, drift reference, registry records, monitoring tables, model key). Use proactively whenever configs, Pydantic schemas, functions listed in docs/architecture.md Public API, or any written artifact format change.
 tools: Read, Grep, Glob, Bash
 model: inherit
+autoCompactWindow: 1000000
 ---
 
 You guard forward compatibility for a framework that many use cases run at different pinned

@@ -238,7 +238,7 @@ resolved config always states the value in force and a `set` on `training.object
 | `monotone` | `{}` | `{feature: increasing \| decreasing}`, on numeric features and ordered categoricals; applied to every fit of the run. A constraint on an unordered categorical is refused when Training starts | yes (Training) |
 | `search_space` | `{}`: the bounded ranges of [training](training.md) | `{family: {parameter: leaf}}`; a leaf is `{low, high, log, integer, start}` (a range, `start` optional) or `{value}` (a constant). An entry replaces one leaf of the family's default space | yes (Training) |
 | `selection.cluster` | `true` | The cluster rule: one representative per redundancy cluster | yes (Training) |
-| `selection.floor_z` | `2.0` | The floor: a feature is dropped below a train concordance of 0.5 + z · SE. `null` switches it off | yes (Training) |
+| `selection.floor_z` | `2.0` | The floor: a feature is dropped below a train concordance of 0.5 + z · SE. `null` switches it off. Below about 300 converting train clients use 1 or `null` (`training.md` → the floor) | yes (Training) |
 | `selection.prune` | `true` | Importance pruning against noise columns | yes (Training) |
 | `categoricals.min_level_client_count` | `50` | A level seen in fewer distinct train clients joins `__other__` | yes (Training) |
 | `categoricals.unordered` | `native` | `native`: unordered categoricals are declared to the library; `codes`: the same integers passed as numbers | yes (Training) |
