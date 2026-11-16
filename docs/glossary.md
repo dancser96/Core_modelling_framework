@@ -206,16 +206,21 @@ Whether this glossary is also published to the wider unit is part of the open do
   sign-off (`docs/components/feature_checks.md`).
 - **Feature sign-off:** a person's recorded approval of the features a model may use, given over the
   model's final feature list after training, with flags grouped and features sorted by importance;
-  the candidate list is reviewed only where flagged. Required before any model is registered, at
-  every automation level (D-031).
+  the candidate list is reviewed only where flagged. It covers every run of the same data
+  definition with the same feature signature. Required before any model is registered, at every
+  automation level (D-031, D-125).
 - **Promotion sign-off:** the approved PR that lets `promote` pick a registered version for
   production (D-033). Separate from the feature sign-off, and from the CR process that runs
   `deploy`. Phase 2 builds no log of who signs off or approves a model: approvals stay in the PR
   and the change request, outside the framework; which source of people logs to build in is a
   later question (D-033). The feature sign-off is an audit-log entry that `register`
   checks (D-031, D-125).
-- **Automated selection:** relevance pruning inside Training, on the train split only; its
-  importance pruning reuses the calibration step's client-grouped out-of-fold folds (D-106).
+- **Automated selection:** the rules inside Training, on the train split only: the cluster rule,
+  a floor on the train concordance and importance pruning (`docs/components/training.md`).
+- **Importance pruning:** Training's third selection rule: five random noise columns are added,
+  the fold models are fitted, and the features that do no better than the best noise column are
+  dropped, unless the out-of-fold loss rises, when the drops are undone. It uses the dataset's
+  client folds (D-106).
 - **Feature ledger:** one wide row per candidate per data definition, recording its path through
   EDA, checks, decisions, selection and use in the model. It stores the statistics and the flags;
   `held / kept / excluded / verdict` are derived from the audit log at render time
@@ -228,7 +233,13 @@ Whether this glossary is also published to the wider unit is part of the open do
   overridable by `features.kinds` (`docs/components/config.md`).
 - **Unsupported column:** a date, timestamp, array, map, struct or binary column: automatically
   excluded like lineage, never a finding.
-- **Feature signature:** a hash of the final feature list.
+- **Feature signature:** a hash of the final feature list, in order; a sign-off covers every run
+  of the same data definition with the same signature, earlier ones included (`docs/components/model_bundle.md`).
+- **Ordered / unordered categorical:** an ordered categorical is one named in `features.order`
+  with its levels listed, and is encoded as its position in that list; every other categorical is
+  unordered and is encoded as integer codes by train frequency. An unseen level is `__other__`
+  for an unordered one and null for an ordered one, counted either way
+  (`docs/components/model_bundle.md`, "The encoder").
 
 ## Config and guidance
 
@@ -238,7 +249,7 @@ Whether this glossary is also published to the wider unit is part of the open do
   built in memory, and the rest of the data definition changes only by a new config, which
   reruns EDA onwards and keeps the saved table (D-125). The **resolved config** is the config with the
   audit-log entries replayed: saved with every artifact and report, it reproduces a run and is what
-  `recipe_hash` covers (D-125). "Frozen config" is the retired name for the resolved config.
+  the resolved-input hash covers (D-125). "Frozen config" is the retired name for the resolved config.
 - **Housekeeping block:** the part of the resolved config that records the framework version, when
   it was resolved, the environment values used and the identities (the hashes, the last entry
   replayed); the key-library versions and the run id join with Training's run. The config hash
@@ -275,7 +286,8 @@ Whether this glossary is also published to the wider unit is part of the open do
   a rule or a person (the table in `docs/components/config.md`, D-132); a run's pathway is the
   chain of decision points it passed and what was chosen at each, read from the decision audit log.
 - **Decision (business decision):** how the scores will be used (e.g. top-N list, threshold, ranking,
-  probability). It drives the optimisation metric, the gates and what reports emphasise.
+  probability). It drives the optimisation metric and what reports emphasise; no pass or fail
+  gate is built (D-032).
 - **Choices block:** the opening section of every report: what was chosen, the alternatives, and
   rule-based warnings. It is one table (choice, value, alternatives) built from the
   resolved config (`docs/components/reporting.md`).
@@ -294,6 +306,8 @@ Whether this glossary is also published to the wider unit is part of the open do
   the same data-definition hash; the `autonomous` level runs them first (`CLAUDE.md` §4.13, D-031).
 - **Modelling path:** `automl` (FLAML, the only path in Phase 2) or `predefined` (a named model
   family tuned with Optuna; later, D-020).
+- **Trial:** one model configuration the search fits and scores on the client folds; the search
+  spends a trial budget per family (D-140).
 - **Model interface:** the small `fit` / `predict` / `describe` contract every model family
   follows: plain functions per family in Phase 2, written so a `Protocol` can wrap them unchanged
   once the predefined path exists (D-100), which is why the shape is fixed now.
@@ -301,14 +315,31 @@ Whether this glossary is also published to the wider unit is part of the open do
   vs train–test gap; it
   weighs train and test metrics, never validation (D-083). The user (or a level's rule) picks the
   point.
+- **Margin:** the model's raw output before any calibration (the log-odds for a binary
+  objective); every family's `predict` returns it (D-037).
+- **Out-of-fold:** a train row's prediction from a fold model that was fitted without that row's
+  client; the calibration, importance pruning and the search metric read them, never the final
+  model's own predictions on train (D-094).
+- **Fold dealing:** how the dataset assigns train clients to the K folds: the converting clients
+  are dealt in turn in the order of a salted hash, every other client takes the hash cut, so a
+  fold holds whole clients and the folds' converting-client counts differ by at most one;
+  `training.fold_repeats` adds further dealings (`docs/components/dataset.md`).
 - **Calibration (prior shift):** a log-odds offset that undoes the class-balance change caused by
   sampling, computed from the effective (weighted) training rate (in Phase 2, with no sample
   weights, the sampled rate, D-117), so it is zero when the balance is unchanged. Example: at a true
   rate of 0.2%, keeping every positive and 5% of negatives trains on about 4% positives, so the
   model's scores come out about 20 times too high; subtracting `log(20) ≈ 3.0` from every score's
   log-odds puts them back on the true scale and leaves the ranking untouched. **Calibration step:**
-  a general calibration (e.g. Platt or isotonic) fitted on out-of-fold predictions inside train
+  a general calibration, Platt on the margin or beta, fitted on out-of-fold predictions inside
+  train (D-049).
+- **Beta calibration:** the second binary calibration method: `sigmoid(a · ln(p) − b · ln(1 − p)
+  + c)` of the uncalibrated probability `p` (`docs/components/model_bundle.md`, "The calibration").
+- **Mean correction (level factor):** the regression calibration for the log-link objectives: the
+  total observed over the total predicted, out of fold, stored with its client-bootstrap interval
   (D-049).
+- **Score / raw score:** `score_raw` is the uncalibrated prediction (`sigmoid(margin)` for binary);
+  `score` is the calibrated one with the prior-shift offset applied. Both tasks use these two
+  columns and `margin` (`docs/components/model_bundle.md`).
 - **Refit:** one more fit of the same recipe, linked to its evaluated parent by `parent_run_id`
   (D-052). In Phase 2 it is the production retrain, on the same data definition, which keeps the
   window and the clients and moves only the inference period; there is no refit command in the
@@ -334,8 +365,6 @@ Whether this glossary is also published to the wider unit is part of the open do
   keep; `promote` picks the production candidate among them (D-033).
 - **Promote:** choosing a registered version for production. The approved PR is the promotion
   sign-off, and promotion builds the verified deployment bundle.
-- **Promotion gate:** the metric check a model must pass on its way to production; its metric is
-  derived from the declared decision (`docs/components/config.md` req. 4, D-032).
 - **Deploy:** the change-request process moves the promoted bundle to production paths and records
   it. By default production then retrains the recipe on the same data definition before it scores;
   deploying the fitted model without a retrain is also allowed (D-033, D-052). A data scientist's
@@ -350,19 +379,31 @@ Whether this glossary is also published to the wider unit is part of the open do
   security approval.
 - **Model version:** one registered model of a model key. A retrain in the sandpit creates a new
   version; what a production retrain records is open (OD-27).
-- **Run / `run_id`:** one training run of one instance (resolved-input hash + entity + timestamp,
-  D-088).
+- **Run / run number / `run_id`:** one Training call and its Evaluation, in one folder,
+  `<use_case>/06_models/r007/`. The `run_id` is the run number, `r` and at least three digits: a
+  running number per use case; a number an audit-log entry names is never given again. The
+  hashes the run was built from, the entity and the start time are fields of its `run.json` (D-088, D-139;
+  `docs/components/model_bundle.md`).
+- **`run.json`:** the run's identity record, written first and never rewritten
+  (`docs/components/model_bundle.md`).
+- **Run comparison:** `compare_runs`: two runs' metrics side by side on the rows both scored, with
+  each difference and its interval on the test split only; validation is shown, never compared
+  (`docs/components/evaluation.md`).
 - **Resolved-input hash / `hash_version`:** the resolved-input hash is the hash of a run's config
   plus its audit-log entries, resolved (D-125). Every hash is computed on the migrated canonical
   form and stored with a `hash_version`, so a migration doesn't orphan old artifacts (D-088).
-  **Model hash:** a hash over the bundle's per-part hashes (encoder, model, calibration with the
-  prior-shift offset, metadata), so any part changing changes it (D-094).
-- **Recipe / `recipe_hash`:** what a model is a fit of: the resolved config, features,
-  hyperparameters, encoder levels and calibration spec. A refit (in Phase 2, the production
+  **Model hash:** one SHA-256 over the model file and `bundle.json` (the encoder, the calibration
+  with the prior-shift offset, the recipe), so any part changing changes it; every loader
+  recomputes it (D-094, D-139).
+- **Recipe / `recipe_hash` (recipe hash):** what a model is a fit of: the task, family,
+  parameters, final features, encoder with its frozen levels, monotone constraints, calibration
+  and sampling specs and the data-definition hash; not the fitted numbers
+  (`docs/components/model_bundle.md`, "The hashes"). A refit (in Phase 2, the production
   retrain) is one more fit of the same recipe, linked by `parent_run_id` (D-052).
 - **Code version:** framework version + use-case repo commit, recorded with every model.
-- **Scoring batch / `scoring_batch_id`:** one inference run. **Manifest:** links a scoring batch to
-  the models that produced it.
+- **Scoring batch / `scoring_batch_id`:** one inference run. **Manifest:** two kinds. The inference manifest links a scoring batch to
+  the models that produced it; the bundle's `manifest.json` holds `model_hash`, `recipe_hash`,
+  the feature signature and the run it belongs to (`docs/components/model_bundle.md`).
 - **Scores table (master layer):** the framework's own scores output: long format, fully traceable
   to model, run and config, shared by every pinned version (D-007). **Consumable tables** in a
   consumer platform's format are built from it outside the framework (D-016).
@@ -370,10 +411,11 @@ Whether this glossary is also published to the wider unit is part of the open do
   bundle, registry records, monitoring tables, the model card. Their shapes come close to final
   before their contents deepen (D-022).
 - **Model card:** the generated, versioned record of a model's facts.
-- **Model bundle:** the saved model a run produces (encoder, model, calibration), in a versioned
-  format (D-051); what is promoted is never pickle.
-- **Drift reference:** the feature and score distributions saved at training, on the true
-  population, that monitoring compares against (D-054).
+- **Model bundle:** the saved model a run produces (encoder, model, calibration): the library's
+  native model file, `bundle.json` and `manifest.json`, in versioned formats (D-051); never a
+  pickle (`docs/components/model_bundle.md`).
+- **Drift reference:** the feature and score distributions written by Evaluation per run, on the
+  true population, that monitoring compares against (D-054).
 - **Framework pin:** the framework version a use case runs with. Its models are scored with it, and
   the use case upgrades it at its own pace (D-047).
 - **Base image:** the internal devcontainer image the package ships in, through Nexus. Images are
@@ -404,8 +446,15 @@ Whether this glossary is also published to the wider unit is part of the open do
   (`docs/components/eda.md`).
 - **Capture:** the share of the positives, or of the total amount, that falls inside a slice; a
   random list captures the slice's own share.
-- **Baselines:** population base rate (business reporting); previous model and historic predicted
-  rate (internal metrics).
+- **Baselines:** what the model is compared with (`decision.baselines`): the population base rate
+  (the train mean for regression), the best single feature by train concordance, a previous
+  model's score column and a historic predicted rate (a number or a column;
+  `docs/components/config.md`).
+- **Explanation sample:** the seeded sample of test rows, with their raw feature values and
+  scores, that Evaluation collects for the contribution, importance and effect views; the only
+  rows its driver holds (`docs/components/evaluation.md`).
+- **Model results report:** `evaluation/report.html`, Evaluation's report: seventeen views, all on
+  by default, with no pass or fail line (`docs/components/reporting.md`).
 - **Lift:** a group's rate (or mean) divided by the base, the snapshot's base rate or mean; 1 is
   the base, 2 twice it. Not available when the base is not positive (`docs/components/eda.md`).
 - **Concordance:** the one ranking statistic on one scale for both tasks: Somers' D of the feature

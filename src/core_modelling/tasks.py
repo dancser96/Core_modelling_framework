@@ -8,7 +8,9 @@ Checks read the rest (A28, A29): the counts table's target bins, the group summa
 per-period estimate with their intervals, the rare effect, the concordance from cells and its
 SE, the support in effective clients and its name, the events warning, the headline, the level
 encoding's shrinkage, whether a lift exists, the target class and how an estimate is printed
-and named.
+and named. The modelling choices (the metrics, objectives and calibration methods each task
+allows, with their defaults) are the config schema's `TASK_CHOICES`, which each task's entry
+carries too: the schema checks and fills them at load and cannot import this module.
 
 A target rule compares a unit's value at period t with its values in t+1 … t+w and returns the
 target at t as a Column, from the target column and the forward window that
@@ -34,6 +36,7 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import BooleanType, DoubleType, FloatType, NumericType
 
 from core_modelling.config import UseCaseConfig
+from core_modelling.config.schema import TASK_CHOICES
 from core_modelling.periods import label_by_period, period_spec
 from core_modelling.statistics.cells import two_way_table
 from core_modelling.statistics.concordance import (
@@ -56,6 +59,9 @@ from core_modelling.statistics.intervals import t_interval, wilson_interval
 SHOWN_VALUES = 3  # bad target values named in the error
 TARGET_BINS = 20  # quantile bins of a regression target in the counts table
 EVENTS_WARNING = 500  # fewer events (units with a non-zero target) in the snapshot: a warning
+# Over the window, fewer converting clients or positive rows than these: the warning also says
+# the fold metric is noisy (training.fold_repeats steadies it; fewer folds never help).
+FEW_CONVERTING_CLIENTS, FEW_POSITIVE_ROWS = 100, 200
 BINARY_SUPPORT = "positive events"  # what the concordance's support counts, per task
 REGRESSION_SUPPORT = "units with a non-zero target"
 # A group table's summary columns every task shares; `summary_columns` per task adds its own, so
@@ -388,14 +394,26 @@ def _regression_client_support(
     return units * events / total, units * non_events / total
 
 
-def _events_warning(events: int, support: str) -> str | None:
-    """The snapshot's events warning, or None when it holds `EVENTS_WARNING` events or more."""
-    if events >= EVENTS_WARNING:
-        return None
-    return (
-        f"{events} {support} in the snapshot, fewer than {EVENTS_WARNING}: the concordance's "
-        "third decimal is noise"
-    )
+def _events_warning(events: int, clients: int, rows: int, support: str, kind: str) -> str | None:
+    """The one events warning, or None: `events` (the snapshot's) below `EVENTS_WARNING` make
+    the concordance's third decimal noise; the window's `clients` (distinct, with a `kind`
+    target) below `FEW_CONVERTING_CLIENTS` or its `rows` with one below `FEW_POSITIVE_ROWS` make
+    the fold metric noisy too, which repeated folds, a small trial budget and intervals answer."""
+    few_folds = clients < FEW_CONVERTING_CLIENTS or rows < FEW_POSITIVE_ROWS
+    parts = []
+    if events < EVENTS_WARNING:
+        parts.append(
+            f"{events} {support} in the snapshot, fewer than {EVENTS_WARNING}: the concordance's "
+            "third decimal is noise"
+        )
+    if few_folds:
+        parts.append(
+            f"{clients} clients and {rows} rows with a {kind} target over the window, fewer than "
+            f"{FEW_CONVERTING_CLIENTS} clients or {FEW_POSITIVE_ROWS} rows: the fold metric is "
+            "noisy at this size; set training.fold_repeats: 3, keep the trial budget small and "
+            "read differences between runs against their intervals"
+        )
+    return "; ".join(parts) or None
 
 
 def _binary_headline(target: pd.Series) -> dict[str, float]:
@@ -492,6 +510,7 @@ def _no_perfect_list(n: int, support: int) -> None:
 
 TASK_SPECS = {
     "binary": {
+        **TASK_CHOICES["binary"],
         "target_rules": {"flag_goes_up": _flag_goes_up},
         "check_target_column": _check_flag_column,
         "summarise_targets": _binary_summary,
@@ -505,7 +524,7 @@ TASK_SPECS = {
         "rare_effect_name": "Cohen's h",
         "concordance_se": _binary_se,
         "client_support": _binary_client_support,
-        "events_warning": partial(_events_warning, support=BINARY_SUPPORT),
+        "events_warning": partial(_events_warning, support=BINARY_SUPPORT, kind="positive"),
         "support_name": BINARY_SUPPORT,
         "base_rate_views": _binary_headline,
         "shrinkage_rows": _binary_shrinkage_rows,
@@ -521,8 +540,11 @@ TASK_SPECS = {
         "target_distribution": False,  # a 0/1 target has no distribution to show per group
         "capture_noun": "positives",  # what a slice captures: the share of `sum_y`
         "perfect_list": _binary_perfect_list,
+        # the client folds deal the converting clients in turn, so every fold holds its share
+        "balanced_folds": True,
     },
     "regression": {
+        **TASK_CHOICES["regression"],
         "target_rules": {"forward_sum": _forward_sum},
         "check_target_column": _check_amount_column,
         "summarise_targets": _regression_summary,
@@ -536,7 +558,7 @@ TASK_SPECS = {
         "rare_effect_name": "Cohen's d",
         "concordance_se": _regression_se,
         "client_support": _regression_client_support,
-        "events_warning": partial(_events_warning, support=REGRESSION_SUPPORT),
+        "events_warning": partial(_events_warning, support=REGRESSION_SUPPORT, kind="non-zero"),
         "support_name": REGRESSION_SUPPORT,
         "base_rate_views": _regression_headline,
         "shrinkage_rows": _regression_shrinkage_rows,
@@ -551,5 +573,6 @@ TASK_SPECS = {
         "target_distribution": True,  # an amount's quartiles per group and its group table
         "capture_noun": "amount",
         "perfect_list": _no_perfect_list,
+        "balanced_folds": False,  # an amount has no converting clients: the plain hash fold
     },
 }

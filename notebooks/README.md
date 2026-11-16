@@ -9,6 +9,9 @@ package functions and a way to learn how things work under the hood (D-039,
 - The shipped notebooks call only the Public API (D-024: stage functions, `run`, the config schema,
   the decision audit log's functions and the adapter's Spark-session function; the table in
   `docs/architecture.md`). A small test checks it.
+  Exception: `00_modelling_helper` is a code-reading aid, dev only like `00_synthetic_data`: it
+  calls internal functions to show what each one returns, is not shipped, and is not in
+  the test's list. It still defines nothing and is committed without outputs.
 - One notebook per stage, **never** one per use case. To work on another use case, change the config
   path in the first cell and rerun.
 - Every notebook has the same shape:
@@ -41,7 +44,7 @@ Anything worth keeping moves into the config, an audit-log entry or the package.
 
 Notebooks: `00_synthetic_data` (exists; dev only and temporary: a visual tour of the synthetic data,
 with its checks in an appendix, see `docs/components/test_harness.md`; not a guided stage notebook).
-`00_eda_fc_helper` (a reference while reading the EDA and Feature Checks code, not a stage: it reads both stages' stored artifacts read-only through `feature_dir`, `read_stage`, `read_ledger` and `show_decisions`, no Spark session and no entry, and shows each one's grain, columns, writers, readers and a few telling rows: `eda.json`, the counts table first, then `ranking`, `client_constant`, `correlation` and every other EDA table, the ledger, `feature_checks.json` and its five tables, the decision audit log; run `02_eda` and `03_feature_checks` first). `01_target_factory` (built with Stage 1: the targets, the model input saved, the frames).
+`00_eda_fc_helper` (a reference while reading the EDA and Feature Checks code, not a stage: it reads both stages' stored artifacts read-only through `feature_dir`, `read_stage`, `read_ledger` and `show_decisions`, no Spark session and no entry, and shows each one's grain, columns, writers, readers and a few telling rows: `eda.json`, the counts table first, then `ranking`, `client_constant`, `correlation` and every other EDA table, the ledger, `feature_checks.json` and its five tables, the decision audit log; run `02_eda` and `03_feature_checks` first). `00_modelling_helper` (built in M2.3 step 1; dev only, a reference while reading the modelling code, not a stage: on the use case's own train rows it calls the functions Training will call and shows what each returns, with its grain, columns and what right looks like: the features in force, the training frame with the client folds, the encoder, the four families with their round trips, the bundle with its manifest and scoring in pandas and in Spark, the run record; everything it writes goes to a temporary folder; run `02_eda` and `03_feature_checks` first; it gains a Training section in step 2 and an Evaluation section in step 3). `01_target_factory` (built with Stage 1: the targets, the model input saved, the frames).
 `02_eda` (built with Stage 2, nine steps: `run_eda` on one config; the report's views with how to
 read each number: the choices, the headline and the warnings (the how-to-read notes in step 3's
 text), the funnel, the sources per period, the target per period and by stratum, the ranking, the
@@ -60,9 +63,8 @@ distribution per period); the proposed decisions with the `record_decision` call
 `CONFIG` and `ENVIRONMENT` names the setup cell defines, each call taking any subset of a finding's
 features, and a walk-through that splits one finding between a `keep` and an `exclude`, reruns the
 stage and reverts both; the report file and what only it holds (the per-period tables, the ledger
-with decisions, the appendix)). Planned,
-created as their stages are built: `04_training`, `05_evaluation`, `06_register_promote`,
-`07_inference`, `08_monitoring`. No notebook deploys: the change-request process runs `deploy`
+with decisions, the appendix)). `04_training` (planned, M2.3 step 2) and `05_evaluation` (planned, M2.3 step 3).
+Planned, created as their stages are built: `06_register_promote`, `07_inference`, `08_monitoring`. No notebook deploys: the change-request process runs `deploy`
 (D-033). The feature sign-off is recorded after training and before register, at every automation
 level. At the `assisted` level the review's `keep` / `exclude` entries precede training; at
 `autonomous` the held features (open flags) stay out of training until the sign-off (D-031,

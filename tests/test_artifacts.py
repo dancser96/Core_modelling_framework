@@ -16,7 +16,7 @@ from core_modelling import __version__
 from core_modelling.artifacts import (
     HOUSEKEEPING_KEYS,
     SETTINGS_PATHS_BY_STAGE,
-    STAGE_SCHEMA_VERSION,
+    STAGE_SCHEMA_VERSIONS,
     StageResult,
     check_upstream,
     list_data_definitions,
@@ -24,6 +24,7 @@ from core_modelling.artifacts import (
     read_stage,
     read_upstream,
     remove_stage,
+    settings_digest,
     settings_meta,
     stage_identity,
     write_stage,
@@ -104,7 +105,7 @@ def test_a_stage_reads_back_as_written(cc_config: UseCaseConfig, tmp_path: Path)
     pd.testing.assert_frame_equal(tables["ranking"], result.tables["ranking"])
     pd.testing.assert_frame_equal(tables["cells"], result.tables["cells"])
     assert tables["ranking"]["flags"][0] == ["leakage.too_strong", "quality.high_missing"]
-    assert meta["schema_version"] == STAGE_SCHEMA_VERSION and meta["stage"] == "eda"
+    assert meta["schema_version"] == STAGE_SCHEMA_VERSIONS["eda"] and meta["stage"] == "eda"
     assert meta["tables"] == ["ranking", "cells"]
     assert meta["framework_version"] == __version__ and meta["written_at"]
     assert (meta["snapshot"], meta["rows"], meta["ok"]) == ("2025-01-31", 7, True)
@@ -221,15 +222,17 @@ def test_the_meta_may_not_set_the_stamp(cc_config: UseCaseConfig, tmp_path: Path
 def test_read_stage_refuses_a_missing_stage_and_another_version(
     cc_config: UseCaseConfig, tmp_path: Path
 ) -> None:
-    """A stage not run yet names the stage to run; another `schema_version` is refused."""
+    """A stage not run yet names the stage to run; another `schema_version` is refused, such as an
+    EDA json stored before its digest narrowed to the decision fields it reads (version 3), naming
+    the stages to rerun."""
     folder = str(tmp_path / "eda")
     with pytest.raises(FileNotFoundError, match="run the eda stage first"):
         read_stage(folder, "eda")
     write_stage(_result(cc_config), folder, "eda")
     path = tmp_path / "eda" / "eda.json"
-    current, other = f'"schema_version": {STAGE_SCHEMA_VERSION}', '"schema_version": 1'
+    current, other = f'"schema_version": {STAGE_SCHEMA_VERSIONS["eda"]}', '"schema_version": 3'
     path.write_text(path.read_text().replace(current, other))
-    reads = f"schema_version 1 .* reads {STAGE_SCHEMA_VERSION}: rerun"
+    reads = "schema_version 3 .* reads 4: rerun the eda stage, then the stages after it"
     with pytest.raises(ValueError, match=reads):
         read_stage(folder, "eda")
 
@@ -327,12 +330,14 @@ def test_check_upstream_names_the_changed_path(variant: Callable[..., UseCaseCon
 
 
 def test_a_changed_decision_or_slice_makes_eda_stale(variant: Callable[..., UseCaseConfig]) -> None:
-    """EDA's decision-slices view reads `decision` and `evaluation.slices`, so a change to either
-    refuses EDA's artifacts, naming the path."""
+    """EDA's decision-slices view reads `decision.type`, `decision.n` and `evaluation.slices`,
+    so a change to any refuses EDA's artifacts, naming the path; a new baseline does not."""
     meta = _eda_meta(_resolved(variant))
     decision = _resolved(variant, decision={"type": "top_n", "n": 500})
-    with pytest.raises(ValueError, match="eda ran with decision = .*rerun eda"):
+    with pytest.raises(ValueError, match=r"eda ran with decision\.type = .*rerun eda"):
         check_upstream(meta, decision, _env(decision))
+    baseline = _resolved(variant, decision={"baselines": [{"previous_model": "old_score"}]})
+    check_upstream(meta, baseline, _env(baseline))
     slices = _resolved(variant, evaluation={"slices": {"top_n": [500]}})
     with pytest.raises(ValueError, match=r"eda ran with evaluation\.slices = .*rerun eda"):
         check_upstream(meta, slices, _env(slices))
@@ -428,3 +433,29 @@ def test_remove_stage_removes_the_folder(cc_config: UseCaseConfig, tmp_path: Pat
     remove_stage(folder)
     remove_stage(folder)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_training_and_evaluation_digests_cover_what_each_reads(
+    variant: Callable[..., UseCaseConfig],
+) -> None:
+    """Training's digest moves with a training setting, a feature decision and the client split,
+    never with an evaluation setting or a baseline, so those never orphan a trained run (D-139);
+    Evaluation's moves with both and with the split."""
+    base = _resolved(variant)
+    changes = {
+        "skip_views": dict(evaluation={"skip_views": ["reliability"]}),
+        "baseline": dict(decision={"baselines": ["population_base_rate"]}),
+        "budget": dict(training={"max_iter": 7}),
+        "held": dict(features={"held": ["age"]}),
+        "split": dict(data={"split": {"seed": 7}}),
+    }
+    moved = {stage: set() for stage in ("training", "evaluation")}
+    for name, sections in changes.items():
+        changed = _resolved(variant, **sections)
+        for stage, paths in SETTINGS_PATHS_BY_STAGE.items():
+            if stage in moved and settings_digest(changed, paths) != settings_digest(base, paths):
+                moved[stage].add(name)
+    assert moved == {
+        "training": {"budget", "held", "split"},
+        "evaluation": {"skip_views", "baseline", "split"},
+    }

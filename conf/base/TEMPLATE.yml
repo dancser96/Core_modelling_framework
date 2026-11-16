@@ -23,10 +23,18 @@ decision:                                # required · set before any result, ne
   # order only | probability: a calibrated score, comparable across products (D-049)
   type: probability                      # required
   n: null                                # top_n only (required there, refused elsewhere): the list size
-  metric: null                           # null: derived from the type; else a FLAML name (T9)
-  gate_metric: null                      # null: derived from the type; the promotion gate's metric
-  # add previous_model (a successor model), historic_predicted_rate (a rate already in use)
-  baselines: [population_base_rate]
+  # the search metric and the report's headline. null: binary log_loss for probability and
+  # threshold, roc_auc for ranking and top_n; regression rmse. Binary also allows ap (a shallow
+  # list with plenty of events); regression mae, r2, tweedie_deviance (an amount with many zeros
+  # and a long tail, with training.objective: tweedie), poisson_deviance (a count). The Tweedie
+  # deviance is computed at a fixed variance power of 1.5, whatever training.tweedie_variance_power
+  # is: the objective may change through the audit log, the yardstick may not
+  metric: null
+  # what the model is compared with: the train base rate (regression: the train mean) and the
+  # best single feature by train concordance; add a score column of a source for a model it
+  # replaces, e.g. {previous_model: old_score}, {historic_predicted_rate: 0.02} for a rate already
+  # in use (or a column holding it)
+  baselines: [population_base_rate, single_feature]
 
 # only the entities this use case applies to; data is never merged across them (D-034)
 entities:                                # required
@@ -109,6 +117,10 @@ features:
   # categorical): a numeric code such as a branch or product code is categorical, a number stored
   # as a string numeric. A key naming no candidate fails; e.g. {branch_code: categorical}
   kinds: {}
+  # an ordered categorical: its levels lowest first, encoded as their position, so a split and a
+  # monotone constraint follow the order; a train level missing from the list fails. Levels are
+  # text: quote a numeric code. e.g. {risk_band: [low, medium, high]}, {grade: ["1", "2", "3"]}
+  order: {}
 
 strata:                                  # required · reported by every stage (D-038)
   variables: [<strata_variable>]         # required · categorical columns for metrics and drift
@@ -179,26 +191,92 @@ feature_checks:
     correlation_max: 0.90                # |Spearman| of a numeric pair; also the cluster cut
     association_max: 0.90                # Cramér's V or η of a pair with a categorical member
 
+# After the config freezes, every training value but path and seed changes through a set entry
+# in the audit log
 training:
   path: automl                           # FLAML, the only path in Phase 2
-  estimator_list: [lgbm, xgboost, catboost]   # one entry fixes the family (D-037)
-  # the trial budget: a rerun gives the same model; raise it when the metric still rises
-  max_iter: null                         # null · level: autonomous 50 · assisted 200
-  # an optional wall-clock cap; with it a rerun reproduces the recipe, not the model
+  # the families searched, FLAML's names: xgboost grows leaf-wise, xgb_limitdepth level by level;
+  # one entry fixes the family (D-037)
+  estimator_list: [lgbm, xgboost, xgb_limitdepth, catboost]
+  # the run's trial budget, split equally over the families (the remainder to the first ones); a
+  # rerun gives the same model; raise it when the metric still rises at the last trials
+  max_iter: null                         # null · level: autonomous 60 · assisted 200
+  # a budget per family, naming every listed family, in place of max_iter: e.g. a main run that
+  # gives more trials to the family a quick run found best, {lgbm: 80, xgboost: 20, …}
+  trials: null
+  # an optional wall-clock cap per family; with it a rerun reproduces the recipe, not the model
   time_budget_s: null                    # null: no cap
   seed: 42
-  search_space: {}                       # {}: FLAML's own ranges; the override format: Training
+  folds: 5                               # client folds of train; never fewer for few events
+  # further dealings of the folds, every trial judged on all of them: a less lucky choice among
+  # trials when events are few; 3 below 100 converting clients or 200 positive rows
+  fold_repeats: 1
+  # how the booster learns; the trials are judged by decision.metric whatever it is.
+  # null: binary log_loss (its only one); regression squared_error. Regression also allows
+  # tweedie (a non-negative amount with many zeros and a long tail, with decision.metric:
+  # tweedie_deviance), poisson (a count), absolute_error, huber (outliers in the target)
+  objective: null
+  tweedie_variance_power: null           # tweedie only; null: 1.5; between 1 (Poisson) and 2 (gamma)
+  # {feature: increasing | decreasing}: the score may only rise (fall) with a numeric or an
+  # ordered categorical (features.order), in every fit of the run; e.g. {income: increasing}
+  monotone: {}
+  # {family: {parameter: leaf}}: an entry replaces one leaf of the family's default space. A leaf
+  # is a range {low, high, log, integer, start} (low, high, log and integer required, start
+  # optional) or a constant {value}; start is the first trial's value, where the local search
+  # begins (left out: the default start below). Refused, in any case: a class weight
+  # (scale_pos_weight, is_unbalance, class_weight, class_weights, auto_class_weights): use
+  # sampling; a parameter the framework sets for every fit (objective, the seeds, the threads,
+  # monotone_constraints, the categorical declarations, missing): use its training field. The
+  # default spaces, as an override writes them:
+  search_space: {}
+  # search_space:
+  #   lgbm:
+  #     learning_rate:     {low: 0.01, high: 0.3, log: true, integer: false, start: 0.1}
+  #     n_estimators:      {low: 50, high: 2000, log: true, integer: true, start: 50}
+  #     num_leaves:        {low: 4, high: 255, log: true, integer: true, start: 4}
+  #     min_child_samples: {low: 5, high: 500, log: true, integer: true, start: 20}
+  #     colsample_bytree:  {low: 0.4, high: 1.0, log: false, integer: false, start: 1.0}
+  #   xgboost:                             # leaf-wise
+  #     learning_rate:     {low: 0.01, high: 0.3, log: true, integer: false, start: 0.1}
+  #     n_estimators:      {low: 50, high: 2000, log: true, integer: true, start: 50}
+  #     max_leaves:        {low: 4, high: 255, log: true, integer: true, start: 4}
+  #     min_child_weight:  {low: 0.5, high: 20, log: true, integer: false, start: 1}
+  #     colsample_bytree:  {low: 0.4, high: 1.0, log: false, integer: false, start: 1.0}
+  #   xgb_limitdepth:                      # depth-wise
+  #     learning_rate:     {low: 0.01, high: 0.3, log: true, integer: false, start: 0.3}
+  #     n_estimators:      {low: 50, high: 2000, log: true, integer: true, start: 50}
+  #     max_depth:         {low: 3, high: 10, log: false, integer: true, start: 6}
+  #     min_child_weight:  {low: 0.5, high: 20, log: true, integer: false, start: 1}
+  #     colsample_bytree:  {low: 0.4, high: 1.0, log: false, integer: false, start: 1.0}
+  #   catboost:
+  #     learning_rate:     {low: 0.01, high: 0.3, log: true, integer: false, start: 0.1}
+  #     n_estimators:      {low: 50, high: 2000, log: true, integer: true, start: 50}
+  #     depth:             {low: 4, high: 8, log: false, integer: true, start: 6}
+  #     l2_leaf_reg:       {low: 1, high: 10, log: true, integer: false, start: 3}
+  #   a constant: {lgbm: {monotone_constraints_method: {value: intermediate}}}
   selection:                             # automated selection by rule, on the train split only
-    univariate_floor: 0.515              # drop below this univariate statistic; binary: AUC
-    importance_floor: null               # null: off · drop below this importance share
-  categoricals: {min_level_count: 50}    # rarer and unseen levels become __other__
-  # platt: a few parameters, robust | isotonic: flexible, needs many rows | none
-  calibration: {method: platt}
-  sampling: null                         # null: no sampling; never on the framework's own (D-117)
+    cluster: true                        # keep one representative per redundancy cluster
+    # drop a feature below a train concordance of 0.5 + floor_z · SE; lower it to keep weaker
+    # features; null: off
+    floor_z: 2.0
+    prune: true                          # drop features no more important than noise columns
+  categoricals:
+    min_level_client_count: 50           # a level in fewer distinct train clients joins __other__
+    # native: unordered categoricals declared to the library | codes: the same integers passed
+    # as numbers; the evidence is mixed at many levels, so two runs compared settle it
+    unordered: native
+  # null: binary platt for a probability decision, else none; regression mean for tweedie and
+  # poisson, else none. Binary: platt (two parameters on the margin) | beta (three; when the
+  # run's out-of-fold log loss shows it clearly better) | none; regression: mean (the out-of-fold
+  # total observed over predicted) | none
+  calibration: {method: null}
+  # null: no sampling; never on the framework's own (D-117). It draws with training.seed, so no
+  # person picks the sample through the audit log
+  sampling: null
   # a rare binary target, keep every positive:
-  # sampling: {method: negative_downsampling, keep_fraction: 0.1, seed: 42}
+  # sampling: {method: negative_downsampling, keep_fraction: 0.1}
   # a common target or regression, fewer clients:
-  # sampling: {method: client_sample, share: 0.3, seed: 42}
+  # sampling: {method: client_sample, share: 0.3}
 
 evaluation:
   # metrics at the top of the ranking; either list may be empty. EDA reads them too (each key
@@ -206,10 +284,12 @@ evaluation:
   slices:
     top_pct: null  # null · level: autonomous [0.01, 0.1] · assisted [0.01, 0.05, 0.1]
     top_n: []                            # e.g. [10000]
-  views: []                              # extended views to add; the core views always render
-
-lifecycle:
-  promotion_gate: {min: null}            # null: no minimum until the stage is built
+  # the report's views to leave out, by name (evaluation.md); every view renders by default and
+  # the summary always; leave out the slow ones on a quick run
+  skip_views: []
+  # every interval is a client bootstrap: more replicates (at least 20) steady the bounds' last
+  # digit and cost time; level is the coverage
+  intervals: {replicates: 200, level: 0.95}
 
 inference:
   model: production                      # production | a registered run_id, to pin one version

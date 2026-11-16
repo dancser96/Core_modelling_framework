@@ -1,8 +1,9 @@
 # Feature ledger
-**Status:** built (spec settled 2026-11-02; `ledger.py` built in Stage 2's m1.5, 2026-11-03; EDA writes the identity and EDA columns since 2026-11-04, Stage 2 major step 2; the identity column `source` and `ledger_schema_version` 2 since 2026-11-06; the sidecar's run tokens and `ledger_schema_version` 3 since 2026-11-10; Feature Checks writes its columns since 2026-11-06, major step 3; the per-run part in M2.3) · **Legacy:** none (the crunch had only `features_include` / `features_exclude`)
+**Status:** built (spec settled 2026-11-02; `ledger.py` built in Stage 2's m1.5, 2026-11-03; EDA writes the identity and EDA columns since 2026-11-04, Stage 2 major step 2; the identity column `source` and `ledger_schema_version` 2 since 2026-11-06; the sidecar's run tokens and `ledger_schema_version` 3 since 2026-11-10; Feature Checks writes its columns since 2026-11-06, major step 3; the per-run part specified 2026-11-13, to be built in M2.3 major step 2) · **Legacy:** none (the crunch had only `features_include` / `features_exclude`)
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [training](training.md) ·
-[evaluation](evaluation.md) · [config](config.md) (the decision audit log) · [reporting](reporting.md) ·
-D-030, D-031, D-043, D-125, D-134, D-135, D-136, D-137 · settles OD-11
+[evaluation](evaluation.md) · [model bundle](model_bundle.md) (the run folder) · [config](config.md) (the
+decision audit log) · [reporting](reporting.md) · D-030, D-031, D-043, D-125, D-134, D-135, D-136,
+D-137, D-139, D-140 · settles OD-11
 
 Read it in three levels: Level 1 gives the essentials, Level 2 how the parts connect, Level 3
 every detail.
@@ -26,7 +27,10 @@ D-125).
   report, the sign-off view or Training reads the ledger, so they can never go stale.
 - **Who reads:** both Stage 2 reports, the notebooks (`StageResult.ledger`), Training (through
   `resolve_features`, the feature set it trains on), the sign-off view and the model card.
-- The per-run part (automated selection, use in the model) is a separate file per run (M2.3).
+- **The per-run part** is a separate file per training run, `<use_case>/06_models/r007/ledger_run.parquet`:
+  one row per feature that entered selection, with each rule's outcome, use in the model,
+  importance, direction, the encoder's shares and the declared constraint. Training writes it
+  once; it is the one record of automated drops.
 
 This spec settles OD-11 (the ledger's shape).
 
@@ -40,12 +44,15 @@ This spec settles OD-11 (the ledger's shape).
 - **The audit log's entries give the decisions.** The ledger stores no decision; a person's
   `keep`, `exclude` and `include` and the framework's `flag` entries are joined in when the ledger
   is read (D-125, D-134).
-- **Training's per-run part** (M2.3) is its own file under `<use_case>/06_models/<run_id>/`,
+- **Training's per-run part** is its own file in the run folder, `<use_case>/06_models/r007/`,
   joined on `feature`, so two training runs on one data definition share the Stage 2 file and
-  never rewrite it.
+  never rewrite it. Training writes it once, before its `training/` folder; Evaluation never
+  rewrites it and keeps its own per-feature numbers in a table under `evaluation/`.
 - **The reports and the model card render it:** the EDA report's appendix shows the identity and
   EDA columns; the Feature Checks report's core shows every column with the decisions; the model
   card (M2.3/M2.4) summarises it ("held: n features with open flags"; [reporting](reporting.md)).
+  The sign-off view, the model results report and the card read the per-run part beside the
+  run's own copy of the Stage 2 rows.
 
 ### The file through a Stage 2 run and a rerun
 1. EDA resolves the candidates, finds the lineage and unsupported columns, decides the kinds and
@@ -76,6 +83,9 @@ This spec settles OD-11 (the ledger's shape).
 - `render_decisions`: the derived columns, for a view;
 - `resolve_features`: Training's feature set.
 
+`src/core_modelling/training/ledger_run.py` holds the per-run part: `build_run_ledger`,
+`save_run_ledger`, `read_run_ledger`, and `signoff_table`, which reads it.
+
 ### How it is checked
 Light tests (`CLAUDE.md` §7). The open-flag cases (an empty `flag` entry closes a finding; a
 `keep` with `findings` settles those findings only; a different finding raised later holds the
@@ -86,7 +96,8 @@ tests ([config](config.md)). `resolve_features` is tested against hand-built res
 a stage's rerun leaves none of its earlier columns; `save_ledger` refuses a derived column and an
 incomplete meta, and a failed save keeps the previous ledger; another `ledger_schema_version`,
 data definition or stage run token is refused; the list, nullable-int and bool columns survive
-the parquet round trip unchanged.
+the parquet round trip unchanged. The per-run part: its columns and sidecar; a declared
+constraint against EDA's direction marks the row and raises the warning.
 
 ## Level 3: Details
 
@@ -107,15 +118,18 @@ the parquet round trip unchanged.
    stage; a stage's rerun replaces only its own columns; an EDA rerun starts a new ledger.
 5. **Derived columns are never stored.** `held`, `kept`, `excluded` and `verdict` exist only in
    `render_decisions`' output; `save_ledger` refuses a frame that holds them (A21).
-6. **The per-run part is separate** (M2.3): Training never writes to the Stage 2 file.
+6. **The per-run part is separate:** Training never writes to the Stage 2 file, and nothing
+   rewrites the per-run file once Training has written it ([below](#the-per-run-part)).
 7. **Task-agnostic column names.** One column set for every task: `concordance`, never AUC (for a
    binary task it equals the AUC of the binned feature; the definition per task is
    [EDA](eda.md)'s); no column assumes a 0/1 target.
 8. **The ledger computes no statistic.** Every number is copied from EDA's or Feature Checks'
    tables (`core_modelling/statistics/` computes them, D-135).
 9. **Labels.** The EDA and Feature Checks columns are computed on every eligible client, labels
-   included (D-030); Training's automated selection recomputes what it uses on the train split
-   and never reads these columns ([training](training.md)).
+   included (D-030); Training's automated selection recomputes every label-using statistic it
+   decides on, on the train split. From these columns it reads the identity columns, the
+   label-free `cluster`, EDA's `non_monotone` marker (whose cost D-030 states) and, for a
+   comparison only, EDA's `direction` ([training](training.md#selection)).
 
 ### Columns
 Types are pandas / parquet types; "list" is a parquet list column. Every statistic's definition,
@@ -205,8 +219,9 @@ The hold-out rule is [feature checks](feature_checks.md)'s (D-134); in short:
   never entries. Entries are recorded per group with one required reason (D-043, D-125).
 - **The sign-off** is given over the model's final list after training, at every level (D-031);
   rejecting a feature there is an `exclude` entry and the model is retrained without it.
-- **Automated decisions** (M2.3) are recorded in the per-run part with the rule that made them;
-  the config holds only the rule, so a rerun on unchanged data gives the same outcome (D-043).
+- **Automated decisions** are recorded in the per-run part with the rule that made them, never
+  as audit-log entries; the config holds only the rule, so a rerun on unchanged data gives the
+  same outcome (D-043).
 - **Final features** = `resolve_features` (candidates − lineage − unsupported − excluded − held)
   minus Training's automated drops; a feature with a `keep` is never dropped automatically. The
   **feature signature** is the hash of the final list, and the model bundle freezes the list.
@@ -230,6 +245,52 @@ The hold-out rule is [feature checks](feature_checks.md)'s (D-134); in short:
 - Local paths only in Stage 2; the HDFS transport arrives in M2.4 for every artifact at once
   (D-136).
 
+### The per-run part
+`<use_case>/06_models/r007/ledger_run.parquet` with its sidecar, in the run folder ([model
+bundle](model_bundle.md#the-run-folder)).
+1. **One row per feature that entered selection** (Training's feature set from
+   `resolve_features`), keyed by `feature` and joined to the run's own copy of the Stage 2 rows
+   (`stage2/`). Held and excluded features have no row here; the sign-off view lists them from
+   the Stage 2 rows and the audit log.
+2. **Written by Training once,** by `build_run_ledger` and `save_run_ledger`, after the bundle and
+   before `training/` (D-139 (a)).
+3. **The one record of automated drops:** no audit-log entry repeats them (D-125).
+4. **Evaluation never rewrites it.** Its per-feature numbers (the test contribution shares, the
+   unseen and null shares on test and validation) are a table of its own under `evaluation/`,
+   joined when the report is drawn ([evaluation](evaluation.md)).
+5. **The sidecar** holds the schema version (1), the `run_id`, the data-definition hash and the
+   Stage 2 run tokens the run paired with; a reader refuses another version, as for the Stage 2
+   file.
+
+| Group | Column | Type | Meaning |
+|---|---|---|---|
+| Identity | `feature` | str | the key |
+| Selection | `selected` | bool | in the final list: no rule dropped it |
+| Selection | `dropped_by` | str | `cluster`, `floor` or `prune`; null when selected |
+| Selection | `cluster_value`, `cluster_threshold`, `cluster_outcome` | float, float, str | the cluster rule: the train concordance it ranked on, the representative's, the outcome |
+| Selection | `floor_value`, `floor_threshold`, `floor_outcome` | float, float, str | the floor: the train concordance (best order for a `non_monotone` feature), 0.5 + z · SE, the outcome |
+| Selection | `prune_value`, `prune_threshold`, `prune_outcome` | float, float, str | pruning: the out-of-fold contribution share, the best noise column's, the outcome |
+| Selection | `represents` | list[str] | the cluster members dropped in its favour |
+| Selection | `protected` | bool | a person's `keep` in force: measured by every rule, dropped by none |
+| Model | `in_model` | bool | used by at least one split of the final model |
+| Model | `splits`, `gain_share` | int, float | the split count and the share of the gain, from the family's `describe` |
+| Model | `contribution_share`, `contribution_rank` | float, int | the share of the mean absolute out-of-fold contribution on train clients, and its rank |
+| Model | `direction_model` | str | `+` or `-`: the sign of the rank correlation between the feature's values and its out-of-fold contributions; null for an unordered categorical |
+| Model | `direction_agrees` | bool | the model's direction against EDA's `direction` |
+| Encoder | `levels_kept` | int | the levels the encoder kept (categoricals) |
+| Encoder | `null_share`, `infinite_share`, `other_share` | float | on the train frame: nulls, values clipped to ±1e30, values coded `__other__` |
+| Constraint | `monotone` | str | the declared constraint, `increasing` or `decreasing`; null when none |
+| Constraint | `monotone_agrees` | bool | the declared sign against EDA's direction: false when it is the opposite or EDA marked the feature `non_monotone` (the wrong-sign warning) |
+
+- An outcome is `passed`, `dropped`, `protected` (the rule would drop it; a `keep` holds it) or
+  `undone` (pruning only: the decision's metric as a loss, out of fold and averaged over the
+  folds, rose without the candidates, so nothing was pruned). A rule switched off,
+  or one after the rule that dropped the feature, leaves its three columns null.
+- The unseen share is zero on the train frame by construction; on test and validation it is
+  Evaluation's.
+- Training's `selection` table (`training/tables/`) holds the same rule outcomes in long form,
+  one row per feature and rule ([training](training.md#what-training-writes)).
+
 ### Code map
 - `src/core_modelling/ledger.py`: the column lists as plain data (`COLUMNS_BY_STAGE`: `identity`,
   `eda`, `feature_checks`; `DERIVED_COLUMNS` apart) and the seven functions below; the files go
@@ -238,7 +299,8 @@ The hold-out rule is [feature checks](feature_checks.md)'s (D-134); in short:
   - Feature Checks' stage function: `read_ledger(..., expect={"eda": …})`,
     `add_columns(..., "feature_checks")`, `save_ledger`, and `render_decisions` for its report and
     review view; its steps' `read_candidates`;
-  - Training (M2.3): `read_ledger`, `resolve_features`.
+  - Training: `read_ledger(..., expect={"eda": …, "feature_checks": …})`, `resolve_features`;
+    `training/ledger_run.py` for the per-run part.
 - Reading order for review: `resolve_features` and `render_decisions` first (the hold-out lives
   there), then `add_columns`.
 
@@ -270,7 +332,14 @@ def render_decisions(
     ledger: pd.DataFrame, resolved: UseCaseConfig, entries: list[Entry]
 ) -> pd.DataFrame: ...
 def resolve_features(ledger: pd.DataFrame, resolved: UseCaseConfig) -> list[str]: ...
+
+# training/ledger_run.py, the per-run part (private)
+def build_run_ledger(selection: pd.DataFrame, description: dict, contributions: pd.DataFrame,
+                     encoder_shares: pd.DataFrame, monotone: dict[str, str],
+                     stage2: pd.DataFrame) -> pd.DataFrame: ...
 ```
+
+`save_run_ledger` and `read_run_ledger` get their signatures when built.
 
 - `create_ledger` writes the identity columns: an unsupported column's kind is `unsupported`, a
   lineage column EDA did not read may have none, every other candidate needs `numeric` or
@@ -307,5 +376,3 @@ feature was in or out.
 
 ## Open questions
 - Readable labels per feature: not in Stage 2 (Q452; D-046).
-- The per-run part's columns (automated selection with its rule and train-split statistic, use in
-  the model, importance and rank, effect direction): decided in M2.3.

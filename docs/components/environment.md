@@ -1,5 +1,5 @@
 # Environment adapter
-**Status:** built (partial; M2.1, 2026-10-26: the environment file, `load_environment`, `get_spark_session`, the sources per entity, the local paths and the compat shim; the `hdfs dfs` transport and the tier roots in M2.4) · **Legacy:** `src/_compat.py`, `src/io.py` (`_read`), `src/inference.py` (`_put_file`, `_read_text`, `_fetch_dir`, `_is_hdfs`)
+**Status:** built (partial; M2.1, 2026-10-26: the environment file, `load_environment`, `get_spark_session`, the sources per entity, the local paths and the compat shim; `models_dir` in M2.3 major step 1; the `hdfs dfs` transport and the tier roots in M2.4) · **Legacy:** `src/_compat.py`, `src/io.py` (`_read`), `src/inference.py` (`_put_file`, `_read_text`, `_fetch_dir`, `_is_hdfs`)
 **Related:** [`docs/context/environment.md`](../context/environment.md) · [config](config.md) (what the environment file is kept out of) ·
 [dataset](dataset.md) (the collect budget, the model input) · [lifecycle](lifecycle.md) (tier paths) ·
 [reporting](reporting.md) (theme) · [test harness](test_harness.md) (synthetic sources) · D-011, D-021, D-024, D-079,
@@ -57,7 +57,10 @@ is refused (T5). Credentials references, if any, also live here and never in the
    `spark.sparkContext.getConf()` and the runtime conf and fails loud listing every difference,
    detecting the session process-wide (`getActiveSession` is thread-local),
    never keeping the old session quietly (D-100 (c); e.g. a notebook's setup cell rerun with
-   other settings).
+   other settings). For a local master, a new session first sets `PYSPARK_PYTHON` to the
+   driver's interpreter, unless the variable is already set, so that Spark's local Python workers
+   (scoring inside Spark) import the framework and the model libraries (T40); a cluster's
+   workers are the cluster's to configure.
 2. Apply the numpy/PySpark compat shim once, before any pyspark/flaml import (T1).
 3. Transport functions that work for local paths and `hdfs://` URIs alike (`read_text`,
    `write_text`, `put_file`, `fetch_dir_to_local`): M2.4, with the registered and production
@@ -72,7 +75,7 @@ is refused (T5). Credentials references, if any, also live here and never in the
      (Stage 1) and, from M2.2, `eda/`, `feature_checks/`, `ledger.parquet` and `_ledger.json`;
    - `05_model_input`: where the environment file's source entry for `data.model_input` points
      (D-131), e.g. `05_model_input/<use_case>/<entity>`;
-   - `<use_case>/06_models/<run_id>/`: local-tier runs (M2.3); `<use_case>/07_model_output/`
+   - `<use_case>/06_models/r007/` (the run number: `r` and at least three digits): local-tier runs (M2.3, [model bundle](model_bundle.md#the-run-folder)); `<use_case>/07_model_output/`
      (M2.4).
 
    The registered and production roots are `null` until M2.4; they follow the same shape
@@ -109,9 +112,7 @@ T1–T5 (`docs/context/lessons.md`).
 Built: `core_modelling/_compat.py`, the `np.NaN` alias applied on package import (T1; verified
 2026-10-14: without it, `import pyspark.pandas` fails on the pinned numpy 2.3.5 + PySpark 3.4.3).
 
-Built in Stage 1's major step 1 (2026-10-26; under the EDS's review), in
-`core_modelling/environment.py` (the paths changed in Stage 2's m1.2, 2026-11-03). They replace
-the M1 private session and source functions and their YAML source mapping.
+Built in `core_modelling/environment.py`:
 - `EnvironmentConfig` (Pydantic, `extra="forbid"`): `spark: SparkSettings` (master,
   driver_memory, shuffle_partitions, time_zone, extra), `roots: Roots` (data, registered,
   production), `sources: dict[str, dict[str, Source]]` (entity → logical name → `{format, path |
@@ -133,6 +134,10 @@ the M1 private session and source functions and their YAML source mapping.
   itself. One function in place of a separate `stage_dir`, so the ledger needs no parent of a
   stage path.
 - `audit_log_dir(env, cfg, entity: str) -> str`: `feature_dir(…, "decisions")`.
+- `models_dir(env, cfg, *parts: str) -> str`: the path of `<use_case>/06_models/` and what is
+  under it, through `data_path`; the runs of every data definition of a use case sit side by
+  side, with no data-definition segment, since a run's `run.json` records the hashes
+  ([model bundle](model_bundle.md#code-map)).
 - `tests/conftest.py`: the `spark` fixture, one real session per test run through
   `get_spark_session` (T15), and `unit_env`, an environment on the written `unit` preset.
 

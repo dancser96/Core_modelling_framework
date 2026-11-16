@@ -4,7 +4,8 @@
 as 0) its own singleton bin: plain quantile edges collapse on a zero-inflated or discrete column
 and fixed-width edges put a skewed one into its first bin (T25). `bin_labels` names the bins
 (the counts table's `bin`) and `range_label` a run of them; `merge_bins` merges cells into a
-chart's groups (chart rule 4). `psi`, `new_level_share` and `standardised_difference` compare
+chart's groups (chart rule 4). `level_text` names a categorical value's level, for EDA's tables
+and the model's encoder alike. `psi`, `new_level_share` and `standardised_difference` compare
 two periods for Feature Checks; `cohens_h` and `cohens_d` are the per-task rare effect, with
 `variance_from_sums` the one-pass variance the cells' sums allow. Pure numpy and pandas.
 
@@ -193,6 +194,20 @@ def psi(expected_shares: np.ndarray, actual_shares: np.ndarray) -> float:
     expected = np.maximum(expected, PSI_FLOOR)
     actual = np.maximum(actual, PSI_FLOOR)
     return float(np.sum((actual - expected) * np.log(actual / expected)))
+
+
+# EDA's snapshot tables and the model's encoder both name a level by this text, and the encoder
+# stores it (its `schema_version` 1), so changing the rule changes every code's meaning: bump
+# the encoder's version with it.
+def level_text(value: object) -> str:
+    """A categorical value's level text, as Spark's cast to string gives it for a boolean and an
+    integer: a boolean lower case, an integral float without `.0` (pandas holds an integer
+    column with nulls as floats), anything else its `str`."""
+    if isinstance(value, bool | np.bool_):
+        return str(value).lower()
+    if isinstance(value, float | np.floating) and float(value).is_integer():
+        return str(int(value))
+    return str(value)
 
 
 def new_level_share(cells: pd.DataFrame, window_levels: list[str], period: str) -> float:

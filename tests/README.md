@@ -37,6 +37,13 @@
   features. The test runs in the default suite; skip it in a quick loop with
   `pytest -m "not slow and not traps"` (a `-m` replaces the default `not slow`). The regression
   trap (Cohen's d) is asserted in `test_feature_checks.py`.
+- The modelling acceptance tests (`test_modelling_acceptance.py`, marker `acceptance`, planned for
+  M2.3 step 3; [evaluation](../docs/components/evaluation.md)): four tests on the `dev` preset,
+  sharing one trained and evaluated run of the card config. They run in the default suite; skip
+  them in a quick loop as `traps` is: `pytest -m "not slow and not traps and not acceptance"`.
+- The `slow` marker also holds the four model families through the search, each with its round
+  trip, on the `dev` preset (planned for M2.3 step 2; [training](../docs/components/training.md)).
+  It stays outside the default suite, like the canonical-size checks.
 
 Tests import the dev-only `synthetic` package and generate their data from its seed when they run
 (the `unit` preset, 5k clients), so they never read a stored dataset. The package goes into the

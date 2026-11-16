@@ -80,7 +80,7 @@ last and M2.4's four):
 |---|---|---|---|---|
 | M2.1 Foundation | 10-26 – 11-02 | 6 | One config gives the train, test and validation frames, with eligibility and split logs | Built (0.2.0), reviewed and closed by the EDS |
 | M2.2 Understanding | 11-03 – 11-13 | 9 | The traps are flagged, the EDA + Feature Checks report opens offline and reads well, the ledger shows each feature's trail | Built (0.3.0; D-134–D-138), reviewed with a codebase review and closed by the EDS on 2026-11-11; the LDS tries it with `worknotes/lds_run_guide.md`; the questions it raised: `docs/guides/eda_fc_faq.md` |
-| M2.3 Modelling | 11-16 – 11-24 | 6 | A calibrated model beats the baselines and never the oracle; three families round-trip without pickle; no CV fold mixes a client's rows (D-106) | — |
+| M2.3 Modelling | 11-16 – 11-24 | 6 | A calibrated model beats the baselines and never the oracle; the four families round-trip without pickle; no CV fold mixes a client's rows (D-106) | — |
 | M2.4 Operations | 11-25 – 12-04 | 4 | Register, promote, deploy, score and monitor from the CLI and the notebooks | — |
 
 M3 and M4 deepen across stages rather than stage by stage.
@@ -101,8 +101,8 @@ the first cut. Stage 5 (integrations and release) runs in M4 and both run-throug
 | 2 | Feature ledger | thin | deep (joined with the audit log) | — |
 | 2 | Reporting | thin (HTML, embedded plotly, styled tables) | deep (theme file) | — |
 | 2 | Synthetic data | as accepted (M1) plus the LDS's noise, constant, redundant and very-low-fill columns (0.5.0) and a trap and a control for every Feature Checks finding, the `unstable` kind included (0.6.0) | as the pre-release | — |
-| 3 | Training (FLAML) | thin; client groups (D-106); calibration chain right (D-049); bundle shape final | deep (categoricals, automated selection; retraining keeps the data definition, D-052) | — |
-| 3 | Evaluation | thin (core views, reliability among them) | deep (comparison, stratified) | Window ablation and the sweep function |
+| 3 | Training (FLAML) | thin; client groups (D-106); calibration: Platt and beta for binary, the level factor for regression, with the prior-shift offset (D-049); fitting the calibrator at the true rate is decided in M3; bundle shape final | deep (categoricals, automated selection; retraining keeps the data definition, D-052) | — |
+| 3 | Evaluation | thin (the seventeen views, reliability among them, D-141) | deep (comparison, stratified) | Window ablation and the sweep function |
 | 3 | Model card | shape final | deep | — |
 | 4 | Lifecycle (register / promote / deploy) | thin; records shape final (D-111) | deep (registry tables, inventory) | — |
 | 4 | Inference | thin; scores table and manifest shape final | deep (reinference) | — |
@@ -117,11 +117,10 @@ the first cut. Stage 5 (integrations and release) runs in M4 and both run-throug
 | — | LLM-assisted modelling | — | — (Phase 3) | — |
 
 ### Work streams beside the critical path
-- **Spikes** (the EDS runs them, Claude reminds; due before M2.3, 11-16): (1) FLAML 2.7's group
-  split on the synthetic data (D-106 needs it, or its fallback; no sample weights in Phase 2,
-  D-117); (2) non-pickle round trips for `lgbm`, `xgboost`, `catboost`; (3) Arrow `toPandas`
-  with date columns; (5) plotly in the bank's JupyterLab, opening time included (the EDS, inside,
-  later). Spike 4 is dropped (D-036).
+- **Spikes:** (1) FLAML 2.7's group split, (2) non-pickle round trips for `lgbm`, `xgboost`,
+  `catboost` and (3) Arrow `toPandas` with date columns are done (Claude ran them on 2026-11-11;
+  results in `docs/context/environment.md`). Still open: (5) plotly in the bank's JupyterLab,
+  opening time included (the EDS, inside, later). Spike 4 is dropped (D-036).
 - **Learn sessions, booked by the LDS, by 11-06:** platform / MLOps (change-request steps and the
   freeze, MLflow's availability OD-08, the registry owner OD-23, Sonar's quality gate,
   scheduling); the feature store team (OD-26: how a use case reads from it; its design is written
@@ -152,7 +151,7 @@ the first cut. Stage 5 (integrations and release) runs in M4 and both run-throug
 | Risk | Trigger | Response |
 |---|---|---|
 | Review backlog grows | More than five items on the sync page's review list for a week | The LDS reviews designs and ML-critical code only; the EDS reviews with review guides |
-| Round 1a slips (M2.2 took nine days against four) | M2.3 not done by 11-24, or M2.4 by 12-04 | Round 1b keeps the exit points; calibration depth moves to round 2 |
+| Round 1a slips (M2.2 took nine days against four) | M2.3 not done by 11-24, or M2.4 by 12-04 | Round 1b keeps the exit points; M3's calibration checks (the oracle check under downsampling, the true-rate decision, the curves on canonical) move to round 2 |
 | Round 1b is short | Five days, 12-07 – 12-11 | The exit points first, then calibration; the slowdown's first days are the pre-release's buffer |
 | An exit point's shape changes after the pre-release | A downstream team needs a different shape | Cheap until release 1.0's first shared row (D-007); collect the changes in run-through 1 |
 | Round 2 is too full | Behind plan in its third week | Cut the nice to haves, then depth in EDA and Evaluation. The integrations, regression and tests stay (D-021, D-022) unless the CDS agrees otherwise |
@@ -189,17 +188,22 @@ the first cut. Stage 5 (integrations and release) runs in M4 and both run-throug
   design in `dataset.md`
 - Target Factory: one binary rule family with lineage (M2 thin), the other rule families and
   labels for scored months (M4) (D-091) — `target_factory.md`
+- Target Factory: a `cap` on the target rule — `target_factory.md`
+- EDA or Feature Checks suggests search bounds, and an objective for regression, from the data
+  (M3/M4) — `training.md`
 - Feature ledger (M2 thin; the per-data-definition part built in M2.2, the per-run part in M2.3) — `feature_ledger.md`
 - EDA worth running first, with low-prevalence charts and pivot functions (M2 thin, M3 report
   presentable, M4 deep) — `eda.md`
 - Feature Checks: correctness and quality, stability within the window (M2 thin, M4 deep) —
   `feature_checks.md`
-- Training: AutoML path with all three families and their non-pickle round trips, the framework's
-  categorical encoder and the drift reference (M2), the calibration chain right (M3), automated
-  selection and richer categorical handling (M4); production retraining on the same data
+- Training: AutoML path with all four families and their non-pickle round trips, the framework's
+  categorical encoder (M2; the drift reference is Evaluation's, D-054), the calibration chain right
+  with Platt, beta and the level factor (M2.3) and fitting at the true rate decided (M3), the
+  three selection rules (M2.3) and richer categorical handling (M4); production retraining on the same data
   definition is the default deploy path (D-052) — `training.md`
-- Evaluation: metrics from the per-task spec, the per-month-first test view, the stratified table
-  and a one-method compatibility dict (M2 thin); view slots and comparison reports (M4) —
+- Evaluation: metrics from the per-task spec with client-bootstrap intervals, pooled and per
+  period, the baselines comparison, the stratified table, the seventeen views, the model card
+  and `compare_runs` for two runs (M2.3); the comparison report over many runs and sweeps (M4) —
   `evaluation.md`
 - Reporting: HTML writer, plotly, chart rules, choices block, model card (M2 thin, M4 deep) —
   `reporting.md`
@@ -235,8 +239,8 @@ the first cut. Stage 5 (integrations and release) runs in M4 and both run-throug
 - A `dev` preset of 20k clients in `synthetic/` for daily work on the skeleton: built (M2.1,
   2026-10-25), written to `data/01_raw/synthetic_dev/` — D-091, `test_harness.md`
 - Lossless non-pickle model formats for what is promoted, researched per model family before it is
-  offered (D-051): `lgbm`, `xgboost` and `catboost` all verified in M2 (D-037; spike 2, due
-  11-16) — `training.md`
+  offered (D-051): `lgbm`, `xgboost` and `catboost` all verified in M2 (D-037; spike 2, done
+  2026-11-11) — `training.md`
 - Retraining in production: research (M4) — OD-27, `lifecycle.md`
 - The learn sessions and the first change request: [Work streams](#work-streams-beside-the-critical-path)
 
@@ -244,6 +248,10 @@ the first cut. Stage 5 (integrations and release) runs in M4 and both run-throug
 Long-term targets, not planned into Phase 2 (D-072). Each item names where it came from.
 - Predefined modelling path tuned with Optuna, with the trade-off chart (D-020; the chart weighs
   train and test metrics, never validation, D-083).
+- A Bayesian search inside the AutoML path: FLAML's BlendSearch (`hpo_method="bs"`, its local
+  search plus Optuna's TPE proposing distant candidates) as a choice beside the default local
+  search. It needs Optuna; it is untested on the pinned versions and its repeatability under a
+  trial budget is unknown (the EDS, 2026-11-12, Stage 3 design).
 - An own client-grouped CV loop around the tuner (D-106, option D of the question on validation
   inside training).
 - Advanced sampling (D-117): outcome-stratified client sampling with weights and the
@@ -279,6 +287,11 @@ Long-term targets, not planned into Phase 2 (D-072). Each item names where it ca
   after a model is trained and saved; checks that the necessary inputs exist).
 - A question: which source of people logs (who signs off, who approves a model) should the
   framework build in? Phase 2 builds none; approvals stay in the PR and the change request (D-033).
+- A question, asked once: should a metric gate come back (a minimum that the decision's metric
+  must reach before `promote`)? No gate is built and the config has no gate fields. A model that misses a threshold is used
+  anyway, so a pass or fail line would be decoration; the EDS and the LDS both prefer the
+  comparison with the baselines shown, and the judgement left to the person who approves the
+  promotion (the EDS, 2026-11-13, Stage 3 design).
 - A question: do we want to gate data to prevent the validation month's use, e.g. computing the
   validation metric only for a signed-off run, refusing to move the validation month once it was
   shown unless it moves by at least `w`, and listing every validation month a model was scored on
@@ -316,7 +329,6 @@ direction or needs people outside the team.
 |---|---|---|---|---|
 | OD-06 | **Lifecycle:** folder layout per entity × domain: are storage permissions actually separate per entity, and do the registered and production roots need their own structure? The sandpit data root is settled (D-136: the root is the entity's area, then use case, then layer; `roots.registered` and `roots.production` follow the same shape in M2.4) | Production paths are separate from the sandpit (D-033, D-051), and permissions are the platform's, not the framework's (D-079); the question is only how the framework lays out its own outputs per entity × domain. Ours to decide (D-073) | EDS + LDS; permission facts from the platform / MLOps team | `components/lifecycle.md` |
 | OD-08 | **Lifecycle:** MLflow for the registry and experiment tracking in Phase 2: is it available inside the bank? | The shape is settled (D-111): M2.4's own records map one-to-one onto MLflow; MLflow goes in with the other integrations in M4 once confirmed; `production.json` stays the pointer through major version 1, MLflow a store beside the own records. Its default flavors pickle, which is fine in the sandpit but not for what is promoted (D-051). Confirm availability at the platform learn session (by 11-06). MLflow fits the registry and experiment tracking better than monitoring (OD-13) | EDS + LDS, with the platform / MLOps team (D-079, OD-23) | `components/lifecycle.md` |
-| OD-12 | **Reporting:** the mandatory "core" views per task of the Evaluation report | The structure is shared by the three reports (summary page + core + extended, D-036). EDA's and Feature Checks' core views are settled with Stage 2's design (2026-11-02; `eda.md`, `feature_checks.md`, D-135); Evaluation's are needed when it is built (M2.3); proposal for binary in `evaluation.md` → Open questions | EDS + LDS | `components/evaluation.md` |
 | OD-18 | **Inference:** separate manifests from score files? | The format part is settled (D-016): the framework writes its own traceable scores table, the master layer, and consumable tables are built outside it. Still open: whether manifests sit beside or inside the score files; leaning: separate them, since manifests beside the score files break a Hive table over the scores (`inference.md`), with the layout from the LDS; designed with Inference (round 1a) | EDS + LDS | `components/inference.md` |
 | OD-23 | **Lifecycle:** who builds the registry and deployment, and at what point they join the project | The CDS routes downstream questions to the platform / MLOps team (D-079); to agree with that team whether they build these or advise. Until then, register / promote / deploy are thin but real (D-033). The original plan had a part-time ML engineering lane for registration, the deployment path and drift alerting | EDS + LDS, with the platform / MLOps team | `components/lifecycle.md` |
 

@@ -10,7 +10,8 @@ stage, and the order to read the docs in: [`docs/README.md`](../README.md). Stat
 [config](config.md) · [dataset](dataset.md) · [environment](environment.md) ·
 [eda](eda.md) · [evaluation](evaluation.md) · [feature_checks](feature_checks.md) ·
 [feature_ledger](feature_ledger.md) · [inference](inference.md) · [lifecycle](lifecycle.md) ·
-[llm_assist](llm_assist.md) · [monitoring](monitoring.md) · [reporting](reporting.md) ·
+[llm_assist](llm_assist.md) · [model_bundle](model_bundle.md) · [monitoring](monitoring.md) ·
+[reporting](reporting.md) ·
 [run_modes](run_modes.md) · [target_factory](target_factory.md) · [test_harness](test_harness.md) ·
 [training](training.md)
 

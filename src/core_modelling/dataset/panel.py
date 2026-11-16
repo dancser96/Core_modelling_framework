@@ -11,7 +11,8 @@ serves several use cases and a changed eligibility never forces a rebuild. `prep
 the read side, run from the reader's own config on the saved or the in-memory panel:
 `read_side_columns` plans the drops (the other use cases' target columns, and an upstream
 target's label column that came in with a feature source) and the renames (a source column
-named `target`, `split` or `eligible` becomes `source_<name>`, the own target column `target`),
+named like a column the dataset adds, `HELPER_COLUMNS`, becomes `source_<name>`, the own
+target column `target`),
 each printed and logged; then come the eligibility steps and the candidates (`eligibility.py`),
 the contract check and the split. `build_panel` is both for one config, the in-memory path.
 """
@@ -226,8 +227,8 @@ def _check_lineage_names(cfg: UseCaseConfig, columns: list[str]) -> None:
         raise ValueError(
             f"data.target.lineage of {cfg.use_case!r} names {unknown}, columns of no source: an "
             "entry that matches nothing excludes nothing; correct the names (a source column "
-            "named like a key is listed as `source_<name>`, one named `target`, `split` or "
-            "`eligible` by its source name)"
+            "named like a key is listed as `source_<name>`, one named like a column the dataset "
+            f"adds ({', '.join(HELPER_COLUMNS)}) by its source name)"
         )
 
 
@@ -417,9 +418,9 @@ def read_side_columns(
     columns: list[str], targets: dict, use_case: str, features: list[str]
 ) -> tuple[dict[str, str], dict[str, str], list[str], list[str]]:
     """The panel's columns the use case's read drops, with why (`_columns_to_drop`); the
-    renames, in order: a remaining `target`, `split` or `eligible` as `source_<name>`, then the
-    own target column as `target`; the columns as read; the own target's lineage under its read
-    names. `features` are the entity's feature sources."""
+    renames, in order: a remaining column named like one the dataset adds (`HELPER_COLUMNS`) as
+    `source_<name>`, then the own target column as `target`; the columns as read; the own
+    target's lineage under its read names. `features` are the entity's feature sources."""
     planned = _columns_to_drop(targets, use_case, features)
     dropped = {column: reason for column, reason in planned.items() if column in columns}
     remaining = [column for column in columns if column not in dropped]

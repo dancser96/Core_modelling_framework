@@ -5,11 +5,15 @@ input through `model_input.read_model_input`) and builds the stage's parts (`STA
 gets the **snapshot**, the `eda.snapshot` period collected whole (every row after the analysis
 filters: the keys, the supported candidates, the modelling tags, `eligible`, `target`, `split`),
 and **`rows`**, the Spark frame of the eligible rows of the compared periods with the label kept
-in the window only, never collected. Training gets train and test, Evaluation also validation:
-the eligible rows with a known target, train sampled when declared, selected in Spark to the
-keys, the stage's features, `target` and `split` before the collect; Training's rows stop at the
-window, so it never gets the validation period (§4.4). The kinds come from the Spark schema
-(`detect_kinds`) and the unsupported columns are dropped before anything is collected. The meta
+in the window only, never collected. Both modelling stages read the eligible rows with a known
+target. Training gets `train` alone, never a test or validation row (§4.4): the window's train
+split, sampled when declared, with the client folds (`folds.py`, checked before the collect),
+selected in Spark to the keys, the features, `target`, `split` and the fold columns. Evaluation
+gets `rows`, one Spark frame of the test split and every validation-period row (both splits),
+scored inside Spark and never collected: `part` says which, and the strata ride along for
+the stratified tables without joining the features. EDA's kinds come from
+the Spark schema (`detect_kinds`) and the unsupported columns are dropped before anything is
+collected. The meta
 also carries the D-088 population counts (only the frames hold the panel) and each column's
 source. `collect_frame` prints every collect's size and, above the collect budget, the callout
 worded for the frame; it never stops.
@@ -26,6 +30,7 @@ from core_modelling.config import UseCaseConfig
 from core_modelling.config.replay import check_resolved
 from core_modelling.config.schema import snapshot_period
 from core_modelling.dataset.counts import compared_periods, population_counts
+from core_modelling.dataset.folds import assign_folds, check_folds, fold_columns, fold_counts
 from core_modelling.dataset.model_input import read_model_input
 from core_modelling.dataset.panel import build_panel
 from core_modelling.dataset.split import sample_train
@@ -37,8 +42,8 @@ SAMPLE_ROWS = 10_000  # measured for bytes per row before a collect
 GB = 1024**3
 STAGE_PARTS = {  # what each stage gets; the other `Frames` fields stay None
     "eda": ["snapshot", "rows"],
-    "training": ["train", "test"],  # never the validation period (§4.4)
-    "evaluation": ["train", "test", "validation"],
+    "training": ["train"],  # never a test or validation row (§4.4)
+    "evaluation": ["rows"],  # test and validation, in Spark
 }
 SPARK_SETTINGS = "spark.driver.maxResultSize caps the collect, spark.driver.memory holds the frame"
 TRAINING_CALLOUT = (
@@ -51,12 +56,7 @@ SNAPSHOT_CALLOUT = (
     f"({SPARK_SETTINGS}), or pick a smaller eda.snapshot population through eligibility, which "
     "changes the data-definition hash and reruns EDA; the analysis population is never sampled"
 )
-CALLOUTS = {
-    "snapshot": SNAPSHOT_CALLOUT,
-    "train": TRAINING_CALLOUT,
-    "test": TRAINING_CALLOUT,
-    "validation": TRAINING_CALLOUT,
-}
+CALLOUTS = {"snapshot": SNAPSHOT_CALLOUT, "train": TRAINING_CALLOUT}
 
 
 @dataclass
@@ -66,13 +66,11 @@ class Frames:
     eligibility, contract, compared-periods, null-target, sampling and collect entries, in
     order) and the meta (hashes, candidates, tags, lineage, the columns' sources, kinds, the
     unsupported columns, the snapshot period, the population counts, the sampling record, the
-    collect measurements)."""
+    fold counts, the collect measurements)."""
 
     snapshot: pd.DataFrame | None
     rows: DataFrame | None
     train: pd.DataFrame | None
-    test: pd.DataFrame | None
-    validation: pd.DataFrame | None
     log: list[dict]
     meta: dict
 
@@ -86,10 +84,11 @@ def build_frames(
     features: list[str] | None = None,
 ) -> Frames:
     """The frames `stage` works on (`STAGE_PARTS`: `eda` the snapshot collected and `rows` left
-    in Spark; `training` train and test; `evaluation` train, test and validation), from the
-    model input when the config names one, else built in memory with the same logs. `features`
-    is the modelling stages' feature set, `resolve_features(ledger, resolved)`: their frames
-    carry the keys, those features, `target` and `split` only; `eda` reads every candidate."""
+    in Spark; `training` train collected; `evaluation` `rows` left in Spark), from the model
+    input when the config names one, else built in memory with the same logs. `features` is the
+    modelling stages' feature set, `resolve_features(ledger, resolved)`: their frames carry the
+    keys, those features, `target`, `split` and the stage's own columns only; `eda` reads every
+    candidate."""
     _check_request(cfg, stage, features)
     if cfg.data.model_input is None:
         panel, log, meta = build_panel(cfg, entity, env, spark)
@@ -100,14 +99,12 @@ def build_frames(
     if stage == "eda":
         frames["snapshot"], frames["rows"] = _eda_frames(panel, cfg, env, log, meta)
     else:
-        frames.update(_modelling_frames(panel, cfg, env, log, meta, features, STAGE_PARTS[stage]))
+        frames.update(_modelling_frames(panel, cfg, env, log, meta, features, stage))
     meta["collect"] = [entry for entry in log if entry["step"] == "collect"]
     return Frames(
         snapshot=frames.get("snapshot"),
         rows=frames.get("rows"),
         train=frames.get("train"),
-        test=frames.get("test"),
-        validation=frames.get("validation"),
         log=log,
         meta=meta,
     )
@@ -217,6 +214,7 @@ def _supported_candidates(panel: DataFrame, cfg: UseCaseConfig, meta: dict) -> l
     """The candidates of a supported kind, in order; the kinds (supported ones) and the
     unsupported columns (column → type) join the meta, printed. None supported fails loud."""
     kinds = detect_kinds(panel.schema, meta["candidates"], cfg.features.kinds)
+    check_level_orders(cfg.features.order, kinds)
     unsupported = {
         name: panel.schema[name].dataType.simpleString()
         for name, kind in kinds.items()
@@ -260,14 +258,13 @@ def _modelling_frames(
     log: list[dict],
     meta: dict,
     features: list[str],
-    parts: list[str],
-) -> dict[str, pd.DataFrame]:
-    """The `parts` by name, each collected with one row per unit and period and the columns
-    `unit_id, period`, `features`, `target`, `split` (selected in Spark before the collect):
-    `train` (the window's train split, sampled when declared), `test` (the window's test split)
-    and `validation` (the validation period, both splits). Only eligible rows with a known target
-    (`_modelling_rows`). The null-target, sampling and collect entries join the log, the sampling
-    record the meta. A feature that is no candidate of the panel fails loud."""
+    stage: str,
+) -> dict[str, pd.DataFrame | DataFrame]:
+    """The modelling stage's part from the eligible rows with a known target
+    (`_modelling_rows`): Training's `train` (`_training_frame`), Evaluation's `rows`
+    (`_evaluation_rows`). The null-target entry joins the log. A feature that is no candidate of
+    the panel, or a feature or stratum named like a further dealing's fold column, fails
+    loud."""
     unknown = [name for name in features if name not in meta["candidates"]]
     if unknown:
         raise ValueError(
@@ -275,24 +272,71 @@ def _modelling_frames(
             "candidates resolved over the sources' columns, minus the lineage and the framework's "
             "columns); pass resolve_features(ledger, resolved)"
         )
-    modelling, null_log = _modelling_rows(panel, cfg, "validation" in parts)
+    # `part` and `cv_fold` are read as `source_<name>` (`HELPER_COLUMNS`); the further dealings'
+    # columns depend on `training.fold_repeats`, so a source column may still carry one's name
+    later = {name.lower() for name in fold_columns(cfg.training.fold_repeats)[1:]}
+    clashing = [name for name in (*features, *cfg.strata.variables) if name.lower() in later]
+    if clashing:
+        raise ValueError(
+            f"the features or strata {clashing} are named like a fold column of a further "
+            f"dealing ({sorted(later)}, training.fold_repeats); rename the source column upstream"
+        )
+    modelling, null_log = _modelling_rows(panel, cfg, stage == "evaluation")
     log.append(null_log)
-    # what follows filters on `period` and `split` and draws on the keys and `target`, all kept,
-    # so the select changes no row
-    modelling = modelling.select(*KEYS, *features, "target", "split")
-    train, record = sample_train(_window(modelling, cfg).where("split = 'train'"), cfg)
+    if stage == "training":
+        return {"train": _training_frame(modelling, cfg, env, log, meta, features)}
+    return {"rows": _evaluation_rows(modelling, cfg, meta, features)}
+
+
+def _training_frame(
+    modelling: DataFrame,
+    cfg: UseCaseConfig,
+    env: EnvironmentConfig,
+    log: list[dict],
+    meta: dict,
+    features: list[str],
+) -> pd.DataFrame:
+    """Training's `train`, collected: one row per unit and period of the window's train split,
+    sampled when declared, with the columns `unit_id, period`, `features`, `target`, `split` and
+    the fold columns (`assign_folds`, on the rows as sampled, so the trained rows are what is
+    balanced). The fold counts are checked (`check_folds`) before the collect. The sampling and
+    collect entries join the log, the sampling record and the fold counts the meta."""
+    # the sampling and the folds that follow draw on the keys and `target`, all kept, so the
+    # select changes no row
+    train = _window(modelling, cfg).where("split = 'train'")
+    train, record = sample_train(train.select(*KEYS, *features, "target", "split"), cfg)
     log.append(record)
     meta["sampling"] = record
-    planned = {  # lazy plans: only the stage's parts are collected
-        "train": train,
-        "test": _window(modelling, cfg).where("split = 'test'"),
-        "validation": modelling.where(F.col("period") == cfg.time.validation_period),
-    }
-    frames = {}
-    for name in parts:
-        frames[name], entry = collect_frame(planned[name], name, env)
-        log.append(entry)
-    return frames
+    train = assign_folds(train, cfg)
+    meta["folds"] = fold_counts(train, cfg)
+    check_folds(meta["folds"])
+    frame, entry = collect_frame(train, "train", env)
+    log.append(entry)
+    return frame
+
+
+def _evaluation_rows(
+    modelling: DataFrame, cfg: UseCaseConfig, meta: dict, features: list[str]
+) -> DataFrame:
+    """Evaluation's `rows`, a lazy Spark frame never collected: one row per unit, period and
+    part, the window's test split (`part` `test`) then every row of the validation period, both
+    splits (`part` `validation`), with the columns `unit_id, period, part`, `features`, the
+    strata not among them, `target`, `split`. The strata ride along for the stratified tables
+    and never join `features`; a stratum that is no candidate fails loud. No modelling tag: every
+    row is eligible, so each is 1."""
+    strata = cfg.strata.variables
+    unknown = [name for name in strata if name not in meta["candidates"]]
+    if unknown:
+        raise ValueError(
+            f"strata.variables names {unknown}, which are not candidates of the panel; a "
+            "stratum is a candidate column (a lineage or framework column is none)"
+        )
+    test = _window(modelling, cfg).where("split = 'test'").withColumn("part", F.lit("test"))
+    validation = modelling.where(F.col("period") == cfg.time.validation_period)
+    validation = validation.withColumn("part", F.lit("validation"))
+    riding = [name for name in strata if name not in features]
+    columns = [*KEYS, "part", *features, *riding, "target", "split"]
+    return test.unionByName(validation).select(*columns)
 
 
 def _window(panel: DataFrame, cfg: UseCaseConfig) -> DataFrame:
@@ -362,6 +406,18 @@ def detect_kinds(
             )
         kinds[name] = kind
     return kinds
+
+
+def check_level_orders(order: dict[str, list[str]], kinds: dict[str, str]) -> None:
+    """Fail loud when `features.order` names a column that is no categorical candidate: Training
+    filters the order to the features it encodes, so a misspelt name would be dropped without a
+    word and the feature coded as unordered."""
+    wrong = sorted(name for name in order if kinds.get(name) != "categorical")
+    if wrong:
+        raise ValueError(
+            f"features.order names {wrong}, which are not categorical candidates; an order "
+            "belongs to a categorical candidate (features.kinds can make a column categorical)"
+        )
 
 
 def estimate_collect(frame: DataFrame, name: str) -> dict:

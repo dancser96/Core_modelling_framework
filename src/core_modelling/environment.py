@@ -16,6 +16,7 @@ a modelling setting or the reverse. The shared pieces are the version-migration 
 
 import os
 import re
+import sys
 from collections.abc import Callable
 from typing import Annotated, Literal, Self
 
@@ -192,6 +193,11 @@ def get_spark_session(env: EnvironmentConfig) -> SparkSession:
     # private attribute, set at creation and cleared by stop().
     session = SparkSession._instantiatedSession
     if session is None:
+        if env.spark.master.startswith("local"):
+            # PySpark 3.4 starts a local master's Python workers with `python3` from the PATH
+            # unless this variable names one (T40). They must be the driver's interpreter, or
+            # scoring inside Spark cannot import the model libraries. A cluster decides its own.
+            os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
         return SparkSession.builder.config(map=settings).getOrCreate()
     differences = [
         f"{key}: running {_running_value(session, key)!r}, requested {value!r}"
@@ -245,3 +251,10 @@ def feature_dir(env: EnvironmentConfig, cfg: UseCaseConfig, entity: str, *parts:
 def audit_log_dir(env: EnvironmentConfig, cfg: UseCaseConfig, entity: str) -> str:
     """Where the decision audit log of one use case and data definition lives."""
     return feature_dir(env, cfg, entity, "decisions")
+
+
+def models_dir(env: EnvironmentConfig, cfg: UseCaseConfig, *parts: str) -> str:
+    """`<use_case>/06_models`, the runs of every data definition of the use case side by side, or
+    a folder in it (`r007`, its `bundle`, …): no data-definition segment, since a run's
+    `run.json` records the hashes it was built from (D-136, D-139)."""
+    return data_path(env, cfg.use_case, "06_models", *parts)

@@ -9,6 +9,7 @@ from typing import get_args, get_origin
 
 import pytest
 import yaml
+from conftest import build_entry
 from pydantic import BaseModel, TypeAdapter
 from pydantic.fields import FieldInfo
 
@@ -20,6 +21,7 @@ from core_modelling.config.levels import (
     unmark_level_filled,
 )
 from core_modelling.config.migrations import MIGRATIONS
+from core_modelling.config.replay import replay, validate_raw
 from core_modelling.config.schema import EVERY_CHECK, snapshot_period
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,7 +86,9 @@ def test_example_loads_with_level_defaults_and_explicit_values() -> None:
     assert cfg.evaluation.slices.top_pct == [0.01, 0.10]  # explicit, not the level's list
     assert cfg.training.calibration.method == "platt"
     assert cfg.features.excluded == []
-    assert cfg.housekeeping == {"level_filled": ["training.max_iter"]}
+    filled = {"decision.metric": "log_loss", "training.objective": "log_loss",
+              "training.calibration.method": "platt"}  # fmt: skip
+    assert cfg.housekeeping == {"level_filled": ["training.max_iter"], "task_filled": filled}
 
 
 def test_top_n_is_a_plain_default_at_both_levels(tmp_path: Path, raw: dict) -> None:
@@ -103,7 +107,7 @@ def test_autonomous_level_gives_its_own_defaults(tmp_path: Path, raw: dict) -> N
     raw["automation_level"] = "autonomous"
     del raw["evaluation"], raw["training"]  # every training field defaults or is level-filled
     cfg = _load(tmp_path, raw)
-    assert (cfg.eda.key_features.top_n, cfg.training.max_iter) == (10, 50)
+    assert (cfg.eda.key_features.top_n, cfg.training.max_iter) == (10, 60)
     assert cfg.training.calibration.method == "platt"
     assert cfg.evaluation.slices.top_pct == [0.01, 0.1]
     assert cfg.housekeeping["level_filled"] == list(LEVEL_DEFAULTS)
@@ -374,10 +378,13 @@ def test_n_without_a_top_n_decision_is_refused(tmp_path: Path, raw: dict) -> Non
     assert "decision.type is 'probability'" in error
 
 
-def test_metric_must_be_a_flaml_name(tmp_path: Path, raw: dict) -> None:
-    """scikit-learn's 'average_precision' is FLAML's 'ap' (T9)."""
-    raw["decision"]["metric"] = "average_precision"
-    assert "not a FLAML metric name" in _error(tmp_path, raw)
+def test_metric_must_be_one_the_task_allows(tmp_path: Path, raw: dict) -> None:
+    """scikit-learn's 'average_precision' is FLAML's 'ap' (T9); a regression metric is refused
+    for a binary task."""
+    for metric in ("average_precision", "rmse"):
+        raw["decision"]["metric"] = metric
+        message = _error(tmp_path, raw)
+        assert f"decision.metric {metric!r} is not one the binary task allows" in message
     raw["decision"]["metric"] = "ap"
     assert _load(tmp_path, raw).decision.metric == "ap"
 
@@ -433,7 +440,9 @@ def test_sampling_parameter_must_match_method(tmp_path: Path, raw: dict) -> None
     raw["training"]["sampling"] = {"method": "client_sample", "share": 1.0}
     assert "share" in _error(tmp_path, raw)
     raw["training"]["sampling"] = {"method": "negative_downsampling", "keep_fraction": 0.1}
-    assert _load(tmp_path, raw).training.sampling.seed == 42
+    assert _load(tmp_path, raw).training.sampling.keep_fraction == 0.1
+    raw["training"]["sampling"]["seed"] = 7  # it draws with training.seed, never loggable
+    assert "training.sampling.seed" in _error(tmp_path, raw)
 
 
 def test_forest_estimator_refused(tmp_path: Path, raw: dict) -> None:
@@ -467,13 +476,11 @@ def test_old_schema_version_migrates_with_a_warning(
 ) -> None:
     """A version-0 file loads through its migration and warns; without one it fails naming it."""
     raw["schema_version"] = 0
-    raw["training"]["selection"] = {"auc_floor": 0.6}  # the old name a migration would rename
+    raw["training"]["selection"] = {"z_floor": 2.5}  # the old name a migration would rename
 
     def rename_floor(old: dict) -> dict:
         """The dummy 0 → 1 migration."""
-        old["training"]["selection"] = {
-            "univariate_floor": old["training"]["selection"]["auc_floor"]
-        }
+        old["training"]["selection"] = {"floor_z": old["training"]["selection"]["z_floor"]}
         return {**old, "schema_version": 1}
 
     with pytest.raises(ValueError, match="no migration from config schema_version 0"):
@@ -481,7 +488,7 @@ def test_old_schema_version_migrates_with_a_warning(
     monkeypatch.setitem(MIGRATIONS, 0, rename_floor)
     with pytest.warns(DeprecationWarning, match="config schema_version 0 is deprecated"):
         cfg = _load(tmp_path, raw)
-    assert cfg.training.selection.univariate_floor == 0.6
+    assert cfg.training.selection.floor_z == 2.5
 
 
 def test_file_with_replay_fields_refused(tmp_path: Path, raw: dict) -> None:
@@ -759,3 +766,319 @@ def test_kind_override_must_be_numeric_or_categorical(tmp_path: Path, raw: dict)
     raw["features"]["kinds"] = {"branch_code": "categorical", "age": "integer"}
     message = _error(tmp_path, raw)
     assert "features.kinds.age" in message and "features.kinds.branch_code" not in message
+
+
+def _regression(raw: dict) -> dict:
+    """The example's raw dict as a regression use case on the card spend."""
+    raw["task"] = "regression"
+    raw["data"]["target"] = {"rule": "forward_sum", "column": "spend_cc_vol"}
+    return raw
+
+
+def test_stage_3_fields_load_with_their_defaults(tmp_path: Path, raw: dict) -> None:
+    """The sections left out take every Stage 3 default; the task-decided nulls are filled from
+    the binary probability decision."""
+    del raw["training"], raw["evaluation"], raw["decision"]["baselines"]
+    cfg = _load(tmp_path, raw)
+    training = cfg.training
+    assert cfg.decision.baselines == ["population_base_rate", "single_feature"]
+    assert cfg.features.order == {}
+    assert training.estimator_list == ["lgbm", "xgboost", "xgb_limitdepth", "catboost"]
+    assert (training.trials, training.folds, training.fold_repeats) == (None, 5, 1)
+    assert (training.objective, training.tweedie_variance_power) == ("log_loss", None)
+    assert (training.monotone, training.search_space) == ({}, {})
+    assert training.selection.model_dump() == {"cluster": True, "floor_z": 2.0, "prune": True}
+    assert training.categoricals.model_dump() == {"min_level_client_count": 50,
+                                                  "unordered": "native"}  # fmt: skip
+    assert (cfg.decision.metric, training.calibration.method) == ("log_loss", "platt")
+    assert cfg.evaluation.skip_views == []
+    assert cfg.evaluation.intervals.model_dump() == {"replicates": 200, "level": 0.95}
+
+
+@pytest.mark.parametrize(
+    ("decision", "metric", "calibration"),
+    [("probability", "log_loss", "platt"), ("threshold", "log_loss", "none"),
+     ("ranking", "roc_auc", "none"), ("top_n", "roc_auc", "none")],
+)  # fmt: skip
+def test_binary_nulls_follow_the_decision(
+    tmp_path: Path, raw: dict, decision: str, metric: str, calibration: str
+) -> None:
+    """The metric and the calibration come from the decision type (D-049)."""
+    raw["decision"] = {"type": decision, "n": 500 if decision == "top_n" else None}
+    cfg = _load(tmp_path, raw)
+    assert (cfg.decision.metric, cfg.training.calibration.method) == (metric, calibration)
+
+
+@pytest.mark.parametrize(
+    ("objective", "power", "calibration"),
+    [(None, None, "none"), ("tweedie", 1.5, "mean"), ("poisson", None, "mean"),
+     ("huber", None, "none")],
+)  # fmt: skip
+def test_regression_nulls_follow_the_objective(
+    tmp_path: Path, raw: dict, objective: str | None, power: float | None, calibration: str
+) -> None:
+    """Regression's metric is rmse whatever the objective; the power is filled under tweedie and
+    the calibration is `mean` under tweedie and poisson."""
+    raw = _regression(raw)
+    raw["training"]["objective"] = objective
+    training = _load(tmp_path, raw).training
+    assert (training.objective or "", training.tweedie_variance_power) == (
+        objective or "squared_error",
+        power,
+    )
+    assert training.calibration.method == calibration
+
+
+def test_stage_3_fields_round_trip(tmp_path: Path, raw: dict) -> None:
+    """Every Stage 3 field set off its default loads as written and survives the JSON dump that
+    the replay validates again."""
+    raw["decision"]["baselines"] = [
+        "population_base_rate", {"previous_model": "old_score"},
+        {"historic_predicted_rate": 0.02}, {"historic_predicted_rate": "campaign_rate"},
+    ]  # fmt: skip
+    raw["features"]["order"] = {"risk_band": ["low", "medium", "high"]}
+    range_leaf = {"low": 8, "high": 127, "log": True, "integer": True, "start": 31}
+    raw["training"].update(
+        estimator_list=["lgbm", "catboost"], trials={"lgbm": 30, "catboost": 10}, folds=4,
+        fold_repeats=3, monotone={"income": "increasing", "risk_band": "decreasing"},
+        search_space={"lgbm": {"num_leaves": range_leaf, "max_bin": {"value": 63}}},
+        selection={"cluster": False, "floor_z": None, "prune": False},
+        categoricals={"min_level_client_count": 20, "unordered": "codes"},
+        calibration={"method": "beta"},
+    )  # fmt: skip
+    raw["evaluation"].update(skip_views=["reliability"], intervals={"replicates": 50})
+    cfg = _load(tmp_path, raw)
+    dumped = cfg.model_dump(mode="json")
+    assert dumped["decision"]["baselines"] == raw["decision"]["baselines"]
+    assert dumped["training"]["search_space"]["lgbm"]["num_leaves"] == range_leaf
+    assert dumped["training"]["search_space"]["lgbm"]["max_bin"] == {"value": 63}
+    assert dumped["training"]["calibration"] == {"method": "beta"}
+    assert dumped["evaluation"]["intervals"] == {"replicates": 50, "level": 0.95}
+    assert UseCaseConfig.model_validate(dumped) == cfg
+
+
+def test_a_task_change_on_a_dump_derives_the_filled_values_again(cfg_dump: dict) -> None:
+    """A value the task filled is derived again when the dump is validated with another task; a
+    value written explicitly stays (and is checked)."""
+    cfg_dump["task"] = "regression"
+    regression = UseCaseConfig.model_validate(cfg_dump)
+    assert (regression.decision.metric, regression.training.objective) == ("rmse", "squared_error")
+    assert regression.training.calibration.method == "none"
+    # Why the record holds values: an edit of a filled path outside the log stays explicit.
+    edited = regression.model_dump(mode="json")
+    edited["training"]["objective"] = "tweedie"
+    tweedie = UseCaseConfig.model_validate(edited).training
+    assert (tweedie.objective, tweedie.calibration.method) == ("tweedie", "mean")
+    cfg_dump["training"]["calibration"]["method"] = "beta"
+    with pytest.raises(ValueError, match="'beta' is not one the regression task allows"):
+        UseCaseConfig.model_validate(cfg_dump)
+
+
+@pytest.fixture
+def cfg_dump() -> dict:
+    """The example config, loaded and dumped as the replay holds it."""
+    return load_config(EXAMPLE).model_dump(mode="json")
+
+
+def test_a_set_of_the_objective_refills_the_calibration(tmp_path: Path, raw: dict) -> None:
+    """The replay starts from the loaded config's dump; a `set` of the objective there refills the
+    calibration and the power, while the declared metric stays. A calibration set explicitly
+    stays through a later objective change, and a `set` to null derives it again."""
+    cfg = _load(tmp_path, _regression(raw))
+    training = cfg.training
+    assert (training.objective, training.calibration.method) == ("squared_error", "none")
+
+    def resolved(*changes: tuple[str, object]) -> UseCaseConfig:
+        """The config after one `set` entry per (path, value), in order."""
+        entries = [
+            build_entry(seq, "set", stage="training", path=path, to=value)
+            for seq, (path, value) in enumerate(changes, start=1)
+        ]
+        return validate_raw(replay(cfg, entries), "the replay")
+
+    tweedie = resolved(("training.objective", "tweedie")).training
+    assert (tweedie.calibration.method, tweedie.tweedie_variance_power) == ("mean", 1.5)
+    kept = resolved(("training.calibration.method", "none"), ("training.objective", "tweedie"))
+    assert kept.training.calibration.method == "none" and kept.decision.metric == "rmse"
+    back = resolved(("training.calibration.method", "none"), ("training.objective", "poisson"),
+                    ("training.calibration.method", None))  # fmt: skip
+    assert back.training.calibration.method == "mean"
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "message"),
+    [
+        ("training.objective", "tweedie", "training.objective 'tweedie' is not one the binary"),
+        ("training.calibration.method", "mean", "'mean' is not one the binary task allows"),
+        ("training.calibration.method", "isotonic", "'isotonic' is not one the binary task"),
+        ("training.tweedie_variance_power", 1.5, "is read only under training.objective"),
+        ("training.trials", {"lgbm": 10}, "must name exactly the listed families"),
+        ("training.search_space", {"rf": {}}, "training.search_space.rf"),
+        ("training.folds", 1, "training.folds"),
+        ("training.fold_repeats", 0, "training.fold_repeats"),
+        ("training.monotone", {"income": "up"}, "training.monotone.income"),
+        ("training.categoricals", {"unordered": "onehot"}, "training.categoricals.unordered"),
+        ("evaluation.intervals", {"level": 1.0}, "evaluation.intervals.level"),
+        ("evaluation.intervals", {"replicates": 19}, "evaluation.intervals.replicates"),
+        ("training.estimator_list", ["lgbm", "catboost", "lgbm"], "repeats ['lgbm']"),
+    ],
+)
+def test_training_and_evaluation_refusals_name_the_field(
+    tmp_path: Path, raw: dict, path: str, value: object, message: str
+) -> None:
+    """Each value the schema or the binary task does not allow is refused naming its field."""
+    *sections, leaf = path.split(".")
+    node = raw
+    for name in sections:
+        node = node[name]
+    node[leaf] = value
+    assert message in _error(tmp_path, raw)
+
+
+def test_search_space_of_an_unlisted_family_refused(tmp_path: Path, raw: dict) -> None:
+    """An override for a family the list leaves out would never be read."""
+    raw["training"].update(estimator_list=["lgbm"], search_space={"catboost": {}})
+    assert "names ['catboost'], which training.estimator_list does not list" in _error(
+        tmp_path, raw
+    )
+
+
+@pytest.mark.parametrize(
+    ("leaf", "message"),
+    [
+        ({"low": 0.01}, "Field required"),
+        ({"low": 1, "high": 9, "log": True, "integer": True, "step": 2}, "Extra inputs"),
+        ({"value": 3, "low": 1}, "Extra inputs"),
+        ({"low": 9, "high": 9, "log": False, "integer": True}, "low 9 must be below high 9"),
+        ({"low": 0, "high": 1, "log": True, "integer": False}, "a log range needs low above 0"),
+        ({"low": 1.5, "high": 9, "log": False, "integer": True}, "takes whole numbers"),
+        ({"low": 4, "high": 255, "log": True, "integer": True, "start": 300},
+         "start 300 lies outside 4 … 255"),
+    ],
+)  # fmt: skip
+def test_search_space_leaf_is_a_range_or_a_constant(
+    tmp_path: Path, raw: dict, leaf: dict, message: str
+) -> None:
+    """A leaf is `{low, high, log, integer, start}` with `start` optional, or `{value}`; anything
+    else, an empty or inverted range, a log range from 0 and a start outside fail naming it."""
+    raw["training"]["search_space"] = {"lgbm": {"num_leaves": leaf}}
+    error = _error(tmp_path, raw)
+    assert "training.search_space.lgbm.num_leaves" in error and message in error
+
+
+@pytest.mark.parametrize(
+    ("family", "parameter"),
+    [("xgboost", "scale_pos_weight"), ("lgbm", "is_unbalance"), ("lgbm", "class_weight"),
+     ("catboost", "class_weights"), ("catboost", "auto_class_weights"),
+     ("xgboost", "Scale_Pos_Weight")],
+)  # fmt: skip
+def test_class_weights_refused_pointing_to_sampling(
+    tmp_path: Path, raw: dict, family: str, parameter: str
+) -> None:
+    """A class weight shifts every score behind the calibration's back, whatever its case."""
+    raw["training"]["search_space"] = {family: {parameter: {"value": 10}}}
+    message = _error(tmp_path, raw)
+    assert f"training.search_space.{family} sets ['{parameter}']" in message
+    assert "sampling: {method: negative_downsampling" in message
+
+
+@pytest.mark.parametrize(
+    ("parameter", "message"),
+    [("objective", "objective: use training.objective"),
+     ("Random_State", "Random_State: use training.seed"),
+     ("missing", "missing: fixed by the framework"),
+     ("cat_features", "cat_features: use features.kinds")],
+)  # fmt: skip
+def test_parameters_the_framework_sets_refused(
+    tmp_path: Path, raw: dict, parameter: str, message: str
+) -> None:
+    """A name `fixed_params` sets for every fit is refused in any case, naming the field to use."""
+    raw["training"]["search_space"] = {"catboost": {parameter: {"value": 1}}}
+    error = _error(tmp_path, raw)
+    assert "training.search_space.catboost sets what the framework sets" in error
+    assert message in error
+
+
+def test_lgbm_monotone_methods_that_break_the_constraint_refused(tmp_path: Path, raw: dict) -> None:
+    """`advanced` broke the constraint; `intermediate` with `colsample_bynode` falls back to
+    `basic`; `intermediate` alone loads."""
+    space = raw["training"]["search_space"] = {
+        "lgbm": {"monotone_constraints_method": {"value": "advanced"}}
+    }
+    assert "advanced broke the monotone constraint" in _error(tmp_path, raw)
+    space["lgbm"]["monotone_constraints_method"] = {"value": "Advanced"}
+    assert "advanced broke the monotone constraint" in _error(tmp_path, raw)
+    space["lgbm"]["monotone_constraints_method"] = {"low": 1, "high": 3, "log": False,
+                                                    "integer": True}  # fmt: skip
+    assert "names a method, written {value: intermediate}, not a range" in _error(tmp_path, raw)
+    space["lgbm"]["monotone_constraints_method"] = {"value": "intermediate"}
+    assert _load(tmp_path, raw).training.search_space["lgbm"]
+    space["lgbm"]["colsample_bynode"] = {"value": 0.8}
+    assert "fall back to basic with only a warning" in _error(tmp_path, raw)
+
+
+@pytest.mark.parametrize(
+    ("levels", "message"),
+    [([], "features.order.risk_band is empty"),
+     (["low", "high", "low"], "features.order.risk_band repeats ['low']")],
+)  # fmt: skip
+def test_order_list_empty_or_repeating_a_level_refused(
+    tmp_path: Path, raw: dict, levels: list[str], message: str
+) -> None:
+    """A level's position is its code, so the list holds each level once."""
+    raw["features"]["order"] = {"risk_band": levels}
+    assert message in _error(tmp_path, raw)
+
+
+def test_regression_choices_are_checked_against_the_task(tmp_path: Path, raw: dict) -> None:
+    """A binary metric or calibration is refused for regression; the power lies in (1, 2)."""
+    raw = _regression(raw)
+    raw["decision"]["metric"] = "log_loss"
+    assert "decision.metric 'log_loss' is not one the regression task allows" in _error(
+        tmp_path, raw
+    )
+    raw["decision"]["metric"] = "tweedie_deviance"
+    raw["training"].update(objective="tweedie", tweedie_variance_power=2.0)
+    assert "training.tweedie_variance_power" in _error(tmp_path, raw)
+    raw["training"]["tweedie_variance_power"] = 1.2
+    cfg = _load(tmp_path, raw)
+    assert cfg.training.tweedie_variance_power == 1.2
+    raw["training"]["objective"] = "poisson"
+    assert "leave the power null in the config file" in _error(tmp_path, raw)
+    entry = build_entry(1, "set", stage="training", path="training.objective", to="poisson")
+    with pytest.raises(ValueError, match="set training.tweedie_variance_power to null first"):
+        replay(cfg, [entry])
+
+
+@pytest.mark.parametrize(
+    ("section", "key", "value"),
+    [("decision", "gate_metric", None), ("training.selection", "univariate_floor", 0.515),
+     ("training.selection", "importance_floor", None),
+     ("training.categoricals", "min_level_count", 50), ("evaluation", "views", [])],
+)  # fmt: skip
+def test_removed_stage_3_keys_fail_as_unknown(
+    tmp_path: Path, raw: dict, section: str, key: str, value: object
+) -> None:
+    """The fields Stage 3 removed changed in place, with no migration (D-136): an old config
+    fails naming the key."""
+    node = raw
+    for name in section.split("."):
+        node = node[name]
+    node[key] = value
+    message = _error(tmp_path, raw)
+    assert f"{section}.{key}" in message and "Extra inputs are not permitted" in message
+
+
+def test_lifecycle_section_fails_as_unknown(tmp_path: Path, raw: dict) -> None:
+    """The section returns when M2.4 gives it content; until then it is an unknown key."""
+    raw["lifecycle"] = {"promotion_gate": {"min": None}}
+    assert "lifecycle" in _error(tmp_path, raw)
+
+
+@pytest.mark.parametrize(("level", "budget"), [("autonomous", 60), ("assisted", 200)])
+def test_trial_budget_by_level(tmp_path: Path, raw: dict, level: str, budget: int) -> None:
+    """60 trials at `autonomous`, 200 at `assisted` (D-132); an explicit budget stays."""
+    raw["automation_level"] = level
+    assert _load(tmp_path, raw).training.max_iter == budget
+    raw["training"]["max_iter"] = 7
+    assert _load(tmp_path, raw).training.max_iter == 7

@@ -40,9 +40,11 @@ CHOICES: dict[str, dict] = {
         "alternatives": "top_n | threshold | ranking | probability",
     },
     "metric": {
-        "label": "Metric derived from the decision",
-        "path": None,
-        "alternatives": "decision.metric overrides it with a FLAML metric name",
+        "label": "Metric (search and headline)",
+        "path": "decision.metric",
+        "alternatives": "declared in decision.metric, else filled from the task and "
+        "decision.type; binary log_loss | roc_auc | ap; regression rmse | mae | r2 | "
+        "tweedie_deviance | poisson_deviance",
     },
     "period": {
         "label": "Period (unit of analysis)",

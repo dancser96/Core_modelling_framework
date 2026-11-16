@@ -7,8 +7,9 @@ edited: a reversal is a new entry. The entry model and the replay (entries → r
 in `replay.py`; this module stores and writes entries and holds the public functions
 `record_decision`, `resolve_config` and `show_decisions` (the CLI command `decide` is in
 `__main__`), `read_resolved_config` for a saved resolved config, `load_entries`, a log's checked
-entries, and `record_stage_entry`, the writer of a stage's `flag` and `run` entries. The log is on
-the local filesystem only; the HDFS transport comes with M2.4.
+entries, and `record_stage_entry`, the writer of a stage's `flag` and `run` entries (Feature
+Checks', Training's and Evaluation's). The log is on the local filesystem only; the HDFS
+transport comes with M2.4.
 """
 
 import copy
@@ -285,17 +286,24 @@ def _keep_findings(
 
 
 def _check_not_compared(resolved: UseCaseConfig, entries: list[Entry], context: str) -> None:
-    """Refuse a validation period that any `run` entry compared, reverted or not: its drift was
-    looked at, so it is no longer an untouched period (D-088, `CLAUDE.md` §4.4)."""
+    """Refuse a validation period that a Feature Checks `run` entry compared, reverted or not:
+    its drift was looked at, so it is no longer an untouched period (D-088, `CLAUDE.md` §4.4).
+    Training's run compares no period and Evaluation's scores the validation period by design,
+    so neither blocks a move."""
     period = resolved.time.validation_period
     if period is None:
         return
     label = period_spec(resolved).label(period)
-    runs = [entry.seq for entry in entries if entry.op == "run" and label in (entry.periods or [])]
+    runs = [
+        entry.seq
+        for entry in entries
+        if entry.op == "run" and entry.stage == "feature_checks" and label in entry.periods
+    ]
     if runs:
         raise ValueError(
-            f"{context}: the validation period {label} was compared by the run of entry "
-            f"{runs[0]}, so its drift was looked at (D-088); choose a period no run compared"
+            f"{context}: the validation period {label} was compared by the Feature Checks run "
+            f"of entry {runs[0]}, so its drift was looked at (D-088); choose a period no Feature "
+            "Checks run compared"
         )
 
 
@@ -322,10 +330,20 @@ def _set_fields(current: dict, entries: list[Entry], setting: object) -> dict:
         _check_not_compared(changed, entries, f"set {path} refused")
     return {
         "path": path,
-        "from_value": get_at(current, path),
+        "from_value": _value_in_force(current, path),
         "to_value": value,
         "stage": LOGGABLE_SETTINGS[path],
     }
+
+
+def _value_in_force(current: dict, path: str) -> object:
+    """A setting's value before a `set`: as stored, unless null or filled from the task
+    (`housekeeping.task_filled`), which validation derives afresh, e.g. the calibration and the
+    Tweedie power after the objective moved."""
+    stored = get_at(current, path)
+    if stored is None or path in (current.get("housekeeping") or {}).get("task_filled", {}):
+        return get_at(validate_raw(current, "the current state").model_dump(mode="json"), path)
+    return stored
 
 
 def _revert_fields(cfg: UseCaseConfig, current: dict, entries: list[Entry], to_seq: object) -> dict:
@@ -435,19 +453,15 @@ def _is_period_label(label: str, spec: Period) -> bool:
     return False
 
 
-def _check_period_labels(cfg: UseCaseConfig, periods: list[str] | None) -> None:
-    """A run's `periods`: a non-empty list of labels as `periods.PERIODS` writes them for the
-    config's period, so each compares with the validation period's label."""
-    if not periods:
-        raise ValueError(
-            "a `run` entry needs `periods`, a non-empty list of the period labels the run compared"
-        )
+def _check_period_labels(cfg: UseCaseConfig, labels: list[str], field: str) -> None:
+    """A run's period labels (`periods`, `validation_period`) as `periods.PERIODS` writes them
+    for the config's period, so each compares with the validation period's label."""
     spec = period_spec(cfg)
-    bad = [label for label in periods if not _is_period_label(label, spec)]
+    bad = [label for label in labels if not _is_period_label(label, spec)]
     if bad:
         example = spec.label(cfg.time.observation_window.last)
         raise ValueError(
-            f"run refused: periods {bad} are not {cfg.time.period} labels as the framework writes "
+            f"run refused: {field} {bad} are not {cfg.time.period} labels as the framework writes "
             f"them, e.g. {example!r}"
         )
 
@@ -465,17 +479,27 @@ def record_stage_entry(
     periods: list[str] | None = None,
     evidence: Sequence[str] = (),
     run_id: str | None = None,
+    validation_period: str | None = None,
     replayed_to: int | None = None,
     resolved_input_hash: str | None = None,
 ) -> Entry:
     """Append one stage entry, by `{kind: stage, id: stage}`: a `flag` (its `finding` and the
-    features, empty to close it) or a `run` marker (the labels of the periods it compared, as
-    `periods.PERIODS` writes them). Whether a flag entry is due, its finding's feature set having
-    changed, is the stage's call."""
+    features, empty to close it) or a `run` marker: Feature Checks' with the labels of the
+    periods it compared, Training's with its run number (`run_id`), Evaluation's with the run
+    number and the label of the validation period it scored (labels as `periods.PERIODS` writes
+    them). Whether a flag entry is due, its finding's feature set having changed, is the stage's
+    call."""
     if op not in ("flag", "run"):
         raise ValueError(f"a stage writes `flag` or `run` entries, not {op!r}")
+    if op == "run" and stage == "feature_checks" and not periods:
+        raise ValueError(
+            "a Feature Checks `run` entry needs `periods`, a non-empty list of the period labels "
+            "the run compared"
+        )
     if op == "run":
-        _check_period_labels(cfg, periods)
+        _check_period_labels(cfg, periods or [], "periods")
+        scored = [validation_period] if validation_period else []
+        _check_period_labels(cfg, scored, "validation_period")
     if not reason.strip():
         raise ValueError("a stage entry needs a non-empty reason")
     if features:
@@ -486,6 +510,7 @@ def record_stage_entry(
         "finding": finding,
         "periods": periods,
         "run_id": run_id,
+        "validation_period": validation_period,
         "replayed_to": replayed_to,
         "resolved_input_hash": resolved_input_hash,
     }
@@ -505,13 +530,51 @@ def record_stage_entry(
     return _write_entry(entry, audit_log_dir(env, cfg, entity))
 
 
+def record_sign_off(
+    cfg: UseCaseConfig,
+    entity: str,
+    env: EnvironmentConfig,
+    *,
+    run_id: str,
+    signature: str,
+    features: list[str],
+    reason: str,
+) -> Entry:
+    """Append a person's `sign_off` entry (D-031, D-125 (c)), by the current user id on stage
+    `sign_off`: the run, the feature signature and the final list it approves. `runs.sign_off`
+    reads them from the run folder and calls it; a person signs off, never an LLM (`CLAUDE.md`
+    §4.13)."""
+    if not reason.strip():
+        raise ValueError("a sign-off needs a non-empty reason")
+    entries = load_entries(cfg, entity, env, warn_if_missing=False)
+    entry = Entry(
+        seq=len(entries) + 1,
+        time=utc_now(),
+        by=By(kind="person", id=getpass.getuser()),
+        stage="sign_off",
+        op="sign_off",
+        reason=reason,
+        data_definition_hash=data_definition_hash(cfg, entity),
+        hash_version=HASH_VERSION,
+        log_schema_version=LOG_SCHEMA_VERSION,
+        run_id=run_id,
+        signature=signature,
+        features=features,
+    )
+    return _write_entry(entry, audit_log_dir(env, cfg, entity))
+
+
 def _what(entry: Entry) -> str:
     """The features (a flag led by its finding, a keep followed by the findings it settles),
-    `path: from → to`, `to #n` for a revert, or a run's id and the periods it compared."""
+    `path: from → to`, `to #n` for a revert, a sign-off's run, list size and signature, or a
+    run's number, the periods it compared and the validation period it scored."""
     if entry.op == "revert":
         return f"to #{entry.to_seq}"
     if entry.op == "flag":
         return f"{entry.finding}: {', '.join(entry.features) or 'none (closes the finding)'}"
+    if entry.op == "sign_off":
+        signature = short(entry.signature)
+        return f"{entry.run_id}: {len(entry.features)} features (signature {signature})"
     if entry.features:
         settles = f" (settles {', '.join(entry.findings)})" if entry.findings else ""
         return ", ".join(entry.features) + settles
@@ -521,7 +584,8 @@ def _what(entry: Entry) -> str:
     if entry.periods:
         first, last = min(entry.periods), max(entry.periods)
         periods = f"periods {first}" if first == last else f"periods {first} … {last}"
-    return " ".join(part for part in (entry.run_id, periods) if part)
+    scored = f"scored on {entry.validation_period}" if entry.validation_period else ""
+    return " ".join(part for part in (entry.run_id, periods, scored) if part)
 
 
 def show_decisions(cfg: UseCaseConfig, entity: str, env: EnvironmentConfig) -> pd.DataFrame:

@@ -8,13 +8,14 @@ stored state after entry `to_seq` (the entries after it stay as the trail). The 
 change the three feature lists, which the replay writes last from the effective entries (the ones
 no revert undid): `features.excluded` and `features.kept` from `decisions_in_force`, the one walk
 of what exclude, include and keep mean, and `features.held` from the open flags (`open_flags`),
-which Training leaves out (D-134). The other operations are the trail. `check_resolved` refuses
-a config that was only loaded where the resolved one is needed, and `dump_resolved` is the
-resolved config's one YAML form. Storage, writing and the public functions live in
-`audit_log.py`.
+which Training leaves out (D-134). The other operations are the trail; `signed_off` reads the
+sign-off in force for a feature list. `check_resolved` refuses a config that was only loaded
+where the resolved one is needed, and `dump_resolved` is the resolved config's one YAML form.
+Storage, writing and the public functions live in `audit_log.py`.
 """
 
 import copy
+import re
 from collections.abc import Callable
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -23,22 +24,34 @@ from typing import Annotated, Literal
 import yaml
 from pydantic import ConfigDict, Field, ValidationError, model_validator
 
-from core_modelling.config.identities import REPLAY_FIELDS, resolved_input_hash, short
+from core_modelling.config.identities import (
+    REPLAY_FIELDS,
+    feature_signature,
+    resolved_input_hash,
+    short,
+)
 from core_modelling.config.levels import refill_level_defaults, unmark_level_filled
 from core_modelling.config.schema import StrictModel, UseCaseConfig
 
 Op = Literal[
-    "exclude", "include", "keep", "set",
-    "revert", "flag", "dropped", "sign_off", "register", "promote", "run",
+    "exclude", "include", "keep", "set", "revert", "flag", "sign_off", "register", "promote", "run",
 ]  # fmt: skip
-FEATURE_OPS = {"exclude", "include", "keep", "flag", "dropped"}
-INPUT_FEATURE_OPS = {"exclude", "include", "keep", "flag"}  # the ones replay checks
+FEATURE_OPS = {"exclude", "include", "keep", "flag"}  # the ones that change the input
 Finding = Annotated[str, Field(pattern=r"^[a-z_]+\.[a-z_]+$")]  # `<step>.<finding>`
+RUN_NUMBER = r"^r\d{3,}$"  # `r007`: a run's number, never given twice in a use case (D-088)
+# A `run` entry's operands by its stage: Feature Checks' lists the periods it compared (D-088),
+# Training's names its run, Evaluation's the run and the validation period it scored.
+RUN_OPERANDS = ("periods", "run_id", "validation_period")
+RUN_OPERANDS_BY_STAGE: dict[str, set[str]] = {
+    "feature_checks": {"periods"},
+    "training": {"run_id"},
+    "evaluation": {"run_id", "validation_period"},
+}
 
 # Setting path → the stage that reruns from it. Never listed: the data definition and `decision`
-# (declared before any result, §4.3); `data.split` and `training.seed`, since a test score must not
-# pick its own sample or seed. `lifecycle`, `inference` and `monitoring` wait for M2.4 and M4. A
-# new schema field is not loggable until it is added here.
+# (declared before any result, the metric with it, §4.3); `data.split`, `training.seed` and
+# `training.path`, since a test score must not pick its own sample or seed. `inference` and
+# `monitoring` wait for M2.4 and M4. A new schema field is not loggable until it is added here.
 LOGGABLE_SETTINGS: dict[str, str] = {
     "automation_level": "eda",  # a level move reruns every stage from EDA (D-132)
     "features.kinds": "eda",  # how a column is read; outside the data-definition hash
@@ -73,20 +86,31 @@ LOGGABLE_SETTINGS: dict[str, str] = {
     "feature_checks.stability.new_level_share_max": "feature_checks",
     "feature_checks.redundancy.correlation_max": "feature_checks",
     "feature_checks.redundancy.association_max": "feature_checks",
+    "features.order": "training",  # the declared level orders: how Training encodes
     "training.estimator_list": "training",
     "training.max_iter": "training",
+    "training.trials": "training",
     "training.time_budget_s": "training",
+    "training.folds": "training",
+    "training.fold_repeats": "training",
+    "training.objective": "training",  # how the booster learns; the metric stays the decision's
+    "training.tweedie_variance_power": "training",
+    "training.monotone": "training",
     "training.search_space": "training",
-    "training.selection.univariate_floor": "training",
-    "training.selection.importance_floor": "training",
-    "training.categoricals.min_level_count": "training",
+    "training.selection.cluster": "training",
+    "training.selection.floor_z": "training",
+    "training.selection.prune": "training",
+    "training.categoricals.min_level_client_count": "training",
+    "training.categoricals.unordered": "training",
     "training.calibration.method": "training",
     "training.sampling": "training",
-    # EDA reads these two: the compared periods, and its decision-slices view.
+    # EDA reads these: the compared periods, and its decision-slices view.
     "time.validation_period": "eda",  # refused once Feature Checks compared it (D-088)
     "evaluation.slices.top_pct": "eda",
     "evaluation.slices.top_n": "eda",
-    "evaluation.views": "evaluation",
+    "evaluation.skip_views": "evaluation",
+    "evaluation.intervals.replicates": "evaluation",
+    "evaluation.intervals.level": "evaluation",
 }
 
 
@@ -97,9 +121,10 @@ class By(StrictModel):
     id: str
 
 
-# Each operand → the operations that take it; any other operation given it is refused.
+# Each operand → the operations that take it; any other operation given it is refused. A
+# `sign_off` holds the run, the feature signature and the final list (`features`), D-125.
 OPS_BY_OPERAND: dict[str, set[str]] = {
-    "features": FEATURE_OPS,
+    "features": {*FEATURE_OPS, "sign_off"},
     "path": {"set"},
     "from_value": {"set"},
     "to_value": {"set"},
@@ -107,7 +132,9 @@ OPS_BY_OPERAND: dict[str, set[str]] = {
     "finding": {"flag"},
     "findings": {"keep"},
     "periods": {"run"},
-    "run_id": {"run"},
+    "run_id": {"run", "sign_off"},
+    "signature": {"sign_off"},
+    "validation_period": {"run"},
     "replayed_to": {"run"},
     "resolved_input_hash": {"run"},
 }
@@ -138,7 +165,9 @@ class Entry(StrictModel):
     data_definition_hash: str
     hash_version: int
     log_schema_version: int
-    run_id: str | None = None
+    run_id: str | None = None  # the run number (`r007`) of a Training or Evaluation run, a sign-off
+    signature: str | None = None  # sign_off: the feature signature of the list it approves
+    validation_period: str | None = None  # Evaluation's run: the label of the period it scored
     replayed_to: int | None = None
     resolved_input_hash: str | None = None
 
@@ -167,10 +196,55 @@ class Entry(StrictModel):
             raise ValueError(
                 f"entry {self.seq}: op 'keep' needs `findings`, the flags it settles (may be [])"
             )
-        if self.op in FEATURE_OPS - {"flag"} and not self.features:
+        if self.op in OPS_BY_OPERAND["features"] - {"flag"} and not self.features:
             raise ValueError(f"entry {self.seq}: op {self.op!r} needs a non-empty `features`")
         if self.op == "set" and (self.path is None or "to_value" not in self.model_fields_set):
             raise ValueError(f"entry {self.seq}: op 'set' needs `path` and `to` (`to` may be null)")
+        return self
+
+    @model_validator(mode="after")
+    def _check_sign_off(self) -> "Entry":
+        """A `sign_off` names its run and the list it approves, with the list's signature
+        (`feature_signature`), so the sign-off covers exactly that list (D-125)."""
+        if self.op != "sign_off":
+            return self
+        if not (self.run_id and self.signature):
+            raise ValueError(
+                f"entry {self.seq}: op 'sign_off' needs `run_id`, `signature` and `features` (the "
+                "final list it approves)"
+            )
+        if self.signature != feature_signature(self.features):
+            raise ValueError(
+                f"entry {self.seq}: the sign_off's signature {short(self.signature)} is not the "
+                f"signature of its features ({short(feature_signature(self.features))}); write "
+                "feature_signature(features)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_run_entry(self) -> "Entry":
+        """A `run` entry carries exactly its stage's operands (`RUN_OPERANDS_BY_STAGE`), so only
+        Feature Checks' lists periods and blocks a move of the validation period (D-088); a run
+        number is `r` and three digits or more."""
+        if self.op == "run":
+            needed = RUN_OPERANDS_BY_STAGE.get(self.stage)
+            if needed is None:
+                raise ValueError(
+                    f"entry {self.seq}: a `run` entry is written by "
+                    f"{sorted(RUN_OPERANDS_BY_STAGE)}, not by stage {self.stage!r}"
+                )
+            missing = sorted(name for name in needed if not getattr(self, name))
+            extra = sorted(n for n in set(RUN_OPERANDS) - needed if getattr(self, n) is not None)
+            if missing or extra:
+                raise ValueError(
+                    f"entry {self.seq}: a {self.stage} `run` entry needs {sorted(needed)}; "
+                    f"missing {missing}, not taken {extra}"
+                )
+        if self.op in ("run", "sign_off") and self.run_id is not None:
+            if not re.fullmatch(RUN_NUMBER, self.run_id):
+                raise ValueError(
+                    f"entry {self.seq}: run_id {self.run_id!r} is not a run number such as 'r007'"
+                )
         return self
 
 
@@ -209,12 +283,14 @@ def check_settable(raw: dict, path: str, context: str) -> None:
 
 def _apply_set(raw: dict, entry: Entry) -> dict:
     """Write the entry's `to` value at its path; a level move refills the level-filled paths, any
-    other `set` makes its path explicit, so a later level move keeps it (D-132)."""
+    other `set` makes its path explicit, so a later level move keeps it (D-132) and a later
+    validation no longer derives it from the task (`housekeeping.task_filled`)."""
     set_at(raw, entry.path, entry.to_value)
     if entry.path == "automation_level":
         refill_level_defaults(raw, entry.to_value)
     else:
         unmark_level_filled(raw, entry.path)
+        raw["housekeeping"].get("task_filled", {}).pop(entry.path, None)
     return raw
 
 
@@ -230,7 +306,6 @@ APPLY_BY_OP: dict[str, Callable[[dict, Entry], dict]] = {
     "keep": _leave_unchanged,
     "set": _apply_set,
     "flag": _leave_unchanged,
-    "dropped": _leave_unchanged,
     "sign_off": _leave_unchanged,
     "register": _leave_unchanged,
     "promote": _leave_unchanged,
@@ -279,7 +354,7 @@ def replay(cfg: UseCaseConfig, entries: list[Entry]) -> dict:
             states.append(states[entry.to_seq])
             continue
         stale = f"entry {entry.seq} is stale"
-        if entry.op in INPUT_FEATURE_OPS:
+        if entry.op in FEATURE_OPS:
             check_candidates(cfg, entry.features, stale)
         if entry.op == "set":
             # A hand-edited or old entry must not change the data definition, `decision` or the
@@ -326,6 +401,15 @@ def held_features(entries: list[Entry]) -> list[str]:
     """The features with an open flag, sorted: for Training, excluded features without a final
     decision (D-134)."""
     return list(open_flags(entries))
+
+
+def signed_off(entries: list[Entry], signature: str) -> Entry | None:
+    """The latest effective `sign_off` entry (no revert undid it) for the feature list with this
+    signature, else None: a sign-off covers every run of the data definition whose final list
+    has the same signature, earlier ones included, whatever its budget or family (D-125)."""
+    effective = effective_entries(entries)
+    matches = [e for e in effective if e.op == "sign_off" and e.signature == signature]
+    return matches[-1] if matches else None
 
 
 def effective_entries(entries: list[Entry]) -> list[Entry]:

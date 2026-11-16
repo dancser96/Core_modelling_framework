@@ -21,8 +21,10 @@ of every live model. Where we start from and where we want to reach: `docs/conte
 - **Integrations (first release):** the feature store upstream; the data observability framework
   only gets a production model's source tables pointed to it at deploy. LLM-assisted modelling
   comes in Phase 3 (D-021).
-- **Current state:** Phase 2: Target Factory, EDA and Feature Checks are built (0.3.0);
-  Training and Evaluation come next (M2.3). The crunch
+- **Current state:** Phase 2: Target Factory, EDA and Feature Checks are built (0.3.0). Of
+  M2.3, the foundations are built (the modelling config fields, client folds, the encoder,
+  four model families, the bundle and scoring, numbered runs; `0.4.0.dev0`); Training and
+  Evaluation are specified and come next. The crunch
   implementation in `legacy/propensity_crunch/` is reference only. Status: `docs/UPDATES.md`. Plan
   and open decisions: `docs/roadmap.md`. Vocabulary: `docs/glossary.md`. Reading order and the
   stage → component map: `docs/README.md`.
@@ -232,8 +234,8 @@ The 0.x pre-release promises nothing; shared formats freeze from release 1.0's f
    used to build the target are excluded automatically (lineage), not by memory.
 7. **Downsampling is train-only.** Whenever sampling happened, a prior-shift offset is applied,
    computed from the true rate and the effective (weighted) training rate, so it is zero when sampling
-   didn't change the class balance. A separate calibration step (e.g. Platt or isotonic) is fitted on
-   out-of-fold predictions inside train, never on test or validation (D-049).
+   didn't change the class balance. A separate calibration step (Platt on the margin, or beta) is
+   fitted on out-of-fold predictions inside train, never on test or validation (D-049).
 8. **Contract checks run on the true population**, before any downsampling.
 9. **Eligibility is applied identically** to every period of train/test, validation and inference.
 10. **Everything is reproducible:** resolved config + config hash + data-definition hash + feature
@@ -268,9 +270,10 @@ features, training, evaluation, calibration or inference.
   - Prune columns and rows (and sample) in Spark before `toPandas()`.
   - No cwd-relative paths — roots come from config.
   - FLAML metric names are its own (`ap`, not `average_precision`).
-  - FLAML 2.7's `estimator_list` + `custom_hp` and its transformer behaviour are verified (D-020,
-    D-094); its group split (spike 1), the non-pickle round trips (spike 2, D-051), xgboost 3.2
-    under FLAML and the Optuna 5.0 API are **unverified**.
+  - FLAML 2.7's `estimator_list` + `custom_hp`, its transformer behaviour, its group split,
+    xgboost 3.2 under it and the non-pickle round trips are verified (D-020, D-094, D-051;
+    `docs/context/environment.md`); the Optuna 5.0 API is **unverified**. Never switch Arrow off
+    in `toPandas()`: timestamps fail without it.
   - Assume no internet inside the bank: reports embed plotly.js, never load it from a CDN.
 - Use the **bank-parity-check** skill when adding imports/dependencies or touching IO.
 

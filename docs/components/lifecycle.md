@@ -1,6 +1,6 @@
 # Lifecycle: register, promote, deploy
 **Status:** designing · **Legacy:** `src/inference.py` (`promote_model`, `verify_model`, manifests) — promotion was coupled to inference in the crunch
-**Related:** [inference](inference.md) · [monitoring](monitoring.md) · [reporting](reporting.md) (model card) ·
+**Related:** [model bundle](model_bundle.md) (the bundle, the run, the hashes) · [inference](inference.md) · [monitoring](monitoring.md) · [reporting](reporting.md) (model card) ·
 [environment](environment.md) · D-016, D-021, D-031, D-033, D-034, D-047, D-051, D-052, D-073, D-079, D-111, D-125, D-134 · OD-06, OD-08, OD-14,
 OD-23, OD-27
 
@@ -27,7 +27,7 @@ Three tiers in order, each with the step(s) that move a model on to the next:
      trip.
 2. **REGISTERED**: immutable, content-hashed, versioned per model key.
    - `promote`: picks the production candidate among the registered versions (D-033); the approved
-     PR is the sign-off. Builds a verified bundle (model, resolved config, the audit-log slice read
+     PR is the sign-off and the only gate: no metric gate is built (D-032). Builds a verified bundle (model, resolved config, the audit-log slice read
      from the registered version, card, drift reference, checksums, framework version) from the
      plain-data model, never pickle (D-051). The bundle carries the recipe (`recipe_hash`,
      D-052), so production can retrain from it.
@@ -74,7 +74,8 @@ Three tiers in order, each with the step(s) that move a model on to the next:
    records in the registry is open (OD-27).
 3. **Integrity:** every load verifies the content hash.
 4. **Visibility: two tables people can query.**
-   - Registered models: run id, model key, version, code version (framework version + use-case repo
+   - Registered models: run id with the model key beside it (a run number is local to a use case in
+     one environment, [model bundle](model_bundle.md#runjson)), model key, version, code version (framework version + use-case repo
      commit), status, path, dates, headline metrics.
    - Production models: the same, for deployed versions only.
 
@@ -102,6 +103,9 @@ Three tiers in order, each with the step(s) that move a model on to the next:
 Promote-on-inference coupling; hash verification; manifest reproduction; T2–T4 for HDFS handling.
 
 ## Open questions
+- What `register` must check about a sign-off (M2.4): a run stays listed as signed off after
+  one of its features is excluded or held later, and the feature signature covers the names
+  in order, not the kinds, the declared level orders or the monotone constraints.
 - The lifecycle evolves as it is built; the CDS doesn't want a blank-slate redesign (D-073).
   OD-06 and OD-08 are the open pieces; D-111 sets the Phase 2 records, which MLflow joins beside
   rather than replaces. Downstream operation questions are the platform / MLOps team's
@@ -119,11 +123,11 @@ Promote-on-inference coupling; hash verification; manifest reproduction; T2–T4
   MLflow concepts, and `production.json` stays the pointer for the whole of major version 1.
 - OD-14: model inventory design.
 - **What a non-pickle promoted model costs** (D-051; scope: only what moves from the sandpit to
-  production; facts verified on the pinned versions unless marked):
-  1. The evaluated model isn't the promoted one unless Evaluation scores the non-pickle bundle
-     too; otherwise two scoring paths can drift apart.
+  production; facts verified on the pinned versions unless marked). The bundle is written at
+  training and Evaluation scores that bundle through `score_frame`, so there is one scoring path
+  ([model bundle](model_bundle.md#how-one-bundle-is-written-loaded-and-scored)); the other costs:
   2. Fewer families reach production: LightGBM (text) and XGBoost (JSON) round-trip
-     identically, CatBoost only as binary `.cbm` (its JSON drifts by up to 1e-15), and
+     identically, CatBoost only as binary `.cbm` (its JSON drifts by up to 1e-13, spike 2), and
      scikit-learn's forests have no format; FLAML must not search a family that can't be
      promoted (D-037).
   3. More of our own code: encoding, calibration and the prior shift become our own parameters
@@ -134,11 +138,12 @@ Promote-on-inference coupling; hash verification; manifest reproduction; T2–T4
      the bundle is registered as plain files and loaded with our own code, losing `pyfunc`
      loading, `spark_udf` and serving.
   6. Security still has to accept `.cbm` (binary) and LightGBM's text model.
-- **Q297** The promote gate: the non-pickle bundle is written at training and Evaluation scores
-  it (one scoring path); promote accepts only listed file types; pin bumps rerun stored bundles
-  against stored predictions. Default: yes to all three.
+- **Q297** Promote accepts only listed file types, and pin bumps rerun stored bundles against
+  stored predictions. Default: yes to both. (The bundle is written at training and Evaluation
+  scores it through one scoring path: settled, [model bundle](model_bundle.md).)
 - **Q298** Strict JSON, or any non-executable plain data, JSON preferred? This decides CatBoost.
-  Default: plain data, as D-051 reads now.
+  Default, taken for Training on 2026-11-11 (the EDS): plain data, as D-051 reads now, so
+  CatBoost uses `.cbm`; security's view (Q299) is still to come.
 - **Q299** Who confirms with security that `.cbm`, LightGBM's text model and, if ever used,
   MLflow's models from code are acceptable? Default: the EDS raises it through the CDS before the
   pre-release.

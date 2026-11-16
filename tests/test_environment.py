@@ -20,6 +20,7 @@ from core_modelling.environment import (
     feature_dir,
     get_spark_session,
     load_environment,
+    models_dir,
     read_source,
 )
 from synthetic.checks.mart import snapshot_columns
@@ -192,3 +193,6 @@ def test_paths_run_root_use_case_layer(cc_config: UseCaseConfig, root: str) -> N
     assert feature_dir(env, cc_config, "entity_a") == folder
     assert feature_dir(env, cc_config, "entity_a", "eda") == f"{folder}/eda"
     assert audit_log_dir(env, cc_config, "entity_a") == f"{folder}/decisions"
+    models = f"{base}/cc_acquisition/06_models"  # no data-definition segment (D-139)
+    assert models_dir(env, cc_config) == models
+    assert models_dir(env, cc_config, "r007", "bundle") == f"{models}/r007/bundle"

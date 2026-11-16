@@ -1,6 +1,6 @@
 """The client split and train-only sampling (§4.11, §4.12; D-030, D-049, D-117).
 
-Both draw with a hash instead of a random number. `_hash_uniform` turns a row's key columns, a
+Both draw with a hash instead of a random number. `hash_uniform` turns a row's key columns, a
 salt and the seed into a number in [0, 1) that is the same on every machine, rerun and
 partition, so a client's every period lands on the same side of the split and a sample can be
 rebuilt exactly. `assign_split` puts a client in `test` when its number is below
@@ -9,7 +9,8 @@ rebuilt exactly. `assign_split` puts a client in `test` when its number is below
 `negative_downsampling` keeps every positive row and the negatives whose number is below
 `keep_fraction` (rare binary targets), `client_sample` keeps the clients whose number is below
 `share`, with all their periods (common targets, regression); one fraction for the whole window
-(D-117). The record carries the true (unsampled train) and the sampled rate for the prior-shift
+(D-117), drawn with `training.seed`, which the audit log never sets, so no person picks the
+sample. The record carries the true (unsampled train) and the sampled rate for the prior-shift
 offset (D-049). The salt keeps the sampling draw independent of the split's: with the same
 function of the same key, every train client would sit above `test_share` and a sample would be
 a slice of the split, not the share asked (T20).
@@ -23,7 +24,7 @@ from core_modelling.config import UseCaseConfig
 RESOLUTION = 1_000_000  # the hash is folded into this many equal buckets, then scaled to [0, 1)
 
 
-def _hash_uniform(columns: list[Column], salt: str, seed: int) -> Column:
+def hash_uniform(columns: list[Column], salt: str, seed: int) -> Column:
     """A uniform number in [0, 1): `pmod(xxhash64(salt, *columns, seed), RESOLUTION) /
     RESOLUTION`."""
     bucket = F.pmod(F.xxhash64(F.lit(salt), *columns, F.lit(seed)), F.lit(RESOLUTION))
@@ -34,25 +35,26 @@ def assign_split(panel: DataFrame, cfg: UseCaseConfig) -> DataFrame:
     """`split` = `test` for the clients whose draw is below `data.split.test_share`, else
     `train`, every period of a client alike."""
     split = cfg.data.split
-    draw = _hash_uniform([F.col("unit_id")], "split", split.seed)
+    draw = hash_uniform([F.col("unit_id")], "split", split.seed)
     return panel.withColumn("split", F.when(draw < split.test_share, "test").otherwise("train"))
 
 
 def sample_train(train: DataFrame, cfg: UseCaseConfig) -> tuple[DataFrame, dict]:
     """The train split thinned as `training.sampling` declares (lazy; same columns, fewer rows),
-    with the record: the method, its parameter and seed, the rows and the target's mean (binary:
-    the positive rate) before and after, from two collected aggregates. Without sampling, the
-    split as it is and a record with `method` None. An empty result fails loud."""
-    sampling = cfg.training.sampling
+    with the record: the method, its parameter and the seed (`training.seed`), the rows and the
+    target's mean (binary: the positive rate) before and after, from two collected aggregates.
+    Without sampling, the split as it is and a record with `method` None. An empty result fails
+    loud."""
+    sampling, seed = cfg.training.sampling, cfg.training.seed
     if sampling is None:
         return train, {"step": "sampling", "method": None}
     unit = F.col("unit_id")
     if sampling.method == "negative_downsampling":
-        draw = _hash_uniform([unit, F.col("period")], "sample", sampling.seed)  # per row
+        draw = hash_uniform([unit, F.col("period")], "sample", seed)  # per row
         keep = (F.col("target") == 1) | (draw < sampling.keep_fraction)
         parameter = {"keep_fraction": sampling.keep_fraction}
     else:
-        draw = _hash_uniform([unit], "sample", sampling.seed)  # per client
+        draw = hash_uniform([unit], "sample", seed)  # per client
         keep = draw < sampling.share
         parameter = {"share": sampling.share}
     sampled = train.where(keep)
@@ -67,7 +69,7 @@ def sample_train(train: DataFrame, cfg: UseCaseConfig) -> tuple[DataFrame, dict]
         "step": "sampling",
         "method": sampling.method,
         **parameter,
-        "seed": sampling.seed,
+        "seed": seed,
         "rows_before": rows_before,
         "rows_after": rows_after,
         "true_rate": true_rate,

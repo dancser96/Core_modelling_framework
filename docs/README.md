@@ -32,10 +32,10 @@ listed alongside.
 | 1 | Target Factory (optional) | [target_factory](components/target_factory.md) | config, dataset | built (thin) |
 | 2 | EDA | [eda](components/eda.md) | dataset, feature ledger, reporting, config | built 2026-11-04 (reviews 2–4 applied 2026-11-05/06; with the LDS for review) |
 | 3 | Feature Checks | [feature_checks](components/feature_checks.md) | feature ledger, config (the audit log), reporting | built 2026-11-06 (Stage 2 major step 3; the EDS's review 1 applied 2026-11-09) |
-| 4 | Training | [training](components/training.md) | dataset, feature ledger, config | designing |
-| 5 | Evaluation | [evaluation](components/evaluation.md) | reporting, dataset | designing |
-| 6 | register → promote → deploy | [lifecycle](components/lifecycle.md) | reporting (model card), environment | designing |
-| 7 | Inference | [inference](components/inference.md) | lifecycle, environment | designing |
+| 4 | Training | [training](components/training.md) | model bundle, dataset, feature ledger, config | designing |
+| 5 | Evaluation | [evaluation](components/evaluation.md) | model bundle, reporting, dataset | designing |
+| 6 | register → promote → deploy | [lifecycle](components/lifecycle.md) | model bundle, reporting (model card), environment | designing |
+| 7 | Inference | [inference](components/inference.md) | model bundle, lifecycle, environment | designing |
 | 8 | Monitoring | [monitoring](components/monitoring.md) | reporting, inference, dataset | designing |
 
 **Cross-cutting docs** (used by several stages):
@@ -45,6 +45,7 @@ listed alongside.
 | [config](components/config.md) | The use-case definition (one file unless it bloats) and its decision audit log: automation levels, decision, entities, sections | Every stage |
 | [dataset](components/dataset.md) | Observation window, train/test/validation split, sampling | Target Factory, EDA, Feature Checks, Training, Evaluation, Monitoring |
 | [feature_ledger](components/feature_ledger.md) | The per-feature trail from candidates to model | EDA, Feature Checks, Training, Evaluation |
+| [model_bundle](components/model_bundle.md) | The run folder, `run.json`, the model bundle, the hashes and the one scoring path | Training, Evaluation, lifecycle, Inference, Monitoring |
 | [reporting](components/reporting.md) | HTML reports, chart rules, model card | EDA, Feature Checks, Evaluation, lifecycle, Monitoring |
 | [environment](components/environment.md) | Spark, transport, paths, source resolution | Every stage |
 | [run_modes](components/run_modes.md) | CLI, Python API, guided notebooks, experiment sweeps | Every stage |

@@ -33,9 +33,10 @@ from core_modelling.periods import Period, period_labels, period_spec
 # The keys every keyed source and the dataset carry; a source's other column of that name is read
 # as `source_<name>`.
 KEYS = ["unit_id", "period"]
-# The columns the dataset adds; a source column of that name is renamed `source_<name>` on the
-# read side (`panel.read_side_columns`).
-HELPER_COLUMNS = ["target", "split", "eligible"]
+# The columns the dataset adds (the panel's, and the modelling frames' `part` and first fold
+# column); a source column of that name is renamed `source_<name>` on the read side
+# (`panel.read_side_columns`).
+HELPER_COLUMNS = ["target", "split", "eligible", "part", "cv_fold"]
 PERIOD_TYPES = (DateType, TimestampType, TimestampNTZType)
 SHOWN_KEYS = 5  # duplicate keys named in the error
 

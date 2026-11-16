@@ -206,7 +206,7 @@ def test_a_numeric_stratum_outside_the_candidates_is_checked(eda_regression: Sta
     it."""
     kinds = {name: kind for name, kind in eda_regression.meta["kinds"].items() if name != "income"}
     meta = {"kinds": kinds, "tags": ["holders"]}
-    frames = Frames(eda_regression.frame, None, None, None, None, [], meta)
+    frames = Frames(eda_regression.frame, None, None, [], meta)
     strata = eda_regression.config.strata.model_copy(update={"variables": ["income"]})
     cfg = eda_regression.config.model_copy(update={"strata": strata})
     with pytest.raises(ValueError, match=r"the numeric strata \{'income'"):

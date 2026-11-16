@@ -825,7 +825,8 @@ the hold-out being the stage's correctness core; then `decisions.py`; then `find
   `finding`; the features may be empty) and the stage `run` entry (with `periods`); reads `keep`
   (with `findings`), `exclude`, `include`, `set` and `revert` through the replay.
 - **Artifacts** (`<use_case>/04_feature/<ddh>/feature_checks/`, D-136):
-  - `feature_checks.json`: the stamp (`schema_version: 3`, since the json carries the sources' digest;
+  - `feature_checks.json`: the stamp (`schema_version: 4`: the json carries the sources' digest and
+    follows EDA's narrowed settings digest;
     an older one is refused by `read_stage`; `stage`, `framework_version`, `written_at`, `tables`);
     `entity`, `config_hash`, `data_definition_hash`, `resolved_input_hash`, `hash_version`,
     `replayed_to` of the run's input; `settings_digest` and `settings` over EDA's paths plus
@@ -873,6 +874,6 @@ the hold-out being the stage's correctness core; then `decisions.py`; then `find
   Review the flag counts per finding and adjust the defaults at the December pre-release.
 - **Bank-side timing:** the stage reads tables only, but a regression counts table is about twenty
   times a binary one; unverified at the bank's size.
-- **Grouped importance and the cluster rule for automated selection** (the top member per cluster
-  unless a person kept the others, ranked inside a cluster on the train split only): M2.3's
-  questions.
+- **Grouped importance:** the cluster rule is no longer open: it is Training's first selection
+  rule ([training](training.md)); grouped importance is Evaluation's permutation importance per
+  cluster ([evaluation](evaluation.md)).

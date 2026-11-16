@@ -1,6 +1,6 @@
 # Inference
 **Status:** designing · **Legacy:** `src/inference.py`, `notebooks/Inference.ipynb`
-**Related:** [lifecycle](lifecycle.md) · [training](training.md) (categorical handling) · [monitoring](monitoring.md) ·
+**Related:** [lifecycle](lifecycle.md) · [model bundle](model_bundle.md) (the bundle, the encoder, the calibration, the scoring path) · [monitoring](monitoring.md) ·
 [environment](environment.md) · D-007, D-016, D-033, D-047, D-049, D-051, D-052, D-088, D-128 · OD-18, OD-27, OD-28
 
 ## Purpose
@@ -10,12 +10,13 @@ write one batch-scoped output with a manifest. No registering, promoting or depl
 
 ## Phase 2 requirements
 1. **Model selection per model key:** the production version (default), a pinned registered version,
-   or a dict `{model key: run_id}`. Local runs only in dev mode. Scoring routes by model key; split =
+   or a dict `{model key: run_id}` (a pin names a registered model version; a run number is local to a use case in one environment, [model bundle](model_bundle.md#runjson)). Local runs only in dev mode. Scoring routes by model key; split =
    `all` in Phase 2.
 2. **Eligibility and features come from the model's resolved config,** so a model always scores its own
    definition.
-3. **Unseen categorical levels** map to `__other__` and are counted per column, reported in the
-   manifest and monitored. A missing column or a changed type fails loud ([training](training.md)).
+3. **Unseen categorical levels** map to `__other__` for an unordered categorical and to null for an
+   ordered one, and are counted per column, reported in the manifest and monitored
+   ([model bundle](model_bundle.md#the-encoder)). A missing column or a changed type fails loud.
 4. **Output ends at the master layer** (D-016): the framework's own scores table, task-agnostic,
    long format and fully traceable: `unit_id, entity, use_case, model_hash, infer_date, score`,
    plus task-specific columns only when needed. It covers everything a consumer could need
@@ -51,13 +52,15 @@ write one batch-scoped output with a manifest. No registering, promoting or depl
    they are compared across products downstream. The retail examples therefore default to the
    `probability` decision through a comment in the example config, not a code default
    (calibration step on, prior shift applied), and correct calibration
-   is a release requirement (D-049; calibration in [training](training.md)).
+   is a release requirement (D-049; the calibration in [model bundle](model_bundle.md#the-calibration-and-the-output-columns)).
 5. **Batch-scoped and written once.** Collect, then write once, and assert that every "ok" model
    landed on disk (T6, T7). The path layout is under review (manifests vs score files, OD-18).
 6. **Reinference** from a manifest: rescore the same registered models on a new period or table,
    without local runs.
-7. **Scale:** score in Spark (e.g. model broadcast / pandas UDF) or in pruned chunks; never collect the
-   full population at once.
+7. **Scale:** scoring runs in Spark through `score_frame`: the driver ships the model as bytes and
+   each partition rebuilds it once ([model bundle](model_bundle.md#how-one-bundle-is-written-loaded-and-scored));
+   never collect the full population at once. A chunked driver path is built only if the model
+   libraries fail on the bank's executors (unverified).
 8. Production scoring runs from the CLI under the production setup, never from a DS notebook. The
    exact scheduling setup inside the bank is unverified.
 9. **Framework version** (D-047): models are scored with the use case's pinned framework version.
@@ -81,10 +84,6 @@ T2–T7; the per-use-case run-pin dict; reinference worked without local runs.
   client with its columns null. Refuse, or print loudly? Training accepts missing periods by
   design (the EDS, 2026-10-30, `dataset.md`); inference is where it matters most (ML audit,
   2026-10-30). Decided when Inference is built (M2.4).
-- Scoring in Spark vs driver-side chunks for the largest populations (decide by measurement).
-- Spark ships a broadcast model to executors serialised in memory (cloudpickle). That is fine:
-  the sandpit (local and registered tiers) may hold any format, and only what moves to production
-  must avoid pickle (D-051).
 - By default deploy retrains the recipe in production before it scores (D-033, D-052), on the same
   window and clients (only the inference period moves) and only after it passes the production
   retrain check against its parent ([lifecycle](lifecycle.md)); the manifest's `model_hash` then points at the model retrained in production, linked to its

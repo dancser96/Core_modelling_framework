@@ -770,9 +770,12 @@ def test_binary_group_summary_and_the_task_entries() -> None:
     assert summary["support"] == 2 and summary["estimate"] == 0.4 and summary["lift"] == 2.0
     assert not regression["lift_available"](0.0) and not regression["lift_available"](-1.0)
     assert regression["lift_available"](0.1) and binary["lift_available"](0.02)
-    assert "499 positive events" in binary["events_warning"](499)
-    assert regression["support_name"] in regression["events_warning"](499)
-    assert regression["events_warning"](500) is None
+    assert "499 positive events" in binary["events_warning"](499, 300, 600)
+    assert regression["support_name"] in regression["events_warning"](499, 300, 600)
+    assert regression["events_warning"](500, 300, 600) is None
+    window_only = binary["events_warning"](500, 99, 600)  # the window part alone
+    assert "fewer than 100 clients or 200 rows" in window_only and "snapshot" not in window_only
+    assert "training.fold_repeats: 3" in binary["events_warning"](500, 300, 199)
     assert binary["target_bins"](np.array([0.0, 1.0]), False) is None
     edges = regression["target_bins"](np.arange(1.0, 101.0), False)
     assert "= 0" in bin_labels(edges) and len(bin_labels(edges)) == 22

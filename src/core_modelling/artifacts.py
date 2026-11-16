@@ -4,7 +4,8 @@ Every reporting stage returns one `StageResult` and writes it with `write_stage`
 (`<use_case>/04_feature/<ddh>/<stage>/` for EDA and Feature Checks): `tables/<table>.parquet`,
 `<stage>.json` (the meta, stamped with `schema_version`, the framework version, the time and the
 tables written), `resolved_config.yml`, `log.json` and the stage's text files (its
-`report.html`). The folder is written into a temporary sibling and swapped in whole, so a crash
+`report.html`; each stage json has its own format version, `STAGE_SCHEMA_VERSIONS`). The folder
+is written into a temporary sibling and swapped in whole, so a crash
 leaves the previous run's folder (or none), never half a stage; a stage renders its report
 first, saves the ledger next and writes its folder last, so `<stage>.json` is the commit marker.
 A stage's meta opens with `stage_identity` (the hashes, the stage's settings and where its
@@ -39,21 +40,32 @@ from core_modelling.config.schema import UseCaseConfig
 from core_modelling.environment import EnvironmentConfig, feature_dir, find_source
 from core_modelling.sources import feature_source_names, source_name
 
-STAGE_SCHEMA_VERSION = 3  # 2: the run's `run_token` (11-10); 3: the sources' digest (11-11)
+# Each stage json's format version, read back by `read_stage`. EDA and Feature Checks: 2 the
+# run's `run_token` (11-10), 3 the sources' digest (11-11), 4 EDA's digest narrowed to the
+# decision fields it reads (11-13), so a json stored before reruns EDA, then Feature Checks.
+STAGE_SCHEMA_VERSIONS = {"eda": 4, "feature_checks": 4, "training": 1, "evaluation": 1}
 STAMP_KEYS = ("schema_version", "stage", "framework_version", "written_at", "tables")
 HOUSEKEEPING_KEYS = ("entity", "config_hash", "data_definition_hash", "resolved_input_hash",
                      "hash_version", "replayed_to")  # fmt: skip
 # EDA's settings: the validation period decides the compared periods and the population counts
-# yet is outside the data-definition hash (D-088); `decision` and `evaluation.slices` shape its
-# decision-slices view.
-_EDA_SETTINGS = ["features.kinds", "strata", "eda", "time.validation_period", "decision",
-                 "evaluation.slices"]  # fmt: skip
-# The settings each stage's digest covers, which the next stage checks; Feature Checks': EDA's
-# (the cells its steps read) and its thresholds.
+# yet is outside the data-definition hash (D-088); `decision.type`, `decision.n` and
+# `evaluation.slices` shape its decision-slices view (a new baseline does not rerun EDA).
+_EDA_SETTINGS = ["features.kinds", "strata", "eda", "time.validation_period", "decision.type",
+                 "decision.n", "evaluation.slices"]  # fmt: skip
+# The settings each stage's digest covers, which a later stage checks (D-137, D-139): Feature
+# Checks' adds its thresholds to EDA's (the cells its steps read); Training's are what it reads,
+# the feature decisions among them; Evaluation's are its own section, the decision and the
+# strata, so an evaluation setting or a baseline never orphans a trained run. Both carry the
+# client split, outside the data-definition hash: another draw would make a run's train clients
+# Evaluation's test clients.
 SETTINGS_PATHS_BY_STAGE: dict[str, list[str]] = {
     "eda": _EDA_SETTINGS,
     "feature_checks": [*_EDA_SETTINGS, "feature_checks"],
-}
+    "training": ["training", "data.split", "features.order", "features.kinds",
+                 "features.excluded", "features.kept", "features.held", "decision.type",
+                 "decision.metric"],
+    "evaluation": ["evaluation", "data.split", "decision", "strata"],
+}  # fmt: skip
 
 
 @dataclass
@@ -157,7 +169,7 @@ def _write_files(result: StageResult, temporary: Path, name: str) -> list[str]:
         written.append(f"tables/{table}.parquet")
         write_parquet(frame, temporary / written[-1])
     stamp = {
-        "schema_version": STAGE_SCHEMA_VERSION,
+        "schema_version": STAGE_SCHEMA_VERSIONS[name],
         "stage": name,
         "framework_version": __version__,
         "written_at": utc_now(),
@@ -237,18 +249,19 @@ def write_stage(
 
 def read_stage(folder: str, name: str) -> tuple[dict, dict[str, pd.DataFrame]]:
     """A stage's json and every table it wrote, by table name; a stage not run yet, written under
-    another `schema_version`, or whose tables on disk differ from those it wrote, fails saying
-    what to do."""
+    another `schema_version` than `STAGE_SCHEMA_VERSIONS` gives it, or whose tables on disk differ
+    from those it wrote, fails saying what to do."""
     path = local_path(folder) / f"{name}.json"
     if not path.is_file():
         raise FileNotFoundError(f"no {name} artifacts at {folder}: run the {name} stage first")
     meta = json.loads(path.read_text())
-    version = meta.get("schema_version")
-    if version != STAGE_SCHEMA_VERSION:
+    version, current = meta.get("schema_version"), STAGE_SCHEMA_VERSIONS[name]
+    if version != current:
         raise ValueError(
             f"{path} has schema_version {version} (written by framework "
-            f"{meta.get('framework_version')}); this version reads {STAGE_SCHEMA_VERSION}: rerun "
-            f"the {name} stage, or raise the use case's framework pin when it is newer"
+            f"{meta.get('framework_version')}); this version reads {current}: rerun the {name} "
+            "stage, then the stages after it, or raise the use case's framework pin when it is "
+            "newer"
         )
     tables = local_path(folder) / "tables"
     found = {table.stem for table in tables.glob("*.parquet")}
@@ -406,7 +419,7 @@ def list_data_definitions(env: EnvironmentConfig, cfg: UseCaseConfig, entity: st
     folders = {p for p in parent.iterdir() if p.is_dir()} if parent.is_dir() else set()
     rows = []
     for folder in sorted(folders | {in_use}):
-        eda, checks = _stage_json(folder, "eda"), _stage_json(folder, "feature_checks")
+        eda, checks = stage_json(folder, "eda"), stage_json(folder, "feature_checks")
         rows.append({"data_definition": folder.name, "in_use": folder == in_use,
                      "entity": eda.get("entity", entity if folder == in_use else ""),
                      "eda_run": eda.get("written_at", ""),
@@ -416,8 +429,9 @@ def list_data_definitions(env: EnvironmentConfig, cfg: UseCaseConfig, entity: st
     return table.sort_values(["in_use", "eda_run"], ascending=False).reset_index(drop=True)
 
 
-def _stage_json(folder: Path, stage: str) -> dict:
-    """A data definition's `<stage>/<stage>.json` as stored, or {} when the stage has not run."""
+def stage_json(folder: Path, stage: str) -> dict:
+    """`<stage>/<stage>.json` under a data definition's or a run's folder as stored, whatever its
+    format version, or {} when the stage has not run."""
     path = folder / stage / f"{stage}.json"
     return json.loads(path.read_text()) if path.is_file() else {}
 

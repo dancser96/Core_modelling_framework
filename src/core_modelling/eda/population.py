@@ -29,7 +29,7 @@ from core_modelling.config.schema import Strata
 from core_modelling.dataset.counts import BLANK_LEVEL, NULL_BIN, OTHER, RESERVED_BINS
 from core_modelling.reporting.formats import COUNT, SHARE, plain_number
 from core_modelling.statistics.cells import level_share_difference, population_cells
-from core_modelling.statistics.distributions import standardised_difference
+from core_modelling.statistics.distributions import level_text, standardised_difference
 from core_modelling.tasks import TASK_SPECS
 
 STRATA_KEYS = ["variable", "level", "feature", "feature_group"]
@@ -57,10 +57,11 @@ def is_numeric(values: pd.Series, kind: str | None) -> bool:
 
 def cap_levels(values: pd.Series, max_levels: int) -> pd.Series:
     """Each value as a level label, an ordered categorical on the same index: the `max_levels`
-    levels with the most rows (ties by label) as their text (`_level_text`), a real level named
+    levels with the most rows (ties by label) as their text (`level_text`, so a snapshot table
+    names a level as the counts table's cells do), a real level named
     like a reserved bin or blank quoted (`'null'`, `''`, `' '`), the rest `__other__`, null (a
     NaN too) its own level `null` (N16); ordered by rows, then `__other__`, then `null`."""
-    text = values.dropna().map(_level_text).astype(str)  # str: an empty map keeps a float dtype
+    text = values.dropna().map(level_text).astype(str)  # str: an empty map keeps a float dtype
     quoted = text.isin(RESERVED_BINS) | text.str.match(BLANK_LEVEL)
     text = text.where(~quoted, "'" + text + "'")
     counts = text.value_counts().sort_index().sort_values(ascending=False, kind="stable")
@@ -69,17 +70,6 @@ def cap_levels(values: pd.Series, max_levels: int) -> pd.Series:
     order += [NULL_BIN] if values.isna().any() else []
     labels = text.where(text.isin(kept), OTHER).reindex(values.index).fillna(NULL_BIN)
     return pd.Series(pd.Categorical(labels, categories=order, ordered=True), index=values.index)
-
-
-def _level_text(value: object) -> str:
-    """A value's text as Spark's cast to string gives it, so a snapshot table names a level as
-    the counts table's cells do: a boolean lower case, an integral float without `.0` (pandas
-    holds an integer column with nulls as floats)."""
-    if isinstance(value, bool | np.bool_):
-        return str(value).lower()
-    if isinstance(value, float | np.floating) and float(value).is_integer():
-        return str(int(value))
-    return str(value)
 
 
 def summarise_groups(

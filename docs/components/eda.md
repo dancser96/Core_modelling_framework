@@ -31,7 +31,8 @@ window is never collected (D-135).
 - **Who uses it:** the DS (report, notebook 02, the four exploration functions); Feature Checks
   (reads only EDA's artifacts); Training (the ledger; the D-088 counts).
 - **Key numbers:** N = 10 key features; `eda.bins` = 100 quantile bins (`null` = exact); a warning
-  below 500 events in the snapshot; `MIN_BIN_SUPPORT = 20` events per bin.
+  below 500 events in the snapshot, or below 100 converting clients or 200 positive rows over the
+  window; `MIN_BIN_SUPPORT = 20` events per bin.
 - **Run it:** `run_eda(cfg, entity, env, spark)`, `python -m core_modelling run <config> --stages
   eda`, or `notebooks/02_eda.ipynb`.
 
@@ -677,18 +678,22 @@ The rules EDA owns (the null-value register in the record, N-numbers):
     (N19).
 
 ### The choices block and the warnings
-**Choices** (one `CHOICES` table of 23 rows, three columns: Choice, Value, Alternatives; when
+**Choices** (one `CHOICES` table of 31 rows, of which EDA shows 22; three columns: Choice, Value, Alternatives; when
 to move to an alternative is the config template's and these docs' to explain; D-032): automation
-level; task, decision and metric (`decision.metric`, or "derived from decision.type" until
-Training derives it, M2.3); the decision slices (their labels); the period, the observation window, `w`, the validation
+level; task and decision (no metric: EDA reads none, and its settings digest does not cover
+it, so a stored report could show a stale one); the decision slices (their labels); the
+period, the observation window, `w`, the validation
 period (shown, never used); the eligibility steps with kind and reason; the candidate count and
 patterns; the kinds summary and overrides; the snapshot period; `eda.bins`; the key-feature rule
 (`top_n`, `max_correlation`, `include`); the strata variables; the pairwise cap; `replayed_to`
 and the hashes.
 
 **Warnings**, numbered, each a rule:
-1. Events: fewer than 500 positive events in the snapshot (regression: units with a non-zero
-   target); the concordance's third decimal is noise. The only events warning.
+1. Events, one warning with two parts. Fewer than 500 positive events in the snapshot
+   (regression: units with a non-zero target): the concordance's third decimal is noise. Fewer
+   than 100 converting clients or 200 positive rows over the window: Training's fold metric is
+   noisy at this size, so the text advises `training.fold_repeats: 3`, a small trial budget and
+   reading differences between runs against their intervals, never fewer folds.
 2. A window period below `strata.min_events`: its per-period statistics are insufficient.
 3. A stratum level below `strata.min_events`.
 4. The contract's null callout: a share of target windows held a null.
@@ -766,7 +771,8 @@ Call flow: Level 2's numbered list. Reading order for review: `statistics/concor
   fresh sidecar) and the stage folder written last, `report.html` passed as one of
   `write_stage`'s `texts` so the rename commits it with the rest; `eda.json` is the commit
   marker:
-  - `eda.json` (`schema_version: 3`, since the json carries the sources' digest; an older one is
+  - `eda.json` (`schema_version: 4`: the json carries the sources' digest, and its settings
+    digest covers `decision.type` and `decision.n`, not the whole `decision`; an older one is
     refused by `read_stage`, "rerun the eda stage"; `stage`, `tables`, plus the stamped framework
     version and time): `artifacts.stage_identity(resolved, "eda", env)`, that is `entity`,
     `config_hash`, `data_definition_hash`, `resolved_input_hash`, `hash_version`, `replayed_to`, `settings_digest`

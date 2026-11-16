@@ -10,9 +10,8 @@ automation_level: assisted               # autonomous | assisted
 decision:                                # declared before any result; never changed later (§4.3)
   type: probability                      # scores compared across products (D-049)
   n: null
-  metric: null                           # derived from the decision type
-  gate_metric: null
-  baselines: [population_base_rate]
+  metric: null                           # log_loss, from the decision type
+  baselines: [population_base_rate, single_feature]
 
 entities:                                # only the entities this use case applies to (D-034)
   entity_a:
@@ -72,22 +71,19 @@ feature_checks:                          # every step listed runs; {} takes its 
 
 training:
   path: automl
-  estimator_list: [lgbm, xgboost, catboost]
+  estimator_list: [lgbm, xgboost, xgb_limitdepth, catboost]
   max_iter: null                         # the trial budget: a rerun gives the same model
   time_budget_s: null
   seed: 42
   search_space: {}
-  selection: {univariate_floor: 0.515, importance_floor: null}
-  categoricals: {min_level_count: 50}
-  calibration: {method: platt}           # on for probability decisions (D-049)
+  selection: {cluster: true, floor_z: 2.0, prune: true}
+  categoricals: {min_level_client_count: 50, unordered: native}
+  calibration: {method: null}            # platt, from the probability decision (D-049)
   sampling: null                         # the synthetic dev target is not rare
 
 evaluation:
   slices: {top_pct: [0.01, 0.10], top_n: [10000]}
-  views: []
-
-lifecycle:
-  promotion_gate: {min: null}            # set when the lifecycle stage is built
+  skip_views: []
 
 inference:
   model: production

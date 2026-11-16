@@ -64,7 +64,8 @@ RANKING_VIEW = ["rank", "feature", "kind", "concordance", "concordance_plain", "
                 "concordance_window", "missing_share", "null_concordance", "zero_share",
                 "dominant_share", "levels", "key_feature", "represented_by",
                 "unavailable"]  # fmt: skip
-CHOICE_NAMES = ["automation_level", "task", "decision", "metric", "slices", "period",
+# No metric row: EDA reads no metric, and its digest leaves `decision.metric` out (D-137).
+CHOICE_NAMES = ["automation_level", "task", "decision", "slices", "period",
                 "observation_window", "target_window", "validation_period", "eligibility_analysis",
                 "eligibility_modelling", "candidate_count", "candidate_patterns", "kinds_summary",
                 "kind_overrides", "snapshot", "bins", "key_features", "strata", "pairwise_cap",
@@ -126,7 +127,6 @@ def _summary_views(meta: dict, resolved: UseCaseConfig) -> dict:
     kinds = list(meta["kinds"].values())
     unsupported, lineage = len(meta["unsupported"]), len(meta["lineage"])
     values = {
-        "metric": resolved.decision.metric or "derived from decision.type",
         "candidate_count": f"{len(meta['candidates'])} ({unsupported} unsupported); {lineage} "
         "lineage columns excluded",
         "kinds_summary": f"{kinds.count('numeric')} numeric, {kinds.count('categorical')} "
@@ -684,14 +684,17 @@ def _appendix_views(
 def eda_warnings(
     tables: dict[str, pd.DataFrame], log: list[dict], resolved: UseCaseConfig, snapshot: str
 ) -> list[str]:
-    """The warnings, one per rule that applies, in eda.md's order: few snapshot events, a thin
-    window period, a thin stratum level, the contract's null callout, the snapshot collect above
-    its budget, and always the all-client warning (D-030)."""
+    """The warnings, one per rule that applies, in eda.md's order: few events (the snapshot's,
+    and the window's converting clients and positive rows), a thin window period, a thin stratum
+    level, the contract's null callout, the snapshot collect above its budget, and always the
+    all-client warning (D-030)."""
     spec, min_events = TASK_SPECS[resolved.task], resolved.strata.min_events
     support = spec["support_name"]
     events = tables["population"].set_index("period").loc[snapshot, "positive_events"]
-    items = [spec["events_warning"](int(events))]
     per_period = tables["target_per_period"]
+    window = per_period.set_index("period").loc["all"]  # `support`: the distinct clients
+    items = [spec["events_warning"](int(events), int(window["support"]),
+                                    int(window["positive_rows"]))]  # fmt: skip
     thin = per_period.loc[per_period["insufficient"] & (per_period["period"] != "all"), "period"]
     if not thin.empty:
         items.append(

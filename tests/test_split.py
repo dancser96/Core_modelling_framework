@@ -3,8 +3,8 @@
 A hand-made frame of many clients over three periods checks that the split is by client, stable
 across periods and reruns and near the asked share; that `negative_downsampling` keeps every
 positive row and the asked fraction of the negatives; that `client_sample` keeps whole clients
-and the asked share of them even when its seed equals the split's (T20); and that no sampling is
-the identity, recorded.
+and the asked share of them even when the training seed equals the split's (T20); and that no
+sampling is the identity, recorded.
 """
 
 from collections.abc import Callable
@@ -15,7 +15,7 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from core_modelling.config import UseCaseConfig
-from core_modelling.dataset.split import _hash_uniform, assign_split, sample_train
+from core_modelling.dataset.split import assign_split, hash_uniform, sample_train
 
 PERIODS = [date(2025, 3, 31), date(2025, 4, 30), date(2025, 5, 31)]
 UNITS = 2_000
@@ -71,10 +71,10 @@ def test_negative_downsampling_keeps_positives_and_a_fraction_of_negatives(
 def test_client_sample_keeps_whole_clients_whatever_the_split_seed(
     frame: DataFrame, variant: Callable[..., UseCaseConfig]
 ) -> None:
-    """About `share` of the train clients stay with all their periods, with the sampling seed
-    equal to the split seed: the two hashes are salted apart (T20)."""
-    cfg = variant(training={"sampling": {"method": "client_sample", "share": 0.5, "seed": 42}})
-    assert cfg.data.split.seed == 42
+    """About `share` of the train clients stay with all their periods, the sample drawn with
+    `training.seed` equal to the split seed: the two hashes are salted apart (T20)."""
+    cfg = variant(training={"sampling": {"method": "client_sample", "share": 0.5}})
+    assert cfg.data.split.seed == cfg.training.seed == 42
     train = assign_split(frame, cfg).where("split = 'train'")
     sampled, record = sample_train(train, cfg)
     periods = sampled.groupBy("unit_id").count().collect()
@@ -82,6 +82,7 @@ def test_client_sample_keeps_whole_clients_whatever_the_split_seed(
     train_units = train.select("unit_id").distinct().count()
     assert len(periods) / train_units == pytest.approx(0.5, abs=0.04)
     assert record["share"] == 0.5 and record["rows_after"] == len(periods) * len(PERIODS)
+    assert record["seed"] == 42
 
 
 def test_no_sampling_is_the_identity(frame: DataFrame, cc_config: UseCaseConfig) -> None:
@@ -96,7 +97,7 @@ def test_hash_draw_is_pinned_and_matches_the_bucket_test(spark: SparkSession) ->
     division fails loud; and `draw < share` agrees with the integer bucket test at the boundary
     for every row (the share with up to six decimals is exact)."""
     one = spark.createDataFrame([("12345",)], "unit_id string")
-    draw = _hash_uniform([F.col("unit_id")], "split", 42)
+    draw = hash_uniform([F.col("unit_id")], "split", 42)
     assert one.select(draw).collect()[0][0] == 0.322993
     ids = spark.range(200_000).select(F.col("id").cast("string").alias("unit_id"))
     bucket = F.pmod(F.xxhash64(F.lit("split"), F.col("unit_id"), F.lit(42)), F.lit(1_000_000))

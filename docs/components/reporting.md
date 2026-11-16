@@ -1,9 +1,12 @@
 # Reporting and model card
-**Status:** built in part 2026-11-04 (Stage 2 major step 2: the renderer, the five primitives and `side_by_side`, the blocks and the theme, built with the EDA report; reviews 2 and 3 applied 2026-11-05/06; the Feature Checks report and `formats.py` built 2026-11-06, major step 3); the model card comes in M2.3/M2.4 · **Legacy:** `src/card.py`, `src/analysis.py` plotting helpers
+**Status:** built in part 2026-11-04 (Stage 2 major step 2: the renderer, the five primitives and `side_by_side`, the blocks and the theme, built with the EDA report; reviews 2 and 3 applied 2026-11-05/06; the Feature Checks report and `formats.py` built 2026-11-06, major step 3); the model results report, the model and explanation charts and the model card: designing (the spec settled 2026-11-13; built in M2.3 major steps 2 and 3) · **Legacy:** `src/card.py`, `src/analysis.py` plotting helpers
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [feature ledger](feature_ledger.md) ·
-[evaluation](evaluation.md) · [monitoring](monitoring.md) · [lifecycle](lifecycle.md) ·
-[config](config.md) (template explanations, audit log) · [environment](environment.md) (theme) ·
-D-012, D-020, D-031, D-032, D-036, D-052, D-083, D-136, D-137 · OD-12
+[evaluation](evaluation.md) (the tables behind the model results report) · [training](training.md)
+(the sign-off and search views) · [model bundle](model_bundle.md) (the run folder the card reads) ·
+[monitoring](monitoring.md) · [lifecycle](lifecycle.md) · [config](config.md) (template
+explanations, audit log, `evaluation.skip_views`) · [environment](environment.md) (theme) ·
+D-012, D-020, D-031, D-032, D-035, D-036, D-052, D-083, D-136, D-137, D-141 · OD-12 is settled
+for every report (Evaluation's views by D-141)
 
 Read it in three levels: Level 1 gives the essentials, Level 2 how the parts connect, Level 3
 every detail.
@@ -16,9 +19,12 @@ Stage 2 builds the renderer, the chart primitives, the shared blocks and a neutr
 (`src/core_modelling/reporting/`, built 2026-11-04 with the EDA report), and two reports with
 them: `eda/report.html` and `feature_checks/report.html` (both built), each beside its stage's
 artifacts (D-136). Every figure is
-pre-aggregated, there is no cap on figures, and a report regenerates from the resolved config.
-Notebooks display the same objects (`StageResult.views`) and never assemble a report. The
-versioned model card (requirement 4) is M2.3/M2.4's.
+pre-aggregated except three capped explanation charts, there is no cap on figures, and a report
+regenerates from the resolved config.
+Notebooks display the same objects (`StageResult.views`) and never assemble a report. M2.3 adds
+the **model results report** (`evaluation/report.html`: seventeen views, all on by default), its
+model charts and four SHAP-style charts in plotly, and the generated **model card**
+(`model_card.json` and a tables-only `model_card.html`).
 
 ## Level 2: How it fits together
 
@@ -49,6 +55,20 @@ Every report opens with the one **`CHOICES` table** in three columns, Choice, Va
 Alternatives; when to move to an alternative is the config template's and the component docs' to
 explain, not the report's (D-032).
 
+### The model results report and the model card
+- **The report** is Evaluation's: summary (the choices, how to read, the headline, the model
+  against each baseline, the statements of [evaluation](evaluation.md) "What the report states")
+  → core (metrics per period, curves, capture, reliability, score distribution, strata, the
+  importance bar, the beeswarm, effects, waterfalls, Training's sign-off and search views) →
+  extended (thresholds, permutation importance per cluster, PDP and ICE, validation on test
+  clients only) → appendix. Each view is one entry of Evaluation's `VIEWS`; a view a task cannot
+  produce reads "not available: reason" (D-035); `evaluation.skip_views` leaves any but the
+  summary out.
+- **The model card** is built from the run folder alone: generated facts, no free text.
+- The charts behind them: `model_charts.py` (curves and distributions from the score cells'
+  tables) and `explain_charts.py` (the four SHAP-style charts), one figure for the notebook and
+  the report.
+
 ### Modules and main functions
 `src/core_modelling/reporting/`:
 - `html.py`: `render_report(title, sections) -> str`, `paragraph(text)`,
@@ -67,6 +87,10 @@ explain, not the report's (D-032).
   `not_available(reason)` and `appendix(resolved, decisions, seconds, caption)`, the resolved
   config, the audit log and the timings every report ends with; a stage adds its own appendix
   parts beside them;
+- `model_charts.py`: `roc_chart`, `pr_chart`, `capture_chart`, `reliability_chart`,
+  `score_distribution`, `metric_lines`, `predicted_vs_observed`, each from a table;
+- `explain_charts.py`: `importance_bar`, `beeswarm`, `waterfall`, `dependence`, `pdp_ice_chart`;
+- `card.py`: `build_card(run_folder) -> dict`, `render_card(card) -> str`;
 - `theme.py`: `THEME`, the neutral palette, fonts, the colour sequence and the heatmap scales as a
   dict.
 
@@ -75,7 +99,9 @@ Light tests: plotly.js appears exactly once in a rendered page; every `div_id` i
 `choices_block` reads its values from the resolved config; the chart rules asserted where testable
 (axis ranges from the data, the null bar present, insufficient bins greyed, no WebGL trace). The
 file size and the open time of both reports are measured locally on the canonical synthetic data
-and recorded in the log (Q455).
+and recorded in the log (Q455). M2.3 adds: each model and explanation chart builds from a
+constructed table; the beeswarm draws at most 1,500 seeded clients per feature and a missing
+value grey; the package imports no `shap`; the card holds only facts read from the run folder.
 
 ## Level 3: Details
 
@@ -87,7 +113,8 @@ and recorded in the log (Q455).
    1. **Summary**, one page for business and governance readers: the choices block (the `CHOICES`
       rows that apply, with their values from the resolved config), the how-to-read notes, the
       headline numbers and numbered rule-based warnings (e.g. few positive events, a choice
-      among variants made on test metrics, D-083); one events warning, not two.
+      among variants made on test metrics, D-083). EDA has one events warning, with two
+      thresholds: below 100 converting clients or 200 events ([EDA](eda.md)).
    2. **Core** views.
    3. **Extended** views, or "not available: reason" where a view is declared incompatible up
       front (`CLAUDE.md` §1 rule 8).
@@ -96,21 +123,21 @@ and recorded in the log (Q455).
       `resolve_config(save_to=…)` writes into a saved `resolved_config.yml`, not the report's.
 3. **Theme:** neutral in the repo (`THEME`); a theme file in `conf/local/` (palette, fonts, logo
    path) is read in M4, when the bank's theme is known. Nothing in the repo names a brand.
-4. **Model card = structured facts only**, with a versioned schema (§2). It covers:
-   - config summary, data definition and lineage, dates, eligibility;
-   - sampling, calibration (prior shift and any calibration step);
-   - modelling path and best config;
-   - metrics vs baselines (overall and stratified), importance;
-   - unresolved flags, human decisions and the feature sign-off (D-031);
-   - for a refit: the parent run and its evaluation metrics (D-052).
-
-   It is designed so a later generator can map it onto the internal model documentation standard.
+4. **Model card = generated facts only**, with a versioned schema (`CLAUDE.md` §2): written by
+   Evaluation from the run folder, never typed by hand ("The model card" below). It is designed
+   so a later generator can map it onto the internal model documentation standard.
 5. **Every figure is pre-aggregated.** No row-level chart and no raw arrays in the HTML: bars come
    from the group tables, box plots from precomputed quartiles. Figures use plotly's `template="none"`, which keeps
    a 20-bar fragment at about 3.7 KB; the EDA report on the unit preset (161 candidates, 35
-   figures) is 5.6 MB, of which plotly.js is 4.83 MB. No chart draws clients, so none needs sampling, while the
-   statistics behind every chart use the whole population (D-135). Should a row-level chart ever
-   be added, it draws a seeded sample of at most 10,000 rows and says so in its caption.
+   figures) is 5.6 MB, of which plotly.js is 4.83 MB. The statistics behind every chart use the
+   whole population (D-135). **Three named exceptions** draw clients, each capped, from the
+   explanation sample, a missing value in grey:
+   - the beeswarm: at most 1,500 seeded clients per feature (about 0.5 MB in the report);
+   - the dependence scatter: at most 1,500 seeded clients per feature;
+   - the waterfall: one client per chart, three charts.
+
+   Any other row-level chart would be a new named exception, drawn on a seeded sample of at most
+   10,000 rows that its caption states.
 6. **No cap on figures**; the size and the open time are measured instead (Q455).
 7. **Reports regenerate from the resolved config** and the stage's artifacts, never from a
    notebook (D-039). Decisions are read from the audit log when the report is written, never
@@ -168,6 +195,57 @@ Its choices block adds eight `CHOICES` rows to the shared ones: the support rule
 the skipped steps and the compared periods. The report never suggests a verb for a flag (Q449);
 for near-duplicates it names the trade-off and leaves the choice to a person (Q472). Each view's
 columns and wording: [feature checks](feature_checks.md) "The report".
+
+### The model results report
+Written by Evaluation as `evaluation/report.html`, from the tables of [evaluation](evaluation.md)
+and, for views 12 and 13, Training's tables (`training/views.py`). Every view renders by
+default; `evaluation.skip_views` leaves any of them out by name, except the summary. View 1 is
+the summary, views 2–13 are core, views 14–17 extended, then the appendix. Every metric shows
+test and validation, each with its interval (D-083: validation is shown everywhere, never chosen
+on); a view the per-task spec declares impossible reads "not available: reason" (D-035).
+
+| # | Name | What it shows | Regression |
+|---|---|---|---|
+| 1 | `summary` | the choices block; how to read; the headline (`decision.metric` with AUC beside it, per part, with intervals; the run number and its date); the model against each baseline at the decision's metric, with intervals, and no "passed" or "failed"; numbered warnings; the statements of [evaluation](evaluation.md) "What the report states" | the concordance for AUC |
+| 2 | `metrics` | every metric per part, pooled and per observation period, the validation period beside them, the periods' mean in the last row; `metric_lines` of the headline metric per period; a period below `strata.min_events` greyed | the regression metrics |
+| 3 | `curves` | ROC and precision–recall, one chart each per part, on all of the part's rows | not available: no classes |
+| 4 | `capture` | the capture curve per part with the slice table: the declared slices, cut per period, and the depths 1, 2, 5, 10, 20, 30 and 50% | the capture curve of the amount |
+| 5 | `reliability` | `score` against the observed rate in 10 quantile groups of the score, axes fitted to the data (T16), observed to expected and the calibration slope beside it; a note under 200 events | predicted against observed in 20 groups of the prediction (`predicted_vs_observed`) |
+| 6 | `score_distribution` | the score's distribution for positives and for the rest, each to its own scale | not available: no classes |
+| 7 | `strata` | per stratum variable and level: support, AUC, observed to expected and, at the decision's slice, the level's share of the list beside its share of the population; greyed below `strata.min_events` | error by stratum |
+| 8 | `importance` | `importance_bar`: contribution shares, train out of fold beside test | the same, on the margin's scale |
+| 9 | `beeswarm` | the top 15 features, 1,500 seeded clients per feature | the same |
+| 10 | `effects` | per effect feature (the model's ten largest plus EDA's key features it uses, twenty at most): `dependence`, the mean contribution per group with EDA's lift beside it; a level table for a categorical | the same |
+| 11 | `waterfalls` | three rows: the highest score, a row at the decision's cut, a typical row; labels read `feature = value` | the same |
+| 12 | `sign_off` | Training's sign-off view, train-only: the final list by out-of-fold contribution, then the held and the excluded features with their reasons | the same |
+| 13 | `search` | per family: trials, seconds in total, the median per trial and the longest, the best fold metric and the trial that reached it, the family's share of the run's time; the best fold metric so far against cumulative seconds, one line per family; the other steps' seconds | the same |
+| 14 | `thresholds` | `threshold_table`: the slice's numbers at a range of score thresholds | not available: no classes |
+| 15 | `permutation_importance` | per redundancy cluster, on the explanation sample, with the rank check against the contributions | the same |
+| 16 | `pdp_ice` | `pdp_ice_chart`: partial dependence and ICE for view 10's features | the same |
+| 17 | `validation_test_clients` | the validation period's metrics on test-split clients only: unseen clients and an unseen period | the same |
+
+Views 8–11 draw contributions on the margin's scale and say so (the log scale for Tweedie and
+Poisson).
+
+### The model card
+Built by `build_card(run_folder)` from the run folder only and rendered by `render_card(card)`;
+both files sit in `evaluation/` and are rewritten with it.
+- `model_card.json`: generated facts, never typed by hand and no free text, with its own schema
+  version (`CLAUDE.md` §2); `model_card.html`: the same facts as tables only, a small page.
+- **Sections:**
+  - Details: the model key, the run, the hashes, the framework and library versions, the family,
+    the dates; for a refit (M2.4), the parent run and its evaluation metrics (D-052).
+  - Intended use: the decision, the slices, the population (eligibility), the target and its
+    window, "a probability conditional on staying through the window".
+  - Data: the logical sources, the window, the validation period, rows and events per period,
+    the sampling, the split.
+  - Features: the final list (kind, source, share, direction), the held features with their
+    flags, the excluded with their reasons, the kept with their findings.
+  - Training: the families searched, the trials, the recipe, the calibration numbers.
+  - Performance: the long metric rows (metric, part, period, stratum, level, value, interval,
+    rows, events) and the baselines comparison; no gates.
+  - Considerations: the warnings raised, as codes with their values.
+  - Sign-off and lifecycle: empty in M2.3; `decide` and `register` fill them in M2.4.
 
 ### The renderer
 - A section is `(heading, blocks)`; a block is a Styler, a plotly figure, a str (an HTML
@@ -231,7 +309,10 @@ columns and wording: [feature checks](feature_checks.md) "The report".
 7. **The null bin is its own bar, labelled `null`,** in the null colour (a `null` line or box
    too); a level table lists `null` as a level. Nulls
    never vanish from a chart.
-8. **Distributions are box plots from quartiles**, never raw points or raw histograms.
+8. **Distributions are box plots from quartiles**, never raw points or raw histograms. The
+   exceptions are requirement 5's: the beeswarm and the dependence scatter draw capped seeded
+   clients. A score distribution is drawn from the score cells' shares, each class to its own
+   scale.
 9. **Lines over an ordered category axis** (`grouped_lines`: periods, or a feature's groups)
    mark every category in the data's order, padded half a slot at both ends; the label-free
    periods show no label-based value. A curve over a share of rows (`x_numeric`) uses a linear
@@ -274,9 +355,42 @@ Every primitive takes `title`, `x_title` and `y_title` (rule 10), places bar tex
   the meta, and a left figure that shows a legend (the one legend sits right of the right
   panel).
 
+### The model charts
+`reporting/model_charts.py`, each taking one of Evaluation's tables (`pd.DataFrame`) and
+returning a `go.Figure` with the chart rules applied; none reads rows.
+- `roc_chart`, `pr_chart`: one line per part; the precision–recall chart marks the base rate.
+- `capture_chart`: capture against depth per part, the random diagonal dashed and muted (rule 9).
+- `reliability_chart`: predicted against observed per group, zoomed to the score range with the
+  diagonal clipped to it (rule 1).
+- `score_distribution`: the score's shares per bin for each class, each to its own scale.
+- `metric_lines`: one metric by period with its interval, the validation period beside the
+  window's.
+- `predicted_vs_observed`: regression, mean predicted against mean observed in 20 groups of the
+  prediction.
+
+### The explanation charts
+`reporting/explain_charts.py`: the four familiar SHAP-style charts drawn in plotly from the
+libraries' own contributions (D-141 (f)), one implementation for the notebook and the report;
+the package imports no `shap`. They take `shap`'s colours, so a DS recognises them at once (red
+raises, blue lowers; blue to red for a low to high feature value; grey for a missing value), and
+the house fonts, titles and margins.
+- `importance_bar`: the mean absolute contribution share per feature on the whole explanation
+  sample, `compare` (train out of fold) beside it, the top 15.
+- `beeswarm`: one point per client and feature, at most 1,500 seeded clients per feature,
+  coloured by the feature's value.
+- `waterfall`: one row from the base value to its margin, the nine largest contributions and the
+  rest, labelled `feature = value`.
+- `dependence`: a feature's contribution against its value, optionally coloured by a second
+  feature, with the mean contribution per group and EDA's lift beside it.
+- `pdp_ice_chart`: the partial dependence line over the ICE lines of the sample.
+
+A DS who wants `shap`'s own pictures builds a `shap.Explanation` from the stored contributions in
+three lines; the helper notebook shows how.
+
 ### Theme
 `THEME` is a dict: the neutral palette, the fonts, the categorical colour sequence and the
-colours of the target classes, `null`, insufficient support, lift and the heatmaps. Tables read on
+colours of the target classes, `null`, insufficient support, lift, the heatmaps and the
+contribution pair (raises and lowers, and the low-to-high value scale). Tables read on
 a light and a dark notebook page: the in-cell bar (`bar`, `rgba(47, 111, 159, 0.45)`) and the
 lift colours (at most 55% opacity, `html.MAX_LIFT_COLOUR`) are translucent, so the page's text
 colour reads over them. Figures keep a white background (a white card on a dark page): plotly
@@ -293,20 +407,24 @@ cannot follow the page's text colour, and the report page is white. The path
 - `reporting/charts.py`: the five primitives, each one function returning a figure, and
   `side_by_side`.
 - `reporting/blocks.py`: `CHOICES` (plain data: label, config path, alternatives),
-  `choices_block` (the "metric" row shows `decision.metric`, or "derived from decision.type" until
-  Training derives it, M2.3), `identity_values`, `headline`, `warnings_block`, `not_available`,
+  `choices_block` (the "metric" row shows `decision.metric`, filled at load from the task and
+  `decision.type` when the config leaves it null), `identity_values`, `headline`, `warnings_block`, `not_available`,
   `appendix`.
 - `reporting/formats.py`: `format_of`, `column_formats`, `plain_number`, `p_value` and the shared
   column lists.
 - `reporting/theme.py`: `THEME`.
+- `reporting/model_charts.py`: the seven model charts, each one function from a table.
+- `reporting/explain_charts.py`: the four SHAP-style charts and `pdp_ice_chart`.
+- `reporting/card.py`: `build_card`, `render_card`.
 - Each stage builds its own sections from its tables ([EDA](eda.md),
-  [feature checks](feature_checks.md)).
+  [feature checks](feature_checks.md), [evaluation](evaluation.md): `evaluation/report.py`,
+  `evaluation/views_explain.py`; Training's two views from `training/views.py`).
 - Reading order for review: `render_report`, then one chart primitive against the chart rules, then
   `choices_block`.
 
 ### Interface
-No public reporting function in Stage 2: reports are written by `run_eda` and
-`run_feature_checks`, notebooks display `StageResult.views` (D-137), and EDA's exploration
+No public reporting function: reports are written by `run_eda`, `run_feature_checks` and
+`run_evaluation`, notebooks display `StageResult.views` (D-137), and EDA's exploration
 functions draw with these primitives ([EDA](eda.md) "Interface").
 
 ```python
@@ -328,6 +446,19 @@ def format_of(name: str, task: str) -> str | Callable[[float], str] | None: ...
 def column_formats(df: pd.DataFrame, task: str) -> dict[str, str | Callable[[float], str]]: ...
 def plain_number(x: float) -> str: ...
 def p_value(x: float) -> str: ...
+
+# model_charts.py: roc_chart, pr_chart, capture_chart, reliability_chart, score_distribution,
+# metric_lines, predicted_vs_observed, each (pd.DataFrame) -> go.Figure
+def importance_bar(contributions: pd.DataFrame, compare: pd.DataFrame | None = None,
+                   top: int = 15) -> go.Figure: ...
+def beeswarm(contributions: pd.DataFrame, values: pd.DataFrame, top: int = 15,
+             clients: int = 1500, seed: int = 0) -> go.Figure: ...
+def waterfall(contributions: pd.Series, base: float, values: pd.Series,
+              shown: int = 9) -> go.Figure: ...
+def dependence(contributions: pd.Series, values: pd.Series, colour: pd.Series | None = None,
+               lift: pd.DataFrame | None = None) -> go.Figure: ...
+def build_card(run_folder: str) -> dict: ...
+def render_card(card: dict) -> str: ...
 ```
 
 `render_report` returns the page; the stage writes it with `artifacts.write_stage(result,
@@ -336,11 +467,12 @@ folder, name, texts={"report.html": page})`.
 ### Lessons from the crunch
 - T16: fixed chart ranges at low prevalence showed nothing (chart rules 1, 2, 5).
 - T17: decide view × model-family compatibility up front, never wrap a view in try/except
-  (requirement 2.3).
+  (requirement 2.3); SHAP failed across the crunch's estimators, so the explanation charts draw
+  the libraries' own contributions.
 
 ## Open questions
-- OD-12 (the core views per task): this spec fixes them for the EDA and Feature Checks reports;
-  Evaluation's are decided in M2.3.
+- Unverified: the explanation charts' hover text, and how they look in the bank's JupyterLab
+  (spike 5). The waterfall's bars are rectangles with a small arrow head, not `shap`'s arrows.
 - Decided for notebook 02: the notebook displays `StageResult.views`, which read on a light and
   a dark page ("Theme"); the report opens in a browser, not inline: the notebook shows the
   report's path and how to open it ("Trust HTML" in JupyterLab, or an `IFrame` with `srcdoc`;

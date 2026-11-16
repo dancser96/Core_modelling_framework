@@ -4,7 +4,9 @@ Each hash is sha256 over the canonical JSON of a dict that names its parts, take
 validated model's JSON dump (dates become ISO strings), so one config hashes the same on a laptop
 and inside the bank, and no two kinds of hash can coincide by content. The config hash keys the
 use-case definition, the data-definition hash the EDA and Feature Checks artifacts, the target-spec
-hash the saved model input (D-131), and the resolved-input hash the run (D-125). Writers store
+hash the saved model input (D-131), the resolved-input hash the run (D-125), the feature
+signature a run's final list, which a sign-off approves (D-139), and the recipe hash what a
+retrain repeats (D-052). Writers store
 `HASH_VERSION` beside every hash; `short` gives the prefix used in paths and `run_id`.
 """
 
@@ -72,6 +74,18 @@ def target_spec_hash(cfg: UseCaseConfig, entity: str) -> str:
         "target_source": _sources(cfg, entity)["targets"],
     }
     return _sha256(canonical_json(parts))
+
+
+def feature_signature(features: list[str]) -> str:
+    """A run's final feature list, in order (D-139 (c)): what a `sign_off` approves and the
+    bundle's manifest records, so the two compare."""
+    return _sha256(canonical_json({"feature_signature": list(features)}))
+
+
+def recipe_hash(recipe: dict) -> str:
+    """A run's recipe as given (the bundle's `recipe`, D-052): what a retrain repeats, with the
+    calibration's spec and never its fitted numbers, so a production retrain keeps the hash."""
+    return _sha256(canonical_json({"recipe": recipe}))
 
 
 def resolved_input_hash(resolved: UseCaseConfig) -> str:

@@ -1,5 +1,5 @@
 # Run modes: CLI, Python API, guided notebooks
-**Status:** built thin (Stage 1, 2026-10-27: `run` with its one stage, the CLI `run` and `decide`, the first guided notebook; Stage 2 adds the `eda` and `feature_checks` stages and notebooks 02 and 03) · **Legacy:** `run_product.py`, `notebooks/`
+**Status:** built thin (Stage 1, 2026-10-27: `run` with its one stage, the CLI `run` and `decide`, the first guided notebook; Stage 2 adds the `eda` and `feature_checks` stages and notebooks 02 and 03; M2.3 major step 1, 2026-11-13/14: the CLI `runs` and `show-run` and `decide --sign-off`; the `training` and `evaluation` stages and `run --run` are not built) · **Legacy:** `run_product.py`, `notebooks/`
 **Related:** [config](config.md) · [environment](environment.md) · [dataset](dataset.md) (experiment sweeps) ·
 `notebooks/README.md` · D-006, D-022, D-024, D-039, D-047, D-083, D-125, D-137 · OD-02, OD-04
 
@@ -15,6 +15,13 @@ so users can see and debug what happens under the hood.
    feature sign-off (D-031) included, as an entry in the decision audit log; it is the CLI form of
    `record_decision` (D-125, [config](config.md#decision-audit-log-d-125)). There is no
    automation-level override: a level changes through a config edit or an audit-log entry (D-023).
+   `runs <config> --entity E` and `show-run <config> --entity E --run r007` list and show a use
+   case's runs, and `decide --sign-off --run r007 --reason …` records the feature sign-off
+   (built, M2.3 major step 1). Planned for M2.3: `run <config> --stages training evaluation`;
+   `run --run r007` evaluates that run (refused with several configs). A bare `run`
+   runs every built stage. At `autonomous` only `run` runs the missing upstream stages;
+   `run_training` and `run_evaluation` called alone refuse (D-132; [training](training.md),
+   [evaluation](evaluation.md), [model bundle](model_bundle.md)).
 2. **Python API:** one function per stage, plus `run(config_paths, stages=...)` taking one config
    path or a list of them. These, the CLI commands, the config schema, the audit log's functions
    (`record_decision`, `show_decisions`, `resolve_config`) and the adapter's Spark-session function
@@ -46,7 +53,8 @@ so users can see and debug what happens under the hood.
 - No HTTP / scheduler layer. Scheduling, if any, calls the CLI.
 
 ## Interface
-Built in Stage 1 (2026-10-27), in `core_modelling/run.py`, `core_modelling/__main__.py` and
+In `core_modelling/run.py`, `core_modelling/__main__.py`, `core_modelling/runs.py` (`list_runs`,
+`show_run` and `sign_off`, which the commands `runs`, `show-run` and `decide --sign-off` call) and
 `notebooks/01_target_factory.ipynb`.
 - `run(config_paths: str | Path | list[str | Path], env_path=None, stages=None, entity=None) ->
   dict` (public, D-024): the stages (default: every built one; the asked ones always run in
@@ -61,16 +69,18 @@ Built in Stage 1 (2026-10-27), in `core_modelling/run.py`, `core_modelling/__mai
   (`run_feature_checks` per config, the paths per use case), in that order; each stage function
   resolves the config itself (`resolve_config`) and saves the resolved config with its artifacts
   (Q422). The later stages join as they are built.
-- CLI: `python -m core_modelling run <config>… [--stages …] [--entity …] [--env …]` and `decide`
-  ([config](config.md)), which gains `--keep` and `--findings`; `__main__` parses and calls.
+- CLI: `python -m core_modelling run <config>… [--stages …] [--entity …] [--env …]`, `decide`
+  ([config](config.md)) with `--keep`, `--findings` and `--sign-off --run r007`, `runs` and
+  `show-run` (these three need `--entity`; requirement 1); `__main__` parses and calls. Planned for
+  M2.3: `run --stages training evaluation` and `run --run r007`.
   `init <folder>` is planned for M2.4: it copies the shipped notebooks out of the wheel and
   refuses to overwrite (D-137).
-- Public API additions in Stage 2: `run_eda`, `run_feature_checks`, `StageResult` and
+- Public API of Stage 2: `run_eda`, `run_feature_checks`, `StageResult` and
   `pivot_target` (the table in [architecture](../architecture.md#public-api)); the stage
   functions return a `StageResult` that the notebooks display.
 - `notebooks/01_target_factory.ipynb`: the guide cell, the setup cell (`load_environment`,
   `get_spark_session`, `load_config`), `run_target_factory`, `save_model_input`,
-  `build_frames(stage="eda")` with the funnel and the frame's head. `tests/test_run.py` checks
+  `build_frames(stage="eda")` with the snapshot's summary, the population counts and the tags' shares. `tests/test_run.py` checks
   that every shipped notebook imports from the Public API only and defines nothing, and runs
   every stage on the two example configs at once
   (`test_run_two_configs_runs_every_stage`).

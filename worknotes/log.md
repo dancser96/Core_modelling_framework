@@ -2,6 +2,196 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-11-13 → 2026-11-14 — Stage 3 major step 1 (the spec and Foundations): built, with the EDS for review 1
+- The EDS approved the plan by starting the build (`worknotes/m2_3_modelling/plan.md`, the
+  status table). Fable holds the main thread; Opus builds and reviews, Sonnet propagates.
+- **The spec is in the owner docs.** Decisions: fourteen rows edited in place (D-032, D-037,
+  D-049, D-051, D-054, D-088, D-094, D-098, D-100, D-106, D-125, D-132, D-136, D-137) and
+  three new ones: D-139 (runs, identity, the bundle), D-140 (the search, selection, the fits),
+  D-141 (Evaluation and its report). `CLAUDE.md` §4.7 reads "Platt on the margin, or beta".
+  New owner doc `docs/components/model_bundle.md` (the run folder, `run.json`, `bundle.json`,
+  the manifest, the encoder, the calibration shapes, the hashes). The config table is
+  `config.md` → "The modelling fields (Stage 3)". `training.md`, `evaluation.md`,
+  `reporting.md`, `monitoring.md`, `feature_ledger.md`, the rest of `config.md` and
+  `dataset.md` are rewritten to the settled design.
+- **Defaults the spec had to set, A65–A78** (`plan.md` §11, to veto by number). The ones that
+  change what a user sees: `decision.metric` for binary allows `log_loss`, `roc_auc`, `ap`
+  only (A65); the Tweedie deviance as a metric is always computed at a power of 1.5, so the
+  loggable objective cannot move the yardstick (A67); `evaluation.skip_views` replaces
+  `evaluation.views` (A68); `run.json` holds only what is known at the run's start, the rest
+  is in `training.json` and the manifest (A72); an unordered categorical with no level at the
+  client count is encoded, not refused (A75); Evaluation's rows carry the strata and not the
+  modelling tags, which are 1 on every eligible row (A76); the search starts at FLAML's own
+  start clipped into the ranges, CatBoost's tree count at 50 (A78).
+- **Built (2026-11-14):** the config fields and the audit log's `sign_off` and `run` entries;
+  the client folds and Evaluation's rows (`dataset/folds.py`, `frames.py`); the encoder; the
+  four families; the bundle, the calibration's application and one scoring path in pandas and
+  inside Spark (`model/`); numbered runs with the sign-off (`runs.py`, the CLI's `runs`,
+  `show-run`, `decide --sign-off`); the dev-only helper notebook `00_modelling_helper`.
+  Review guide: `worknotes/m2_3_modelling/review_guide.md`; defaults to veto A65–A81,
+  questions Q658–Q661.
+- **Reviews:** one combined review per minor step, then the ML audit (Fable), the
+  compatibility check and a spec self-review. The audit's three blocking findings, all fixed:
+  the client split was in no identity a run is found by (an edited split would have scored a
+  run on its own train clients), so it joined Training's and Evaluation's digests and the
+  recipe; a constant in `training.search_space` could override the objective, the seed or
+  the constraints, so the names the framework owns are refused at load and before the first
+  trial; the calibration accepted numbers that reverse the ranking. From the reviews: a
+  family's `load` takes the bytes the bundle verified, so an executor writes no file;
+  `model_hash` covers each file's name and length; every family refuses a parameter name
+  outside its allowed set; the sampling draws with `training.seed` (A81).
+- **Verified:** the full suite once (936 passed, 1 failed, 11 deselected, 11 min 36 s; the
+  failure was a stale test constructor, corrected and passing on its own rerun); `ruff check .`
+  clean; EDA and Feature Checks rerun for the card config (2 min 46 s; `td_acquisition`'s
+  artifacts are stale until step 2's end); the helper notebook run twice end to end, the four
+  model files with the same hashes both times. Version `0.4.0.dev0` during the build.
+- **For the next chats:** the plan's steps 2 and 3 open with what to settle first (the
+  population counts for Training's count check, train statistics for selection's rules, the
+  baseline columns on Evaluation's rows, the score cells' shape) and the audit's requirements.
+  New trap T40: PySpark's local workers run `python3` from the PATH; the adapter now sets the
+  driver's interpreter. The first EDA rerun failed under memory pressure (three agents'
+  test runs beside Spark): agents' test runs count as load on the 8 GB machine.
+- **Found by the builders, for Training's step:**
+  - FLAML's CatBoost wrapper declares categoricals only from pandas `category` columns, while
+    LightGBM and XGBoost need the integer codes; a `category` column gives CatBoost a model
+    bit-identical to integer codes. So the search needs one frame per family.
+  - Through FLAML, LightGBM's `categorical_feature` and CatBoost's `use_best_model` pass only
+    as fit arguments, the thread count only through `AutoML.fit(n_jobs=)`; the objective, the
+    seed and the monotone constraints pass as search-space constants.
+  - LightGBM reads a bracketed constraint string with its first entry as 0 (the research note
+    said it shifts the vector); only four of CatBoost's five metadata entries differ between
+    identical fits; LightGBM's file differs between thread counts in one line, which `save`
+    now normalises so one model has one `model_hash` on every machine.
+- Open for the EDS: `conf/local/cc_acquisition.yml` (gitignored, nothing reads it) uses the
+  removed fields and will no longer load: update or delete.
+
+### 2026-11-11 → 2026-11-13 — Stage 3 (M2.3 Modelling) design: research and three rounds of questions, closed; the build plan written
+- 2026-11-13, the build plan is written and waits for the EDS's approval
+  (`worknotes/m2_3_modelling/plan.md`). Three major steps, each ending in the EDS's review:
+  the spec with Foundations, Training, Evaluation; 34 minor steps. The first draft had five
+  (the spec and a second Evaluation step on their own) and a heavier rule set for two chats;
+  the EDS cut it to three the same day and asked for less ceremony (A52 vetoed). What is
+  left for two chats: a step owns its files, the shapes the next step reads are listed, and
+  pieces that read nothing upstream may start while the step before is in review. The spec
+  has no review of its own: the config table goes to the EDS in chat when written and the
+  build goes on. Fable orchestrates, writes the search and the two stage chains and audits
+  once per major step. Five `dev` tests in all, each with its run time and who runs it. Plan
+  defaults A53–A64 to veto; the one to look at first: the config changed in place with no
+  schema bump, since Q632's "bump and migration" overlooked D-007 (c) (no bump before user
+  testing; A53). Estimate: about 10.5
+  working days of build, so around 12-02 with reviews overlapping the next build; the EDS's
+  target of about 11-20 falls where step 1 is in review. Found while planning: the bootstrap's
+  weights have to be drawn in Spark, so they live with the scores, not in `statistics/`.
+- 2026-11-13, the EDS answered round 3 and the design questions are closed: 68 settled, with
+  the plan assumptions A1–A51. Q650 as proposed; Q651 (B), four families in the default list
+  (both XGBoost variants) and the `autonomous` budget at 60; Q632 (B), no gates and the two
+  config fields nothing read removed, with a Phase 3 question on reopening them
+  (`docs/roadmap.md`); the other six by default. Two questions of the EDS answered: LightGBM
+  stays on its `basic` monotone method; training times are part of the search view,
+  `show_run`, `training.json` and `compare_runs` (A45), so a quick run can set the main run's
+  budget per family. Not started, on the EDS's word: the spec and the plan.
+- 2026-11-13, a check for Q650 on the main thread (every run under a time cap): `intermediate`
+  against `basic` showed no difference in 18 direct comparisons (holdout log loss −0.0006 to
+  +0.0009, mean 0.0000) or through FLAML, and both held the constraint. `intermediate` falls
+  back to `basic` with only a warning under `colsample_bynode` (read in LightGBM's source,
+  confirmed). Found on the way, T39 in `lessons.md`: a FLAML search space that overrides
+  every hyperparameter without a start runs no search and drops its constants.
+- 2026-11-12, the EDS answered round 2: every default accepted, with run numbers (the start
+  time recorded and shown), no imputation (`skip_transform` checked for regression too), one
+  search per family, no advice of fewer folds; BlendSearch to the Phase 3 wishlist
+  (`docs/roadmap.md`); `xgb_limitdepth` and monotone constraints join M2.3; gates doubted; the
+  mean correction's robustness asked. 20 more questions recorded in `answers.md` (59 in all).
+- 2026-11-12, round 3 (`questions.md`): nine questions. From the EDS's answers: Q650 monotone
+  constraints, Q651 the default family list, Q652 the search's start, Q653 the level correction.
+  From the cross-component review: Q654 a run complete in itself, Q655 `compare_runs` decides on
+  test, Q656 the regression metric declared with the decision, Q657 where an ordered
+  categorical's order lives, Q632 no gates. Plus assumptions A31–A51 and the list of doc
+  sentences the design changes, kept for the spec.
+- 2026-11-12, round 3 research (four subagents and one check on the main thread). Measured:
+  monotone constraints hold in the three libraries except under LightGBM's `advanced` method;
+  a constraint on a categorical aborts the process in LightGBM and is silently ignored by
+  XGBoost; CatBoost puts a null inside the constraint; `xgb_limitdepth` shares XGBoost's class,
+  file and loader. Starting each search from an ordinary model bought 0.0001–0.0004 log loss
+  for four to five times the seconds, so that proposal of round 2 is withdrawn (the EDS's
+  objection). A winsorised level correction made the level worse than none; the plain factor
+  repaired Tweedie's 4–5% under-prediction.
+- 2026-11-12, a process failure: one measurement subagent ran long jobs for over two hours while
+  the main thread waited; it was stopped and its output files read instead. Its report was
+  never written, so one of its checks (a Tweedie model refitting exactly) stays open. Briefs
+  for measurements now carry a hard cap.
+- 2026-11-12, the EDS answered round 1. Direction: between thin and deep, as M2.2 was built;
+  nothing is cut, the dates move; Evaluation and its report extensive; testers follow the
+  stage; the research note is never pruned. 39 questions settled, recorded verbatim in
+  `worknotes/m2_3_modelling/answers.md` (among them: scoring inside Spark, FLAML only searches,
+  the sign-off per feature list, `load_bundle` and `score_frame` public, no "too good to be
+  true" warnings, beta calibration built now, notebook 03 ends with the keeps recorded).
+- 2026-11-12, round 2: 18 questions re-posed with the EDS's note, a reply and a default, three
+  new ones (Q647 run numbers and one hash; Q648 how far "extensive" goes; Q649 folds at few
+  events), six assumptions explained, eight new ones.
+- 2026-11-12, seven more research pieces (Opus and Sonnet subagents; one Spark check on the main
+  thread). Measured: round robin equals one independent search per family; FLAML starts every
+  family from a 4-tree model and climbs slowly; `auto_augment` never acts with client folds; a
+  splitter object is honoured (repeats possible); ±1e30 is a safe stand-in for ±inf in all three
+  libraries; declared categoricals round-trip bit-identically and moved AUC by at most 0.006 in
+  a constructed test; fit time is linear in the feature count; `mapInPandas` scoring equals the
+  driver's for the three families locally; the four SHAP plots can be drawn in plotly
+  (prototype in the session scratchpad). Surveys: native null handling beats imputation for
+  boosted trees; nobody recommends fewer folds at few events; the tools' search ranges; no
+  evidence for selecting on average precision; Tweedie for amounts with zeros.
+- 2026-11-12, positions changed from round 1 on the evidence: ±inf is clipped, not read as null
+  (the EDS's objection); `roc_auc`, not `ap`, for `top_n`; curves and the headline AUC pooled,
+  per period in a table (the EDS's objection to D-098's reading); client-bootstrap intervals
+  and importance pruning now, not in M4.
+- 2026-11-12, the imputation finding is corrected in the docs on the EDS's default for Q646:
+  D-094 (a), `docs/context/environment.md`, `training.md` req. 2, and T38 in `lessons.md`.
+- 2026-11-11, ten research pieces (Opus subagents; Fable on the main thread only): the crunch
+  inventory, the package's seams, what the other docs promise, the synthetic data and oracle
+  facts, two fact checks on the pinned versions (FLAML; formats, determinism, SHAP) and four
+  surveys with sources (calibration, evaluation, explanation and selection, model card and
+  bundle standards).
+- 2026-11-11, the finding that contradicted settled text: FLAML 2.7.0 median-imputes numeric
+  nulls when given a DataFrame (`flaml/automl/data.py`), so its transformer is not the identity
+  that D-094 (a) and the spike 2 line in `docs/context/environment.md` stated. Checked on the
+  main thread: 6,000 rows with 5% nulls, xgboost, the booster on the raw frame against
+  `automl.predict`: up to 0.40 apart; 0 with `skip_transform=True` and with a numpy array.
+- 2026-11-11, other measured facts: a search under a trial budget repeats exactly (so the
+  client-order sentence in `training.md` holds); the default learner selector starved xgboost
+  (9 of 60 trials); CatBoost's `.cbm` bytes differ per run unless five metadata keys are
+  deleted; the libraries' own contribution outputs equal SHAP's tree explainer.
+- 2026-11-11, round 1 of the questions: Q590–Q646 (57, each with a default), 22 assumptions.
+  Q588–Q589 were used by the spikes chat.
+- Files: `worknotes/m2_3_modelling/questions.md` (closed form: the research note, the settled
+  design in one table, what the spec and the plan need), `answers.md` (three rounds verbatim
+  and an index of the 68 outcomes), `plan.md` (the build plan), `prototype_explain_charts.py.txt`
+  (the chart prototype the EDS saw, copied from the session scratchpad), `docs/decisions.md`
+  (D-094), `docs/context/environment.md`,
+  `docs/context/lessons.md` (T38, T39), `docs/components/training.md`, `docs/roadmap.md` (two
+  Phase 3 wishlist items), `docs/UPDATES.md`, `worknotes/README.md`.
+- Still open: the EDS's approval of the plan, with A53–A64; then the spec in the owner docs,
+  the first part of major step 1 (the decision rows are written with it); the checks in
+  `questions.md` → To check before or during the build, each now placed in a minor step.
+  Inside the bank, unverified: the model libraries on the executors, the same model across
+  machines.
+- Housekeeping: the untracked `catboost_info/` folder noted on 11-11 is no longer in the repo
+  root. Not run: any test (no code changed).
+
+### 2026-11-11 — Spikes 1–3 run
+- At the EDS's request Claude ran the three pre-M2.3 spikes locally (throwaway scripts in the
+  session scratchpad, nothing in the repo); the results are in `docs/context/environment.md`.
+  Spike 5 (plotly in the bank's JupyterLab) stays with the EDS.
+- Spike 1 (FLAML group split, 76,000 panel rows of 19,650 clients): classification with `groups`
+  and regression with `split_type="group"` split by client in holdout and CV; regression with
+  `groups` alone leaks (6,498 clients on both sides). `sample=True` trains its early trials on
+  the first rows of the frame in its order, so Training must order the frame by a seeded random
+  order of clients.
+- Spike 2 (round trips): LightGBM text and XGBoost JSON/UBJSON bit-identical, LightGBM's JSON
+  does not load back, CatBoost `.cbm` bit-identical and its JSON differs by up to 1e-13.
+  FLAML 2.7 with xgboost 3.2 fits and predicts.
+- Spike 3 (Arrow): same values with Arrow on and off for every real source; the non-Arrow path
+  fails on timestamps, so Arrow stays on.
+- Settled by the EDS at the defaults: CatBoost is saved as `.cbm`, and Training orders the train
+  frame by a seeded random order of clients. In D-051, D-106, `training.md` and `lifecycle.md`.
+
 ### 2026-11-11 — M2.2 closed; the worknotes cleaned up
 - The EDS closed M2.2 after the second round of answers. Q587 (the sources' digest covers every
   source the config names) and the warning beside Training's held list (Q576) stand as built.

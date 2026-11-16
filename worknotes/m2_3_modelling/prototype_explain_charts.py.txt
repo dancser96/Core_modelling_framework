@@ -1,0 +1,173 @@
+"""SHAP-style plots in plotly from native feature contributions (n x p array, log-odds)."""
+import numpy as np
+import plotly.graph_objects as go
+
+FONT = "system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif"  # house theme
+TEXT, MUTED, BORDER = "#1f2933", "#616e7c", "#d9e2ec"
+BLUE, RED, GREY = "#008bfb", "#ff0051", "#bbbbbb"  # shap's colours
+# shap's red_blue colormap sampled at 11 points (it runs blue -> purple -> red, not a straight blend)
+SHAP_SCALE = ["#008bfb", "#007df5", "#236cea", "#625adb", "#8443c6", "#9b24ae",
+              "#bb00a0", "#d5008f", "#e9007c", "#f90067", "#ff0051"]
+SHAP_SCALE = [[i / 10, c] for i, c in enumerate(SHAP_SCALE)]
+
+
+def _layout(fig: go.Figure, title: str, height: int, width: int | None = None, left: int = 150) -> go.Figure:
+    """House style: no template, system font, centred 14 px title, white background."""
+    fig.update_layout(template="none", title={"text": title, "x": 0.5, "xanchor": "center", "font": {"size": 14}},
+                      font={"family": FONT, "color": TEXT, "size": 13}, height=height, width=width,
+                      paper_bgcolor="white", plot_bgcolor="white", showlegend=False,
+                      margin={"l": left, "r": 40, "t": 70, "b": 70})
+    return fig
+
+
+def _fmt(v: float) -> str:
+    """Feature value as shown in labels: 4 significant digits, NaN spelled out."""
+    return "NaN" if np.isnan(v) else f"{v:.4g}"
+
+
+def _clip_range(v: np.ndarray) -> tuple[float, float]:
+    """Colour range of a feature: 5th-95th percentile, widened when it collapses (shap's rule)."""
+    for q in (5, 1, 0):
+        lo, hi = np.nanpercentile(v, q), np.nanpercentile(v, 100 - q)
+        if lo < hi:
+            return lo, hi
+    return lo, lo + 1.0
+
+
+def _unit_colour(v: np.ndarray) -> np.ndarray:
+    """Per-feature position on the colour scale in [0, 1]."""
+    lo, hi = _clip_range(v)
+    return np.clip((v - lo) / (hi - lo), 0, 1)
+
+
+def importance_bar(contrib: np.ndarray, names: list[str], top: int = 15) -> go.Figure:
+    """Mean |contribution| per feature, top N sorted, plus one 'sum of other features' bar."""
+    m = np.abs(contrib).mean(0)
+    order = np.argsort(-m)
+    labels = [names[i] for i in order[:top]] + [f"Sum of {len(m) - top} other features"]
+    vals = np.append(m[order[:top]], m[order[top:]].sum())
+    fig = go.Figure(go.Bar(x=vals, y=labels, orientation="h", marker_color=RED, text=[f"+{v:.2f}" for v in vals],
+                           textposition="outside", cliponaxis=False, hovertemplate="%{y}: %{x:.3f}<extra></extra>"))
+    fig.update_xaxes(title_text="mean(|contribution|) in log-odds, average impact on model output", showgrid=False,
+                     range=[0, vals.max() * 1.15], linecolor=BORDER, ticks="outside")
+    fig.update_yaxes(autorange="reversed", showgrid=False, linecolor=BORDER)
+    return _layout(fig, "Global feature importance", 26 * len(labels) + 140)
+
+
+def _swarm_offsets(x: np.ndarray, rng: np.random.Generator, nbins: int = 100) -> np.ndarray:
+    """Vertical offsets in (-1, 1): stack points sharing an x-bin alternately above/below the row centre."""
+    q = np.round(nbins * (x - x.min()) / (x.max() - x.min() + 1e-8)).astype(int)
+    order = np.lexsort((rng.random(len(x)), q))  # by bin, random within the bin
+    sorted_q = q[order]
+    start = np.r_[0, np.flatnonzero(np.diff(sorted_q)) + 1]
+    layer = np.arange(len(x)) - np.repeat(start, np.diff(np.r_[start, len(x)]))  # rank within the bin
+    off = np.empty(len(x))
+    off[order] = np.ceil(layer / 2) * ((layer % 2) * 2 - 1)
+    return off / (np.abs(off).max() + 1)
+
+
+def beeswarm(contrib: np.ndarray, X: np.ndarray, names: list[str], top: int = 15, n_sample: int | None = None,
+             gl: bool = False, hover: bool = True, seed: int = 0) -> go.Figure:
+    """Summary plot: one row per feature, x = contribution, colour = feature value (percentile scale)."""
+    rng = np.random.default_rng(seed)
+    order = np.argsort(-np.abs(contrib).mean(0))[:top]
+    Scatter = go.Scattergl if gl else go.Scatter
+    fig = go.Figure()
+    for r, j in enumerate(order):
+        rows = np.arange(len(contrib)) if n_sample is None else rng.choice(len(contrib), n_sample, replace=False)
+        x, v = contrib[rows, j], X[rows, j]
+        y = (top - 1 - r) + 0.42 * _swarm_offsets(x, rng)
+        c = _unit_colour(v)
+        nan = np.isnan(v)
+        common = {"mode": "markers", "name": names[j], "showlegend": False}
+        if hover:
+            common["hovertemplate"] = names[j] + " = %{customdata:.4g}<br>contribution %{x:.3f}<extra></extra>"
+        else:
+            common["hoverinfo"] = "skip"
+        if nan.any():  # grey first, so the coloured points sit on top as in shap
+            fig.add_trace(Scatter(x=x[nan].astype("f4"), y=y[nan].astype("f4"), marker={"color": GREY, "size": 5},
+                                  **common, **({"customdata": v[nan].astype("f4")} if hover else {})))
+        fig.add_trace(Scatter(x=x[~nan].astype("f4"), y=y[~nan].astype("f4"),
+                              marker={"color": c[~nan].astype("f4"), "colorscale": SHAP_SCALE, "cmin": 0, "cmax": 1,
+                                      "size": 5, "showscale": r == 0,
+                                      "colorbar": {"title": {"text": "Feature value", "side": "right"},
+                                                   "tickvals": [0, 1], "ticktext": ["Low", "High"],
+                                                   "thickness": 12, "len": 0.9, "outlinewidth": 0}}, **common, **({"customdata": v[~nan].astype("f4")} if hover else {})))
+    fig.add_vline(x=0, line_color="#999999", line_width=1)
+    fig.update_yaxes(tickvals=list(range(top))[::-1], ticktext=[names[j] for j in order], range=[-0.7, top - 0.3],
+                     showgrid=True, gridcolor="#cccccc", griddash="dot", zeroline=False, linecolor=BORDER)
+    fig.update_xaxes(title_text="Contribution to the model output (log-odds): higher = more likely positive",
+                     showgrid=False, zeroline=False, linecolor=BORDER, ticks="outside")
+    return _layout(fig, "Feature contributions, one point per client", 34 * top + 150)
+
+
+def waterfall(contrib_row: np.ndarray, base: float, x_row: np.ndarray, names: list[str], n_show: int = 9) -> go.Figure:
+    """One row's walk from the base value to its margin: n_show largest contributions plus 'other features'."""
+    order = np.argsort(-np.abs(contrib_row))
+    big, rest = order[:n_show], order[n_show:]
+    steps = list(contrib_row[big][::-1])  # smallest first: the walk goes bottom to top, as in shap
+    labels = [f"{names[j]} = {_fmt(x_row[j])}" for j in big[::-1]]
+    steps, labels = [contrib_row[rest].sum()] + steps, [f"{len(rest)} other features"] + labels
+    start = base + np.cumsum([0] + steps[:-1])
+    end = start + np.array(steps)
+    final, y = end[-1], np.arange(len(steps))
+    colour = [RED if s > 0 else BLUE for s in steps]
+    fig = go.Figure(go.Bar(x=steps, base=start, y=y, orientation="h", width=0.6, marker_color=colour,
+                           hovertemplate="%{customdata}<extra></extra>", customdata=labels))
+    # arrow tips and value labels in one marker trace: plotly offsets the text by the marker size
+    fig.add_trace(go.Scatter(x=end, y=y, mode="markers+text", hoverinfo="skip", marker_color=colour, marker_size=9,
+                             marker_symbol=["triangle-right" if s > 0 else "triangle-left" for s in steps],
+                             text=[f"{s:+.2f}" for s in steps], textfont={"color": colour},
+                             textposition=["middle right" if s > 0 else "middle left" for s in steps]))
+    for i in range(len(steps) - 1):  # dotted connectors between bar ends
+        fig.add_shape(type="line", x0=end[i], x1=end[i], y0=i + 0.3, y1=i + 0.7, line={"color": GREY, "dash": "dot"})
+    for v in (base, final):
+        fig.add_vline(x=v, line_color=GREY, line_dash="dot", line_width=1)
+    for v, t, yy, ya in ((base, f"E[f(X)] = {base:.2f}", 0, "top"), (final, f"f(x) = {final:.2f}", 1.0, "bottom")):
+        fig.add_annotation(x=v, y=yy, xref="x", yref="paper", text=t, showarrow=False, yanchor=ya,
+                           yshift=-48 if yy == 0 else 0, font={"color": MUTED})
+    pad = 0.12 * (max(end.max(), base) - min(end.min(), base))
+    fig.update_xaxes(title_text="Model output (log-odds)", range=[min(end.min(), start.min(), base) - pad,
+                                                                 max(end.max(), start.max(), base) + pad],
+                     showgrid=False, zeroline=False, linecolor=BORDER, ticks="outside", side="bottom", title_standoff=55)
+    fig.update_yaxes(tickvals=list(y), ticktext=labels, showgrid=False, zeroline=False, linecolor=BORDER)
+    p, p0 = 1 / (1 + np.exp(-final)), 1 / (1 + np.exp(-base))
+    return _layout(fig, f"One client: f(x) = {final:.2f} log-odds, probability {p:.1%} (base rate {p0:.1%})",
+                   34 * len(steps) + 170, left=210)
+
+
+def dependence(contrib: np.ndarray, X: np.ndarray, names: list[str], feature: str, colour_by: str) -> go.Figure:
+    """Contribution vs feature value, coloured by a second feature; missing x in a strip on the right."""
+    j, k = names.index(feature), names.index(colour_by)
+    x, y, c = X[:, j], contrib[:, j], X[:, k]
+    miss, cn = np.isnan(x), np.isnan(X[:, k])
+    lo, hi = _clip_range(c)
+    h, e = np.histogram(x[~miss], bins=40)
+    fig = go.Figure(go.Bar(x=(e[1:] + e[:-1]) / 2, y=h, width=np.diff(e), marker_color="#e3e3e3", hoverinfo="skip"))
+    hover = (f"{feature} = %{{customdata[0]:.4g}}<br>{colour_by} = %{{customdata[1]:.4g}}"
+             "<br>contribution %{y:.3f}<extra></extra>")
+    bar = {"title": {"text": colour_by, "side": "right"}, "thickness": 12, "len": 0.8, "outlinewidth": 0}
+    jitter = np.random.default_rng(0).uniform(-0.35, 0.35, len(x))
+    for strip in (False, True):  # main panel, then the strip of missing x
+        sel = miss if strip else ~miss
+        xx, axes = (jitter, {"xaxis": "x2", "yaxis": "y2"}) if strip else (x, {"xaxis": "x", "yaxis": "y3"})
+        for part, marker in ((sel & cn, {"color": GREY, "size": 5}),
+                             (sel & ~cn, {"color": c, "colorscale": SHAP_SCALE, "cmin": lo, "cmax": hi, "size": 5,
+                                          "showscale": not strip, "colorbar": bar})):
+            if part.any():
+                if "colorscale" in marker:
+                    marker = {**marker, "color": c[part]}
+                fig.add_trace(go.Scatter(x=xx[part], y=y[part], mode="markers", marker=marker, customdata=np.c_[x[part], c[part]],
+                                         hovertemplate=hover, **axes))
+    pad = 0.05 * (y.max() - y.min())
+    rng_y = [y.min() - pad, y.max() + pad]
+    ax = {"showgrid": False, "zeroline": False, "linecolor": BORDER}
+    fig.update_layout(  # main panel on (x, y3); the strip of missing x on (x2, y2), left, carrying the y axis
+        xaxis={"domain": [0.1, 1], "title": {"text": feature}, "ticks": "outside", **ax},
+        xaxis2={"domain": [0, 0.07], "anchor": "y2", "tickvals": [0], "ticktext": ["missing"], "range": [-0.5, 0.5], **ax},
+        yaxis={"range": [0, h.max() * 4], "visible": False},
+        yaxis2={"overlaying": "y", "range": rng_y, "anchor": "x2", "title": {"text": "Contribution (log-odds)"},
+                "ticks": "outside", **ax},
+        yaxis3={"overlaying": "y", "range": rng_y, "anchor": "x", "showticklabels": False, **ax})
+    fig.add_shape(type="line", xref="paper", x0=0.1, x1=1, yref="y3", y0=0, y1=0, line={"color": "#999999", "dash": "dot", "width": 1})
+    return _layout(fig, f"Dependence: {feature}, coloured by {colour_by}", 460, left=80)

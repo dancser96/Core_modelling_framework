@@ -1,8 +1,8 @@
 """The config spine: load a use-case YAML into a validated `UseCaseConfig`.
 
 Load = read YAML → `migrate` → refuse what only a replay writes → `apply_level_defaults` →
-validate. The audit log's replay (`replay.py`) runs later, in `resolve_config` (`audit_log.py`),
-on the loaded config.
+validate, which fills the nulls the task decides (`schema.TASK_CHOICES`). The audit log's
+replay (`replay.py`) runs later, in `resolve_config` (`audit_log.py`), on the loaded config.
 """
 
 from pathlib import Path

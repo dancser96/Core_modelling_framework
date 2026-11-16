@@ -33,6 +33,7 @@ from core_modelling.config.audit_log import (
 from core_modelling.config.identities import (
     HASH_VERSION,
     data_definition_hash,
+    feature_signature,
     resolved_input_hash,
     short,
 )
@@ -43,9 +44,10 @@ from core_modelling.config.replay import (
     effective_entries,
     open_flags,
     replay,
+    signed_off,
     validate_raw,
 )
-from core_modelling.config.schema import FeatureChecks
+from core_modelling.config.schema import TASK_CHOICES, FeatureChecks
 from core_modelling.environment import EnvironmentConfig, Roots, audit_log_dir
 from core_modelling.periods import PERIODS
 
@@ -72,7 +74,7 @@ NEVER_LOGGABLE = (
     "features.candidates",
     "decision",
     "training.seed",
-    "lifecycle",
+    "training.path",
     "inference",
     "monitoring",
 )
@@ -165,8 +167,8 @@ def _held(cfg: UseCaseConfig, env: EnvironmentConfig) -> list[str]:
 def worked_example(
     config_path: Path, env_path: Path, cfg: UseCaseConfig, env: EnvironmentConfig
 ) -> None:
-    """Entries 1–12 of the worked example: Feature Checks through the stage writer, a rule and
-    Training's run markers by hand, people through the API."""
+    """Entries 1–12 of the worked example: the stages through the stage writer (Evaluation's
+    run of `r001` as entry 9), people through the API."""
     decide = dict(env_path=str(env_path))
     _flag(cfg, env, "quality.all_null", QUALITY[:1])
     _flag(cfg, env, "quality.near_constant", QUALITY[1:])
@@ -179,14 +181,14 @@ def worked_example(
     record_decision(config_path, ENTITY, keep=UNSTABLE, findings=[UNSTABLE_FINDING],
                     evidence=["#4"], reason="Digital adoption trend; monitoring watches it",
                     **decide)  # fmt: skip
-    _write_json(cfg, env, 8, by={"kind": "stage", "id": "training"}, stage="training", op="run",
-                run_id="r1", replayed_to=7, reason="run")  # fmt: skip
-    _write_json(cfg, env, 9, by=_rule("selection.importance"), stage="training", op="dropped",
-                features=["age", "tenure_months"])  # fmt: skip
+    record_stage_entry(cfg, ENTITY, env, stage="training", op="run", run_id="r001",
+                       replayed_to=7, reason="run")  # fmt: skip
+    record_stage_entry(cfg, ENTITY, env, stage="evaluation", op="run", run_id="r001",
+                       validation_period="2025-11", reason="evaluated")  # fmt: skip
     record_decision(config_path, ENTITY, set={"training.max_iter": 300},
                     reason="AUC still rising at the last trials", **decide)  # fmt: skip
-    _write_json(cfg, env, 11, by={"kind": "stage", "id": "training"}, stage="training", op="run",
-                run_id="r2", replayed_to=10, reason="run")  # fmt: skip
+    record_stage_entry(cfg, ENTITY, env, stage="training", op="run", run_id="r002",
+                       replayed_to=10, reason="run")  # fmt: skip
     record_decision(config_path, ENTITY, exclude=["nationality"], stage="sign_off",
                     reason="Not used for product targeting", **decide)  # fmt: skip
 
@@ -318,7 +320,7 @@ def test_resolved_input_hash_moves_only_with_input_entries(
     worked_example: None, cfg: UseCaseConfig, env: EnvironmentConfig
 ) -> None:
     """Flag, exclude, keep and set entries change the run's input (a flag through
-    `features.held`); runs and drops do not."""
+    `features.held`); runs do not."""
     hashes = [resolved_input_hash(resolve_config(cfg, ENTITY, env, upto=n)) for n in range(13)]
     changed = {n for n in range(1, 13) if hashes[n] != hashes[n - 1]}
     assert changed == {1, 2, 3, 4, 6, 7, 10, 12}
@@ -392,7 +394,7 @@ def test_level_move_refills_the_level_defaults_only(
         env_path=str(env_path),
     )
     resolved = resolve_config(cfg, ENTITY, env)
-    assert resolved.training.max_iter == 50
+    assert resolved.training.max_iter == 60
     assert resolved.evaluation.slices.top_pct == [0.01, 0.10]  # explicit in the file
     assert resolved.housekeeping["level_filled"] == cfg.housekeeping["level_filled"]
 
@@ -401,7 +403,7 @@ def test_level_move_refills_the_level_defaults_only(
     ("setting", "budgets", "still_filled"),
     [
         ({"training.max_iter": 300}, (300, 10), []),
-        ({"eda.key_features.top_n": 15}, (50, 15), ["training.max_iter"]),
+        ({"eda.key_features.top_n": 15}, (60, 15), ["training.max_iter"]),
     ],
 )
 def test_level_move_keeps_a_persons_set(
@@ -443,7 +445,8 @@ def test_show_decisions_has_one_row_per_entry(
     worked_example: None, cfg: UseCaseConfig, env: EnvironmentConfig
 ) -> None:
     """Twelve rows with the `what` column filled for every kind of entry: a flag led by its
-    finding, a keep followed by the findings it settles, a run by its id or its periods."""
+    finding, a keep followed by the findings it settles, a run by its number, its periods or the
+    period it scored."""
     table = show_decisions(cfg, ENTITY, env)
     assert list(table.columns) == ["seq", "time", "by", "stage", "op", "what", "reason", "evidence"]
     assert table["seq"].tolist() == list(range(1, 13))
@@ -453,7 +456,8 @@ def test_show_decisions_has_one_row_per_entry(
     assert table.loc[4, "what"] == "periods 2025-03 … 2026-02"
     assert table.loc[6, "what"] == f"{', '.join(UNSTABLE)} (settles {UNSTABLE_FINDING})"
     assert table.loc[9, "what"] == "training.max_iter: 200 → 300"
-    assert table.loc[7, "what"] == "r1" and table.loc[5, "evidence"] == "#3"
+    assert table.loc[7, "what"] == "r001" and table.loc[5, "evidence"] == "#3"
+    assert table.loc[8, "what"] == "r001 scored on 2025-11"
 
 
 def test_saved_resolved_config_names_its_entries_and_loads_back(
@@ -474,6 +478,22 @@ def test_saved_resolved_config_names_its_entries_and_loads_back(
         load_config(saved)
 
 
+def test_a_stored_resolved_config_reads_back_as_written(
+    cfg: UseCaseConfig, env: EnvironmentConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resolved config carries no `housekeeping.task_filled`, so its values are explicit: a
+    later change of a task default leaves an older run's stored metric and calibration alone."""
+    saved = tmp_path / "resolved.yml"
+    resolve_config(cfg, ENTITY, env, save_to=saved)
+    assert "task_filled" not in yaml.safe_load(saved.read_text())["housekeeping"]
+    binary = TASK_CHOICES["binary"]
+    monkeypatch.setitem(binary["metric_by_decision"], "probability", "roc_auc")
+    monkeypatch.setitem(binary["calibration_by_decision"], "probability", "none")
+    stored = read_resolved_config(saved)
+    assert (stored.decision.metric, stored.training.calibration.method) == ("log_loss", "platt")
+    assert load_config(EXAMPLE).decision.metric == "roc_auc"  # a fresh load takes the new one
+
+
 def test_an_old_resolved_config_loads_through_its_migration(
     cfg: UseCaseConfig, env: EnvironmentConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -484,13 +504,13 @@ def test_an_old_resolved_config_loads_through_its_migration(
     resolved = resolve_config(cfg, ENTITY, env, save_to=saved)
     raw = yaml.safe_load(saved.read_text())
     raw["schema_version"] = 0
-    raw["training"]["selection"]["auc_floor"] = raw["training"]["selection"].pop("univariate_floor")
+    raw["training"]["selection"]["z_floor"] = raw["training"]["selection"].pop("floor_z")
     saved.write_text(yaml.safe_dump(raw, sort_keys=False))
 
     def rename_floor(old: dict) -> dict:
         """The dummy 0 → 1 migration."""
         selection = old["training"]["selection"]
-        selection["univariate_floor"] = selection.pop("auc_floor")
+        selection["floor_z"] = selection.pop("z_floor")
         return {**old, "schema_version": 1}
 
     with pytest.raises(ValueError, match=r"no migration from resolved config .*resolved\.yml "):
@@ -922,7 +942,7 @@ def test_validation_period_a_run_compared_is_refused(
     record_stage_entry(cfg, ENTITY, env, stage="feature_checks", op="run", periods=COMPARED,
                        reason="Feature Checks run")  # fmt: skip
     record_decision(config_path, ENTITY, revert_to=0, reason="start over", **decide)
-    refused = "2026-02 was compared by the run of entry 1"
+    refused = "2026-02 was compared by the Feature Checks run of entry 1"
     with pytest.raises(ValueError, match=refused):
         record_decision(config_path, ENTITY, set={"time.validation_period": "2026-02-28"},
                         reason="later", **decide)  # fmt: skip
@@ -947,8 +967,8 @@ def test_validation_period_set_to_null_is_refused(
 def test_stage_writer_records_the_stage_and_refuses_missing_operands(
     cfg: UseCaseConfig, env: EnvironmentConfig
 ) -> None:
-    """`by` is the stage itself; a flag needs its finding, a run its periods, and a stage writes
-    no other op."""
+    """`by` is the stage itself; a flag needs its finding, Feature Checks' run its periods, and a
+    stage writes no other op."""
     entry = _flag(cfg, env, LEAK, ["age"])
     assert (entry.by.kind, entry.by.id, entry.stage) == (
         "stage",
@@ -958,7 +978,7 @@ def test_stage_writer_records_the_stage_and_refuses_missing_operands(
     write = dict(stage="feature_checks", reason="r")
     with pytest.raises(ValidationError, match="op 'flag' needs `finding` and `features`"):
         record_stage_entry(cfg, ENTITY, env, op="flag", features=["age"], **write)
-    with pytest.raises(ValueError, match="a `run` entry needs `periods`"):
+    with pytest.raises(ValueError, match="a Feature Checks `run` entry needs `periods`"):
         record_stage_entry(cfg, ENTITY, env, op="run", **write)
     with pytest.raises(ValueError, match="a stage writes `flag` or `run` entries, not 'exclude'"):
         record_stage_entry(cfg, ENTITY, env, op="exclude", features=["age"], **write)
@@ -1053,7 +1073,7 @@ def test_revert_is_checked_like_a_set(
                     reason="one more month", **decide)  # fmt: skip
     record_stage_entry(cfg, ENTITY, env, stage="feature_checks", op="run",
                        periods=[*COMPARED, "2025-11"], reason="Feature Checks run")  # fmt: skip
-    compared = "the validation period 2025-11 was compared by the run of entry 2"
+    compared = "the validation period 2025-11 was compared by the Feature Checks run of entry 2"
     with pytest.raises(ValueError, match=f"revert_to=0 refused: {compared}"):
         record_decision(config_path, ENTITY, revert_to=0, reason="start over", **decide)
     _write_json(cfg, env, 3, by={"kind": "person", "id": "someone"}, stage="training",
@@ -1090,7 +1110,7 @@ def test_run_periods_are_labels_of_the_configs_period(
     refused = r"periods \['2026-01-31'\] are not month labels.*e.g. '2025-08'"
     with pytest.raises(ValueError, match=refused):
         record_stage_entry(cfg, ENTITY, env, periods=["2025-03", "2026-01-31"], **write)
-    with pytest.raises(ValueError, match="a `run` entry needs `periods`, a non-empty list"):
+    with pytest.raises(ValueError, match="Checks `run` entry needs `periods`, a non-empty list"):
         record_stage_entry(cfg, ENTITY, env, periods=[], **write)
     assert read_entries(audit_log_dir(env, cfg, ENTITY)) == []
 
@@ -1135,3 +1155,164 @@ def test_stale_set_under_a_step_the_config_does_not_run(
     stale = "entry 1 is stale: feature_checks.leakage is not in this config"
     with pytest.raises(ValueError, match=stale):
         resolve_config(cfg, ENTITY, env)
+
+
+def _sign_off(cfg: UseCaseConfig, seq: int, run: str, features: list[str]) -> Entry:
+    """A person's `sign_off` of a run's final list, with its signature, on the sign-off stage."""
+    return _entry(cfg, seq, op="sign_off", stage="sign_off", run_id=run, features=features,
+                  signature=feature_signature(features))  # fmt: skip
+
+
+def _run(cfg: UseCaseConfig, seq: int, stage: str, **operands: object) -> Entry:
+    """A stage's `run` entry built in code."""
+    by = {"kind": "stage", "id": stage}
+    return _entry(cfg, seq, op="run", stage=stage, by=by, reason="run", **operands)
+
+
+def test_a_sign_off_covers_later_runs_of_the_same_feature_list(cfg: UseCaseConfig) -> None:
+    """The sign-off in force for a signature covers a later run with the same final list (a higher
+    budget), not a changed list; a revert past it undoes it (D-125)."""
+    signed, changed = ["age", "income"], ["age"]
+    log = [
+        _run(cfg, 1, "training", run_id="r001"),
+        _sign_off(cfg, 2, "r001", signed),
+        _entry(cfg, 3, op="set", stage="training", path="training.max_iter", to=300),
+        _run(cfg, 4, "training", run_id="r002"),
+    ]
+    sig = feature_signature(signed)
+    assert signed_off(log, sig).run_id == "r001"  # r002 kept the list: still covered
+    assert signed_off(log, feature_signature(changed)) is None  # a changed list: its own
+    log.append(_entry(cfg, 5, op="revert", to_seq=1))
+    assert signed_off(log, sig) is None
+    log.append(_sign_off(cfg, 6, "r003", signed))
+    assert signed_off(log, sig).seq == 6
+
+
+def test_a_sign_off_names_its_run_signature_and_list(cfg: UseCaseConfig) -> None:
+    """Each of the three is required, the signature is the list's and the run is a run
+    number."""
+    for missing in ("run_id", "signature"):
+        fields = {"run_id": "r001", "signature": feature_signature(["age"]), "features": ["age"]}
+        del fields[missing]
+        with pytest.raises(ValidationError, match="op 'sign_off' needs `run_id`, `signature`"):
+            _entry(cfg, op="sign_off", stage="sign_off", **fields)
+    with pytest.raises(ValidationError, match="op 'sign_off' needs a non-empty `features`"):
+        _entry(cfg, op="sign_off", stage="sign_off", run_id="r001", signature="s", features=[])
+    with pytest.raises(ValidationError, match="is not the signature of its features"):
+        _entry(cfg, op="sign_off", stage="sign_off", run_id="r001", features=["age", "income"],
+               signature=feature_signature(["age"]))  # fmt: skip
+    with pytest.raises(ValidationError, match="run_id 'r7' is not a run number such as 'r007'"):
+        _sign_off(cfg, 1, "r7", ["age"])
+    with pytest.raises(ValidationError, match="op 'set' takes no `signature`"):
+        _entry(cfg, op="set", path="training.max_iter", to=300, signature="s")
+
+
+@pytest.mark.parametrize(
+    ("stage", "operands", "message"),
+    [
+        ("training", {}, r"needs \['run_id'\]; missing \['run_id'\]"),
+        ("training", {"run_id": "r001", "periods": ["2025-03"]}, r"not taken \['periods'\]"),
+        ("evaluation", {"run_id": "r001"}, r"missing \['validation_period'\]"),
+        ("feature_checks", {"periods": ["2025-03"], "validation_period": "2025-11"},
+         r"not taken \['validation_period'\]"),
+        ("eda", {"run_id": "r001"}, "not by stage 'eda'"),
+        ("training", {"run_id": "run7"}, "'run7' is not a run number"),
+    ],
+)  # fmt: skip
+def test_a_run_entry_carries_its_stages_operands(
+    cfg: UseCaseConfig, stage: str, operands: dict, message: str
+) -> None:
+    """Feature Checks' run lists periods, Training's names its run, Evaluation's the run and the
+    validation period it scored; nothing else."""
+    with pytest.raises(ValidationError, match=message):
+        _run(cfg, 1, stage, **operands)
+
+
+def test_a_run_entry_stored_with_a_null_operand_loads(cfg: UseCaseConfig) -> None:
+    """A null is no operand: Feature Checks' run stored with `"run_id": null` is accepted."""
+    stored = _run(cfg, 1, "feature_checks", periods=["2025-03"])  # as the writer stores it:
+    data = stored.model_dump(mode="json", by_alias=True, exclude_unset=True)
+    entry = Entry.model_validate({**data, "run_id": None})
+    assert entry.run_id is None and entry.periods == ["2025-03"]
+
+
+def test_a_training_run_without_periods_loads_and_blocks_no_move(
+    config_path: Path, env_path: Path, cfg: UseCaseConfig, env: EnvironmentConfig
+) -> None:
+    """Training's run entry, written by the stage writer, carries its number and no periods; it
+    reads back and never blocks moving the validation period (D-088)."""
+    entry = record_stage_entry(cfg, ENTITY, env, stage="training", op="run", run_id="r001",
+                               replayed_to=0, reason="trained")  # fmt: skip
+    assert (entry.run_id, entry.periods) == ("r001", None)
+    assert read_entries(audit_log_dir(env, cfg, ENTITY)) == [entry]
+    record_decision(config_path, ENTITY, set={"time.validation_period": "2025-12-01"},
+                    reason="one more month", env_path=str(env_path))  # fmt: skip
+    with pytest.raises(ValueError, match="needs \\['run_id'\\]; missing"):
+        record_stage_entry(cfg, ENTITY, env, stage="training", op="run", reason="r")
+
+
+def test_an_evaluation_run_naming_the_validation_period_blocks_nothing(
+    config_path: Path, env_path: Path, cfg: UseCaseConfig, env: EnvironmentConfig
+) -> None:
+    """Evaluation scores the validation period by design: its entry names it in a field of its own,
+    `resolve_config` takes it, and the period may still move away and back; the label is checked
+    like Feature Checks' periods."""
+    write = dict(stage="evaluation", op="run", run_id="r001", reason="evaluated")
+    with pytest.raises(ValueError, match=r"validation_period \['2025-11-30'\] are not month"):
+        record_stage_entry(cfg, ENTITY, env, validation_period="2025-11-30", **write)
+    entry = record_stage_entry(cfg, ENTITY, env, validation_period="2025-11", **write)
+    assert entry.validation_period == "2025-11"
+    assert str(resolve_config(cfg, ENTITY, env).time.validation_period) == "2025-11-30"
+    decide = dict(reason="move", env_path=str(env_path))
+    record_decision(config_path, ENTITY, set={"time.validation_period": "2025-12-01"}, **decide)
+    record_decision(config_path, ENTITY, set={"time.validation_period": "2025-11-01"}, **decide)
+    assert str(resolve_config(cfg, ENTITY, env).time.validation_period) == "2025-11-30"
+
+
+def test_a_dropped_entry_fails_as_an_unknown_op(cfg: UseCaseConfig, env: EnvironmentConfig) -> None:
+    """Automated drops live in the per-run ledger only (D-125): an old `dropped` entry fails."""
+    path = _write_json(cfg, env, 1, by=_rule("selection.importance"), stage="training",
+                       op="dropped", features=["age"])  # fmt: skip
+    unknown = f"(?s){path.name} is not valid.*Input should be 'exclude'"
+    with pytest.raises(ValueError, match=unknown):
+        read_entries(audit_log_dir(env, cfg, ENTITY))
+
+
+def test_the_training_and_evaluation_settings_a_set_may_change() -> None:
+    """Exactly the spec's loggable modelling leaves: every training leaf but `path` and `seed`
+    and the declared level orders rerun from Training; the views and intervals from Evaluation;
+    the slices from EDA, which shows them."""
+    modelling = {p: s for p, s in LOGGABLE_SETTINGS.items() if s in ("training", "evaluation")}
+    training = ["estimator_list", "max_iter", "trials", "time_budget_s", "folds", "fold_repeats",
+                "objective", "tweedie_variance_power", "monotone", "search_space",
+                "selection.cluster", "selection.floor_z", "selection.prune",
+                "categoricals.min_level_client_count", "categoricals.unordered",
+                "calibration.method", "sampling"]  # fmt: skip
+    assert modelling == {
+        "features.order": "training",
+        **{f"training.{leaf}": "training" for leaf in training},
+        "evaluation.skip_views": "evaluation",
+        "evaluation.intervals.replicates": "evaluation",
+        "evaluation.intervals.level": "evaluation",
+    }
+    assert LOGGABLE_SETTINGS["evaluation.slices.top_pct"] == "eda"
+
+
+def test_a_set_on_a_task_filled_setting_records_the_value_in_force(
+    config_path: Path, env_path: Path
+) -> None:
+    """After the objective moves to `tweedie`, a later `set` of the calibration or the power
+    records the value then in force (`mean`, 1.5), not the stored one (`none`, null)."""
+    raw = yaml.safe_load(config_path.read_text())
+    raw["task"] = "regression"
+    raw["data"]["target"] = {"rule": "forward_sum", "column": "spend_cc_vol"}
+    config_path.write_text(yaml.safe_dump(raw))
+    decide = dict(reason="r", env_path=str(env_path))
+    first = record_decision(config_path, ENTITY, set={"training.objective": "tweedie"}, **decide)
+    assert first.from_value == "squared_error"
+    entries = [
+        record_decision(config_path, ENTITY, set={path: value}, **decide)
+        for path, value in (("training.calibration.method", "none"),
+                            ("training.tweedie_variance_power", 1.3))
+    ]  # fmt: skip
+    assert [entry.from_value for entry in entries] == ["mean", 1.5]

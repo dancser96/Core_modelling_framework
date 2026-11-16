@@ -8,25 +8,70 @@ Fields the automation level fills (`levels.py`) have no default here: a dict tha
 so the resolved config validates with this same schema (D-125, D-134). A period (the unit of
 analysis, `time.period`) is held as its last day, the framework's one convention; a config may
 write it as any day the period spec accepts (a month: its first or its last day, D-129). The
-Stage 2 fields (`eda`, `feature_checks`, `features.kinds`) changed in place, with no schema bump
-and no migration (D-136).
+Stage 2 and Stage 3 fields changed in place, with no schema bump and no migration (D-136). The
+modelling choices a task decides (`TASK_CHOICES`) are checked against the task and, left null,
+filled at every validation, so the config states the value in force.
 """
 
 import re
 from datetime import date
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from core_modelling.periods import PERIODS
 
-# FLAML's own metric names (T9): `ap`, not `average_precision`.
-FLAML_METRICS = {
-    "roc_auc", "ap", "log_loss", "f1", "accuracy", "macro_f1", "micro_f1",
-    "r2", "rmse", "mae", "mse", "mape",
-}  # fmt: skip
-Estimator = Literal["lgbm", "xgboost", "catboost"]  # the three families; the forests never (D-037)
+Estimator = Literal["lgbm", "xgboost", "xgb_limitdepth", "catboost"]  # FLAML's names (D-037)
 USE_CASE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]*$"
+TWEEDIE_VARIANCE_POWER = 1.5  # the Tweedie objective's power when the config leaves it null
+# They count positives several times behind the calibration's back; sampling does that job with
+# the prior-shift offset applied. Compared lowercased; a library's aliases are refused by each
+# family's allowed-parameter check.
+CLASS_WEIGHT_PARAMETERS = ("scale_pos_weight", "is_unbalance", "class_weight", "class_weights",
+                           "auto_class_weights")  # fmt: skip
+# Names each family's `fixed_params` sets, refused in the search space (compared lowercased):
+# they belong to training.objective, training.seed, training.monotone and the encoder, or the
+# framework fixes them. Each maps to the field to use instead (None: fixed).
+FRAMEWORK_PARAMETERS: dict[str, str | None] = {
+    "objective": "training.objective", "loss_function": "training.objective",
+    "tweedie_variance_power": "training.tweedie_variance_power",
+    "random_state": "training.seed", "random_seed": "training.seed", "seed": "training.seed",
+    "monotone_constraints": "training.monotone",
+    "categorical_feature": "features.kinds", "cat_features": "features.kinds",
+    "enable_categorical": "training.categoricals.unordered",
+    "feature_types": "training.categoricals.unordered",
+    "n_jobs": None, "thread_count": None, "nthread": None, "num_threads": None, "missing": None,
+    "allow_writing_files": None, "use_best_model": None,
+}  # fmt: skip
+# The per-task modelling choices, plain data (D-050): the allowed values and the default of each.
+# `tasks.TASK_SPECS` carries them too; they live here because `tasks.py` imports pyspark and the
+# config package, so the schema cannot import it. Metric names are FLAML's where it has one (T9:
+# `ap`); the two deviances are the framework's own (the Tweedie one at a power of 1.5). A
+# calibration default is the decision's entry, else the objective's, else `calibration_default`.
+TASK_CHOICES: dict[str, dict] = {
+    "binary": {
+        "metrics": ["log_loss", "roc_auc", "ap"],
+        "metric_by_decision": {"probability": "log_loss", "threshold": "log_loss",
+                               "ranking": "roc_auc", "top_n": "roc_auc"},
+        "objectives": ["log_loss"],
+        "objective_default": "log_loss",
+        "calibration_methods": ["platt", "beta", "none"],
+        "calibration_by_decision": {"probability": "platt"},
+        "calibration_by_objective": {},
+        "calibration_default": "none",
+    },
+    "regression": {
+        "metrics": ["rmse", "mae", "r2", "tweedie_deviance", "poisson_deviance"],
+        "metric_by_decision": {"probability": "rmse", "threshold": "rmse", "ranking": "rmse",
+                               "top_n": "rmse"},
+        "objectives": ["squared_error", "tweedie", "poisson", "absolute_error", "huber"],
+        "objective_default": "squared_error",
+        "calibration_methods": ["mean", "none"],
+        "calibration_by_decision": {},
+        "calibration_by_objective": {"tweedie": "mean", "poisson": "mean"},
+        "calibration_default": "none",
+    },
+}  # fmt: skip
 
 
 class StrictModel(BaseModel):
@@ -44,29 +89,35 @@ def _unique_names(steps: list) -> list:
     return steps
 
 
-def _check_metric(value: str | None) -> str | None:
-    """Refuse a metric name FLAML does not know (T9)."""
-    if value is not None and value not in FLAML_METRICS:
-        raise ValueError(
-            f"{value!r} is not a FLAML metric name; use one of {sorted(FLAML_METRICS)} "
-            "(FLAML says 'ap', not 'average_precision'; T9)"
-        )
-    return value
+Name = Annotated[str, Field(pattern=r"^\s*\S")]  # a source or column name: not empty or blank
 
 
-Metric = Annotated[str | None, AfterValidator(_check_metric)]
+class PreviousModel(StrictModel):
+    """A baseline: a score column of a source, judged like the model."""
+
+    previous_model: Name
+
+
+class HistoricPredictedRate(StrictModel):
+    """A baseline: one rate in use (a number), or a column judged like a previous model."""
+
+    historic_predicted_rate: float | Name
+
+
+Baseline = Literal["population_base_rate", "single_feature"] | PreviousModel | HistoricPredictedRate
 
 
 class Decision(StrictModel):
-    """How the scores are used; declared before any result and never loggable (§4.3)."""
+    """How the scores are used; declared before any result and never loggable (§4.3). `metric`
+    left null is filled from the type (`TASK_CHOICES`); `UseCaseConfig` checks it against the
+    task."""
 
     type: Literal["top_n", "threshold", "ranking", "probability"]
     n: int | None = Field(default=None, ge=1)
-    metric: Metric = None
-    gate_metric: Metric = None
-    baselines: list[
-        Literal["population_base_rate", "previous_model", "historic_predicted_rate"]
-    ] = Field(default=["population_base_rate"], min_length=1)
+    metric: str | None = None
+    baselines: list[Baseline] = Field(
+        default=["population_base_rate", "single_feature"], min_length=1
+    )
 
     @model_validator(mode="after")
     def _check_n_matches_type(self) -> "Decision":
@@ -80,9 +131,6 @@ class Decision(StrictModel):
                 f"{self.type!r}: leave decision.n null"
             )
         return self
-
-
-Name = Annotated[str, Field(pattern=r"^\s*\S")]  # a source or column name: not empty or blank
 
 
 class SourceKeys(StrictModel):
@@ -299,15 +347,32 @@ class Candidates(StrictModel):
 class Features(StrictModel):
     """The candidates and the kind overrides (`{column: numeric | categorical}`, over the
     Spark-schema default; a key naming no candidate is refused when the frames are built, since
-    the candidates are patterns until then). `excluded`, `kept` and `held` are written by the
-    audit log's replay and empty in a file; for Training a held feature acts as an excluded
-    feature without a final decision (D-134)."""
+    the candidates are patterns until then). `order` declares an ordered categorical's levels,
+    lowest first; a name that is no candidate, or no categorical, is refused when the frames are
+    built. `excluded`, `kept` and `held` are written by the audit log's replay and empty in a
+    file; for Training a held feature acts as an excluded feature without a final decision
+    (D-134)."""
 
     candidates: Candidates = Candidates()
     kinds: dict[str, Literal["numeric", "categorical"]] = {}
+    order: dict[str, list[str]] = {}
     excluded: list[str] = []
     kept: list[str] = []
     held: list[str] = []
+
+    @field_validator("order")
+    @classmethod
+    def _check_order_levels(cls, order: dict[str, list[str]]) -> dict[str, list[str]]:
+        """Each declared order lists at least one level, each once: a level's position is its
+        code."""
+        for feature, levels in order.items():
+            repeated = sorted({level for level in levels if levels.count(level) > 1})
+            if not levels or repeated:
+                problem = f"repeats {repeated}" if repeated else "is empty"
+                raise ValueError(
+                    f"features.order.{feature} {problem}: list every train level once, lowest first"
+                )
+        return order
 
 
 class Strata(StrictModel):
@@ -468,30 +533,70 @@ EVERY_CHECK = FeatureChecks(
 
 
 class Selection(StrictModel):
-    """Automated feature selection by rule, on the train split only; the floor's statistic comes
-    from the per-task spec (binary: univariate AUC)."""
+    """Automated feature selection by rule, on the train split only: one representative per
+    redundancy cluster, the floor (dropped below a train concordance of 0.5 + `floor_z` · SE;
+    null: off) and importance pruning against noise columns."""
 
-    univariate_floor: float = Field(default=0.515, ge=0.5, le=1)
-    importance_floor: float | None = Field(default=None, ge=0)
+    cluster: bool = True
+    floor_z: float | None = Field(default=2.0, gt=0)
+    prune: bool = True
 
 
 class Categoricals(StrictModel):
-    """Rarer and unseen levels map to `__other__` (D-037)."""
+    """A level seen in fewer distinct train clients joins `__other__` (D-037); an unordered
+    categorical is declared to the library (`native`) or passed as its integer codes (`codes`)."""
 
-    min_level_count: int = Field(default=50, ge=1)
+    min_level_client_count: int = Field(default=50, ge=1)
+    unordered: Literal["native", "codes"] = "native"
 
 
 class Calibration(StrictModel):
-    """The calibration step, fitted out-of-fold inside train (D-049)."""
+    """The calibration step, fitted out-of-fold inside train (D-049). `method` left null is
+    filled from the task and the decision (`TASK_CHOICES`); `UseCaseConfig` checks it against
+    the task."""
 
-    method: Literal["platt", "isotonic", "none"] = "platt"
+    method: str | None = None
+
+
+class SearchRange(StrictModel):
+    """A searched leaf of `training.search_space`: `low` to `high`, on a log scale or not, whole
+    numbers or not; `start` is the first trial's value (left out: the family's default start)."""
+
+    low: int | float
+    high: int | float
+    log: bool
+    integer: bool
+    start: int | float | None = None
+
+    @model_validator(mode="after")
+    def _check_range(self) -> "SearchRange":
+        """`low` below `high` (a constant is written `{value: …}`), above 0 on a log scale,
+        whole numbers for an integer range, and `start` inside the range."""
+        bounds = [self.low, self.high, *([] if self.start is None else [self.start])]
+        if self.low >= self.high:
+            raise ValueError(
+                f"low {self.low} must be below high {self.high}; a constant is written {{value: …}}"
+            )
+        if self.log and self.low <= 0:
+            raise ValueError(f"a log range needs low above 0, got {self.low}")
+        if self.integer and not all(isinstance(bound, int) for bound in bounds):
+            raise ValueError(f"an integer range takes whole numbers, got {bounds}")
+        if self.start is not None and not self.low <= self.start <= self.high:
+            raise ValueError(f"start {self.start} lies outside {self.low} … {self.high}")
+        return self
+
+
+class SearchValue(StrictModel):
+    """A leaf of `training.search_space` held constant."""
+
+    value: bool | int | float | str
 
 
 class Sampling(StrictModel):
-    """Train-only sampling, declared by a person (D-117): one method with its one parameter."""
+    """Train-only sampling, declared by a person (D-117): one method with its one parameter. It
+    draws with `training.seed`, which the audit log never sets, so no person picks the sample."""
 
     method: Literal["negative_downsampling", "client_sample"]
-    seed: int = 42
     keep_fraction: float | None = Field(default=None, gt=0, lt=1)
     share: float | None = Field(default=None, gt=0, lt=1)
 
@@ -506,18 +611,118 @@ class Sampling(StrictModel):
 
 
 class Training(StrictModel):
-    """The modelling path, model families, budgets, seeds, selection, calibration, sampling."""
+    """The modelling path, the families and their budgets, the seed, the folds, the objective,
+    the monotone constraints, the search ranges, selection, the categoricals, calibration and
+    sampling. `objective` and `tweedie_variance_power` left null are filled from the task
+    (`TASK_CHOICES`); `UseCaseConfig` checks them against the task."""
 
     path: Literal["automl"] = "automl"
-    estimator_list: list[Estimator] = Field(default=["lgbm", "xgboost", "catboost"], min_length=1)
+    estimator_list: list[Estimator] = Field(
+        default=["lgbm", "xgboost", "xgb_limitdepth", "catboost"], min_length=1
+    )
     max_iter: int = Field(ge=1)
+    trials: dict[Estimator, Annotated[int, Field(ge=1)]] | None = None
     time_budget_s: int | None = Field(default=None, ge=1)
     seed: int = 42
-    search_space: dict[str, dict[str, object]] = {}
+    folds: int = Field(default=5, ge=2)
+    fold_repeats: int = Field(default=1, ge=1)
+    objective: str | None = None
+    tweedie_variance_power: float | None = Field(default=None, gt=1, lt=2)
+    monotone: dict[str, Literal["increasing", "decreasing"]] = {}
+    search_space: dict[Estimator, dict[str, SearchRange | SearchValue]] = {}
     selection: Selection = Selection()
     categoricals: Categoricals = Categoricals()
     calibration: Calibration = Calibration()
     sampling: Sampling | None = None
+
+    @field_validator("estimator_list")
+    @classmethod
+    def _check_families_once(cls, families: list[str]) -> list[str]:
+        """Each family listed once: the budget is split over the list."""
+        repeated = sorted({family for family in families if families.count(family) > 1})
+        if repeated:
+            raise ValueError(f"training.estimator_list repeats {repeated}; list each family once")
+        return families
+
+    @model_validator(mode="after")
+    def _check_trials_name_the_families(self) -> "Training":
+        """`trials` replaces `max_iter` with a budget per family, so it names every listed family
+        and no other."""
+        if self.trials is not None and set(self.trials) != set(self.estimator_list):
+            raise ValueError(
+                f"training.trials names {sorted(self.trials)}; it must name exactly the listed "
+                f"families {sorted(self.estimator_list)}, or be left null to split max_iter"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_search_space_families(self) -> "Training":
+        """A range override applies to a listed family only."""
+        unlisted = sorted(set(self.search_space) - set(self.estimator_list))
+        if unlisted:
+            raise ValueError(
+                f"training.search_space names {unlisted}, which training.estimator_list does not "
+                f"list ({self.estimator_list}); list the family or drop its entry"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_no_class_weights(self) -> "Training":
+        """A class weight changes the class balance without the calibration knowing, so every
+        score would come out too high; sampling does the same job with the offset."""
+        for family, space in self.search_space.items():
+            weights = sorted(name for name in space if name.lower() in CLASS_WEIGHT_PARAMETERS)
+            if weights:
+                raise ValueError(
+                    f"training.search_space.{family} sets {weights}: a class weight shifts every "
+                    "score without the calibration knowing; use training.sampling: "
+                    "{method: negative_downsampling, keep_fraction: …}, which the prior-shift "
+                    "offset undoes"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _check_no_framework_parameters(self) -> "Training":
+        """A parameter the framework sets for every fit is not the search space's: a `{value}`
+        there would fight `fixed_params` (the objective, the seed, the constraints, the encoder's
+        categoricals, the threads)."""
+        for family, space in self.search_space.items():
+            owned = [name for name in space if name.lower() in FRAMEWORK_PARAMETERS]
+            if owned:
+                uses = [
+                    f"{name}: use {FRAMEWORK_PARAMETERS[name.lower()]}"
+                    if FRAMEWORK_PARAMETERS[name.lower()]
+                    else f"{name}: fixed by the framework"
+                    for name in owned
+                ]
+                raise ValueError(
+                    f"training.search_space.{family} sets what the framework sets for every fit "
+                    f"({'; '.join(uses)}); drop the entry"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _check_lgbm_monotone_method(self) -> "Training":
+        """The method is a constant (`{value}`); LightGBM's `advanced` broke the constraint when
+        measured, and `intermediate` with `colsample_bynode` falls back to `basic` with only a
+        warning."""
+        space = self.search_space.get("lgbm", {})
+        method = space.get("monotone_constraints_method")
+        path = "training.search_space.lgbm.monotone_constraints_method"
+        if isinstance(method, SearchRange):
+            raise ValueError(f"{path} names a method, written {{value: intermediate}}, not a range")
+        chosen = str(method.value).lower() if method is not None else None
+        if chosen == "advanced":
+            raise ValueError(
+                f"{path}: advanced broke the monotone constraint when measured; use basic (the "
+                "default) or intermediate"
+            )
+        if chosen == "intermediate" and "colsample_bynode" in space:
+            raise ValueError(
+                f"{path}: intermediate with colsample_bynode makes LightGBM fall back to basic "
+                "with only a warning; drop colsample_bynode"
+            )
+        return self
 
 
 class Slices(StrictModel):
@@ -527,23 +732,20 @@ class Slices(StrictModel):
     top_n: list[Annotated[int, Field(ge=1)]] = []
 
 
+class Intervals(StrictModel):
+    """The client bootstrap behind every interval: its replicates and the coverage."""
+
+    replicates: int = Field(default=200, ge=20)  # fewer give no usable percentile interval
+    level: float = Field(default=0.95, gt=0, lt=1)
+
+
 class Evaluation(StrictModel):
-    """Metric slices and the extended views to add (the core views always render)."""
+    """Metric slices, the report's views to leave out and the intervals."""
 
     slices: Slices
-    views: list[str] = []
-
-
-class PromotionGate(StrictModel):
-    """The gate metric's minimum; null until the lifecycle stage is built."""
-
-    min: float | None = None
-
-
-class Lifecycle(StrictModel):
-    """register and promote settings."""
-
-    promotion_gate: PromotionGate = PromotionGate()
+    # Any name for now: the view names are Evaluation's, which checks them when it is built.
+    skip_views: list[str] = []
+    intervals: Intervals = Intervals()
 
 
 class Inference(StrictModel):
@@ -591,10 +793,60 @@ class UseCaseConfig(StrictModel):
     feature_checks: FeatureChecks = EVERY_CHECK
     training: Training
     evaluation: Evaluation
-    lifecycle: Lifecycle = Lifecycle()
     inference: Inference = Inference()
     monitoring: Monitoring = Monitoring()
     housekeeping: dict[str, object] | None = None
+
+    @model_validator(mode="after")
+    def _fill_task_defaults(self) -> "UseCaseConfig":
+        """Fill the nulls the task and the decision decide (`_fill_task_nulls`), so the config
+        states the value in force, recording them as `housekeeping.task_filled` (path → value).
+        A recorded value still unchanged at a later validation (a replayed state, a dump) is
+        derived again, so a `set` of the objective refills the calibration; any other value is
+        explicit and stays (a `set` takes its path off the record, D-125)."""
+        # The value compare keeps a recorded path edited outside the log (a dump re-validated,
+        # e.g. `variant(training={"objective": "tweedie"})`) explicit instead of re-deriving it.
+        recorded = (self.housekeeping or {}).get("task_filled", {})
+        for path, value in recorded.items():
+            *parents, leaf = path.split(".")
+            node = self
+            for name in parents:
+                node = getattr(node, name)
+            if getattr(node, leaf) == value:
+                setattr(node, leaf, None)
+        filled = _fill_task_nulls(self)
+        if filled or recorded:
+            self.housekeeping = {**(self.housekeeping or {}), "task_filled": filled}
+        return self
+
+    @model_validator(mode="after")
+    def _check_task_choices(self) -> "UseCaseConfig":
+        """The metric, the objective and the calibration method are ones the task allows."""
+        choices = TASK_CHOICES[self.task]
+        for path, value, allowed in (
+            ("decision.metric", self.decision.metric, choices["metrics"]),
+            ("training.objective", self.training.objective, choices["objectives"]),
+            ("training.calibration.method", self.training.calibration.method,
+             choices["calibration_methods"]),
+        ):  # fmt: skip
+            if value not in allowed:
+                raise ValueError(
+                    f"{path} {value!r} is not one the {self.task} task allows: {allowed} (null "
+                    "takes the task's default)"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _check_tweedie_power(self) -> "UseCaseConfig":
+        """The variance power belongs to the Tweedie objective only."""
+        power, objective = self.training.tweedie_variance_power, self.training.objective
+        if power is not None and objective != "tweedie":
+            raise ValueError(
+                f"training.tweedie_variance_power {power} is read only under training.objective "
+                f"'tweedie'; the objective is {objective!r}: leave the power null in the config "
+                "file, or through the audit log set training.tweedie_variance_power to null first"
+            )
+        return self
 
     @model_validator(mode="after")
     def _check_snapshot_in_window(self) -> "UseCaseConfig":
@@ -636,6 +888,32 @@ class UseCaseConfig(StrictModel):
                 "'fx-activation'"
             )
         return value
+
+
+def _fill_task_nulls(cfg: UseCaseConfig) -> dict[str, object]:
+    """Fill, in place and in this order, the null `decision.metric` (by the decision type), the
+    null `training.objective`, the null `training.tweedie_variance_power` under `tweedie` and the
+    null `training.calibration.method` (the decision's entry, else the objective's, else the
+    task's default), from `TASK_CHOICES`; returns path → value filled."""
+    choices, decision, training = TASK_CHOICES[cfg.task], cfg.decision, cfg.training
+    filled: dict[str, object] = {}
+    if decision.metric is None:
+        decision.metric = choices["metric_by_decision"][decision.type]
+        filled["decision.metric"] = decision.metric
+    if training.objective is None:
+        training.objective = choices["objective_default"]
+        filled["training.objective"] = training.objective
+    if training.tweedie_variance_power is None and training.objective == "tweedie":
+        training.tweedie_variance_power = TWEEDIE_VARIANCE_POWER
+        filled["training.tweedie_variance_power"] = TWEEDIE_VARIANCE_POWER
+    if training.calibration.method is None:
+        training.calibration.method = (
+            choices["calibration_by_decision"].get(decision.type)
+            or choices["calibration_by_objective"].get(training.objective)
+            or choices["calibration_default"]
+        )
+        filled["training.calibration.method"] = training.calibration.method
+    return filled
 
 
 def snapshot_period(cfg: UseCaseConfig) -> date:

@@ -14,7 +14,7 @@ import copy
 LEVELS = ("autonomous", "assisted")
 
 LEVEL_DEFAULTS: dict[str, dict[str, object]] = {
-    "training.max_iter": {"autonomous": 50, "assisted": 200},
+    "training.max_iter": {"autonomous": 60, "assisted": 200},  # 15 and 50 per default family
     "evaluation.slices.top_pct": {"autonomous": [0.01, 0.1], "assisted": [0.01, 0.05, 0.1]},
 }
 
