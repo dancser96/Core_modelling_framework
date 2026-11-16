@@ -120,14 +120,19 @@ Everything committed travels with git. These don't:
      folder name encodes the repo's absolute path, so it differs per machine. Open a session in
      the repo once first, so the folder exists. This is the only place where Claude's cross-session
      "rules" live outside the repo; sessions and chat history do not transfer and are not needed.
-   - **User settings** `~/.claude/settings.json`: currently only the model choice. Copy or set it.
+   - **User settings** `~/.claude/settings.json`: the model choice, the per-model effort
+     (`high`) and `showThinkingSummaries`. Copy or set it.
+   - **Sleep.** The keep-awake hook (`.claude/hooks/keep_awake.sh`) works on macOS only. Set the
+     PC not to sleep on power while agents work: every wake re-writes each running subagent's
+     context (`docs/context/lessons.md`, T41).
    - **User-level skills** `~/.claude/skills/`: the synced `skill-creator` (kept user-level by
      D-013). It re-syncs from the account; nothing to copy.
    - **Plugins** `~/.claude/plugins/installed_plugins.json`: `pyright-lsp` (D-013). Re-enable it
      from the marketplace on the PC rather than copying the file.
    - **Gitignored repo files** are item 3 below.
 3. **Gitignored local files**, if they exist by then: `conf/local/` (copy),
-   `.claude/settings.local.json` (copy), `data/` (regenerate the synthetic data from its seed
+   `.claude/settings.local.json` (copy: it keeps the account's synced plugins and connectors out
+   of this repo), `data/` (regenerate the synthetic data from its seed
    rather than copying it).
 4. **Verify:** `pytest` green, then run step 0's proof on the PC
    (`docs/components/test_harness.md`).

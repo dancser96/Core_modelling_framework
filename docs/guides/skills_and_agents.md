@@ -11,7 +11,8 @@ gets them through git.
 |---|---|---|
 | `CLAUDE.md` | Every session, always | Rules that apply to everything (keep it lean) |
 | Skill `.claude/skills/<name>/SKILL.md` | Only when relevant (matched by its description) or asked for by name | Repeatable procedures and checklists |
-| Subagent `.claude/agents/<name>.md` | When delegated to; runs in its own fresh context | Independent review / audit without polluting the main context |
+| Subagent `.claude/agents/<name>.md` | When delegated to; runs in its own fresh context | Independent review / audit without polluting the main context; delegated building, research and doc writing |
+| Hook `.claude/hooks/<name>`, wired in `.claude/settings.json` | Automatically, on a harness event | What must happen every time without anyone remembering it |
 
 ## Current inventory
 
@@ -31,10 +32,16 @@ gets them through git.
 | Command | `/brief` | Briefing for the daily Lead DS sync; refreshes the shared `worknotes/sync.md` |
 | Command | `/handover <topic>` | Writes a chat handover for one topic to `worknotes/handovers/<topic>.md` |
 | Command | `/resume <topic>` | Resumes a topic in a new chat from its handover |
+| Command | `/efficiency` | Runs `.claude/scripts/session_usage.py` and reports where the tokens went: by model, thread, context size, cache rewrites and subagent (D-072 (q)) |
 | Subagent | `code-reviewer` | Fresh-context review for simplicity, clarity, structure |
 | Subagent | `ml-correctness-auditor` | Leakage, time separation, evaluation and calibration invariants |
 | Subagent | `compat-guardian` | Forward compatibility: config schemas, public API, artifact formats |
 | Subagent | `silent-failure-hunter` *(vendored)* | Swallowed exceptions, silent fallbacks, data coercion that hides failures |
+| Subagent | `builder` | Builds one minor step from a brief: code and its tests in the files the brief names. Opus, `high`; carries the §1 rules, the test and no-Spark rules, the report format and the stop rule, and the essence of `bank-parity-check`, `systematic-debugging`, `verification-before-completion` and `new-component`'s consistency rules, because a skill is only applied when someone loads it (D-072 (o)) |
+| Subagent | `researcher` | Gathers and checks evidence against the pinned versions, with a source for every claim; never designs. Sonnet, `high` |
+| Subagent | `doc-writer` | Writes docs from substance given in the brief, to the §8 style; never decides what is true. Opus, `high` |
+| Hook | `keep_awake.sh` | Before every tool call: keeps the Mac awake for an hour, so background agents are not stalled by idle sleep (`lessons.md` T41). Does nothing on Linux and WSL |
+| Hook | `compact_gate.py` | Before an auto-compaction: lets it through only when the main thread's last tool call wrote a handover, or at 600k tokens. After a compaction: adds that handover back (D-072 (p)) |
 | Plugin | `pyright-lsp` | Live Python type checking for Claude (enabled in `.claude/settings.json`; optional local `pyright`) |
 
 Vendored items are adapted to this repo; sources, commits and local changes are in
@@ -67,10 +74,12 @@ name: my-agent
 description: When Claude should delegate to it.
 tools: Read, Grep, Glob, Bash     # grant the minimum
 model: inherit                    # or sonnet / opus / haiku
+effort: high                      # optional; a model or effort on the Agent call overrides both
+autoCompactWindow: 1000000        # every agent here: the 300k window is for the main thread only
 ---
 You are ... (role, checklist, output format)
 ```
-Manage subagents with `/agents`. If a new one doesn't show up, restart Claude Code.
+Manage subagents with `/agents`. A new or changed file is picked up within seconds.
 
 ## Adding a skill or subagent (process)
 

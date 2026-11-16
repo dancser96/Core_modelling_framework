@@ -2,6 +2,35 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-11-16 — Claude Code usage measured, and the harness changed on it
+- **Measured** from every session transcript (30 Sep to 16 Nov: 16.6k requests, 394 threads) and
+  the Mac's power log, at list prices as one unit across models. Cache writes are 47% of the
+  spend, cache reads 29%, output 24%; subagents 53%; Fable 34%.
+- **Findings.** Whole-context cache rewrites were 23% of the spend. The largest group: the Mac
+  idle-sleeps under background subagents and each wake re-writes every agent's context (T41:
+  248 rewrites, about 11%, about 65 agent-hours stalled). 58% of main-thread requests ran above
+  300k tokens of context. A `general-purpose` agent starts at 48k tokens, the repo's own at 20k.
+  About nine in ten main-thread requests ran at `xhigh`.
+- **Changed, on the EDS's go** (D-072 (o) to (q)): a keep-awake hook; the worker agents
+  `builder`, `researcher` and `doc-writer`, with `delegation` routing to them; `/efficiency`
+  (`.claude/scripts/session_usage.py`); the default effort `high` (user settings);
+  auto-compaction only right after a checkpoint, window 300k (`.claude/hooks/compact_gate.py`);
+  the account's synced plugins and connectors hidden in this repo
+  (`.claude/settings.local.json`).
+- **Not done.** The third-party token-saving plugin the EDS asked about: it cuts the middle out
+  of long Bash and agent output, which reviewers here read in full. A one-hour cache for
+  subagents: the setting exists, but with the Mac awake the five-minute cache is cheaper.
+- **Skills never loaded in 32 active days** (`bank-parity-check`, `systematic-debugging`,
+  `verification-before-completion`, `new-component`): on the EDS's word their essence is now in
+  the `builder` prompt, and the verification and root-cause rules are in `CLAUDE.md` §9. The
+  skill files stay as the long form.
+- **Progress visibility, on the EDS's go** (D-072 (r)): a status-line rule for the main thread in
+  `CLAUDE.md` §9, and `showThinkingSummaries: true` in the user settings. The advisor tool stays
+  off until there is an `/efficiency` baseline (each call re-reads the whole conversation
+  uncached at the advisor's price). `drop_block` does not apply: Claude Code owns its requests.
+- **Unverified until it happens:** a real auto-compaction through the gate. Its logic is tested
+  on real and constructed transcripts; the harness side has not been triggered yet.
+
 ### 2026-11-13 → 2026-11-14 — Stage 3 major step 1 (the spec and Foundations): built, with the EDS for review 1
 - The EDS approved the plan by starting the build (`worknotes/m2_3_modelling/plan.md`, the
   status table). Fable holds the main thread; Opus builds and reviews, Sonnet propagates.

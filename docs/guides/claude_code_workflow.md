@@ -70,6 +70,24 @@ resume on either machine.
   parallel by default: subagents for independent pieces, long jobs in the background
   (`CLAUDE.md` §1 workflow, D-072). The `delegation` skill is the procedure; "delegate this" or
   "in parallel" calls it explicitly.
+- **A long build compacts itself at checkpoints.** Claude ends every minor step by writing
+  `worknotes/handovers/<topic>.md`. Once the context is past 300k tokens, auto-compaction goes
+  through right after such a checkpoint and nowhere else, except at 600k tokens, and
+  the checkpoint is added back to the new context (D-072 (p)). A manual `/compact` always
+  works. In a conversation nothing is compacted for you: run `/handover <topic>` before a long
+  break, otherwise the whole context is re-written at full price when you return after more
+  than an hour.
+- **Keep the lid open during a build.** A hook keeps the Mac awake for an hour after each tool
+  call, but a closed lid sleeps it anyway, and every wake then costs each running subagent a
+  full re-write of its context (`docs/context/lessons.md`, T41).
+- **`/efficiency`** after a major step shows where the tokens went: by model, thread, context
+  size, cache rewrites and subagent (D-072 (q)).
+- The default effort is `high`, set per model in the user settings. `xhigh` goes to the
+  ML-correctness audit and to the builders the routing plan names.
+- **Seeing what is happening.** `showThinkingSummaries: true` in the user settings shows the
+  text of each thinking block in VS Code (otherwise only "Thought for 12s"); reload the window
+  after setting it, and set it at the start of a session. The main thread also posts one status
+  line at each minor-step boundary and agent report (`CLAUDE.md` §9).
 - Strong-model sessions use up plan limits quickly. Keep tasks small, and use `/model` to drop to
   a lighter model only for mechanical sessions (renames, moving files), not ones that write the
   docs you read. `delegation` sends only mechanical, fully checked pieces to sonnet or haiku;

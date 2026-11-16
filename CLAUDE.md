@@ -104,13 +104,17 @@ complete or "future-proof" code. When in doubt, write less.
 **Parallel by default** (D-072): split the work into independent pieces and run them at the same
 time, using subagents as much as possible. The `delegation` skill is the procedure (the split,
 which model takes which piece, the brief template, integration); in short:
-- delegate research, reviews and audits, and independent code, test or doc pieces, to subagents;
+- delegate research, reviews and audits, and independent code, test or doc pieces, to subagents
+  (`researcher`, `builder`, `doc-writer` and the review agents of §10);
 - run long jobs (data generation, slow tests) in the background meanwhile;
 - give each subagent a complete brief (goal, files, constraints, what to report), since it starts
   with no context, and give parallel agents disjoint files;
 - integrate and verify every result yourself;
 - keep on the main thread only what needs the whole picture or must happen in order;
 - run at most one memory-heavy job at a time (the dev machine's memory is the limit);
+- end every minor step with a checkpoint (`worknotes/handovers/<topic>.md`, written as the last
+  tool call): the main thread's context is compacted only there, so a long build stays small
+  without losing state (D-072 (p));
 - on a Fable session, start every major task with a routing plan shown with the plan: each piece
   with its agent, model and effort. Fable keeps design, integration, the ML-correctness audit
   and the architecturally hardest code pieces (25–30% of the tokens at most); Opus, Sonnet and
@@ -347,7 +351,7 @@ Each fact has **one owner doc**; every other doc links to it instead of repeatin
 | An environment fact changes (versions, bank behaviour) | `docs/context/environment.md` + `requirements.txt` |
 | A doc is added, renamed or deleted | `docs/README.md` (reading order and/or stage → component map) + `docs/components/README.md` index |
 | A new component | New doc from the template via **new-component** + components index + stage map in `docs/README.md` + UPDATES row + roadmap backlog |
-| A new skill, agent or command | §10 + `docs/guides/skills_and_agents.md` |
+| A new skill, agent, command or hook | §10 + `docs/guides/skills_and_agents.md` |
 | Scope, goals, priorities or roles change | `docs/context/project.md` (+ `docs/roadmap.md` if phasing changes) |
 
 **Small prompt, small diff.** A remark round, a question round or a rename changes the code and
@@ -407,13 +411,20 @@ numbered list for a flow, nested bullets for a tree and a narrow table for a map
   - For genuine choices, lay out the options with when-to-use guidance and a recommendation.
   - Match the altitude to the phase: directions first, details when that component is designed.
 - **Verify, don't assume.** Check library behaviour against the pinned version. Say when something is
-  opinion or unverified.
+  opinion or unverified. Nothing is done, fixed or passing without output from a command run
+  after the last edit, and a subagent's report is a claim until its diff and output are seen. A
+  bug gets its root cause before a fix: read the whole error, reproduce it, check
+  `docs/context/lessons.md`, one hypothesis at a time; after three failed fixes, stop and
+  question the design with the EDS.
+- **Keep the EDS posted.** On the main thread, write one status line at each minor-step boundary
+  and whenever an agent reports: what finished, what is running, what comes next. One line, not
+  a narrative.
 - **Push back** when a request leads to over-engineering or a correctness risk: explain why and offer
   the simpler option. Ruthless-mentor tone, not adversarial.
 
 ---
 
-## 10. Skills, subagents and commands (in this repo)
+## 10. Skills, subagents, commands and hooks (in this repo)
 
 | Kind | Name | Use when |
 |---|---|---|
@@ -429,10 +440,16 @@ numbered list for a flow, nested bullets for a tree and a narrow table for a map
 | Skill | `claude-md-improver` / `/revise-claude-md` | Auditing CLAUDE.md or capturing session learnings |
 | Command | `/brief` | Before the daily Lead DS sync, or "what happened recently?" |
 | Command | `/handover <topic>` / `/resume <topic>` | Moving a long context to a new chat, per topic |
+| Command | `/efficiency` | After each major step, or "was that efficient?": where the tokens went and what could have been cheaper |
+| Subagent | `builder` | Every delegated code or test piece (Opus, `high`; `model: sonnet` for mechanical ones) |
+| Subagent | `researcher` | Every delegated research or fact-check piece (Sonnet, `high`); it never designs |
+| Subagent | `doc-writer` | Every delegated doc piece, from substance given in the brief (Opus, `high`) |
 | Subagent | `code-reviewer` | Before declaring any code change done (fresh-context review) |
 | Subagent | `silent-failure-hunter` | Changes to error handling, fallbacks, coercion, IO or validation |
 | Subagent | `ml-correctness-auditor` | Changes to targets, dataset/splits, features, training, evaluation, calibration, inference |
 | Subagent | `compat-guardian` | Changes to config schemas, public API or artifact formats |
+| Hook | `keep_awake.sh` | Automatic: keeps the Mac awake for an hour after each tool call (T41) |
+| Hook | `compact_gate.py` | Automatic: lets auto-compaction through only right after a checkpoint, and adds the checkpoint back (D-072 (p)) |
 
 Vendored items and their sources: `.claude/skills/SOURCES.md`. How to add more:
 `docs/guides/skills_and_agents.md`.
@@ -470,5 +487,5 @@ docs/architecture.md       target design
 docs/decisions.md          decision log
 docs/components/           one doc per component or versioned artifact
 docs/guides/               setup (WSL2 / macOS), Claude Code workflow, skills & agents, EDA + Feature Checks FAQ
-.claude/                   project skills, subagents and commands
+.claude/                   project skills, subagents, commands, hooks and scripts
 ```
