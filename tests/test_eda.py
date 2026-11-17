@@ -56,9 +56,9 @@ from core_modelling.tasks import TASK_SPECS
 
 ENTITY = "entity_a"
 SETTINGS = SETTINGS_PATHS_BY_STAGE["eda"]
-TABLES = {"cells", "client_constant", "population", "funnel", "sources", "target_per_period",
-          "ranking", "correlation", "slices", "capture_curve", "profile", "bins", "levels",
-          "quartiles", "per_period", "strata", "reference_groups",
+TABLES = {"cells", "edges", "client_constant", "population", "funnel", "sources",
+          "target_per_period", "ranking", "correlation", "slices", "capture_curve", "profile",
+          "bins", "levels", "quartiles", "per_period", "strata", "reference_groups",
           "concordance_per_period"}  # fmt: skip
 # The report's sections and subsections in order (a deep dive's and a tag's names between).
 HEADINGS = ["Summary", "Choices", "How to read", "Headline", "Warnings", "Core",
@@ -86,6 +86,20 @@ def test_the_folder_holds_every_file_and_table(result: StageResult) -> None:
     extra = {"target_quartiles"} if result.config.task == "regression" else set()
     assert set(tables) == TABLES | extra and meta["stage"] == "eda"
     assert not (folder.parent / "feature_checks").exists()  # the stale judgement is gone
+
+
+def test_the_edges_table_holds_each_numerics_edges_in_order(result: StageResult) -> None:
+    """`tables/edges` keeps the numeric bin edges at full precision (the cells' labels are
+    rounded): numerics only, each feature's positions from 0 and its edges ascending, and a
+    numeric's non-null bins in the cells never more than its edges plus one."""
+    edges, cells = result.tables["edges"], result.tables["cells"]
+    numerics = {name for name, kind in result.meta["kinds"].items() if kind == "numeric"}
+    assert not edges.empty and set(edges["feature"]) <= numerics
+    for feature, part in edges.groupby("feature"):
+        assert part["position"].tolist() == list(range(len(part)))
+        assert part["edge"].is_monotonic_increasing and part["edge"].is_unique
+        own = cells.loc[(cells["feature"] == feature) & ~cells["is_null"].astype(bool)]
+        assert own["bin_order"].nunique() <= len(part) + 1
 
 
 def test_eda_json_carries_the_population_counts_and_the_digest(

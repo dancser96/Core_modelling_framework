@@ -54,7 +54,9 @@ window is never collected (D-135).
   when the ledger is another EDA run's (its run token), or when an older EDA run lacks one of
   those tables or columns. Training reads the ledger
   (`kind`, `levels`, both concordances) and compares its per-period counts with `eda.json`
-  (D-088). An EDA rerun removes Feature Checks' folder and ledger columns.
+  (D-088). Whatever buckets new rows as EDA did (a training run's `stage2/` copy, Evaluation's
+  drift reference, the effect charts' groups) reads the numeric edges from `tables/edges`, never
+  the cells' rounded `bin` labels. An EDA rerun removes Feature Checks' folder and ledger columns.
 - **The per-task spec** (`tasks.py`, D-050) supplies every task-specific piece: the target bins,
   the group summary (rate or mean, interval, lift), the rare effect, the standard error, the
   events warning and the base-rate views. Binary and regression share every shape.
@@ -213,7 +215,10 @@ target's sum of squares, gives a regression mean its interval from the counts.
   `[13, 15]`, `< 50`, `≥ 900`, `(0, 7)`). No thousands separator (a comma would read like the
   bounds' separator); integral values below 1e15 print whole, others to six significant digits; when
   that would make two of a feature's labels read alike or out of order, all of its labels use the
-  shortest exact text.
+  shortest exact text. The labels are for reading; the edges themselves are stored in
+  `tables/edges`: one row per numeric and interior edge, `feature`, `position` (0-based,
+  ascending) and `edge` (float, full precision). A numeric without a non-null eligible value has
+  no row, and a categorical has none.
 - **Categorical:** the levels seen in any window period, the 50 most frequent kept
   (`LEVEL_CAP = 50`), the rest `__other__`; a level unseen in the window is `__new__`; null is a
   level (a NaN in a numeric column declared categorical is null too). `window_levels` returns the
@@ -771,9 +776,10 @@ Call flow: Level 2's numbered list. Reading order for review: `statistics/concor
   fresh sidecar) and the stage folder written last, `report.html` passed as one of
   `write_stage`'s `texts` so the rename commits it with the rest; `eda.json` is the commit
   marker:
-  - `eda.json` (`schema_version: 4`: the json carries the sources' digest, and its settings
-    digest covers `decision.type` and `decision.n`, not the whole `decision`; an older one is
-    refused by `read_stage`, "rerun the eda stage"; `stage`, `tables`, plus the stamped framework
+  - `eda.json` (`schema_version: 5`: the json carries the sources' digest, its settings digest
+    covers `decision.type` and `decision.n`, not the whole `decision`, and its tables include
+    `edges`; another version is refused by `read_stage`: rerun EDA, then Feature Checks, once per
+    use case; `stage`, `tables`, plus the stamped framework
     version and time): `artifacts.stage_identity(resolved, "eda", env)`, that is `entity`,
     `config_hash`, `data_definition_hash`, `resolved_input_hash`, `hash_version`, `replayed_to`, `settings_digest`
     and `settings` (the digested values at `SETTINGS_PATHS_BY_STAGE["eda"]`: `features.kinds`,
@@ -792,7 +798,8 @@ Call flow: Level 2's numbered list. Reading order for review: `statistics/concor
     `cells_estimate`, the estimate before the passes, null unless `eda.bins` is null); `log.json`
     beside it holds the run's log entries;
   - `tables/*.parquet`: `cells` (`CELL_COLUMNS`, `sum_y2` among them), `client_constant`,
-    `population`, `funnel`, `sources`, `target_per_period`, `ranking`, `correlation`,
+    `edges` (the numeric bin edges at full precision), `population`, `funnel`, `sources`,
+    `target_per_period`, `ranking`, `correlation`,
     `concordance_per_period` (every candidate), `slices`, `capture_curve`, `profile`, `bins`,
     `levels`, `quartiles`, `per_period` (the key features' rows of it), `strata`,
     `reference_groups`, and `target_quartiles` when the task has a target distribution

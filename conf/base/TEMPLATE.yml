@@ -26,7 +26,8 @@ decision:                                # required · set before any result, ne
   # the search metric and the report's headline. null: binary log_loss for probability and
   # threshold, roc_auc for ranking and top_n; regression rmse. Binary also allows ap (a shallow
   # list with plenty of events); regression mae, r2, tweedie_deviance (an amount with many zeros
-  # and a long tail, with training.objective: tweedie), poisson_deviance (a count). The Tweedie
+  # and a long tail, with training.objective: tweedie), poisson_deviance (a count). A deviance
+  # needs training.objective tweedie or poisson, whose predictions are positive. The Tweedie
   # deviance is computed at a fixed variance power of 1.5, whatever training.tweedie_variance_power
   # is: the objective may change through the audit log, the yardstick may not
   metric: null
@@ -214,7 +215,8 @@ training:
   # how the booster learns; the trials are judged by decision.metric whatever it is.
   # null: binary log_loss (its only one); regression squared_error. Regression also allows
   # tweedie (a non-negative amount with many zeros and a long tail, with decision.metric:
-  # tweedie_deviance), poisson (a count), absolute_error, huber (outliers in the target)
+  # tweedie_deviance), poisson (a count), absolute_error, huber (outliers in the target).
+  # absolute_error takes no monotone constraint (the libraries break or refuse it): use huber
   objective: null
   tweedie_variance_power: null           # tweedie only; null: 1.5; between 1 (Poisson) and 2 (gamma)
   # {feature: increasing | decreasing}: the score may only rise (fall) with a numeric or an
@@ -265,7 +267,8 @@ training:
   categoricals:
     min_level_client_count: 50           # a level in fewer distinct train clients joins __other__
     # native: unordered categoricals declared to the library | codes: the same integers passed
-    # as numbers; the evidence is mixed at many levels, so two runs compared settle it
+    # as numbers; the evidence is mixed at many levels, so two runs compared settle it; native
+    # makes CatBoost's search several times slower
     unordered: native
   # null: binary platt for a probability decision, else none; regression mean for tweedie and
   # poisson, else none. Binary: platt (two parameters on the margin) | beta (three; when the

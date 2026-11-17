@@ -2,6 +2,192 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-11-17 — M2.3 major step 2: Q668–Q673 answered at their defaults; steps 2 and 3 reviewed together
+- The EDS answered Q668–Q673 at their defaults; Q667 (option 1) was answered on 11-16. Record:
+  `worknotes/m2_3_modelling/answers.md`.
+- Kept: the deviance refusal (Q668), `run` with no `--stages` trains (Q669), `xgb_limitdepth`'s
+  own start (Q672), `native` as the categoricals default (Q673, cost into notebook 04's advice).
+- Q670: fixed once in `write_parquet` with the 1.0 hardening, in M2.4. Q671: the caption, no
+  cross-fit.
+- Step 2's review stays open (A82–A90, review guide 2); step 3 starts without a review of step 2
+  and its orchestrator runs on Opus (plan §7).
+
+### 2026-11-16 — M2.3 major step 2, final runs
+- All run after the last code edit. Spark batch: 142 passed, 1 failed (a test patched a function
+  the fix round renamed; it now patches `training_run.encode_and_select`, 127 s). Slow
+  four-family test on `dev`: 4 passed, 4 min 58 s. Notebooks 03 (17 code cells), 04 (9) and
+  `00_modelling_helper` (15): executed as scratch copies against `dev`, no error.
+- Canonical data (`cc_acquisition`, 15 trials, native categoricals): 257,338 train rows, 123
+  features in force (47 held), 38 after selection. Search seconds, best fold log loss, best
+  trial: lgbm 29 s, 0.111004, 15; xgboost 37 s, 0.110806, 15; xgb_limitdepth 47 s, 0.110718, 15;
+  catboost 284 s, 0.110617, 12. Kept catboost: out-of-fold log loss 0.11061, concordance 0.806
+  (in sample 0.818). Steps in seconds: frames 12, selection 15, search 404, fold models 25,
+  final fit 5, tables 2; 664 s with Target Factory, EDA and Feature Checks. No warnings.
+- Observations: CatBoost takes 70% of the search time; three families peaked at the last of 15
+  trials, so 15 is a measuring budget, not a converged search.
+- Local reruns (`--stages target_factory eda feature_checks`, `cc_acquisition` and
+  `td_acquisition`): exit 0. Full suite: 1028 passed, 15 deselected, 6 warnings, 13 min 22 s.
+
+### 2026-11-16 — Stage 3 major step 2 (Training): build started
+- The EDS's go: "build major step 2 of M2.3". Routing as the plan's §7, on the worker agents:
+  Fable holds the main thread, the search (m2.1) and `run_training` (m2.6); `builder` (Opus)
+  takes selection, calibration, the charts, the per-run ledger and views; `researcher` (Opus)
+  the FLAML facts (m2.0).
+- **Shapes fixed before the builders were briefed** (the plan's "to settle" list):
+  - `statistics/losses.py`: the decision's metric as a loss on rows, FLAML's definitions
+    (`1 − AUC`), so the framework's fold loss is the number the search reported;
+  - `training/fold_models.py`: `fit_fold_models` gives every out-of-fold margin and
+    contribution; `model/encoder.py::select_encoder` restricts a fitted encoder;
+    `model/calibration.py::LINK_BY_OBJECTIVE` and `uncalibrated`;
+  - selection reads one train-statistics table (`training/train_statistics.py`) computed with
+    the statistics engine on cells built in pandas from the encoded train frame; the
+    `selection` table gains `represented_by`; the per-run ledger gains `train_concordance`
+    and `train_sign`, which Evaluation's single-feature baseline reads when a rule is off;
+  - `calibrate` returns the bundle's calibration, the table and the warnings, and takes the
+    sampling record (the offset follows the sampling method, never the two rates);
+  - Training's frames carry the window's population counts (`dataset/frames.py`).
+- **Found: EDA never stored its numeric bin edges.** The cells' `bin` labels are rounded to
+  six significant digits, while the spec has the run's `stage2/` copy, the drift reference
+  and the effect charts read "EDA's stored bin edges". EDA now writes an `edges` table
+  (`feature, position, edge`); its stage json is at version 5: **rerun EDA, then Feature
+  Checks, once per use case.**
+- **The explanation charts** (m2.4) are built from the prototype. Changes from it: no
+  background histogram on the dependence scatter (chart rules 4 and 8), the waterfall on the
+  margin's scale for both tasks, `null` for a missing value; with `lift`, `dependence` draws
+  the mean contribution per EDA group beside EDA's lift and takes each row's group label.
+- **m2.0, the pinned libraries checked** (flaml 2.7.0, lightgbm 4.6.0, xgboost 3.2.0, catboost
+  1.2.8, scikit-learn 1.8.0; 6,832 rows, 1,500 clients, 2 × 5 folds; scripts and outputs in the
+  session scratchpad, `m2_0/`):
+
+  | Item | Result | Consequence |
+  |---|---|---|
+  | Everything at once, per family: our splitter, declared categoricals, a ranged space with starts, a constraint | passed for all four: exactly N trials, R × K fits per trial plus one retrain, trial 1 at the starts, the trials distinct, `check_monotone` passes on FLAML's best model | the search is written as designed |
+  | FLAML's loss = our own fold models' | the gap is 0 for LightGBM and CatBoost, 2e-10 for both XGBoost variants (float32 probabilities) | the splitter is ours |
+  | Our own fit = FLAML's model | margins bit-identical for all four, binary and Tweedie, CatBoost with `use_best_model` off | no parameter is renamed between the search and the fit |
+  | Row order (new trap) | FLAML permutes each fold's training rows unless the splitter has `shuffle = False` (`flaml/automl/task/generic_task.py`: `getattr(kf, "shuffle", …)`); CatBoost's loss then differs (0.179268 against 0.179686) | the splitter sets `shuffle = False` |
+  | How parameters reach the trials | the fixed parameters go in as constants of `custom_hp`; LightGBM's `categorical_feature` and CatBoost's `use_best_model` through `fit_kwargs_by_estimator`; threads through `n_jobs`; no fit gets an `eval_set` | those four names are taken out of the fixed parameters before the space is built; `best_config` holds the constants, so `check_searched` reads the ranged leaves only |
+  | Poisson, Huber, Tweedie through the search, the deviances as custom metrics | passed for all four; a custom metric takes FLAML's 11 positional arguments and returns `(loss, dict)`; `predict` returns the mean under a log link | |
+  | **`absolute_error` with a monotone constraint** | **fails:** LightGBM raises ("Cannot use monotone_constraints in regression_l1"); XGBoost fits and breaks the constraint (34 to 383 of 7,800 steps); CatBoost holds it; without a constraint all run | Q667, with the EDS; `training/search.py` waits for the answer (the plan's rule) |
+  | A non-finite fold metric | FLAML raises nothing: a custom metric returning inf or NaN, or `roc_auc` on a fold without a positive (NaN in scikit-learn 1.8, not infinity), is logged as that loss and the search goes on; with every trial NaN, `best_config` is None | `check_search` refuses any non-finite fold loss; `training.md` item 13 said "infinity" |
+  | 2N trials repeat N | the first five configurations and losses are identical, all four | |
+  | scikit-learn 1.8.0's unpenalised logistic regression | `penalty=None` raises a FutureWarning and `C=np.inf` a UserWarning; `C=1e12` is warning-free and equal to 1e-15 | Platt and beta use `C=1e12` (a plan default) |
+  | The trials table's source | FLAML's log file holds every trial (`record_id`, `trial_time`, `validation_loss`, `config`); `config_history` held 2 of 12 | the table is read from the log; T14 corrected |
+
+  Not verified: across machines; whether an integer range's upper bound is ever drawn (flaml's
+  upper bound is exclusive, so the space passes `high + 1`).
+- **Q667 (open, with the EDS):** `absolute_error` with a monotone constraint. Proposed: refuse
+  the combination at config load, whatever the families (pruning always fits LightGBM under the
+  run's constraints), pointing to `huber`, whose constraints held in all four families.
+- **m2.2 selection, m2.3 calibration, m2.4 the charts and m2.5 the per-run ledger and views
+  are built, reviewed (one combined review each, Opus) and fixed.** What the reviews changed:
+  - m2.5: the sign-off table is one row per feature (a constrained feature that is held or
+    excluded stays in its own section; the view's "declared, not in the model" block lists
+    every constrained feature outside the model). EDA's direction is compared for numerics
+    only: for a categorical it comes from a cross-fitted target encoding and reads `+`
+    whenever there is signal, so a `decreasing` constraint on an ordered categorical raised
+    the wrong-sign warning every time. CatBoost gives no split counts: `in_model` is then
+    "gain above zero". The per-run ledger is written once and never overwritten.
+  - m2.3: a margin that separates the labels, or a constant one, stops calibration with its
+    own message (Platt returned a slope of 43.9 on separated labels, without an error); a
+    non-positive level factor stops Training only when `mean` is the chosen method; the
+    bootstrap builds the clients' text once (5.1 s for 100,000 clients, from 7.8 s).
+  - m2.2: an emptied feature list is refused at the rule that emptied it; a null fold or a
+    missing SE fails loud.
+  - m2.4: only zero contributions fail loud; the `null` strip is drawn only when needed.
+  - **For the ML audit and the review guide** (from m2.2's review): the floor compares a
+    `non_monotone` feature's best-order concordance, which carries about 2 SE of optimism on
+    a null feature, with 0.5 + z · SE; EDA's SE-scaled margin for the mark is the guard today.
+- **m2.6 `run_training` is written around the search** (`training/gate.py`, `run.py`,
+  `tables.py`, `views.training_views`; 52 no-Spark tests of Training's modules pass; nothing
+  of it has run end to end yet). Chosen while writing, each a default to veto:
+  - the run number is reserved after the gate has fully passed (the frames collected, the
+    counts and kinds checked), so a refused run takes no number;
+  - the thread count is the machine's cores (`os.cpu_count()`): no config or environment
+    field holds one, and no hash depends on it;
+  - the concordance beside every headline (the AUC for a binary target) is computed on rows,
+    exactly, for both tasks (`statistics/losses.py::row_concordance`: Somers' D from
+    Kendall's tau-b and the tie counts, 1 s for 2 million rows); out of fold it is the mean
+    over the folds;
+  - `stage2/` holds `ledger` (every candidate's row), and EDA's `cells`, `edges`, `bins` and
+    `levels` rows of the final features;
+  - `training.json` holds `summary`, `best`, `search`, `search_space`, `metrics`
+    (`metric`, `out_of_fold`, `out_of_fold_concordance`, `in_sample_concordance`),
+    `final_features`, `sampling`, `folds`, `reproducible_to`, `warnings`, `timings`.
+- The Spark tests after the `edges` table and the frames' counts: the first batch stopped at
+  EDA's folder test, which listed the tables without `edges` (28 passed before it); the test
+  is fixed and `tests/test_eda.py` gained one test of the table. The rerun passed: 122 tests
+  (`test_frames.py`, `test_eda.py`, `test_feature_checks.py`, `test_dataset.py`) in 4 min 51 s.
+- The m2.3 leftover is fixed: a non-finite level factor (possible only under `none`, where it
+  warns) is written as JSON `null` in the calibration table's `parameters`, never as `NaN`.
+- The doc-writer's five component docs are read and accepted (`eda.md`, `feature_ledger.md`,
+  `dataset.md`, `model_bundle.md`, `reporting.md`). Left for the step's end: `UPDATES.md` still
+  names EDA's stage json as version 4.
+- **Q667 answered by the EDS: option 1.** `training.objective: absolute_error` with any
+  `training.monotone` entry is refused at config load, whatever the families, pointing to
+  `huber` (`Training._check_absolute_error_unconstrained`, one test, `config.md`, the template,
+  `training.md` item 10, T43).
+- **m2.1 the search is built** (`training/search.py`, 335 lines; `tests/test_search.py`, 13
+  tests, no Spark): `split_budget`, `fold_splitter` (`ClientFolds`, `shuffle = False`),
+  `search_metric` (FLAML's own six by name, the two deviances as a custom metric),
+  `build_search_space`, `flaml_settings`, `search_frame`, `search_family`, `read_trials`,
+  `check_search`, `search_families`. What the build found or decided:
+  - FLAML refits the best trial on every row at the end of each family's search and
+    `retrain_full=False` does not stop it under cross-validation (`retrain_final` is true
+    whenever `max_iter > 0`): one fit per family that Training never reads, about a quarter
+    of one trial's cost at five folds. Left as it is.
+  - With a validation fold the metric is not defined on, FLAML logs NaN for every trial and
+    raises nothing: `check_search` refuses any non-finite fold loss (`training.md` item 13
+    says "infinity": to correct).
+  - The parameters of every later fit are the fixed ones, the space's constants and the best
+    trial's searched values, all from the framework's own data and the trials table, not
+    FLAML's echo of the configuration.
+  - The trials table's `configuration` holds the searched values only (JSON); the constants
+    are in `training.json`'s `search_space`.
+  - A trial budget below the number of families is refused when Training starts, before any
+    work. `CONSTANTS["catboost"]` holds `early_stopping_rounds: None`; `TASK_SPECS` holds
+    `flaml_task`.
+- **m2.6 `run_training` runs end to end** (`tests/test_training.py`, 10 tests on Spark, 2 min
+  35 s; `conftest.py`: `trained_env`, `card_quick`, `regression_quick`, `trained_card`,
+  `trained_regression`, `with_training`, `QUICK_SEARCH`). First run on the unit data: 122
+  features in force (48 held), 18 after selection, four trials, 13.6 s. Shown by the tests:
+  both tasks' run folders whole; the fold models' loss on the uncalibrated score equals the
+  best trial's (1e-9); no held feature enters; the `run` entry has no periods; a second run
+  repeats `model_hash` and `recipe_hash` and the one frame asked for is train only; a crash
+  after `create_run` leaves an incomplete run and no entry; `run --stages training` at
+  `autonomous` runs EDA, Feature Checks, then Training, and refuses at `assisted`.
+- `run`: `STAGES` gains `training` (so the default stage list includes it);
+  `training.gate.missing_stage2` is the one place that says which Stage 2 artifacts are
+  missing. `tests/test_run.py`'s two-config test names its three stages.
+- All 207 no-Spark tests of the step's modules pass (the config schema's included).
+- **The slow test passes** (`pytest tests/test_training.py -m slow`, 5 min 19 s): each of the
+  four families alone through the whole stage on `dev`, 123 features in force with declared
+  categoricals and `age` constrained; each kept model's fold loss equals its search's best
+  to 1e-8, and the bundle's round trip and the constraint's sweep pass inside the run.
+- **m2.8 on `dev`** (the shipped card config at `assisted`, 51,040 train rows, 33 final
+  features of 123 in force, 15 trials per family, fold log loss; one run each, so a gap
+  under about 0.0005 is noise):
+
+  | Family | Bounded space: best, seconds | Categoricals as codes: best, seconds | FLAML's own space: best, seconds |
+  |---|---|---|---|
+  | `lgbm` | 0.10878, 11 | 0.10879, 8 | 0.10881, 9 |
+  | `xgboost` | 0.10868, 11 | 0.10867, 10 | 0.10839, 18 |
+  | `xgb_limitdepth` | 0.10960, 15 | 0.10925, 14 | 0.10868, 9 |
+  | `catboost` | 0.10907, 79 | 0.10908, 27 | 0.11206, 58 |
+
+  - The bounded ranges lose nothing against FLAML's own for `lgbm` and `xgboost`, win
+    clearly for `catboost` (FLAML's own holds 8,192 trees behind early stopping), and trail
+    for `xgb_limitdepth` by 0.0009: its start (learning rate 0.3, depth 6, FLAML's own) is
+    the weak one, still improving at trial 15.
+  - Declared categoricals against codes: the same loss in every family; CatBoost's search
+    takes three times as long with them declared (79 s against 27 s).
+  - The best family's out-of-fold AUC is 0.796 with the three honest static attributes
+    held; the oracle's is 0.83 to 0.86 by window on every client (`truth.json`), so nothing
+    beats it.
+  - Step seconds at 60 trials: frames 7, selection 5, the search 117 (CatBoost 79 of them),
+    the fold models 1, the final fit and the bundle under 1. Target Factory, EDA and Feature
+    Checks before it: about 105 s together.
+  - The canonical seconds per family are still to measure (after the fix round).
+
 ### 2026-11-16 — Claude Code usage measured, and the harness changed on it
 - **Measured** from every session transcript (30 Sep to 16 Nov: 16.6k requests, 394 threads) and
   the Mac's power log, at list prices as one unit across models. Cache writes are 47% of the

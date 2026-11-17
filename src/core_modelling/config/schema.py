@@ -48,6 +48,11 @@ FRAMEWORK_PARAMETERS: dict[str, str | None] = {
 # config package, so the schema cannot import it. Metric names are FLAML's where it has one (T9:
 # `ap`); the two deviances are the framework's own (the Tweedie one at a power of 1.5). A
 # calibration default is the decision's entry, else the objective's, else `calibration_default`.
+# A deviance is defined for positive predictions only, which a log link gives and an identity
+# link does not: the metrics that need one of the objectives fitted on the log scale
+# (`model/calibration.py`, `LINK_BY_OBJECTIVE`).
+DEVIANCE_METRICS = ("tweedie_deviance", "poisson_deviance")
+LOG_LINK_OBJECTIVES = ("tweedie", "poisson")
 TASK_CHOICES: dict[str, dict] = {
     "binary": {
         "metrics": ["log_loss", "roc_auc", "ap"],
@@ -724,6 +729,21 @@ class Training(StrictModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _check_absolute_error_unconstrained(self) -> "Training":
+        """The absolute error takes no monotone constraint, whatever the families: LightGBM
+        refuses the pair, XGBoost fits and breaks the constraint without a word, and only
+        CatBoost held it when measured (T43). Importance pruning fits LightGBM for every run."""
+        if self.objective == "absolute_error" and self.monotone:
+            raise ValueError(
+                f"training.objective 'absolute_error' takes no monotone constraint, and "
+                f"training.monotone constrains {sorted(self.monotone)}: LightGBM refuses the "
+                "pair and XGBoost breaks the constraint without a word; use training.objective "
+                "'huber', which also resists large amounts and holds a constraint in every "
+                "family, or drop the constraints"
+            )
+        return self
+
 
 class Slices(StrictModel):
     """Metric slices at the top of the score ranking; either list may be empty."""
@@ -845,6 +865,21 @@ class UseCaseConfig(StrictModel):
                 f"training.tweedie_variance_power {power} is read only under training.objective "
                 f"'tweedie'; the objective is {objective!r}: leave the power null in the config "
                 "file, or through the audit log set training.tweedie_variance_power to null first"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_deviance_has_a_log_link(self) -> "UseCaseConfig":
+        """A deviance metric needs an objective fitted on the log scale: under an identity link
+        a prediction can be zero or negative, where the deviance is not defined, so the run
+        would stop mid-search on whatever data first produces one."""
+        metric, objective = self.decision.metric, self.training.objective
+        if metric in DEVIANCE_METRICS and objective not in LOG_LINK_OBJECTIVES:
+            raise ValueError(
+                f"decision.metric {metric!r} needs a training.objective of "
+                f"{' or '.join(LOG_LINK_OBJECTIVES)}, whose predictions are always positive; "
+                f"under {objective!r} a prediction can be zero or negative, where the deviance "
+                "is not defined. Set the objective, or judge by rmse or mae"
             )
         return self
 

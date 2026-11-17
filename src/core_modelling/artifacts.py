@@ -42,8 +42,9 @@ from core_modelling.sources import feature_source_names, source_name
 
 # Each stage json's format version, read back by `read_stage`. EDA and Feature Checks: 2 the
 # run's `run_token` (11-10), 3 the sources' digest (11-11), 4 EDA's digest narrowed to the
-# decision fields it reads (11-13), so a json stored before reruns EDA, then Feature Checks.
-STAGE_SCHEMA_VERSIONS = {"eda": 4, "feature_checks": 4, "training": 1, "evaluation": 1}
+# decision fields it reads (11-13), 5 EDA's `edges` table, the numeric bin edges at full
+# precision (11-16), so a json stored before reruns EDA, then Feature Checks.
+STAGE_SCHEMA_VERSIONS = {"eda": 5, "feature_checks": 4, "training": 1, "evaluation": 1}
 STAMP_KEYS = ("schema_version", "stage", "framework_version", "written_at", "tables")
 HOUSEKEEPING_KEYS = ("entity", "config_hash", "data_definition_hash", "resolved_input_hash",
                      "hash_version", "replayed_to")  # fmt: skip

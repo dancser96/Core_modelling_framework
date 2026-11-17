@@ -89,6 +89,19 @@ def encode_frame(frame: pd.DataFrame, encoder: dict) -> tuple[pd.DataFrame, pd.D
     return encoded, pd.DataFrame(shares, columns=SHARE_COLUMNS)
 
 
+def select_encoder(encoder: dict, features: list[str]) -> dict:
+    """The encoder restricted to `features`, in the encoder's own order: what is left after
+    selection, and the final features' encoder a bundle holds. Each entry is the fitted one,
+    unchanged, so a code keeps its meaning; a name the encoder lacks fails loud."""
+    check_encoder(encoder)
+    known = [entry["name"] for entry in encoder["features"]]
+    unknown = [name for name in features if name not in known]
+    if unknown:
+        raise ValueError(f"the encoder holds no feature named {unknown}; it holds {known}")
+    wanted = set(features)
+    return {**encoder, "features": [e for e in encoder["features"] if e["name"] in wanted]}
+
+
 def _check_fit_inputs(
     train: pd.DataFrame,
     features: list[str],

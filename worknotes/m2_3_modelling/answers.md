@@ -2426,3 +2426,82 @@ converting clients this floor could be a bit too high, no?" Then: "Apply Q666".
 than kept at z = 2. The default stays 2 and is never derived from the event count; the
 template, the config table and `training.md` (with the table) say to set 1 or `null` below
 about 300 converting train clients.
+
+### Q667. `absolute_error` with a monotone constraint
+The question text is as `plan.md` §11 (A91) records it; its written-out options were given in
+chat only. With a monotone constraint LightGBM refuses `regression_l1` and XGBoost fits and
+breaks the constraint without a word (T43 in `docs/context/lessons.md`). Option 1 refuses the
+pair at config load, whatever the families, and points to `huber`.
+
+**The EDS (2026-11-16):** "I'll go with your default, Option 1."
+
+**Outcome.** `training.objective: absolute_error` with any `training.monotone` entry is refused
+at config load, whatever the families, pointing to `huber`
+(`Training._check_absolute_error_unconstrained` in `src/core_modelling/config/schema.py`; its
+test is in `tests/test_config_schema.py`). Applied 2026-11-16.
+
+### Q668. The deviance refusal
+A deviance metric (`tweedie_deviance`, `poisson_deviance`) with an objective other than
+`tweedie` or `poisson` is refused at config load: under an identity link a prediction can be
+zero or negative, where the deviance is undefined, and the search would stop on whatever data
+first produced one. Built as Q667's refusal was (Q667: `absolute_error` with a monotone
+constraint is refused at load). *Default:* keep.
+
+**The EDS (2026-11-17):** "All questions go with default."
+
+**Outcome.** Kept: the refusal stays (`UseCaseConfig._check_deviance_has_a_log_link`). No change.
+
+### Q669. `run` with no `--stages` now trains
+`STAGES` gains `training`, so a plain `run <config>` runs every built stage, takes a run number
+and writes a `run` entry each time. *Default:* keep, with the note in `docs/UPDATES.md`.
+
+**The EDS (2026-11-17):** "All questions go with default."
+
+**Outcome.** Kept: `run <config>` with no `--stages` trains; the note is in `docs/UPDATES.md`.
+No change.
+
+### Q670. Typed parquet schemas
+A text or list column that is all null (`selection`'s `represented_by`; text and list columns
+of the sign-off table and the per-run ledger) is written as type `null` or `list<null>`, so a
+table's schema follows its data. pandas reads them back; Spark's handling is unverified. Fix in
+`write_parquet` now, or for every stage at once with the 1.0 hardening? *Default:* with the
+hardening, in M2.4 (a roadmap backlog line and a lessons row record it).
+
+**The EDS (2026-11-17):** "All questions go with default."
+
+**Outcome.** With the 1.0 hardening, in M2.4: fixed once in `write_parquet` for every stage.
+The roadmap backlog line and the lessons row carry it. No code change now.
+
+### Q671. The calibration table's per-method loss
+It is in sample for each calibrator (beta contains Platt contains none, so its order is
+forced; about 1/(2·n_eff) per parameter). Cross-fit it by fold (about 15 lines, and a new way
+to fail when a fold's rows separate where the whole does not), or keep the caption that says
+so? *Default:* the caption.
+
+**The EDS (2026-11-17):** "All questions go with default."
+
+**Outcome.** The caption, no cross-fit: the report's caption, notebook 04 and `training.md`
+say the per-method loss is in sample for each calibrator.
+
+### Q672. `xgb_limitdepth`'s start
+Its start is FLAML's own (learning rate 0.3, depth 6). On `dev` it trailed FLAML's own space by
+0.0009 and was still improving at trial 15 (§5). *Default:* keep until the canonical numbers
+are in.
+
+**The EDS (2026-11-17):** "All questions go with default."
+
+**Outcome.** Kept: `xgb_limitdepth` keeps FLAML's own start. The canonical numbers the default
+waited for are in (2026-11-16, 15 trials per family): 0.110718, second of the four families,
+ahead of `xgboost` (0.110806) and `lgbm` (0.111004), still improving at trial 15. Nothing in
+them argues for another start.
+
+### Q673. Declared categoricals and CatBoost's time
+With `training.categoricals.unordered: native`, CatBoost's search took three times as long on
+`dev` as with `codes`, for the same loss (§5). *Default:* keep `native` as the default, and add
+the cost to notebook 04's budget advice.
+
+**The EDS (2026-11-17):** "All questions go with default."
+
+**Outcome.** `native` stays the default for `training.categoricals.unordered`; the cost goes
+into notebook 04's budget advice (on the canonical data CatBoost took 70% of the search time at
+an equal trial count).

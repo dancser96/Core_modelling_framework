@@ -298,8 +298,8 @@ built.
     client-constant shares and the population counts per period, D-135), `model_input.py`
     (the model input saved and read), `folds.py` (the client folds Training's search, selection
     and calibration share)
-  - `run.py`: `run`, `STAGES` (`target_factory`, `eda`, `feature_checks`, in run order;
-    `training` and `evaluation` join in M2.3)
+  - `run.py`: `run`, `STAGES` (`target_factory`, `eda`, `feature_checks`, `training`, in run
+    order; `evaluation` joins in M2.3 step 3)
   - `statistics/`: every statistical calculation, shared by EDA, Feature Checks and later
     Training, Evaluation and Monitoring (D-137): `cells.py` (the counts table read as cells),
     `concordance.py` (the concordance from the two-way table, its standard error, the
@@ -308,9 +308,10 @@ built.
     encoding's prior), `capture.py` (an ordered list cut at shares: lift and capture),
     `distributions.py` (quantile edges, PSI, new levels, `level_text`, standardised differences,
     Cohen's h and d), `intervals.py` (Wilson, t-interval), `association.py` (Spearman, Cramér's V, the
-    correlation ratio, the clusters); planned for M2.3: `calibration.py` (Platt, beta, the
-    offset, the level factor), `metrics.py` and `bootstrap.py` (Evaluation's metrics and
-    intervals on score cells)
+    correlation ratio, the clusters), `calibration.py` (Platt, beta, the offset, the level
+    factor), `losses.py` (the decision's metric as a loss on rows, the row concordance); planned
+    for M2.3 step 3: `metrics.py` and `bootstrap.py` (Evaluation's metrics and intervals on
+    score cells)
   - `artifacts.py`: `StageResult`, the stage folder, the tables and json written and read, the
     temporary folder renamed on success (D-136); the stages' shared plumbing:
     `SETTINGS_PATHS_BY_STAGE` and the settings digest, `stage_identity` (the head of a stage's
@@ -336,8 +337,12 @@ built.
     `bundle.py`, `scoring.py` ([model bundle](components/model_bundle.md#code-map))
   - `runs.py`: the run folder, `run.json`, listing and showing runs, the
     sign-off
-  - `training/` (planned, M2.3 step 2): the search, automated selection, the fold models, the
-    calibration, the per-run ledger, `run_training`; the predefined path (Optuna) later
+  - `training/`: `search_space.py` (the ranges, starts, constants and FLAML's switches as
+    data), `search.py` (one search per family and its checks), `gate.py` (the gate, the count
+    and kind checks, the `stage2/` copy), `train_data.py` (the encoder on train, the frame
+    encoded and selected), `train_statistics.py` and `selection.py` (the three rules),
+    `fold_models.py`, `calibrate.py`, `ledger_run.py` (the per-run ledger, the sign-off table),
+    `tables.py`, `views.py`, `run.py` (`run_training`); the predefined path (Optuna) later
     ([training](components/training.md#function-structure))
   - `evaluation/` (planned, M2.3 step 3): scoring and the score cells, baselines, the metric
     tables, the drift reference, the explanation tables, the report, `compare_runs`,
@@ -348,8 +353,8 @@ built.
   - `reporting/`: `html.py` (the renderer, plotly.js embedded once; the stage writes the page
     with its artifacts), `charts.py` (the chart primitives with the chart rules), `blocks.py`
     (the choices table, the identity rows, the headline, warnings, "not available" lines and the
-    appendix every report ends with), `theme.py` (the neutral palette); planned for M2.3:
-    `model_charts.py`, `explain_charts.py` and `card.py` (the model card)
+    appendix every report ends with), `theme.py` (the neutral palette), `explain_charts.py` (the contribution charts, built with
+    Training); planned for M2.3 step 3: `model_charts.py` and `card.py` (the model card)
 - `conf/base/`: `cc_acquisition.yml`, `td_acquisition.yml`, `TEMPLATE.yml`,
   `environment.example.yml`
 - `synthetic/`: dev-only synthetic data package (top level; not part of `core_modelling`)
@@ -386,7 +391,7 @@ The frames and the model input are what a DS explores in a notebook copy, which 
 | CLI `decide` (`--revert-to N`) | `python -m core_modelling decide` | 0.2.0 (Stage 1) |
 | `run_target_factory` (per config; returns `TargetSummary(per_period, occurrences)` since 2026-11-06, a `pd.DataFrame` before: D-007 (c)), `TargetSummary` | `core_modelling.target_factory` | 0.2.0 (Stage 1); `TargetSummary` 0.3.0 |
 | `build_frames` (`features` required for `training` / `evaluation` and refused for `eda`; `training` gets the train frame only, with the client folds; `evaluation` gets `rows`, one Spark frame of the test split and the validation period), `save_model_input` (one config or a list), `Frames` (`snapshot`, `rows`, `train`, `log`, `meta`) | `core_modelling.dataset` | 0.2.0 (Stage 1) |
-| `run` (one or several config paths; the default runs every built stage, the asked stages in `STAGES` order: `feature_checks` included since 0.3.0) | `core_modelling.run` | 0.2.0 (Stage 1) |
+| `run` (one or several config paths; the default runs every built stage, the asked stages in `STAGES` order: `feature_checks` included since 0.3.0, `training` since 0.4.0, so a call without `--stages` trains a new numbered run and appends a `run` entry) | `core_modelling.run` | 0.2.0 (Stage 1) |
 | CLI `run` (one or several configs) | `python -m core_modelling run` | 0.2.0 (Stage 1) |
 | `run_eda`, `pivot_target`, `lift_by_group`, `compare_sides`, `rate_by_period`; CLI `run <config>… --stages eda` (returns the paths per use case) | `core_modelling.eda`, `python -m core_modelling run` | 0.3.0 (built 2026-11-04, Stage 2 major step 2; review 2 applied 2026-11-05) |
 | `run_feature_checks`; CLI `run <config>… --stages eda feature_checks` | `core_modelling.feature_checks`, `python -m core_modelling run` | 0.3.0 (built 2026-11-06, Stage 2 major step 3) |
@@ -395,7 +400,7 @@ The frames and the model input are what a DS explores in a notebook copy, which 
 | `feature_dir`, `read_stage`, `read_ledger`: read-only access to a stage's stored artifacts, for the helper notebook `00_eda_fc_helper` (promoted as they are) | `core_modelling.environment`, `core_modelling.artifacts`, `core_modelling.ledger` | 0.3.0 (2026-11-09) |
 | `list_data_definitions(env, cfg, entity)`: the use case's data-definition folders, the config's first (`in_use`), with when each stage last ran; notebooks 02, 03 and the helper show it | `core_modelling.artifacts` | 0.3.0 (2026-11-11) |
 | `load_bundle`, `score_frame`, `list_runs`, `show_run`, `sign_off`; CLI `decide --sign-off --run r007 --reason …`, `runs`, `show-run` | `core_modelling.model`, `core_modelling.runs`, `python -m core_modelling` | 0.4.0 (built in M2.3 major step 1, for review; [model bundle](components/model_bundle.md#interface)) |
-| `run_training`; CLI `run <config>… --stages training evaluation` | `core_modelling.training`, `python -m core_modelling run` | planned (M2.3 major step 2; [training](components/training.md)) |
+| `run_training` (each call trains a new numbered run); CLI `run <config>… --stages training`: at `autonomous` it first runs a missing EDA or Feature Checks (D-132); `--stages training evaluation` is refused until Evaluation is built | `core_modelling.training`, `python -m core_modelling run` | 0.4.0 (built 2026-11-16, M2.3 major step 2; [training](components/training.md)) |
 | `run_evaluation`, `compare_runs` | `core_modelling.evaluation` | planned (M2.3 major step 3; [evaluation](components/evaluation.md)) |
 | `record_decision` gains `keep` and `findings` (`keep_despite_flag=` and `--keep-despite-flag` renamed in place, no alias: D-007 (c), D-136); CLI `decide --keep --findings` | `core_modelling.config.audit_log` | 0.3.0 (built 2026-11-03, Stage 2 major step 1) |
 
@@ -413,14 +418,14 @@ docs).
 | Audit log entry | [config](components/config.md) | `log_schema_version`, `hash_version` | `record_decision` (people), `record_stage_entry` (the stages' `flag` and `run` entries) | `resolve_config`, `show_decisions` | append-only; another version fails naming the file; an entry under another data definition fails; Stage 2 added `finding`, `findings` and `periods` in place under version 1 (D-136); from 1.0 a new entry field bumps `log_schema_version`; `periods` holds `periods.py` labels; `finding` values are the names in Feature Checks' finding table, so a name or kind changed is a log-format change (from 1.0: bump `log_schema_version` and migrate) |
 | Resolved config | [config](components/config.md) | `schema_version` (the config's) + `housekeeping.hash_version` | `resolve_config`, the stages (`resolved_config.yml`), one YAML form (`dump_resolved`) | every stage after Target Factory, the reports | read back through `read_resolved_config`, migrated like a config file |
 | Model input (`_model_input.json` + the parquet table) | [dataset](components/dataset.md) | `schema_version` (`MODEL_INPUT_SCHEMA_VERSION`, 4: the join entries' `columns`), `hash_version` | `save_model_input` (Target Factory), for one or several use cases (an empty list refused) | every later stage, the audit log's feature decisions | refused on another schema version, naming the framework version that wrote it (an older pin raises its pin rather than rebuild over a newer table), or another hash version, other sources, keys or period, a use case the table lacks, another target spec, uncovered periods or a validation period whose target window reaches beyond the saved target source's last period: rebuild with `save_model_input` (the migration until 1.0); not refused on a changed eligibility, window, split or candidate list, which are derived on read (D-131) |
-| EDA artifacts (`eda.json` with `stage`, `tables`, `settings`, `settings_digest`, `sources`, `sources_digest` and `run_token`; `tables/*.parquet`, `log.json`, `resolved_config.yml`, `report.html`) | [eda](components/eda.md) | `schema_version` (4: EDA's narrowed settings digest; 3 the sources' digest; 2 the `run_token`; an older json is refused, the stage reruns) | `run_eda` | Feature Checks (refuses on a digest mismatch or a moved source), Training (the population counts, D-088), the acceptance test | local paths, rewritten whole per run; until 1.0 a framework upgrade means rerunning EDA (the cells gained `sum_y2` and the numeric `bin` text changed in review 2; `tables/ranking` gained `raw_sign`, `eda.json` `slices`, and the tables `sources`, `slices`, `capture_curve` and `profile` were added 2026-11-06; `tables/ranking` gained `concordance_best_order_window` and the table `concordance_per_period` was added 2026-11-09, which Feature Checks refuses an EDA without), from 1.0 a change to a table's columns or its `bin` text bumps `schema_version` (built 2026-11-04, Stage 2 major step 2; D-136) |
+| EDA artifacts (`eda.json` with `stage`, `tables`, `settings`, `settings_digest`, `sources`, `sources_digest` and `run_token`; `tables/*.parquet`, `log.json`, `resolved_config.yml`, `report.html`) | [eda](components/eda.md) | `schema_version` (5: the `edges` table, the numeric bin edges at full precision; 4 EDA's narrowed settings digest; 3 the sources' digest; 2 the `run_token`; an older json is refused, the stage reruns, then Feature Checks) | `run_eda` | Feature Checks (refuses on a digest mismatch or a moved source), Training (the population counts, D-088), the acceptance test | local paths, rewritten whole per run; until 1.0 a framework upgrade means rerunning EDA (the cells gained `sum_y2` and the numeric `bin` text changed in review 2; `tables/ranking` gained `raw_sign`, `eda.json` `slices`, and the tables `sources`, `slices`, `capture_curve` and `profile` were added 2026-11-06; `tables/ranking` gained `concordance_best_order_window` and the table `concordance_per_period` was added 2026-11-09, which Feature Checks refuses an EDA without), from 1.0 a change to a table's columns or its `bin` text bumps `schema_version` (built 2026-11-04, Stage 2 major step 2; D-136) |
 | Feature Checks artifacts (`feature_checks.json` with `run_token` and the sources' digest, `tables/`, `log.json`, `resolved_config.yml`, `report.html`) | [feature_checks](components/feature_checks.md) | `schema_version` (4: EDA's narrowed settings digest; 3 the sources' digest; 2 the `run_token`; an older json is refused, the stage reruns) | `run_feature_checks` | Training (through the ledger and the audit log), the sign-off view | as EDA's (built 2026-11-06, Stage 2 major step 3) |
 | Feature ledger (`ledger.parquet` + `_ledger.json`: `ledger_schema_version`, `framework_version`, `written_at`, `data_definition_hash`, `runs` (`{stage: run_token}`)) | [feature_ledger](components/feature_ledger.md) | `ledger_schema_version` (3: the run tokens; an older ledger refused, EDA reruns) | EDA creates, Feature Checks appends; the per-run part (M2.3) is a separate file | Training, Evaluation, the reports, the model card | stages append and never rewrite another stage's columns; decisions derived from the audit log at render time; the sidecar carries the data-definition hash and each stage run's token, which `read_ledger(..., expect=…)` pairs with the stage jsons (`ledger.py` built 2026-11-03; EDA writes it since 2026-11-04) |
 | Run record `run.json` | [model bundle](components/model_bundle.md) | `run_schema_version` | `create_run` (Training), once | every later reader of the run | built (M2.3 step 1); written first, never rewritten; another version is refused |
 | Model bundle (`bundle/`: the model file, `bundle.json`, `manifest.json`) | [model bundle](components/model_bundle.md) | `bundle_schema_version`, `manifest_schema_version`, the encoder's `schema_version` | `write_bundle` (Training) | Evaluation, Inference, `register` | built (M2.3 step 1); plain data, never pickle; `model_hash` recomputed and checked at every load |
-| Per-run ledger (`ledger_run.parquet` + sidecar) | [feature ledger](components/feature_ledger.md) | its own schema version | Training | Evaluation, the sign-off view, the model card | planned (M2.3 step 2) |
-| Run copies of Stage 2 (`stage2/`) | [training](components/training.md) | in its files | Training | Evaluation | planned (M2.3 step 2); an EDA rerun never changes an older run |
-| Training artifacts (`training/`: `training.json`, `tables/`) | [training](components/training.md) | `schema_version` | `run_training`, last (the commit marker) | Evaluation, `list_runs`, `show_run`, the sign-off view | planned (M2.3 step 2); a run without it is listed as incomplete |
+| Per-run ledger (`ledger_run.parquet` + `_ledger_run.json`) | [feature ledger](components/feature_ledger.md) | `ledger_run_schema_version` (1) | Training, once | Evaluation, the sign-off view, the model card | built 2026-11-16 (M2.3 step 2); never rewritten; another version is refused |
+| Run copies of Stage 2 (`stage2/`: `ledger.parquet`, EDA's `cells`, `edges`, `bins`, `levels`, `_stage2.json`) | [training](components/training.md#what-training-writes) | `_stage2.json`: `eda_schema_version`, `ledger_schema_version`, `runs` | Training | Evaluation | built 2026-11-16 (M2.3 step 2); an EDA rerun never changes an older run; the copies carry no sidecar, so `_stage2.json` is what lets Evaluation refuse a copy it cannot read |
+| Training artifacts (`training/`: `training.json`, `tables/` (six), `flaml_<family>.log`, `log.json`, `resolved_config.yml`) | [training](components/training.md#what-training-writes) | `schema_version` (1) | `run_training`, last (the commit marker) | Evaluation, `list_runs`, `show_run`, the sign-off view | built 2026-11-16 (M2.3 step 2); a run without it is listed as incomplete; all-null text and list columns are written as parquet type `null` (T44) until the tables get typed schemas before 1.0 |
 | Evaluation artifacts (`evaluation/`: `evaluation.json`, `tables/`, the scores table, `report.html`) | [evaluation](components/evaluation.md) | `schema_version` | `run_evaluation` | `compare_runs`, `list_runs`, `show_run`, Monitoring | planned (M2.3 step 3); written whole by each run |
 | Model card (`model_card.json`, `model_card.html`) and drift reference | [reporting](components/reporting.md), [monitoring](components/monitoring.md) | `schema_version` | Evaluation | `register`, Monitoring | planned (M2.3 step 3); the drift reference is keyed by `model_hash` |
 | Scores, registry records, monitoring tables | their owner docs | `schema_version` (+ `framework_version` on shared-table rows) | their stages (M2.2–M2.4, M4) | later stages, monitoring | D-007 (b): rows only gain nullable columns within a major version |

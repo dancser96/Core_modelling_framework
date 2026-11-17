@@ -320,6 +320,9 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Out-of-fold:** a train row's prediction from a fold model that was fitted without that row's
   client; the calibration, importance pruning and the search metric read them, never the final
   model's own predictions on train (D-094).
+- **Fold models:** the K models of one configuration, each fitted on K − 1 client folds of the
+  first dealing and scoring the fold it did not see; they give every out-of-fold number and are
+  discarded (`docs/components/training.md`).
 - **Fold dealing:** how the dataset assigns train clients to the K folds: the converting clients
   are dealt in turn in the order of a salted hash, every other client takes the hash cut, so a
   fold holds whole clients and the folds' converting-client counts differ by at most one;
@@ -452,7 +455,9 @@ Whether this glossary is also published to the wider unit is part of the open do
   `docs/components/config.md`).
 - **Explanation sample:** the seeded sample of test rows, with their raw feature values and
   scores, that Evaluation collects for the contribution, importance and effect views; the only
-  rows its driver holds (`docs/components/evaluation.md`).
+  rows its driver holds (`docs/components/evaluation.md`). Training writes its own of train
+  rows, with their out-of-fold contributions, for the sign-off view
+  (`docs/components/training.md`).
 - **Model results report:** `evaluation/report.html`, Evaluation's report: seventeen views, all on
   by default, with no pass or fail line (`docs/components/reporting.md`).
 - **Lift:** a group's rate (or mean) divided by the base, the snapshot's base rate or mean; 1 is
@@ -465,8 +470,9 @@ Whether this glossary is also published to the wider unit is part of the open do
   (D-135; `docs/components/eda.md`).
 - **Best-order concordance:** `concordance_best_order`: the bins ordered by their shrunk target
   rate instead of by value, then the same statistic: what a ten-leaf tree on that one feature
-  would reach. `non_monotone` when it beats the plain value by ≥ max(0.03, 4 · SE); the ranking and Training's
-  floor use it only for features marked `non_monotone` (D-135).
+  would reach. `non_monotone` when it beats the plain value by ≥ max(0.03, 4 · SE); the ranking
+  uses it only for features marked `non_monotone`, and Training's floor only for a numeric whose
+  train numbers meet the same rule (D-135).
 - **Null concordance:** the concordance of the null indicator against the target:
   `nulls_informative` from 0.55, `missingness_leak` from 0.70.
 - **Null set:** features whose labelled null counts match in every window period and target bin,

@@ -127,16 +127,23 @@ checks](feature_checks.md)):
 - `log`: the join, eligibility, contract, compared-periods (`eda`: the labels per group, and
   `missing_window` when the panel lacks a window period, T19), null-target, sampling (`training`)
   and collect logs, in order.
-- `meta`: the hashes, the lineage, the candidates, the tags, the sampling record, for
-  `training` the fold counts (`folds`, the table of `fold_counts`) and the collect estimate and
-  measured size per frame (D-133); for `eda` also `kinds` (candidate →
-  `numeric` / `categorical`, from the Spark schema with the `features.kinds` overrides),
-  `unsupported` (column → type), `snapshot_period` (the label) and `population` (the D-088
-  counts table of `counts.population_counts`, computed here since only the frames hold the
-  panel). Target Factory's summary counts every row of the target source before eligibility;
-  `population` counts the panel after the analysis filters (its labelled counts the eligible
-  rows), so the two agree on the window periods' positive rows and events only where no
-  analysis or modelling filter drops rows.
+- `meta`: the hashes, the lineage, the candidates, the tags, the sampling record, `kinds`
+  (feature → `numeric` / `categorical`, from the panel's Spark schema with the `features.kinds`
+  overrides, `detect_kinds`: for `eda` every supported candidate, for the modelling frames each
+  feature passed), for `training` the fold counts (`folds`, the table of `fold_counts`) and
+  the collect estimate and measured size per frame (D-133); for `eda` also `unsupported` (column
+  → type) and `snapshot_period` (the label); for `eda` and `training`, `population` (the D-088
+  counts table of [`counts.population_counts`](#counts-passes-d-135), computed here since only
+  the frames hold the panel). EDA's covers its compared periods; Training's covers the window's
+  periods, on every client of the panel, before the client split and any sampling. Training's
+  gate compares its
+  `eligible_rows`, `known_target` and `positive_rows` per window period with the counts EDA
+  stored in `eda.json` and refuses a panel that changed under an unchanged data definition; it
+  compares `kinds` with the ledger's `kind` and fails loud on a changed type
+  ([training](training.md#the-gate)). Target Factory's summary counts every row of the target
+  source before eligibility; `population` counts the panel after the analysis filters (its
+  labelled counts the eligible rows), so the two agree on the window periods' positive rows and
+  events only where no analysis or modelling filter drops rows.
 
 The sizing rule (D-135): the window's statistics are Spark aggregates and only their result
 tables reach pandas, while the snapshot analysis runs on every client in pandas; Training
@@ -267,9 +274,10 @@ from them are [EDA](eda.md)'s (its statistics section). The functions:
   positive is a non-zero label, for a flag and an amount alike. The unit counts are plain counts:
   one row per unit and period (`read_keyed_source` refuses a repeated key), so within a period a row
   is a unit; the labelled counts are set to null in pandas outside the window. The labelled counts
-  are nullable integers (`Int64`). `build_frames` computes it for the `eda` stage as
-  `Frames.meta["population"]`; EDA puts it in `eda.json`; the trap acceptance test and Training's
-  count check read it there. A row whose target is null (the forward window not matured, or the
+  are nullable integers (`Int64`). `build_frames` computes it as `Frames.meta["population"]` for
+  `eda` (the compared periods) and `training` (the window's periods); EDA puts it in `eda.json`,
+  where the trap acceptance test reads it and Training's count check compares its own with it.
+  A row whose target is null (the forward window not matured, or the
   client gone before it closed) is in the eligible counts and out of every labelled statistic; the
   gap and latest periods are label-free by construction (N10 of the Stage 2 record; D-131, D-030).
 - `estimate_cells(rows, kinds, window_periods) -> int`: the cell count of both passes with
@@ -715,9 +723,9 @@ is one entity's area and the data-definition hash carries the entity (D-136; [ED
   built by `periods.label_by_period(rows, field, spec)` and `periods.period_labels(first, last,
   spec)`, the two functions every log entry uses.
   `meta`: the data-definition and target-spec hashes with `hash_version`, the lineage, the
-  candidates, the tags, `column_sources` (column → source, every stage), for `eda` the kinds, the unsupported columns, the snapshot period and
-  the population counts ([Frames](#frames-d-030-d-131-d-135)), the sampling record and the
-  collect entries.
+  candidates, the tags, `column_sources` (column → source, every stage), the kinds, for `eda`
+  the unsupported columns and the snapshot period, for `eda` and `training` the population counts
+  ([Frames](#frames-d-030-d-131-d-135)), the sampling record and the collect entries.
 - `save_model_input(cfgs: UseCaseConfig | list[UseCaseConfig], entity, env, spark) -> str`
   (public, `model_input.py`): one config is the one-element list, an empty list is refused;
   the panel of `load_panel` (the sources joined plus the target columns) written to the path

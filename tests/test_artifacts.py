@@ -232,7 +232,10 @@ def test_read_stage_refuses_a_missing_stage_and_another_version(
     path = tmp_path / "eda" / "eda.json"
     current, other = f'"schema_version": {STAGE_SCHEMA_VERSIONS["eda"]}', '"schema_version": 3'
     path.write_text(path.read_text().replace(current, other))
-    reads = "schema_version 3 .* reads 4: rerun the eda stage, then the stages after it"
+    reads = (
+        f"schema_version 3 .* reads {STAGE_SCHEMA_VERSIONS['eda']}: "
+        "rerun the eda stage, then the stages after it"
+    )
     with pytest.raises(ValueError, match=reads):
         read_stage(folder, "eda")
 

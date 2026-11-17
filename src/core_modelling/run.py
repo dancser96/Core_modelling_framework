@@ -6,8 +6,10 @@ asked stages for the asked entities. Target Factory prints its summary per use c
 the model input, one table for every config given, when the configs name one (D-131; the Stage 1
 addendum, section B). EDA and then Feature Checks run per config and return the paths they wrote
 (`eda/`, `feature_checks/`, each with its report); each resolves the config itself (the audit log
-replayed, D-125), and Feature Checks reads EDA's artifacts, so it runs after EDA. Training and
-the later stages arrive with M2.3–M2.4.
+replayed, D-125), and Feature Checks reads EDA's artifacts, so it runs after EDA. Training trains
+one numbered run per config and returns the paths of its `training/` folder; at `autonomous` it
+first runs whichever of EDA and Feature Checks has not run on the config's data definition
+(D-132). Evaluation and the later stages arrive with M2.3–M2.4.
 """
 
 from collections.abc import Callable
@@ -16,11 +18,14 @@ from pathlib import Path
 from pyspark.sql import SparkSession
 
 from core_modelling.config import UseCaseConfig, load_config
+from core_modelling.config.audit_log import resolve_config
 from core_modelling.dataset import save_model_input
 from core_modelling.eda import run_eda
 from core_modelling.environment import EnvironmentConfig, get_spark_session, load_environment
 from core_modelling.feature_checks import run_feature_checks
 from core_modelling.target_factory import run_target_factory
+from core_modelling.training import run_training
+from core_modelling.training.gate import STAGE2, missing_stage2
 
 Stage = Callable[[list[UseCaseConfig], str, EnvironmentConfig, SparkSession], dict]
 
@@ -53,10 +58,33 @@ def _run_feature_checks_stage(
     return {cfg.use_case: run_feature_checks(cfg, entity, env, spark).paths for cfg in cfgs}
 
 
+STAGE2_RUNNERS = {"eda": run_eda, "feature_checks": run_feature_checks}
+
+
+def _run_training_stage(
+    cfgs: list[UseCaseConfig], entity: str, env: EnvironmentConfig, spark: SparkSession
+) -> dict:
+    """Every config's Training, by use case: the paths it wrote. At `autonomous` a config whose
+    EDA or Feature Checks artifacts are missing gets them first, in that order (D-132): what is
+    missing is looked up again after each, since an EDA run removes Feature Checks' folder. At
+    `assisted`, and for stale artifacts at both levels, `run_training` refuses."""
+    out = {}
+    for cfg in cfgs:
+        resolved = resolve_config(cfg, entity, env)
+        if resolved.automation_level == "autonomous":
+            for stage in STAGE2:
+                if stage in missing_stage2(resolved, entity, env):
+                    print(f"run {stage} for {entity} first: training needs it (autonomous)")
+                    STAGE2_RUNNERS[stage](cfg, entity, env, spark)
+        out[cfg.use_case] = run_training(cfg, entity, env, spark).paths
+    return out
+
+
 STAGES: dict[str, Stage] = {
     "target_factory": _run_target_factory_stage,
     "eda": _run_eda_stage,
     "feature_checks": _run_feature_checks_stage,
+    "training": _run_training_stage,
 }  # the run order
 
 
@@ -89,7 +117,7 @@ def run(
     stages: list[str] | None = None,
     entity: str | None = None,
 ) -> dict:
-    """The stages (default: every built stage, `feature_checks` included since 0.3.0) for the
+    """The stages (default: every built stage, `training` included since 0.4.0) for the
     entities (the one given, which every config must list; default: the configs' entities, which
     must agree) of one config or a list; per entity and stage, what the stage returned.
 

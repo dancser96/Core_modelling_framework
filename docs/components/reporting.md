@@ -1,5 +1,5 @@
 # Reporting and model card
-**Status:** built in part 2026-11-04 (Stage 2 major step 2: the renderer, the five primitives and `side_by_side`, the blocks and the theme, built with the EDA report; reviews 2 and 3 applied 2026-11-05/06; the Feature Checks report and `formats.py` built 2026-11-06, major step 3); the model results report, the model and explanation charts and the model card: designing (the spec settled 2026-11-13; built in M2.3 major steps 2 and 3) · **Legacy:** `src/card.py`, `src/analysis.py` plotting helpers
+**Status:** built in part 2026-11-04 (Stage 2 major step 2: the renderer, the five primitives and `side_by_side`, the blocks and the theme, built with the EDA report; reviews 2 and 3 applied 2026-11-05/06; the Feature Checks report and `formats.py` built 2026-11-06, major step 3); the four explanation charts built 2026-11-16 (M2.3 major step 2); the model results report, the model charts, `pdp_ice_chart` and the model card: designing (the spec settled 2026-11-13; built in M2.3 major step 3) · **Legacy:** `src/card.py`, `src/analysis.py` plotting helpers
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [feature ledger](feature_ledger.md) ·
 [evaluation](evaluation.md) (the tables behind the model results report) · [training](training.md)
 (the sign-off and search views) · [model bundle](model_bundle.md) (the run folder the card reads) ·
@@ -372,16 +372,24 @@ returning a `go.Figure` with the chart rules applied; none reads rows.
 `reporting/explain_charts.py`: the four familiar SHAP-style charts drawn in plotly from the
 libraries' own contributions (D-141 (f)), one implementation for the notebook and the report;
 the package imports no `shap`. They take `shap`'s colours, so a DS recognises them at once (red
-raises, blue lowers; blue to red for a low to high feature value; grey for a missing value), and
-the house fonts, titles and margins.
-- `importance_bar`: the mean absolute contribution share per feature on the whole explanation
-  sample, `compare` (train out of fold) beside it, the top 15.
-- `beeswarm`: one point per client and feature, at most 1,500 seeded clients per feature,
-  coloured by the feature's value.
-- `waterfall`: one row from the base value to its margin, the nine largest contributions and the
-  rest, labelled `feature = value`.
-- `dependence`: a feature's contribution against its value, optionally coloured by a second
-  feature, with the mean contribution per group and EDA's lift beside it.
+raises, blue lowers; blue to red for a low to high feature value), and the house fonts, titles
+and margins. A missing value is `null` and grey in every one of them.
+- `importance_bar`: each feature's share of the mean absolute contribution, the `top` (15)
+  largest and the rest summed in one bar. With `compare` (train out of fold beside test) each
+  feature gets a second bar, its shares from its own frame. A frame of only zero contributions
+  fails loud.
+- `beeswarm`: one point per sampled row and feature, coloured by the feature's value; at most
+  1,500 seeded rows (`ROW_CAP`), the same rows for every feature. A `clients` outside 1…1,500 is
+  refused.
+- `waterfall`: one row from the base value to its margin, on the margin's scale for both tasks:
+  the `shown` (9) largest contributions and the rest as one bar, labelled `feature = value`.
+- `dependence` has two forms:
+  - without `lift`: a scatter of the contribution against the raw value for at most 1,500 seeded
+    rows, coloured by a second feature when `colour` is given; a missing value sits in its own
+    `null` strip, drawn only when a sampled value is missing. There is no background histogram.
+  - with `lift` (EDA's group table for the feature): `values` holds each row's EDA group label,
+    and the figure is two panels, the mean contribution per group with its 95% interval (a group
+    under 20 sampled rows greyed) beside EDA's lift. `colour` is refused there.
 - `pdp_ice_chart`: the partial dependence line over the ICE lines of the sample.
 
 A DS who wants `shap`'s own pictures builds a `shap.Explanation` from the stored contributions in
@@ -405,7 +413,9 @@ cannot follow the page's text colour, and the report page is white. The path
 - `src/core_modelling/reporting/html.py`: the renderer (`render_report`, `paragraph`,
   `preformatted`, `figure_html`, `table_html`, `style_table`).
 - `reporting/charts.py`: the five primitives, each one function returning a figure, and
-  `side_by_side`.
+  `side_by_side`. `apply_theme` (the shared theme and layout) and `axis_range` (the axis that
+  follows the data, rule 1) are public names inside `reporting/`, since three modules use them;
+  they are not part of the package's Public API.
 - `reporting/blocks.py`: `CHOICES` (plain data: label, config path, alternatives),
   `choices_block` (the "metric" row shows `decision.metric`, filled at load from the task and
   `decision.type` when the config leaves it null), `identity_values`, `headline`, `warnings_block`, `not_available`,

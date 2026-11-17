@@ -32,7 +32,7 @@ listed alongside.
 | 1 | Target Factory (optional) | [target_factory](components/target_factory.md) | config, dataset | built (thin) |
 | 2 | EDA | [eda](components/eda.md) | dataset, feature ledger, reporting, config | built 2026-11-04 (reviews 2–4 applied 2026-11-05/06; with the LDS for review) |
 | 3 | Feature Checks | [feature_checks](components/feature_checks.md) | feature ledger, config (the audit log), reporting | built 2026-11-06 (Stage 2 major step 3; the EDS's review 1 applied 2026-11-09) |
-| 4 | Training | [training](components/training.md) | model bundle, dataset, feature ledger, config | designing |
+| 4 | Training | [training](components/training.md) | model bundle, dataset, feature ledger, config | built 2026-11-16 (M2.3 major step 2; reviews pending) |
 | 5 | Evaluation | [evaluation](components/evaluation.md) | model bundle, reporting, dataset | designing |
 | 6 | register → promote → deploy | [lifecycle](components/lifecycle.md) | model bundle, reporting (model card), environment | designing |
 | 7 | Inference | [inference](components/inference.md) | model bundle, lifecycle, environment | designing |

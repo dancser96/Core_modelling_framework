@@ -16,7 +16,7 @@ Sonnet build the rest (§7).
 | Major step | State | Chat | Review 1 | Review 2 | Closed |
 |---|---|---|---|---|---|
 | 1 The spec and Foundations | built 2026-11-14; committed (`fa84160`); review 1's remarks applied 2026-11-16 | chat 1 | done 2026-11-16: A65–A81 not vetoed, Q658–Q666 answered (`answers.md`) | | |
-| 2 Training | — | | | | |
+| 2 Training | building since 2026-11-16 | chat 2 | | | |
 | 3 Evaluation | — | | | | |
 
 Each chat sets its row when it starts, at each review and when the step closes.
@@ -110,7 +110,7 @@ section lists what the next step builds on.
 - `run.json` (written first, never rewritten);
 - `bundle/`: the model file, `bundle.json`, `manifest.json`;
 - `ledger_run.parquet` with its sidecar;
-- `stage2/`: the final features' Stage 2 ledger rows, EDA's bin edges and shares per period,
+- `stage2/`: every candidate's Stage 2 ledger row and, cut to the final features, EDA's bin edges and shares per period,
   EDA's lift table (Q654);
 - `training/` (written last, the commit marker):
   - `training.json`: the stamp, the identity, the `summary`, the per-family search table, the
@@ -496,6 +496,12 @@ review is closed) · `general-purpose` · Opus · high
 before its first training (A21); review guide 2.
 
 ### Major step 3: Evaluation
+**How this step runs (the EDS, 2026-11-17).** The EDS reviews steps 2 and 3 together, so this
+step builds on step 2's contracts as built and nothing here waits for a review of step 2; a
+contract the joint review changes is fixed in both steps. Step 2's review stays open (review
+guide 2, A82–A91); its questions Q667–Q673 are answered (`answers.md`). Routing: §7's last
+paragraph. Start: `worknotes/handovers/m2-3-evaluation.md`.
+
 **To settle when this step starts** (found by step 1's spec self-review and reviews):
 - **Evaluation's rows lack the baseline columns.** They carry the keys, `part`, the bundle's
   features, the strata, `target` and `split`. A `previous_model` or `historic_predicted_rate`
@@ -521,8 +527,46 @@ before its first training (A21); review guide 2.
   - For M2.4's `register`: a run stays listed as signed off after one of its features is
     excluded or held later, and the signature covers the names in order, not the kinds,
     the declared orders or the constraints.
+- **What step 2 leaves for this step** (Training's outputs, as built):
+  - Under `negative_downsampling` the `oof` table's rows and `target` are at the sampled rate,
+    while `score` is at the true rate (the offset applied); no column says so.
+  - `stage2/_stage2.json` (EDA's stage version, the ledger's schema version, the two runs'
+    tokens) is checked before any copy in `stage2/` is read; a version Evaluation cannot read
+    is refused.
+  - The `calibration` table's per-method loss is in sample for each calibrator, never an
+    out-of-sample comparison.
+  - With `training.fold_repeats > 1` the search's fold loss covers every dealing and the
+    out-of-fold metric the first only: different quantities, never compared.
+  - Training's concordance is computed on rows (`row_concordance`); Evaluation's, from score
+    cells, must be comparable with it.
+  - The per-run ledger's `train_concordance` and `train_sign` are there for the single-feature
+    baseline (A77).
+- **From the readiness check against the built code** (2026-11-17; it found no blocker):
+  - Views 12 and 13 are not functions. They are the keys `signoff` and `search` of the dict
+    that `training_views(run, opening, warnings, tables, run_ledger, resolved, signed, best,
+    metrics)` returns, so m3.4 rebuilds those nine inputs from `training/` and the audit log
+    (`signed_off`).
+  - `run --run` and `run="r001"` need a run parameter on `Stage`, on `run()` and on the CLI's
+    `run` (none today; only `decide` has `--run`), and the refusal with several configs.
+    `tests/test_run.py` asserts today that `stages=["evaluation"]` is refused; it changes with
+    `STAGES`.
+  - The test of an older run needs a second training: `trained_card` and `trained_regression`
+    hold one run each and share `cc_acquisition`'s run numbers.
+  - The scores are written by Spark, while `write_stage` swaps in a folder built from pandas
+    tables: `write_scores` needs its place in that swap.
+  - The single-feature baseline needs each feature's kind, which the per-run ledger lacks: it
+    comes from `stage2/ledger.parquet` (`kind`) and `features.order`.
+  - `slice_metrics`'s `population` has no source yet (a `top_n` is a share of the period's
+    eligible population, Q629): the evaluation frames' meta carries none and `eda.json`'s is
+    not copied into `stage2/`. Q629's tie rule at the cut (a seeded client hash) is not in
+    `evaluation.md`'s Slices.
+  - `training.json`'s metric keys are `out_of_fold`, `out_of_fold_concordance` and
+    `in_sample_concordance` (the AUC for binary).
+  - `_stage2.json` is written and nothing reads it yet; `models_dir` lives in
+    `environment.py`; a private Poisson client weight exists in `statistics/calibration.py`
+    (pandas, for the level factor), beside the Spark `client_weights` this step builds.
 
-**m3.1 ∥ The metrics and the client bootstrap** (*free*) · `general-purpose` · Opus · xhigh
+**m3.1 ∥ The metrics and the client bootstrap** (*free*) · `builder` · Opus · xhigh
 - Owns: `statistics/metrics.py`, `statistics/bootstrap.py`, `tests/test_metrics.py`,
   `tests/test_bootstrap.py`; seam: `tasks.py`.
 - Builds, on score cells (A58): `binary_metrics(cells: pd.DataFrame) -> dict[str, float]` (AUC,
@@ -542,15 +586,15 @@ before its first training (A21); review guide 2.
   so the log loss clips before the logarithm; a test covers it.
 - Leaves out: the replicate weights, which are drawn in Spark (m3.3).
 
-**m3.2 ∥ The model charts** (*free*) · `general-purpose` · Sonnet · high
+**m3.2 ∥ The model charts** (*free*) · `builder` · Sonnet · high
 - Owns: `reporting/model_charts.py`, `tests/test_model_charts.py`.
 - Builds, each from a table (no row-level data, `reporting.md`): `roc_chart`, `pr_chart`,
   `capture_chart`, `reliability_chart`, `score_distribution` (each class to its own scale),
   `metric_lines` (a metric by period with its interval), `predicted_vs_observed` (regression,
   20 groups). Each takes a `pd.DataFrame` and returns a `go.Figure`.
 
-**m3.3 Scores, baselines, strata, the drift reference** (after step 2's review-1 fixes) ·
-`general-purpose` · Opus · xhigh
+**m3.3 Scores, baselines, strata, the drift reference** (after m3.1, on step 2's contracts as built) ·
+`builder` · Opus · xhigh
 - Owns: `evaluation/scores.py`, `evaluation/baselines.py`, `evaluation/tables.py`,
   `evaluation/drift_reference.py`, `tests/test_evaluation_tables.py`.
 - Builds: `score_parts(spark, bundle_folder: str, rows: DataFrame, cfg) -> DataFrame` and
@@ -578,7 +622,7 @@ before its first training (A21); review guide 2.
   size (to check 8); the main thread runs it and reports it.
 
 **m3.4 The core report and `run_evaluation`** (after m3.1–m3.3) · `report.py`:
-`general-purpose` · Opus · high; `run.py`: main thread · Fable
+`builder` · Opus · high; `run.py`: `builder` · Opus · xhigh (§7's last paragraph)
 - Owns: `evaluation/report.py`, `evaluation/run.py`, `evaluation/__init__.py`,
   `tests/test_evaluation.py`; its lines in `run.py` (`STAGES`), `__main__.py` (`run --run`),
   `conftest.py` (the fixtures `evaluated_card` and `evaluated_regression`) and `test_run.py`.
@@ -593,19 +637,20 @@ before its first training (A21); review guide 2.
   (A36); `run="r001"` evaluates an older run of the same data definition; the end-to-end test
   runs every stage on both configs within its two minutes on `unit`.
 
-**m3.5 The acceptance tests on `dev`** (after m3.4) · written by `general-purpose` · Opus ·
+**m3.5 The acceptance tests on `dev`** (after m3.4) · written by `builder` · Opus ·
 high; run by the main thread
 - Owns: `tests/test_modelling_acceptance.py`; the `acceptance` marker in `pyproject.toml`; the
   `dev_stage2` fixture in `conftest.py`, which `test_traps.py` reads too, so a suite pays for
   `dev`'s EDA and Feature Checks once. The four tests are in §6.
 
 **m3.6 ∥ The explanation tables** (the functions on `score_frame` are *free*) ·
-`general-purpose` · Opus · high
+`builder` · Opus · high
 - Owns: `evaluation/explain.py`, `tests/test_explain.py`.
 - Builds: `collect_explanation_sample(rows: DataFrame, scores: DataFrame, cfg, env) ->
   pd.DataFrame` (a seeded test sample with its features, and the three waterfall rows: the
-  highest score, a row at the decision's cut, a typical row); `sample_contributions(bundle:
-  Bundle, sample: pd.DataFrame) -> pd.DataFrame`; `feature_table(…) -> pd.DataFrame` (A36: the
+  highest score, a row at the decision's cut, a typical row); `compute_contributions(bundle:
+  Bundle, sample: pd.DataFrame) -> pd.DataFrame` (not `sample_contributions`: Training's
+  `training/tables.py` holds that name with other arguments); `feature_table(…) -> pd.DataFrame` (A36: the
   test contribution shares, the unseen and null shares on test and validation, a table of its
   own); `permutation_importance(bundle, sample, clusters: pd.DataFrame, metric: Callable, seed:
   int) -> pd.DataFrame` (per cluster, with the rank check against the contributions);
@@ -614,18 +659,18 @@ high; run by the main thread
 - Tests: the contributions sum to the margin; permuting a cluster moves its members together;
   the effect features are at most twenty and hold every key feature the model uses.
 
-**m3.7 The explanation views** (after m3.6) · `general-purpose` · Opus · high
+**m3.7 The explanation views** (after m3.6) · `builder` · Opus · high
 - Owns: `evaluation/views_explain.py`; its entries in `VIEWS`, its calls in `run_evaluation`,
   and `pdp_ice_chart` in `reporting/explain_charts.py`.
 - Builds views 8–11, 15 and 16: the importance bar with train out of fold beside test, the
   beeswarm, the effects with EDA's lift, the waterfalls, permutation importance, PDP and ICE.
 
-**m3.8 ∥ The model card** · `general-purpose` · Opus · high
+**m3.8 ∥ The model card** · `builder` · Opus · high
 - Owns: `reporting/card.py`, `tests/test_card.py`; one call in `run_evaluation`.
 - Builds: `build_card(run_folder: str) -> dict` (Q638's sections, a schema version, facts from
   the run folder only, no free text) and `render_card(card: dict) -> str` (tables only).
 
-**m3.9 ∥ `compare_runs`** · `general-purpose` · Opus · xhigh
+**m3.9 ∥ `compare_runs`** · `builder` · Opus · xhigh
 - Owns: `evaluation/compare.py`, `tests/test_compare.py`.
 - Builds: `compare_runs(cfg, entity, env, spark, run_a: str, run_b: str) -> dict[str,
   pd.DataFrame]`: the metrics side by side on the rows both scored; each difference with its
@@ -635,16 +680,16 @@ high; run by the main thread
 - Tests: no difference is computed on validation; a run compared with itself has a zero
   interval (the shared weights); runs of two data definitions are refused.
 
-**m3.10 Notebook 05 and the helper's last section** (after m3.7–m3.9) · `general-purpose` ·
+**m3.10 Notebook 05 and the helper's last section** (after m3.7–m3.9) · `builder` ·
 Opus · high
 - Owns: `notebooks/05_evaluation.ipynb` (a guide cell before every step: pick a run, evaluate,
   read the report section by section, the explanations, the card, a comparison, the sign-off,
   the closing checklist), the helper's Evaluation section (with a `shap.Explanation` from the
-  stored contributions in three lines, Q635), `tests/test_code_rules.py` (the notebook joins
-  the public-API rule); the Status lines of `evaluation.md`, `monitoring.md`, `reporting.md`.
+  stored contributions in three lines, Q635), `tests/test_run.py` (the notebook joins
+  `NOTEBOOKS`; `run_evaluation` and `compare_runs` join `PUBLIC_API`); the Status lines of `evaluation.md`, `monitoring.md`, `reporting.md`.
 - The agent writes; the main thread runs the notebook on `dev`.
 
-**m3.11 The close** · main thread; the propagation by `general-purpose` · Sonnet · medium
+**m3.11 The close** · main thread; the propagation by `doc-writer` · Sonnet · medium
 - The reviews of §8, with the ML audit of the whole chain, Training through Evaluation (A61),
   and `compat-guardian` on the scores, the metrics table, the drift reference and the card;
   one fix round; the full suite with the acceptance and slow tests; version
@@ -712,6 +757,15 @@ Every `Agent` call passes `model` and `effort`. Expected balance: Fable about a 
 about two thirds, Sonnet the rest. The share is measured from the transcripts at each step's
 end; above 30%, the next step's orchestrator moves to Opus and Fable keeps its named pieces.
 
+**Step 3's routing (measured at step 2's end, 2026-11-16).** Fable took 40% of the spend since
+11-09 and the main thread 55% of step 2's session, with 58% of main-thread requests above 300k
+tokens. So, overriding the rows above for step 3: the orchestrator runs on Opus; m3.4's
+`run_evaluation` goes to a `builder` (Opus, xhigh) and the orchestrator reads its diff in full;
+Fable does the ML audit of the whole chain (A61) and nothing else; every code or test piece is
+a `builder` and every doc piece a `doc-writer` (D-072 (o)). The orchestrator writes the
+checkpoint at every minor step, sends each fix back to the builder that wrote the code, and
+runs Spark as single background commands.
+
 **How the orchestrator stays small.** It briefs from §5 by reference (the step's bullet, the
 owner doc's section, one question number), never by pasting. It reads a builder's report and
 the reviewer's findings; it reads a diff in full only for the files of the xhigh rows above.
@@ -733,6 +787,8 @@ carries a hard cap.
    code, not tests).
 7. **Review 1** by the EDS, then its fixes: from here the step's contracts are frozen and the
    next chat builds on them. **Review 2**, its fixes, and the step closes on the EDS's word.
+   Steps 2 and 3 are reviewed together (the EDS, 2026-11-17): step 3 builds on step 2's
+   contracts as built, and a contract the joint review changes is fixed in both.
 
 ## 9. Order, parallelism and time
 1. Step 1: m1.1, then m1.2–m1.4 in parallel, then m1.5 and m1.6. From m1.1 on: m1.7→m1.8 (one
@@ -740,9 +796,10 @@ carries a hard cap.
 2. Review 1 of step 1. A second chat may start m2.0, m2.4 and `statistics/calibration.py`.
 3. After its fixes: m2.1 (when m2.0 is back), m2.2 and m2.3 in parallel; m2.5; m2.6; m2.7 and
    m2.8.
-4. Review 1 of step 2. The next chat may start m3.1 and m3.2.
-5. After its fixes: m3.3; m3.4; then m3.5, m3.6, m3.8 and m3.9 in parallel; m3.7; m3.10; m3.11.
-6. The reviews of step 3; version 0.4.0.
+4. Step 3, without waiting for a review of step 2 (the EDS reviews both together, §8): the
+   "to settle" list; m3.1 and m3.2 in parallel; m3.3; m3.4; then m3.5, m3.6, m3.8 and m3.9 in
+   parallel; m3.7; m3.10; m3.11.
+5. The joint review of steps 2 and 3, its fixes; version 0.4.0.
 
 **Time, as an estimate and not a target.** In working days of build: step 1 three (the spec
 one, Foundations two), Training three, Evaluation four and a half, about 10.5 in all, plus the
@@ -892,6 +949,131 @@ fallback for that is that round 1b keeps the exit points and calibration depth m
   and Evaluation's digests and the recipe; names the framework owns (the objective, the
   seed, the constraints) are refused in `training.search_space`; a calibration that would
   reverse the order is refused.
+
+**Defaults from the Training build (step 2, 2026-11-16), to veto by number.** Each is in
+`docs/components/training.md` or the owner doc it names.
+
+- **A82.** What Training reads from Stage 2 and keeps. EDA writes an `edges` table (`feature,
+  position, edge`: each numeric's bin edges at full precision), since the cells' `bin` labels
+  are rounded to six significant digits and the run's copy, the drift reference and the effect
+  charts need the edges themselves; EDA's stage json is at version 5, so EDA, then Feature
+  Checks, rerun once per use case. A run's `stage2/` holds the ledger rows of every candidate
+  (the sign-off table lists the held and the excluded ones too) and EDA's `cells`, `edges`,
+  `bins` and `levels` rows of the final features. `stage2/_stage2.json` records EDA's stage
+  version and the ledger's schema version as read, and the two runs' tokens: the copies carry
+  no sidecar of their own, and Evaluation must refuse a copy it cannot read.
+
+- **A83.** The tables' added columns and rows. The per-run ledger gains `train_concordance`
+  and `train_sign`, which Evaluation's single-feature baseline reads (A77); the `selection`
+  table gains `represented_by`, the cluster member a dropped feature is represented by;
+  `training.json`'s `metrics` gains `note`, the optimism of every train-side number. The trials
+  table's `configuration` holds the searched values only, as JSON text; the constants are in
+  `training.json`'s `search_space`. The sign-off table is one row per feature: a constrained
+  feature that is held or excluded stays in its own section, and `declared_not_in_model` lists
+  every constrained feature outside the model. EDA's direction is compared with the model's and
+  with a constraint for numerics only: a categorical's comes from a cross-fitted target
+  encoding and reads `+` whenever there is signal, so a `decreasing` constraint on an ordered
+  categorical warned every time. CatBoost gives no split counts, so its `in_model` is "gain
+  above zero".
+
+- **A84.** Calibration. `calibrate(margins, y, clients, cfg, sampling)` returns the bundle's
+  calibration, the `calibration` table and the warnings; it takes the frames' sampling record
+  and sets the offset by the sampling method (zero without sampling and under `client_sample`),
+  never from the record's two rates. Platt and beta are scikit-learn's logistic regression with
+  `C=1e12` and the `newton-cholesky` solver to a tolerance of 1e-10: scikit-learn 1.8.0 warns on
+  `penalty=None` and on `C=np.inf`, and `C=1e12` matches the unpenalised fit to 1e-15.
+  Out-of-fold margins that separate the labels, or are constant, stop calibration with their
+  own message (Platt returned a slope of 43.9 on separated labels without an error). A Platt
+  slope at or below zero, or a beta fit with neither coefficient positive, stops Training
+  whatever the chosen method: the model is anti-predictive out of fold. A level factor that is
+  not positive and finite stops it only when `mean` is chosen; under `none` it warns. The level
+  factor's bootstrap weights come from pandas' fixed hash of the client, not Spark's.
+
+- **A85.** The search as built, where it differs from m2.1's signatures.
+  `build_search_space(space, fixed)` takes the family's space, not the config;
+  `search_metric(metric)` takes the metric's name; `fold_splitter(folds)` returns `ClientFolds`
+  with `shuffle = False` (T42). `search_family(X, y, splitter, settings)` runs one family and
+  returns FLAML's log text, with its arguments from `flaml_settings(family, space, fixed, cfg,
+  budget, threads)` and its frame from `search_frame(family, X, encoder)` (CatBoost's
+  categoricals as pandas `category`). `read_trials(family, log, searched, constants)` builds the
+  trials table from the log, which holds every trial (FLAML's `config_history` held 2 of 12).
+  `check_search(family, trials, starts, budget)` adds two refusals to the plan's: a non-finite
+  fold loss (FLAML logs NaN, not infinity, on a fold without a positive) and a trial count off
+  the budget. `search_families(X, y, folds, encoder, monotone, cfg, threads) -> Search` runs
+  every family and picks the best, the list's order deciding a tie. New beside them:
+  `checked_space`, `check_spaces(cfg)`, `fit_parameters` and `check_judged_model` (A86, A87).
+  `split_budget` refuses a trial budget below the number of families; a range in
+  `training.search_space` without a `start`, whose family has no default to start from, is
+  refused (T39). `TASK_SPECS` holds `flaml_task`; `CONSTANTS["catboost"]` holds
+  `early_stopping_rounds: None`, which FLAML skips, while the fixed `use_best_model: False` is
+  what stops early stopping.
+
+- **A86.** One rule for a configuration's parameters, and the check that the kept model is the
+  judged one. `fit_parameters(fixed, space, searched)` gives the parameters of every fit,
+  FLAML's trials and the framework's own alike: the fixed ones, the space's values over them,
+  the searched values last. The space wins over a fixed parameter because LightGBM's
+  `monotone_constraints_method` is the one fixed name a config may set; with two rules a search
+  judged `basic` while the kept model used `intermediate` (the code review's blocking item).
+  Every later fit's parameters come from the framework's own data and the trials table, never
+  from FLAML's echo of the configuration, and `read_trials` refuses a logged trial whose other
+  values are not the framework's constants or that names a parameter the framework does not
+  know. After the fold models, at one dealing, `check_judged_model` compares their mean fold
+  loss on `score_raw` with the best trial's, to 1e-6 (relative for a loss above 1): a
+  difference fails loud under a trial budget; under `training.time_budget_s`, where FLAML stops
+  adding LightGBM's and XGBoost's trees at a deadline while its log keeps the configured count,
+  it is the run's warning with both numbers. FLAML's refit of the best trial on every row is
+  left on: under cross-validation `retrain_full=False` does not stop it, Training never reads
+  it, and it costs about a quarter of one trial per family at five folds.
+
+- **A87.** The order of a run and the module cut. Every refusal that needs no fit comes before
+  the run number: `check_spaces` (the budget and each family's names), the gate, the frames, the
+  count and kind checks, and the encoder's fit with its refusals (a constraint on an unordered
+  categorical, a train level that `features.order` does not list); then `create_run`. A refused
+  run takes no number. `check_counts` compares both ways: a window period EDA counted that the
+  panel no longer holds is refused too. The thread count is the machine's cores
+  (`os.cpu_count()`): no config or environment field holds it and no hash depends on it; an
+  environment field follows if the bank's node needs a cap. The per-run ledger and the
+  `stage2/` copies are written from `run_training`, between the bundle and the result, so the
+  run's writes all show there. The cut: `training/gate.py` (the gate, the counts, the copies),
+  `training/train_data.py` (the encoder's fit, encoding and selection: `TrainData`,
+  `fit_train_encoder`, `encode_and_select`) and `training/tables.py` (the `oof` table, the
+  explanation sample, the train metrics) leave `training/run.py` at 432 lines, which opens,
+  fits and writes; the writes are the next cut if it grows.
+
+- **A88.** Selection. Whether the floor judges a numeric on its best-order concordance is
+  decided on the train split (`is_non_monotone` on its train concordance, its best-order
+  concordance and its SE, EDA's rule); EDA's `non_monotone` mark is not read, since it saw test
+  labels (`CLAUDE.md` §4.4, beyond D-030's carve-out). The train-statistics table gains
+  `non_monotone`. Still open in the spec: on a noise feature the best-order concordance sits
+  2.5 to 2.8 SE above 0.5, so a noise numeric judged on its best order tends to pass a floor at
+  z = 2; the SE-scaled margin of `is_non_monotone` is the guard today. Pruning compares like
+  with like: the fits with and without the candidates both leave the noise columns out, at the
+  cost of one more fold fit when there are candidates. An emptied feature list is refused at the
+  rule that emptied it; a null fold or a missing SE fails loud.
+
+- **A89.** The concordance on rows, for both tasks. The concordance beside every headline (the
+  AUC for a binary target) is computed exactly on rows by `statistics/losses.py::row_concordance`
+  (Somers' D from Kendall's tau-b and the tie counts; 1 s for 2 million rows): out of fold as
+  the mean over the folds, in sample on the final model; a non-finite prediction is refused.
+  The decision's metric as a loss on rows follows FLAML's definitions (`1 − AUC`), so the
+  framework's fold loss is the number the search reported.
+
+- **A90.** The explanation charts, where they differ from the prototype: `importance_bar` shows
+  each feature's share of the mean absolute contribution; `dependence` with `lift` draws the
+  mean contribution per EDA group beside EDA's lift and takes each row's group label; the
+  waterfall is on the margin's scale for both tasks; the dependence scatter has no background
+  histogram (chart rules 4 and 8); a missing value is `null`, its strip drawn only when needed;
+  only zero contributions fail loud; the beeswarm's title says "per sampled row".
+
+- **A91.** `run` and the config. `STAGES` gains `training`, so `run <config>` with no
+  `--stages` trains: each call takes a run number and writes a `run` entry (Q669). The config
+  refuses a deviance metric (`tweedie_deviance`, `poisson_deviance`) with an objective other
+  than `tweedie` or `poisson`: under an identity link a prediction can be zero or negative,
+  where the deviance is undefined, and the search would stop on whatever data first produced
+  one (Q668). Beside it, decided by the EDS (Q667, option 1), not a default:
+  `training.objective: absolute_error` with any `training.monotone` entry is refused at load,
+  whatever the families, pointing to `huber` (T43: LightGBM refuses the pair, XGBoost breaks
+  the constraint without a word).
 
 Recorded with Q632 and still open to a veto with the spec: the emptied `lifecycle` config
 section leaves the schema until M2.4.

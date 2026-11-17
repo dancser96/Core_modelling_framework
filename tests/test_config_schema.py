@@ -22,7 +22,8 @@ from core_modelling.config.levels import (
 )
 from core_modelling.config.migrations import MIGRATIONS
 from core_modelling.config.replay import replay, validate_raw
-from core_modelling.config.schema import EVERY_CHECK, snapshot_period
+from core_modelling.config.schema import EVERY_CHECK, LOG_LINK_OBJECTIVES, snapshot_period
+from core_modelling.model.calibration import LINK_BY_OBJECTIVE
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "tests/conf/cc_acquisition.yml"
@@ -1047,6 +1048,39 @@ def test_regression_choices_are_checked_against_the_task(tmp_path: Path, raw: di
     assert "leave the power null in the config file" in _error(tmp_path, raw)
     entry = build_entry(1, "set", stage="training", path="training.objective", to="poisson")
     with pytest.raises(ValueError, match="set training.tweedie_variance_power to null first"):
+        replay(cfg, [entry])
+
+
+def test_a_deviance_metric_needs_a_log_link_objective(tmp_path: Path, raw: dict) -> None:
+    """A deviance is not defined for a prediction at or below zero, which only a log link rules
+    out: the pair is refused at load instead of stopping a run mid-search. The lists agree with
+    the families' links."""
+    raw = _regression(raw)
+    raw["decision"]["metric"] = "poisson_deviance"
+    error = _error(tmp_path, raw)
+    assert "'poisson_deviance' needs a training.objective of tweedie or poisson" in error
+    raw["training"]["objective"] = "huber"
+    assert "under 'huber' a prediction can be zero or negative" in _error(tmp_path, raw)
+    for objective in LOG_LINK_OBJECTIVES:
+        raw["training"]["objective"] = objective
+        assert _load(tmp_path, raw).decision.metric == "poisson_deviance"
+    log_links = {name for name, link in LINK_BY_OBJECTIVE.items() if link == "log"}
+    assert log_links == set(LOG_LINK_OBJECTIVES)
+
+
+def test_the_absolute_error_takes_no_monotone_constraint(tmp_path: Path, raw: dict) -> None:
+    """`absolute_error` with a constraint is refused at load, whatever the families (T43), also
+    when a `set` brings the pair about; alone it loads, and `huber` loads with the constraint."""
+    raw = _regression(raw)
+    raw["training"].update(objective="absolute_error", estimator_list=["catboost"])
+    assert _load(tmp_path, raw).training.objective == "absolute_error"
+    raw["training"]["monotone"] = {"age": "increasing"}
+    error = _error(tmp_path, raw)
+    assert "'absolute_error' takes no monotone constraint" in error and "['age']" in error
+    raw["training"]["objective"] = "huber"
+    cfg = _load(tmp_path, raw)
+    entry = build_entry(1, "set", stage="training", path="training.objective", to="absolute_error")
+    with pytest.raises(ValueError, match="takes no monotone constraint"):
         replay(cfg, [entry])
 
 

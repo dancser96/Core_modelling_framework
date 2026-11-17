@@ -4,13 +4,15 @@ A stage that does something differently for binary and regression looks the choi
 `TASK_SPECS[cfg.task]` instead of branching on the task; both tasks share one function where the
 formula is the same (the lift test). Target Factory and the dataset read the target rules, the
 target column check, the target summary and occurrences and the contract checks. EDA and Feature
-Checks read the rest (A28, A29): the counts table's target bins, the group summary and the
-per-period estimate with their intervals, the rare effect, the concordance from cells and its
-SE, the support in effective clients and its name, the events warning, the headline, the level
-encoding's shrinkage, whether a lift exists, the target class and how an estimate is printed
-and named. The modelling choices (the metrics, objectives and calibration methods each task
-allows, with their defaults) are the config schema's `TASK_CHOICES`, which each task's entry
-carries too: the schema checks and fills them at load and cannot import this module.
+Checks read most of the rest (A28, A29): the counts table's target bins, the group summary and
+the per-period estimate with their intervals, the rare effect, the concordance from cells and
+its SE, the support in effective clients and its name, the events warning, the headline, the
+level encoding's shrinkage, whether a lift exists, the target class and how an estimate is
+printed and named. Training reads the calibration's fits (every method the task allows, with
+their evidence and warnings) and the loss its table shows per method. The modelling choices
+(the metrics, objectives and calibration methods each task allows, with their defaults) are the
+config schema's `TASK_CHOICES`, which each task's entry carries too: the schema checks and
+fills them at load and cannot import this module.
 
 A target rule compares a unit's value at period t with its values in t+1 … t+w and returns the
 target at t as a Column, from the target column and the forward window that
@@ -38,6 +40,7 @@ from pyspark.sql.types import BooleanType, DoubleType, FloatType, NumericType
 from core_modelling.config import UseCaseConfig
 from core_modelling.config.schema import TASK_CHOICES
 from core_modelling.periods import label_by_period, period_spec
+from core_modelling.statistics.calibration import fit_beta, fit_platt, level_factor
 from core_modelling.statistics.cells import two_way_table
 from core_modelling.statistics.concordance import (
     concordance_exact,
@@ -62,6 +65,7 @@ EVENTS_WARNING = 500  # fewer events (units with a non-zero target) in the snaps
 # Over the window, fewer converting clients or positive rows than these: the warning also says
 # the fold metric is noisy (training.fold_repeats steadies it; fewer folds never help).
 FEW_CONVERTING_CLIENTS, FEW_POSITIVE_ROWS = 100, 200
+LEVEL_WARNING = 0.05  # a level factor's interval reaching beyond ±5% of it: a warning
 BINARY_SUPPORT = "positive events"  # what the concordance's support counts, per task
 REGRESSION_SUPPORT = "units with a non-zero target"
 # A group table's summary columns every task shares; `summary_columns` per task adds its own, so
@@ -508,6 +512,41 @@ def _no_perfect_list(n: int, support: int) -> None:
     return None
 
 
+def _binary_calibration_fits(
+    margin: np.ndarray, score_raw: np.ndarray, y: np.ndarray, clients: np.ndarray
+) -> tuple[dict[str, dict], dict, list[str]]:
+    """Every binary method's parameters on the out-of-fold margins (`none`, `platt`, `beta`);
+    no level evidence and no warning."""
+    fits = {"none": {}, "platt": fit_platt(margin, y), "beta": fit_beta(margin, y)}
+    return fits, {}, []
+
+
+def _regression_calibration_fits(
+    margin: np.ndarray, score_raw: np.ndarray, y: np.ndarray, clients: np.ndarray
+) -> tuple[dict[str, dict], dict, list[str]]:
+    """`none` and `mean` (the level factor on `score_raw`, the out-of-fold prediction in the
+    target's units), the factor with its interval and `half_total_rows` as the evidence of
+    both, and one warning: the factor is not defined (not positive and finite), or its interval
+    is not within ±5% of it (a NaN bound included). The method never switches itself."""
+    level = level_factor(score_raw, y, clients)
+    factor, low, high = level["factor"], level["low"], level["high"]
+    evidence = {"factor": factor, "factor_low": low, "factor_high": high,
+                "half_total_rows": level["half_total_rows"]}  # fmt: skip
+    warnings = []
+    if not (np.isfinite(factor) and factor > 0):
+        warnings.append(
+            "the level factor is not defined for this target: its total, or the predictions' "
+            "total, is not positive"
+        )
+    elif not (low >= (1 - LEVEL_WARNING) * factor and high <= (1 + LEVEL_WARNING) * factor):
+        warnings.append(
+            f"the level factor {factor:.3f} has the 95% interval {low:.3f} … {high:.3f}: the "
+            "level of this target is decided by a few rows; the factor, and any model's level, "
+            "is uncertain; consider a capped target"
+        )
+    return {"none": {}, "mean": {"factor": factor}}, evidence, warnings
+
+
 TASK_SPECS = {
     "binary": {
         **TASK_CHOICES["binary"],
@@ -542,6 +581,10 @@ TASK_SPECS = {
         "perfect_list": _binary_perfect_list,
         # the client folds deal the converting clients in turn, so every fold holds its share
         "balanced_folds": True,
+        # (margin, score_raw, y, clients) -> (parameters by method, evidence, warnings)
+        "calibration_fits": _binary_calibration_fits,
+        "calibration_loss": "log_loss",  # each method's out-of-fold loss in the table
+        "flaml_task": "classification",  # FLAML's name for the search's task
     },
     "regression": {
         **TASK_CHOICES["regression"],
@@ -574,5 +617,8 @@ TASK_SPECS = {
         "capture_noun": "amount",
         "perfect_list": _no_perfect_list,
         "balanced_folds": False,  # an amount has no converting clients: the plain hash fold
+        "calibration_fits": _regression_calibration_fits,
+        "calibration_loss": None,  # the level factor's interval is the evidence instead
+        "flaml_task": "regression",
     },
 }

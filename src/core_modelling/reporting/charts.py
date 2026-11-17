@@ -23,7 +23,7 @@ TITLE_SIZE = 14
 LIFT_TITLE = "Lift vs base rate (1 = base)"  # the lift axis' title, every lift chart's
 
 
-def _apply_theme(fig: go.Figure, title: str, x_title: str, y_title: str, height: int) -> go.Figure:
+def apply_theme(fig: go.Figure, title: str, x_title: str, y_title: str, height: int) -> go.Figure:
     """The theme and layout every primitive shares: fonts, colours, margins, grid, axis titles."""
     fig.update_layout(
         template="none", title={"text": title, "x": 0.5, "xanchor": "center",
@@ -58,7 +58,7 @@ def _add_reference_and_note(fig: go.Figure, reference: float | None, insufficien
     fig.layout.meta = {"reference": reference, "insufficient": insufficient}
 
 
-def _axis_range(values: np.ndarray, reference: float | None, from_zero: bool) -> list[float] | None:
+def axis_range(values: np.ndarray, reference: float | None, from_zero: bool) -> list[float] | None:
     """The axis range that follows the data (chart rule 1): from zero, 1.25 × the plotted values
     on each side of it (a regression target can be negative); else the data's span padded; the
     reference stays in view. None when nothing but zero is plotted."""
@@ -162,12 +162,12 @@ def _interval_bars(
         bar.insidetextanchor = "start"  # at the base, clear of the error bar around the top
     fig = go.Figure(bar)
     fig.update_xaxes(type="category", categoryorder="array", categoryarray=list(data[x]))
-    _apply_theme(fig, title, x_title, y_title, 380)
+    apply_theme(fig, title, x_title, y_title, 380)
     fig.update_layout(showlegend=False)
     if data[x].str.len().max() > 12:  # long labels tilt
         fig.update_xaxes(tickangle=-30)
     plotted = _plotted(data, value, low, high, flags)
-    fig.update_yaxes(range=_axis_range(plotted, reference, True), tickformat=y_format)
+    fig.update_yaxes(range=axis_range(plotted, reference, True), tickformat=y_format)
     _add_reference_and_note(fig, reference, bool(flags.any()))
     return fig
 
@@ -258,7 +258,7 @@ def box_from_quartiles(
         ))  # fmt: skip
     # A category axis, or plotly.js reads labels like "0" and "1" as numbers (and drops "null").
     fig.update_xaxes(type="category", categoryorder="array", categoryarray=list(data[group]))
-    _apply_theme(fig, title, x_title, y_title, 380)
+    apply_theme(fig, title, x_title, y_title, 380)
     fig.update_layout(showlegend=False)
     fig.update_yaxes(type="log" if log else "linear")
     _add_reference_and_note(fig, None, False)
@@ -378,7 +378,7 @@ def grouped_lines(
     if support is not None and x_numeric:
         raise ValueError("support bars are drawn over categories: do not combine with x_numeric")
     fig = make_subplots(specs=[[{"secondary_y": support is not None}]])
-    _apply_theme(fig, title, x_title, y_title, 380)  # first: it titles every y axis
+    apply_theme(fig, title, x_title, y_title, 380)  # first: it titles every y axis
     lines = _lines(df, group, group_order) if group else [("", df, THEME["accent"])]
     for name, part, colour in lines:
         _add_line(fig, part, x, y, low, high, insufficient, name, colour, group is not None,
@@ -395,7 +395,7 @@ def grouped_lines(
                          range=[-0.5, len(categories) - 0.5])  # fmt: skip
     flags = _flags(df, insufficient)
     plotted = _line_range_values(df, y, low, high, flags)
-    fig.update_yaxes(range=_axis_range(plotted, reference, from_zero), tickformat=y_format,
+    fig.update_yaxes(range=axis_range(plotted, reference, from_zero), tickformat=y_format,
                      hoverformat=y_format, secondary_y=False)  # fmt: skip
     if legend_title is not None:
         fig.update_layout(legend_title_text=legend_title)
@@ -430,7 +430,7 @@ def heatmap(
     label = 7 * max(len(name) for name in labels) + 20
     # The square fits the report's 1,060 px column; the paper stays wide enough for the title.
     side = min(max(280, 32 * len(labels)), 1060 - label - 110)
-    _apply_theme(fig, title, x_title, "", side + label + 90)
+    apply_theme(fig, title, x_title, "", side + label + 90)
     # A paper just wider than the square and its labels keeps the colour bar beside it.
     width = max(560, side + label + 110)
     fig.update_layout(width=width, margin={"l": label, "r": 110, "t": 90, "b": label})
@@ -492,7 +492,7 @@ def side_by_side(left: go.Figure, right: go.Figure, height: int = 380) -> go.Fig
         horizontal_spacing=0.1,
     )  # fmt: skip
     fig.update_annotations(font_size=TITLE_SIZE)  # the panel titles, sized as a figure's title
-    _apply_theme(fig, "", "", "", height)  # first: it titles every axis
+    apply_theme(fig, "", "", "", height)  # first: it titles every axis
     if _shows_legend(left):
         # One figure has one legend, right of the right panel: two would also mix their levels.
         raise ValueError(

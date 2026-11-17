@@ -1,5 +1,5 @@
 # Feature ledger
-**Status:** built (spec settled 2026-11-02; `ledger.py` built in Stage 2's m1.5, 2026-11-03; EDA writes the identity and EDA columns since 2026-11-04, Stage 2 major step 2; the identity column `source` and `ledger_schema_version` 2 since 2026-11-06; the sidecar's run tokens and `ledger_schema_version` 3 since 2026-11-10; Feature Checks writes its columns since 2026-11-06, major step 3; the per-run part specified 2026-11-13, to be built in M2.3 major step 2) · **Legacy:** none (the crunch had only `features_include` / `features_exclude`)
+**Status:** built (spec settled 2026-11-02; `ledger.py` built in Stage 2's m1.5, 2026-11-03; EDA writes the identity and EDA columns since 2026-11-04, Stage 2 major step 2; the identity column `source` and `ledger_schema_version` 2 since 2026-11-06; the sidecar's run tokens and `ledger_schema_version` 3 since 2026-11-10; Feature Checks writes its columns since 2026-11-06, major step 3; the per-run part specified 2026-11-13 and built 2026-11-16, M2.3 major step 2) · **Legacy:** none (the crunch had only `features_include` / `features_exclude`)
 **Related:** [EDA](eda.md) · [feature checks](feature_checks.md) · [training](training.md) ·
 [evaluation](evaluation.md) · [model bundle](model_bundle.md) (the run folder) · [config](config.md) (the
 decision audit log) · [reporting](reporting.md) · D-030, D-031, D-043, D-125, D-134, D-135, D-136,
@@ -127,9 +127,10 @@ constraint against EDA's direction marks the row and raises the warning.
    tables (`core_modelling/statistics/` computes them, D-135).
 9. **Labels.** The EDA and Feature Checks columns are computed on every eligible client, labels
    included (D-030); Training's automated selection recomputes every label-using statistic it
-   decides on, on the train split. From these columns it reads the identity columns, the
-   label-free `cluster`, EDA's `non_monotone` marker (whose cost D-030 states) and, for a
-   comparison only, EDA's `direction` ([training](training.md#selection)).
+   decides on, on the train split, including whether a numeric is judged on its best order
+   ([training](training.md#selection)). Its rules read only the identity columns and the
+   label-free `cluster` from these columns; EDA's `direction` and `non_monotone` mark reach the
+   per-run ledger for display and the wrong-sign warning only.
 
 ### Columns
 Types are pandas / parquet types; "list" is a parquet list column. Every statistic's definition,
@@ -253,14 +254,18 @@ bundle](model_bundle.md#the-run-folder)).
    (`stage2/`). Held and excluded features have no row here; the sign-off view lists them from
    the Stage 2 rows and the audit log.
 2. **Written by Training once,** by `build_run_ledger` and `save_run_ledger`, after the bundle and
-   before `training/` (D-139 (a)).
+   before `training/` (D-139 (a)). A second save into the same run folder is refused. Both files
+   go to temporary names first, then are renamed, the parquet first and the sidecar last: the
+   sidecar is what the reader looks for, so a crash between the renames leaves no readable
+   ledger.
 3. **The one record of automated drops:** no audit-log entry repeats them (D-125).
 4. **Evaluation never rewrites it.** Its per-feature numbers (the test contribution shares, the
    unseen and null shares on test and validation) are a table of its own under `evaluation/`,
    joined when the report is drawn ([evaluation](evaluation.md)).
-5. **The sidecar** holds the schema version (1), the `run_id`, the data-definition hash and the
-   Stage 2 run tokens the run paired with; a reader refuses another version, as for the Stage 2
-   file.
+5. **The sidecar**, `_ledger_run.json`, holds `ledger_run_schema_version` (1),
+   `framework_version`, `written_at`, `run_id`, `data_definition_hash` and `stage2` (the run
+   tokens of the EDA and Feature Checks runs the run paired with); `read_run_ledger` refuses
+   another version, as for the Stage 2 file.
 
 | Group | Column | Type | Meaning |
 |---|---|---|---|
@@ -268,28 +273,41 @@ bundle](model_bundle.md#the-run-folder)).
 | Selection | `selected` | bool | in the final list: no rule dropped it |
 | Selection | `dropped_by` | str | `cluster`, `floor` or `prune`; null when selected |
 | Selection | `cluster_value`, `cluster_threshold`, `cluster_outcome` | float, float, str | the cluster rule: the train concordance it ranked on, the representative's, the outcome |
-| Selection | `floor_value`, `floor_threshold`, `floor_outcome` | float, float, str | the floor: the train concordance (best order for a `non_monotone` feature), 0.5 + z · SE, the outcome |
+| Selection | `floor_value`, `floor_threshold`, `floor_outcome` | float, float, str | the floor: the train concordance (best order for a numeric the train split shows as non-monotone, by EDA's rule), 0.5 + z · SE, the outcome |
 | Selection | `prune_value`, `prune_threshold`, `prune_outcome` | float, float, str | pruning: the out-of-fold contribution share, the best noise column's, the outcome |
 | Selection | `represents` | list[str] | the cluster members dropped in its favour |
 | Selection | `protected` | bool | a person's `keep` in force: measured by every rule, dropped by none |
-| Model | `in_model` | bool | used by at least one split of the final model |
-| Model | `splits`, `gain_share` | int, float | the split count and the share of the gain, from the family's `describe` |
+| Model | `in_model` | bool | used by the final model: at least one split, or gain above zero when `splits` is null |
+| Model | `splits`, `gain_share` | int, float | the split count and the share of the gain, from the family's `describe`; `splits` is null for CatBoost, whose `describe` gives no split counts |
 | Model | `contribution_share`, `contribution_rank` | float, int | the share of the mean absolute out-of-fold contribution on train clients, and its rank |
-| Model | `direction_model` | str | `+` or `-`: the sign of the rank correlation between the feature's values and its out-of-fold contributions; null for an unordered categorical |
-| Model | `direction_agrees` | bool | the model's direction against EDA's `direction` |
+| Model | `direction_model` | str | `+` or `-`: the sign of the rank correlation between the feature's values and its out-of-fold contributions; null for an unordered categorical or a constant |
+| Model | `direction_agrees` | bool | the model's direction against EDA's `direction`, for a numeric only |
 | Encoder | `levels_kept` | int | the levels the encoder kept (categoricals) |
 | Encoder | `null_share`, `infinite_share`, `other_share` | float | on the train frame: nulls, values clipped to ±1e30, values coded `__other__` |
 | Constraint | `monotone` | str | the declared constraint, `increasing` or `decreasing`; null when none |
-| Constraint | `monotone_agrees` | bool | the declared sign against EDA's direction: false when it is the opposite or EDA marked the feature `non_monotone` (the wrong-sign warning) |
+| Constraint | `monotone_agrees` | bool | the declared sign against EDA's direction, for a numeric only: false when it is the opposite or EDA marked the feature `non_monotone` (the wrong-sign warning) |
+| Train | `train_concordance` | float | the concordance with the target on the train split, direction taken out (`training/train_statistics.py`) |
+| Train | `train_sign` | int | the raw sign of its direction there: 1, −1, or 0 when unavailable |
 
+- The selection columns come from Training's long `selection` table (`training/tables/`; `feature,
+  rule, value, threshold, outcome, represented_by`, one row per feature and rule;
+  [training](training.md#what-training-writes)): per rule its value, threshold and outcome,
+  `dropped_by` (the rule with a `dropped` row) and `represents` (the features whose `cluster` row
+  is `dropped` with this one as `represented_by`). A `protected` or `undone` row is not a drop.
 - An outcome is `passed`, `dropped`, `protected` (the rule would drop it; a `keep` holds it) or
   `undone` (pruning only: the decision's metric as a loss, out of fold and averaged over the
   folds, rose without the candidates, so nothing was pruned). A rule switched off,
   or one after the rule that dropped the feature, leaves its three columns null.
+- `direction_agrees` and `monotone_agrees` compare with EDA's direction for a numeric only: a
+  categorical's comes from a cross-fitted target encoding and reads `+` whenever there is
+  signal, so it says nothing about the order of an ordered categorical. Both are null when there
+  is nothing to compare (no EDA direction, a categorical, no constraint).
+- A final model with a total gain or a total mean |contribution| of zero fails loud ("the final
+  model made no split"): no feature would have a share.
+- `train_concordance` and `train_sign` are there for Evaluation's single-feature baseline, which
+  reads them also when a selection rule is switched off.
 - The unseen share is zero on the train frame by construction; on test and validation it is
   Evaluation's.
-- Training's `selection` table (`training/tables/`) holds the same rule outcomes in long form,
-  one row per feature and rule ([training](training.md#what-training-writes)).
 
 ### Code map
 - `src/core_modelling/ledger.py`: the column lists as plain data (`COLUMNS_BY_STAGE`: `identity`,
@@ -334,12 +352,36 @@ def render_decisions(
 def resolve_features(ledger: pd.DataFrame, resolved: UseCaseConfig) -> list[str]: ...
 
 # training/ledger_run.py, the per-run part (private)
-def build_run_ledger(selection: pd.DataFrame, description: dict, contributions: pd.DataFrame,
-                     encoder_shares: pd.DataFrame, monotone: dict[str, str],
-                     stage2: pd.DataFrame) -> pd.DataFrame: ...
+LEDGER_RUN_SCHEMA_VERSION = 1
+
+
+def build_run_ledger(
+    selection: pd.DataFrame,
+    statistics: pd.DataFrame,
+    description: dict,
+    contributions: pd.DataFrame,
+    values: pd.DataFrame,
+    encoder: dict,
+    encoder_shares: pd.DataFrame,
+    monotone: dict[str, str],
+    stage2: pd.DataFrame,
+    kept: list[str],
+) -> pd.DataFrame: ...
+def save_run_ledger(ledger: pd.DataFrame, run_folder: str, meta: dict) -> None: ...
+def read_run_ledger(run_folder: str) -> pd.DataFrame: ...
 ```
 
-`save_run_ledger` and `read_run_ledger` get their signatures when built.
+- `build_run_ledger` gives one row per feature of `encoder_shares` (the features that entered
+  selection), in its order, with `LEDGER_RUN_COLUMNS`. `statistics` are the train-split
+  statistics, `description` the final model's `describe`, `contributions` and `values` the
+  out-of-fold contributions and encoded values of the final features on the train rows, `kept`
+  the features with a `keep` in force. It refuses a selection table that does not fit the
+  features (an unknown feature, rule, outcome or representative, a repeated feature and rule, two
+  drops), model inputs that are not exactly the final list, and a feature the encoder or the
+  train statistics lack.
+- `save_run_ledger` refuses columns other than `LEDGER_RUN_COLUMNS` in order, and a `meta` other
+  than `run_id`, `data_definition_hash` and `stage2`. `read_run_ledger` refuses a missing sidecar
+  and another `ledger_run_schema_version` before it reads the parquet.
 
 - `create_ledger` writes the identity columns: an unsupported column's kind is `unsupported`, a
   lineage column EDA did not read may have none, every other candidate needs `numeric` or

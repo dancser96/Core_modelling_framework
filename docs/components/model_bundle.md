@@ -51,8 +51,9 @@ the model library's native file, `bundle.json` (the encoder, the calibration, th
   - `bundle.json`,
   - `manifest.json`;
 - `ledger_run.parquet` with its sidecar: the per-run feature ledger ([feature ledger](feature_ledger.md));
-- `stage2/`: the run's own copy of what it needs from Stage 2 (the final features' ledger rows,
-  EDA's bin edges and shares per period, EDA's lift table);
+- `stage2/`: the run's own copy of what it needs from Stage 2: every candidate's ledger rows
+  (without the ledger's sidecar), EDA's `cells`, `edges`, `bins` and `levels` tables of the
+  final features, and `_stage2.json`, which versions and runs it copied ([training](training.md#what-training-writes));
 - `training/`: written last, the commit marker of a trained run ([training](training.md));
 - `evaluation/`: written whole by each Evaluation ([evaluation](evaluation.md)).
 
@@ -77,12 +78,12 @@ stays taken while the folder exists.
    library differs in version from the driver's fails loud.
 
 ### The functions in brief
-- `model/encoder.py`: `fit_encoder`, `encode_frame`.
+- `model/encoder.py`: `fit_encoder`, `encode_frame`, `select_encoder`.
 - `model/families.py` and one module per library: `FAMILIES` (`fit`, `predict`, `describe`,
   `save`, `load`, `contributions`, `fixed_params`, `file_name`, `allowed_params`),
   `check_params`, `check_monotone`; `model/family_inputs.py`: the checks the families share,
   `check_order` among them.
-- `model/calibration.py`: `apply_calibration`.
+- `model/calibration.py`: `LINK_BY_OBJECTIVE`, `uncalibrated`, `apply_calibration`.
 - `model/bundle.py`: `write_bundle`, `read_bundle_files`, `load_bundle`.
 - `model/scoring.py`: `score_frame`, `check_bundle`, `score_spark`.
 - `config/identities.py`: `feature_signature` and `recipe_hash`, beside the config's hashes,
@@ -208,11 +209,15 @@ Fitted on the train frame only (`CLAUDE.md` §4.4), plain data, `schema_version`
 - Nothing is imputed, and no statistic other than the levels is fitted.
 - `encode_frame` also returns one row per feature with the null, infinite, `__other__` and
   unseen shares of the frame it encoded.
+- `select_encoder(encoder, features)` restricts the fitted encoder to `features`, in the
+  encoder's own order, each entry unchanged so a code keeps its meaning; a name the encoder lacks
+  fails loud. It gives what selection leaves, and the bundle holds the final features' encoder
+  only.
 
 ### The calibration and the output columns
-`calibration` is `{link, method, parameters, offset}`. The link comes from the objective:
-`logit` for binary, `log` for the Tweedie and Poisson objectives, `identity` for the other
-regression objectives. With `m` the margin:
+`calibration` is `{link, method, parameters, offset}`. The link comes from `training.objective`
+(`LINK_BY_OBJECTIVE`): `logit` for binary (`log_loss`), `log` for `tweedie` and `poisson`,
+`identity` for the other regression objectives. With `m` the margin:
 
 | Link | `score_raw` | `score` |
 |---|---|---|
@@ -228,6 +233,10 @@ regression objectives. With `m` the margin:
   on `score_raw`.
 - `score_raw` leaves out both the calibration and the offset. Under `negative_downsampling` it
   is a probability at the sampled rate: its order is usable, its level is not.
+- `uncalibrated(objective)` is the calibration that changes nothing, `{link, method: "none",
+  parameters: {}, offset: 0.0}` with the objective's link. Training passes it to
+  `apply_calibration` wherever a margin must be read as `score_raw` before any calibration is
+  fitted: pruning's loss and the calibration fits themselves.
 - `offset` is the prior-shift offset, `logit(true rate) − logit(sampled rate)`: zero without
   sampling and under `client_sample`, and always zero for regression (`CLAUDE.md` §4.7).
 - The evidence behind the numbers (the two rates, the out-of-fold log loss of each method, the
@@ -240,7 +249,7 @@ regression objectives. With `m` the margin:
 | Hash | Covers | Changes when |
 |---|---|---|
 | `model_hash` | the model file and `bundle.json` | the trees, the encoder, the calibration numbers or the recipe change: every retrain |
-| `recipe_hash` | the recipe, exactly the keys `task`, `family`, `parameters` (with the tree count and the seed), `features` (the final ones, in order), `encoder` (with its frozen levels), `monotone`, `calibration` (the spec: exactly the method and the folds), `split` (the client split), `sampling`, `data_definition_hash`; its task, family, features and encoder must equal the bundle's own, and its parameters hold no thread count, which would give one model two hashes on two machines | the recipe changes; a production retrain keeps it and recomputes the calibration numbers (D-052) |
+| `recipe_hash` | the recipe, exactly the keys `task`, `family`, `parameters`, `features` (the final ones, in order), `encoder` (with its frozen levels), `monotone`, `calibration` (the spec: exactly the method and the folds), `split` (the client split), `sampling`, `data_definition_hash`; its task, family, features and encoder must equal the bundle's own. `parameters` are the family `fit`'s as it takes them: the fixed ones, the search space's constants and the best trial's values, with the tree count and the seed, under FLAML's names where the family takes them (LightGBM's `log_max_bin`), constants and null ones included (CatBoost's `early_stopping_rounds: null`); they hold no thread count, which would give one model two hashes on two machines. A later version keeps every name a stored recipe holds accepted by `fit` | the recipe changes, so also a change to the search space's constants; a production retrain keeps it and recomputes the calibration numbers (D-052) |
 | feature signature | the final feature list, in order | a feature enters or leaves; a sign-off covers every run of the same data definition with the same signature, earlier ones included |
 
 A retrain keeps the encoder's levels, so a level new in production data maps to `__other__` and
@@ -257,6 +266,7 @@ a code never changes meaning under a live model.
 ```python
 fit_encoder(train, features, kinds, order, min_level_client_count, unordered) -> dict
 encode_frame(frame, encoder) -> tuple[pd.DataFrame, pd.DataFrame]
+select_encoder(encoder, features) -> dict
 
 FAMILIES[name].fit(X, y, params, task) -> object
 FAMILIES[name].predict(booster, X) -> np.ndarray                 # the margin, float64
@@ -276,6 +286,8 @@ recipe_hash(recipe) -> str                                       # config/identi
 feature_signature(features) -> str                               # config/identities.py
 check_order(X, encoder) -> None                                  # model/family_inputs.py; before every fit
 check_params(family, params) -> None                             # before the first trial
+LINK_BY_OBJECTIVE: dict[str, str]                                # training.objective → link
+uncalibrated(objective) -> dict                                  # the calibration that changes nothing
 apply_calibration(margin, calibration, task) -> tuple[np.ndarray, np.ndarray]
 score_frame(bundle, frame) -> pd.DataFrame                       # public: margin, score_raw, score
 score_spark(folder, rows, keep) -> DataFrame

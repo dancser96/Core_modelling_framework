@@ -35,4 +35,27 @@ THEME: dict = {
     "bar": "rgba(47, 111, 159, 0.45)",
     "heat_scale": [[0.0, "#f5f7fa"], [1.0, "#2f6f9f"]],  # association heatmap, 0 to 1
     "heat_scale_signed": [[0.0, "#d9822b"], [0.5, "#f5f7fa"], [1.0, "#2f6f9f"]],  # -1 to 1
+    # The explanation charts take shap's colours, so a DS recognises them at once: red raises
+    # the margin, blue lowers it, a low to high feature value runs blue to red (shap's red_blue
+    # map sampled at 11 points: blue, purple, red, not a straight blend), a missing value is
+    # grey and a value with no order (a categorical) the darker neutral grey.
+    "contribution": {
+        "raises": "#ff0051",
+        "lowers": "#008bfb",
+        "missing": "#bbbbbb",
+        "neutral": "#777777",
+        "scale": [
+            [0.0, "#008bfb"],
+            [0.1, "#007df5"],
+            [0.2, "#236cea"],
+            [0.3, "#625adb"],
+            [0.4, "#8443c6"],
+            [0.5, "#9b24ae"],
+            [0.6, "#bb00a0"],
+            [0.7, "#d5008f"],
+            [0.8, "#e9007c"],
+            [0.9, "#f90067"],
+            [1.0, "#ff0051"],
+        ],
+    },
 }

@@ -1,5 +1,5 @@
 # Run modes: CLI, Python API, guided notebooks
-**Status:** built thin (Stage 1, 2026-10-27: `run` with its one stage, the CLI `run` and `decide`, the first guided notebook; Stage 2 adds the `eda` and `feature_checks` stages and notebooks 02 and 03; M2.3 major step 1, 2026-11-13/14: the CLI `runs` and `show-run` and `decide --sign-off`; the `training` and `evaluation` stages and `run --run` are not built) · **Legacy:** `run_product.py`, `notebooks/`
+**Status:** built thin (Stage 1, 2026-10-27: `run` with its one stage, the CLI `run` and `decide`, the first guided notebook; Stage 2 adds the `eda` and `feature_checks` stages and notebooks 02 and 03; M2.3 major step 1, 2026-11-13/14: the CLI `runs` and `show-run` and `decide --sign-off`; M2.3 major step 2, 2026-11-16: the `training` stage and notebook 04; the `evaluation` stage and `run --run` are not built) · **Legacy:** `run_product.py`, `notebooks/`
 **Related:** [config](config.md) · [environment](environment.md) · [dataset](dataset.md) (experiment sweeps) ·
 `notebooks/README.md` · D-006, D-022, D-024, D-039, D-047, D-083, D-125, D-137 · OD-02, OD-04
 
@@ -17,8 +17,9 @@ so users can see and debug what happens under the hood.
    automation-level override: a level changes through a config edit or an audit-log entry (D-023).
    `runs <config> --entity E` and `show-run <config> --entity E --run r007` list and show a use
    case's runs, and `decide --sign-off --run r007 --reason …` records the feature sign-off
-   (built, M2.3 major step 1). Planned for M2.3: `run <config> --stages training evaluation`;
-   `run --run r007` evaluates that run (refused with several configs). A bare `run`
+   (built, M2.3 major step 1). `training` is a stage of `run` and in its default list
+   (built, major step 2); `evaluation` is refused as unknown until major step 3 builds it, which
+   also adds `run --run r007`, evaluating that run (refused with several configs). A bare `run`
    runs every built stage. At `autonomous` only `run` runs the missing upstream stages;
    `run_training` and `run_evaluation` called alone refuse (D-132; [training](training.md),
    [evaluation](evaluation.md), [model bundle](model_bundle.md)).
@@ -71,8 +72,8 @@ In `core_modelling/run.py`, `core_modelling/__main__.py`, `core_modelling/runs.p
   (Q422). The later stages join as they are built.
 - CLI: `python -m core_modelling run <config>… [--stages …] [--entity …] [--env …]`, `decide`
   ([config](config.md)) with `--keep`, `--findings` and `--sign-off --run r007`, `runs` and
-  `show-run` (these three need `--entity`; requirement 1); `__main__` parses and calls. Planned for
-  M2.3: `run --stages training evaluation` and `run --run r007`.
+  `show-run` (these three need `--entity`; requirement 1); `__main__` parses and calls. `run --stages training`
+  is built; `evaluation` and `run --run r007` are planned for M2.3 major step 3.
   `init <folder>` is planned for M2.4: it copies the shipped notebooks out of the wheel and
   refuses to overwrite (D-137).
 - Public API of Stage 2: `run_eda`, `run_feature_checks`, `StageResult` and

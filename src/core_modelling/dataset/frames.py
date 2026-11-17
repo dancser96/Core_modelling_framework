@@ -8,7 +8,9 @@ and **`rows`**, the Spark frame of the eligible rows of the compared periods wit
 in the window only, never collected. Both modelling stages read the eligible rows with a known
 target. Training gets `train` alone, never a test or validation row (§4.4): the window's train
 split, sampled when declared, with the client folds (`folds.py`, checked before the collect),
-selected in Spark to the keys, the features, `target`, `split` and the fold columns. Evaluation
+selected in Spark to the keys, the features, `target`, `split` and the fold columns; its meta
+carries the window's population counts on every client, which Training checks against EDA's
+(D-088). Evaluation
 gets `rows`, one Spark frame of the test split and every validation-period row (both splits),
 scored inside Spark and never collected: `part` says which, and the strata ride along for
 the stratified tables without joining the features. EDA's kinds come from
@@ -281,11 +283,23 @@ def _modelling_frames(
             f"the features or strata {clashing} are named like a fold column of a further "
             f"dealing ({sorted(later)}, training.fold_repeats); rename the source column upstream"
         )
+    kinds = detect_kinds(panel.schema, meta["candidates"], cfg.features.kinds)
+    meta["kinds"] = {name: kinds[name] for name in features}  # the panel's, for Training's gate
     modelling, null_log = _modelling_rows(panel, cfg, stage == "evaluation")
     log.append(null_log)
     if stage == "training":
+        meta["population"] = _window_population(panel, cfg)
         return {"train": _training_frame(modelling, cfg, env, log, meta, features)}
     return {"rows": _evaluation_rows(modelling, cfg, meta, features)}
+
+
+def _window_population(panel: DataFrame, cfg: UseCaseConfig) -> pd.DataFrame:
+    """The D-088 counts of the window's periods on every client of the panel, before the client
+    split and any sampling (`population_counts`, one row per window period the panel holds):
+    what Training compares with the counts EDA stored, so a panel that changed under an
+    unchanged data definition is refused (training.md → "The gate")."""
+    periods = _window(panel, cfg).select("period").distinct().collect()
+    return population_counts(panel, cfg, {"window": sorted(row.period for row in periods)})
 
 
 def _training_frame(

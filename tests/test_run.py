@@ -28,6 +28,7 @@ NOTEBOOKS = [
     NOTEBOOK,
     ROOT / "notebooks/02_eda.ipynb",
     ROOT / "notebooks/03_feature_checks.ipynb",
+    ROOT / "notebooks/04_training.ipynb",
     ROOT / "notebooks/00_eda_fc_helper.ipynb",
 ]
 EDA_CANDIDATES = ["age", "income", "segment", "onboarding_channel", "cc_bal", "spend_cc_cnt"]
@@ -54,6 +55,8 @@ PUBLIC_API = {
         "rate_by_period",
     },  # fmt: skip
     "core_modelling.feature_checks": {"run_feature_checks"},
+    "core_modelling.training": {"run_training"},
+    "core_modelling.runs": {"list_runs", "show_run"},
 }
 
 
@@ -84,7 +87,8 @@ def test_run_through_the_cli_prints_the_summary_and_saves_the_model_input(
 def test_run_two_configs_runs_every_stage(
     spark: SparkSession, tmp_path: Path, unit_output: tuple[str, dict]
 ) -> None:
-    """`run([a, b])` runs every built stage (a few candidates to keep it short): Target Factory
+    """`run([a, b])` runs the stages before Training (a few candidates to keep it short; Training
+    through `run` is `test_training.py`'s): Target Factory
     returns both summaries and saves one model input whose sidecar lists both use cases and whose
     table carries both target columns; EDA and then Feature Checks run per config on it and
     return the folders they wrote by use case, `eda/` with its json and report, every Feature
@@ -96,7 +100,8 @@ def test_run_two_configs_runs_every_stage(
         raw["features"]["candidates"]["include"] = EDA_CANDIDATES
         paths.append(tmp_path / config.name)
         paths[-1].write_text(yaml.safe_dump(raw))
-    out = run(paths, env_path=str(env_file))["entity_a"]
+    stages = ["target_factory", "eda", "feature_checks"]
+    out = run(paths, env_path=str(env_file), stages=stages)["entity_a"]
     stage = out["target_factory"]
     assert sorted(stage["summary"]) == ["cc_acquisition", "td_acquisition"]
     metadata = json.loads(Path(stage["model_input"], METADATA_FILE).read_text())
@@ -127,8 +132,8 @@ def test_run_refuses_an_unknown_stage_or_entity_or_no_config(
     """A stage not built, an entity the config doesn't list, an empty config list, or configs
     listing different entities when no entity is given, each fail before anything runs."""
     env_file = _environment_file(tmp_path, unit_output)
-    with pytest.raises(ValueError, match=r"unknown stages \['training'\]; the built"):
-        run(CONFIG, env_path=str(env_file), stages=["training"])
+    with pytest.raises(ValueError, match=r"unknown stages \['evaluation'\]; the built"):
+        run(CONFIG, env_path=str(env_file), stages=["evaluation"])
     with pytest.raises(ValueError, match="unknown entity 'entity_b': the config 'cc_acquisition'"):
         run(CONFIG, env_path=str(env_file), entity="entity_b")
     with pytest.raises(ValueError, match="run needs at least one config"):

@@ -117,6 +117,7 @@ def run_eda(
     meta = _stage_meta(resolved, env, frames, counts, ranking, labels)
     tables = _population_tables(frames, resolved, counts, labels, ranking)
     tables.update(cells=counts["cells"], client_constant=counts["client_constant"])
+    tables["edges"] = _edges_table(counts["edges"])
     tables.update(ranking=ranking, correlation=correlation, concordance_per_period=per_period)
     tables["slices"], tables["capture_curve"] = slice_tables(
         counts["cells"], ranking, meta, resolved, labels["window"], prior_rows
@@ -404,6 +405,23 @@ def _stage_meta(
         "snapshot_base": float(known["target"].mean()),
         "slices": slice_shares(resolved, len(known)),
     }
+
+
+def _edges_table(edges: dict[str, np.ndarray | None]) -> pd.DataFrame:
+    """The numerics' interior bin edges as stored: one row per feature and edge, `feature,
+    position` (0-based, ascending) and `edge` at full precision. The cells' `bin` labels are
+    rounded for reading, so a later stage that bins new rows as EDA did (a run's drift
+    reference, the effect charts' groups) reads the edges here. A numeric without a non-null
+    eligible value has no row."""
+    rows = [
+        {"feature": name, "position": position, "edge": float(edge)}
+        for name, cut in edges.items()
+        if cut is not None
+        for position, edge in enumerate(cut)
+    ]
+    table = pd.DataFrame(rows, columns=["feature", "position", "edge"])
+    # typed also when no numeric has an edge: an empty frame would be written without types
+    return table.astype({"feature": "object", "position": "int64", "edge": "float64"})
 
 
 def _write(result: StageResult, env: EnvironmentConfig, entity: str) -> None:

@@ -1,6 +1,6 @@
 """Shared fixtures: one real local Spark session (never a stub, T15), the synthetic datasets, the
-config variants several modules read, EDA's frames and EDA's runs on the unit preset, and an
-audit-log entry builder.
+config variants several modules read, EDA's frames and EDA's runs on the unit preset, the
+trained runs, and an audit-log entry builder.
 
 The unit preset is generated in memory once and written to disk once. The dev preset is written
 once per session by a separate process, for the trap acceptance test (`test_traps.py`), with an
@@ -12,11 +12,13 @@ itself stays small and every family's memory goes back to the system when it end
 
 EDA's frames and the two EDA runs (the card config and the regression variant) are built once per
 session and shared: `test_eda.py` reads the runs and Feature Checks' tests run on a copy of their
-data root. A shared value is read-only; a test that changes one, or a file under it, works on its
-own copy.
+data root. The two trained runs (`trained_card`, `trained_regression`) are built once on another
+copy, after Feature Checks there, for Training's and Evaluation's tests. A shared value is
+read-only; a test that changes one, or a file under it, works on its own copy.
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -42,10 +44,13 @@ from core_modelling.environment import (
     feature_dir,
     get_spark_session,
 )
+from core_modelling.feature_checks import run_feature_checks
+from core_modelling.training import run_training
 from synthetic.generate import generate_mart
 from synthetic.output import load_truth, write_mart
 
 ENTITY = "entity_a"
+QUICK_SEARCH = {"estimator_list": ["lgbm"], "max_iter": 4}  # a search of seconds, for the tests
 # The regression variant's sections: card spend summed forward for holders, on the mart alone.
 REGRESSION = {
     "task": "regression",
@@ -198,6 +203,63 @@ def eda_regression(
 ) -> StageResult:
     """The regression variant's EDA, run once on `eda_env`."""
     return _run_with_stale_checks(regression_cfg, eda_env, spark)
+
+
+def with_training(cfg: UseCaseConfig, **training: object) -> UseCaseConfig:
+    """`cfg` with its training section's fields changed, validated: the data definition and the
+    settings EDA and Feature Checks ran with stay, so their artifacts stay valid."""
+    data = cfg.model_dump()
+    data["training"] = _merged(data["training"], training)
+    return UseCaseConfig.model_validate(data)
+
+
+@pytest.fixture(scope="session")
+def trained_env(
+    spark: SparkSession,
+    eda_env: EnvironmentConfig,
+    eda_card: StageResult,
+    eda_regression: StageResult,
+    in_memory: UseCaseConfig,
+    regression_cfg: UseCaseConfig,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> EnvironmentConfig:
+    """The shared EDA runs' environment on a copy of their data root, with Feature Checks run
+    there for both configs: the root the trained runs are written under."""
+    root = tmp_path_factory.mktemp("trained_data")
+    shutil.copytree(eda_env.roots.data, root, dirs_exist_ok=True)
+    roots = eda_env.roots.model_copy(update={"data": str(root)})
+    env = eda_env.model_copy(update={"roots": roots})
+    for cfg in (in_memory, regression_cfg):
+        run_feature_checks(cfg, ENTITY, env, spark)
+    return env
+
+
+@pytest.fixture(scope="session")
+def card_quick(in_memory: UseCaseConfig) -> UseCaseConfig:
+    """The card config with `QUICK_SEARCH`."""
+    return with_training(in_memory, **QUICK_SEARCH)
+
+
+@pytest.fixture(scope="session")
+def regression_quick(regression_cfg: UseCaseConfig) -> UseCaseConfig:
+    """The regression variant with `QUICK_SEARCH`."""
+    return with_training(regression_cfg, **QUICK_SEARCH)
+
+
+@pytest.fixture(scope="session")
+def trained_card(
+    spark: SparkSession, trained_env: EnvironmentConfig, card_quick: UseCaseConfig
+) -> StageResult:
+    """The card config's first Training run on `trained_env` (`r001` of its use case)."""
+    return run_training(card_quick, ENTITY, trained_env, spark)
+
+
+@pytest.fixture(scope="session")
+def trained_regression(
+    spark: SparkSession, trained_env: EnvironmentConfig, regression_quick: UseCaseConfig
+) -> StageResult:
+    """The regression variant's Training run on `trained_env`."""
+    return run_training(regression_quick, ENTITY, trained_env, spark)
 
 
 def build_entry(seq: int, op: str, **fields: object) -> Entry:

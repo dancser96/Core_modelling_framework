@@ -30,6 +30,20 @@ PARAMETERS_BY_METHOD = {
     "beta": ("a", "b", "c"),
     "mean": ("factor",),
 }
+LINK_BY_OBJECTIVE = {  # `training.objective` → how the margin becomes `score_raw`
+    "log_loss": "logit",
+    "squared_error": "identity",
+    "absolute_error": "identity",
+    "huber": "identity",
+    "tweedie": "log",
+    "poisson": "log",
+}
+
+
+def uncalibrated(objective: str) -> dict:
+    """The calibration that changes nothing, for `objective`'s link: what `apply_calibration`
+    takes to turn fold margins into `score_raw` before any calibration is fitted."""
+    return {"link": LINK_BY_OBJECTIVE[objective], "method": "none", "parameters": {}, "offset": 0.0}
 
 
 def apply_calibration(
