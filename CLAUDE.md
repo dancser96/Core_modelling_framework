@@ -401,7 +401,10 @@ numbered list for a flow, nested bullets for a tree and a narrow table for a map
   `docs/roadmap.md` → Chief DS topics (D-073). Downstream operation questions go to the platform /
   MLOps team (D-079). Refer to people by role only.
 - **Ask first** before: a new dependency, a public API or schema change, a large refactor, deleting
-  anything, or anything that touches the lifecycle tiers.
+  anything, or anything that touches the lifecycle tiers. **A major step the EDS asked to be
+  built never stops for a question** (D-072 (s)): take the default, build on, and put it first
+  in the review guide. Only a new dependency, a deletion or a lifecycle-tier change still
+  waits, and the rest of the build goes on meanwhile.
 - **Git.** Commit only when the EDS asks, even locally, and always with a message. Commits go
   straight to main (no branches); push only when asked (D-072).
 - **Consult well.**

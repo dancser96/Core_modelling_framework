@@ -50,7 +50,11 @@ test file, the name `compute_contributions`).
 4. Then: m3.1 and m3.2 in parallel; m3.3; m3.4; m3.5, m3.6, m3.8 and m3.9 in parallel; m3.7;
    m3.10; m3.11.
 
-## Working rules that cost tokens in step 2
+## Working rules from step 2 (the EDS, 2026-11-17)
+- **The build never stops for a question** (D-072 (s); Q667 stopped step 2): take the default,
+  build on, and put it first in review guide 3. The EDS looks again when the step is built.
+- **Compact.** Step 2's main thread passed 600k tokens without one compaction, because
+  compaction is let through only right after this file is written as the last tool call.
 - Every code or test piece is a `builder`, every doc piece a `doc-writer`; pass `model` and
   `effort` as the plan's minor step names them.
 - A fix goes back to the builder that wrote the code (`SendMessage`), never to the main thread.
