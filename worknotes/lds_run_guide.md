@@ -23,6 +23,15 @@ Do everything in a VS Code terminal at the repo root:
    - `<that folder>/eda/report.html`
    - `<that folder>/feature_checks/report.html`
 
+## Training and Evaluation (not reviewed yet)
+
+The Training and Evaluation code is built but the EDS hasn't reviewed it yet, so expect rough edges. Both need EDA and Feature Checks to have run first (steps 6–7 above).
+
+8. **Train** with `notebooks/04_training.ipynb`, Run All. The default search takes a while; the notebook's step 1 text says how to record a smaller `training.max_iter` for a quick first run. Each run is written to `data/<use case>/06_models/r001/`, `r002/`, ….
+9. **Evaluate** with `notebooks/05_evaluation.ipynb`, Run All. It evaluates the latest trained run; to pick another one, set `RUN` in step 1. It writes `report.html`, `model_card.html` and the tables to `<run folder>/evaluation/`.
+   - optionally `notebooks/00_modelling_helper.ipynb`, which shows the modelling artifacts beside the code that writes them
+   - The same two stages from the terminal: `python -m core_modelling run conf/base/cc_acquisition.yml --stages training evaluation --env conf/local/environment.yml`
+
 ## What to look out for
 - **Rerun in order.** Outputs of an older version are refused with "rerun": run EDA, then Feature Checks. Any EDA rerun makes the stored Feature Checks stale, so rerun it after.
 - **A flag acts.** Every feature Feature Checks flags is held out of training until a person keeps or excludes it (notebook 03, step 9). Judge whether the held list is right: the planted traps (`trap` in the name) should be there, and few honest features.
