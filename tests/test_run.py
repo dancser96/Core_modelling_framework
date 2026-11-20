@@ -1,6 +1,7 @@
 """`run` and the CLI (D-024): the Target Factory stage through `python -m core_modelling run`,
-every stage on the two example configs at once (one model input, then EDA and Feature Checks per
-config), and the guided notebooks calling only the Public API."""
+every stage on the two example configs at once (one model input, then EDA, Feature Checks,
+Training and Evaluation per config), the refusals before anything runs, and the guided notebooks
+calling only the Public API."""
 
 import json
 import re
@@ -8,7 +9,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from conftest import write_environment_file
+from conftest import QUICK_INTERVALS, QUICK_SEARCH, write_environment_file
 from pyspark.sql import SparkSession
 
 from core_modelling.__main__ import main
@@ -29,9 +30,11 @@ NOTEBOOKS = [
     ROOT / "notebooks/02_eda.ipynb",
     ROOT / "notebooks/03_feature_checks.ipynb",
     ROOT / "notebooks/04_training.ipynb",
+    ROOT / "notebooks/05_evaluation.ipynb",
     ROOT / "notebooks/00_eda_fc_helper.ipynb",
 ]
 EDA_CANDIDATES = ["age", "income", "segment", "onboarding_channel", "cc_bal", "spend_cc_cnt"]
+UNSELECTED = {"cluster": False, "floor_z": None, "prune": False}  # six candidates need no rule
 # The Public API table of docs/architecture.md: what the shipped notebooks may import.
 PUBLIC_API = {
     "core_modelling.config": {"load_config", "UseCaseConfig"},
@@ -56,6 +59,7 @@ PUBLIC_API = {
     },  # fmt: skip
     "core_modelling.feature_checks": {"run_feature_checks"},
     "core_modelling.training": {"run_training"},
+    "core_modelling.evaluation": {"run_evaluation", "compare_runs"},
     "core_modelling.runs": {"list_runs", "show_run"},
 }
 
@@ -87,21 +91,23 @@ def test_run_through_the_cli_prints_the_summary_and_saves_the_model_input(
 def test_run_two_configs_runs_every_stage(
     spark: SparkSession, tmp_path: Path, unit_output: tuple[str, dict]
 ) -> None:
-    """`run([a, b])` runs the stages before Training (a few candidates to keep it short; Training
-    through `run` is `test_training.py`'s): Target Factory
-    returns both summaries and saves one model input whose sidecar lists both use cases and whose
-    table carries both target columns; EDA and then Feature Checks run per config on it and
-    return the folders they wrote by use case, `eda/` with its json and report, every Feature
-    Checks step run, and the ledger beside them pairs the two runs."""
+    """`run([a, b])` runs every built stage (a few candidates, the quick search and the fewest
+    replicates, to keep it short): Target Factory returns both summaries and saves one model
+    input whose sidecar lists both use cases and whose table carries both target columns; EDA
+    and then Feature Checks run per config on it and return the folders they wrote by use case,
+    `eda/` with its json and report, every Feature Checks step run, and the ledger beside them
+    pairs the two runs; Training trains one run per config and Evaluation evaluates that run,
+    `evaluation/` with its json and report."""
     env_file = _environment_file(tmp_path, unit_output)
     paths = []
     for config in (CONFIG, SECOND_CONFIG):
         raw = yaml.safe_load(config.read_text())
         raw["features"]["candidates"]["include"] = EDA_CANDIDATES
+        raw["training"].update({**QUICK_SEARCH, "selection": UNSELECTED})
+        raw["evaluation"].update(QUICK_INTERVALS)
         paths.append(tmp_path / config.name)
         paths[-1].write_text(yaml.safe_dump(raw))
-    stages = ["target_factory", "eda", "feature_checks"]
-    out = run(paths, env_path=str(env_file), stages=stages)["entity_a"]
+    out = run(paths, env_path=str(env_file))["entity_a"]
     stage = out["target_factory"]
     assert sorted(stage["summary"]) == ["cc_acquisition", "td_acquisition"]
     metadata = json.loads(Path(stage["model_input"], METADATA_FILE).read_text())
@@ -124,16 +130,29 @@ def test_run_two_configs_runs_every_stage(
         folder = feature_dir(env, cfg, "entity_a")
         ledger = read_ledger(folder, meta["data_definition_hash"], tokens)
         assert set(COLUMNS_BY_STAGE["feature_checks"]) <= set(ledger.columns)
+        trained = json.loads(Path(out["training"][cfg.use_case]["training.json"]).read_text())
+        evaluated = out["evaluation"][cfg.use_case]
+        assert Path(evaluated["report.html"]).is_file()
+        evaluation = json.loads(Path(evaluated["evaluation.json"]).read_text())
+        assert evaluation["run_id"] == trained["run_id"] and evaluation["summary"]
 
 
 def test_run_refuses_an_unknown_stage_or_entity_or_no_config(
     tmp_path: Path, unit_output: tuple[str, dict]
 ) -> None:
-    """A stage not built, an entity the config doesn't list, an empty config list, or configs
-    listing different entities when no entity is given, each fail before anything runs."""
+    """A stage not built, an entity the config doesn't list, an empty config list, configs
+    listing different entities when no entity is given, or a named run given with another stage
+    or several configs (through the CLI too), each fail before anything runs."""
     env_file = _environment_file(tmp_path, unit_output)
-    with pytest.raises(ValueError, match=r"unknown stages \['evaluation'\]; the built"):
-        run(CONFIG, env_path=str(env_file), stages=["evaluation"])
+    with pytest.raises(ValueError, match=r"unknown stages \['inference'\]; the built"):
+        run(CONFIG, env_path=str(env_file), stages=["inference"])
+    named = r"run='r001' names one trained run: give it with stages=\['evaluation'\] and one"
+    for stages, configs in ((["eda", "evaluation"], CONFIG), (None, CONFIG),
+                            (["evaluation"], [CONFIG, SECOND_CONFIG])):  # fmt: skip
+        with pytest.raises(ValueError, match=named):
+            run(configs, env_path=str(env_file), stages=stages, run="r001")
+    with pytest.raises(ValueError, match=named):
+        main(["run", str(CONFIG), "--env", str(env_file), "--stages", "eda", "--run", "r001"])
     with pytest.raises(ValueError, match="unknown entity 'entity_b': the config 'cc_acquisition'"):
         run(CONFIG, env_path=str(env_file), entity="entity_b")
     with pytest.raises(ValueError, match="run needs at least one config"):

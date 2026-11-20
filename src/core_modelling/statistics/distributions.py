@@ -3,8 +3,9 @@
 `quantile_edges` gives the split points the counts table bins a numeric on, a mass point (such
 as 0) its own singleton bin: plain quantile edges collapse on a zero-inflated or discrete column
 and fixed-width edges put a skewed one into its first bin (T25). `bin_labels` names the bins
-(the counts table's `bin`) and `range_label` a run of them; `merge_bins` merges cells into a
-chart's groups (chart rule 4). `level_text` names a categorical value's level, for EDA's tables
+(the counts table's `bin`), `bin_orders` puts values in them and `range_label` names a run of
+them; `merge_bins` merges cells into a chart's groups (chart rule 4). `level_text` names a
+categorical value's level, for EDA's tables
 and the model's encoder alike. `psi`, `new_level_share` and `standardised_difference` compare
 two periods for Feature Checks; `cohens_h` and `cohens_d` are the per-task rare effect, with
 `variance_from_sums` the one-pass variance the cells' sums allow. Pure numpy and pandas.
@@ -66,6 +67,15 @@ def bin_labels(edges: np.ndarray) -> list[str]:
     edges = np.asarray(edges, dtype=float)
     closes, text = _edge_text(edges)  # formatted once: `eda.bins: null` can mean many edges
     return [_range_text(closes, text, i, i) for i in range(edges.size + 1)]
+
+
+def bin_orders(values: pd.Series, edges: np.ndarray | None) -> np.ndarray:
+    """Each value's bucket on the interior `edges` as the counts table's `Bucketizer` gives it,
+    `np.digitize`'s index (`[e_i, e_{i+1})`, -0.0 as 0.0); -1 for a null or NaN; 0 without
+    edges."""
+    numbers = values.to_numpy(dtype=float, na_value=np.nan) + 0.0
+    orders = np.zeros(numbers.size, dtype=int) if edges is None else np.digitize(numbers, edges)
+    return np.where(np.isnan(numbers), -1, orders)
 
 
 def range_label(edges: np.ndarray, first: int, last: int) -> str:

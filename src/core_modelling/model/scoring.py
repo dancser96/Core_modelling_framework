@@ -6,7 +6,10 @@ Inference all score through it, and `score_spark` runs the same function inside 
 `mapInPandas`. The driver ships the bundle's bytes in the function's closure, never a path
 (A28), so an executor needs no access to the folder; each partition refuses a model library
 version other than the driver's, builds the bundle once from those bytes, verifying
-`model_hash` again, and writes nothing to disk. Arrow stays on and nothing is collected.
+`model_hash` again, and writes nothing to disk. Arrow stays on and nothing is collected. A
+partition predicts on its task's CPUs (`spark.task.cpus`): LightGBM and XGBoost default to
+every core of the host, which the executor's other tasks share (measured; CatBoost's default
+too, though its scoring measured near one core), and the scores are the same at any count.
 """
 
 from collections.abc import Iterator
@@ -14,6 +17,7 @@ from importlib.metadata import version
 
 import numpy as np
 import pandas as pd
+from pyspark import TaskContext
 from pyspark.sql import DataFrame
 from pyspark.sql.types import DoubleType, StructField, StructType
 
@@ -30,12 +34,14 @@ from core_modelling.model.encoder import encode_frame
 from core_modelling.model.families import FAMILIES
 
 
-def score_frame(bundle: Bundle, frame: pd.DataFrame) -> pd.DataFrame:
+def score_frame(bundle: Bundle, frame: pd.DataFrame, threads: int | None = None) -> pd.DataFrame:
     """The scores of a frame of raw feature values (any rows holding the bundle's features; a
     missing one fails in `encode_frame`): `OUTPUT_COLUMNS` as float64 on the frame's index. A
-    non-finite value fails loud (the `log` link overflows to inf near a margin of 710)."""
+    non-finite value fails loud (the `log` link overflows to inf near a margin of 710).
+    `threads` caps the model library's threads (None: its default, every core); the scores are
+    the same at any count."""
     encoded, _ = encode_frame(frame, bundle.encoder)
-    margin = FAMILIES[bundle.family].predict(bundle.booster, encoded)
+    margin = FAMILIES[bundle.family].predict(bundle.booster, encoded, threads)
     score_raw, score = apply_calibration(margin, bundle.calibration, bundle.task)
     columns = {"margin": margin, "score_raw": score_raw, "score": score}
     for name, values in columns.items():
@@ -93,14 +99,25 @@ def score_spark(folder: str, rows: DataFrame, keep: list[str]) -> DataFrame:
 
     def score_batches(batches: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
         """One partition's batches, each as its `keep` columns and scores; the bundle is built
-        from the shipped bytes once for the partition (`folder` is only named in messages)."""
+        from the shipped bytes once for the partition (`folder` is only named in messages), and
+        the library predicts on the task's own cores."""
         _check_library_versions(driver)
         bundle = build_bundle(files, folder)
+        threads = _task_threads()
         for batch in batches:
-            yield pd.concat([batch[keep], score_frame(bundle, batch)], axis=1)
+            yield pd.concat([batch[keep], score_frame(bundle, batch, threads)], axis=1)
 
     columns = dict.fromkeys([*keep, *bundle.features])
     return rows.select(*columns).mapInPandas(score_batches, schema)
+
+
+def _task_threads() -> int:
+    """The CPUs Spark gives the running task (`spark.task.cpus`, 1 by default): each library
+    would otherwise predict on every core of the host while the executor runs a task per core."""
+    context = TaskContext.get()
+    if context is None:
+        raise RuntimeError("score_spark: the partition runs outside a Spark task")
+    return context.cpus()
 
 
 def _check_library_versions(driver: dict[str, str]) -> None:

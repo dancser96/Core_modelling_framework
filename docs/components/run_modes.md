@@ -1,5 +1,5 @@
 # Run modes: CLI, Python API, guided notebooks
-**Status:** built thin (Stage 1, 2026-10-27: `run` with its one stage, the CLI `run` and `decide`, the first guided notebook; Stage 2 adds the `eda` and `feature_checks` stages and notebooks 02 and 03; M2.3 major step 1, 2026-11-13/14: the CLI `runs` and `show-run` and `decide --sign-off`; M2.3 major step 2, 2026-11-16: the `training` stage and notebook 04; the `evaluation` stage and `run --run` are not built) · **Legacy:** `run_product.py`, `notebooks/`
+**Status:** built thin (Stage 1, 2026-10-27: `run` with its one stage, the CLI `run` and `decide`, the first guided notebook; Stage 2 adds the `eda` and `feature_checks` stages and notebooks 02 and 03; M2.3 major step 1, 2026-11-13/14: the CLI `runs` and `show-run` and `decide --sign-off`; M2.3 major step 2, 2026-11-16: the `training` stage and notebook 04; major step 3: the `evaluation` stage and `run --run`) · **Legacy:** `run_product.py`, `notebooks/`
 **Related:** [config](config.md) · [environment](environment.md) · [dataset](dataset.md) (experiment sweeps) ·
 `notebooks/README.md` · D-006, D-022, D-024, D-039, D-047, D-083, D-125, D-137 · OD-02, OD-04
 
@@ -9,7 +9,7 @@ API for automated and production runs. The framework is a versioned library, not
 so users can see and debug what happens under the hood.
 
 ## Phase 2 requirements
-1. **CLI:** `python -m core_modelling run <config>… [--stages …] [--entity …]` (several configs save one model input; an empty list or configs listing different entities are refused), plus
+1. **CLI:** `python -m core_modelling run <config>… [--stages …] [--entity …] [--run r007]` (several configs save one model input; an empty list or configs listing different entities are refused), plus
    separate `register`, `promote` and `deploy` commands. They are gated steps run by different
    actors: the change-request process runs `deploy`. `decide` records a person's decision, the
    feature sign-off (D-031) included, as an entry in the decision audit log; it is the CLI form of
@@ -17,10 +17,11 @@ so users can see and debug what happens under the hood.
    automation-level override: a level changes through a config edit or an audit-log entry (D-023).
    `runs <config> --entity E` and `show-run <config> --entity E --run r007` list and show a use
    case's runs, and `decide --sign-off --run r007 --reason …` records the feature sign-off
-   (built, M2.3 major step 1). `training` is a stage of `run` and in its default list
-   (built, major step 2); `evaluation` is refused as unknown until major step 3 builds it, which
-   also adds `run --run r007`, evaluating that run (refused with several configs). A bare `run`
-   runs every built stage. At `autonomous` only `run` runs the missing upstream stages;
+   (built, M2.3 major step 1). `training` and `evaluation` are stages of `run` and in its
+   default list (built, major steps 2 and 3). Evaluation evaluates each config's latest trained run
+   of its data definition; `run --stages evaluation --run r007` evaluates that run instead. `--run`
+   is refused before anything runs unless the stages are `evaluation` alone and there is one
+   config. A bare `run` runs every built stage. At `autonomous` only `run` runs the missing upstream stages;
    `run_training` and `run_evaluation` called alone refuse (D-132; [training](training.md),
    [evaluation](evaluation.md), [model bundle](model_bundle.md)).
 2. **Python API:** one function per stage, plus `run(config_paths, stages=...)` taking one config
@@ -57,8 +58,8 @@ so users can see and debug what happens under the hood.
 In `core_modelling/run.py`, `core_modelling/__main__.py`, `core_modelling/runs.py` (`list_runs`,
 `show_run` and `sign_off`, which the commands `runs`, `show-run` and `decide --sign-off` call) and
 `notebooks/01_target_factory.ipynb`.
-- `run(config_paths: str | Path | list[str | Path], env_path=None, stages=None, entity=None) ->
-  dict` (public, D-024): the stages (default: every built one; the asked ones always run in
+- `run(config_paths: str | Path | list[str | Path], env_path=None, stages=None, entity=None,
+  run=None) -> dict` (public, D-024): the stages (default: every built one; the asked ones always run in
   `STAGES` order, whatever order they are given in) for the entities (the one given, which every
   config must list; default: the configs' entities, which must agree) of one config or a list;
   per entity and stage what the stage returned. An empty list, an unknown stage or an entity
@@ -66,14 +67,15 @@ In `core_modelling/run.py`, `core_modelling/__main__.py`, `core_modelling/runs.p
   `(cfgs, entity, env, spark)` over the list of configs: `target_factory` (`run_target_factory`
   per config, then one `save_model_input` for them all when they name a model input, D-131; it
   returns `{"summary": {use_case: TargetSummary}, "model_input": path}`, the path only when one
-  is saved), `eda` (`run_eda` per config, the paths per use case) and `feature_checks`
-  (`run_feature_checks` per config, the paths per use case), in that order; each stage function
+  is saved), `eda` (`run_eda` per config, the paths per use case), `feature_checks`
+  (`run_feature_checks` per config, the paths per use case), `training` (one numbered run per
+  config) and `evaluation` (`run_evaluation` per config, the paths of its `evaluation/` folder
+  per use case; `run` names the run to evaluate), in that order; each stage function
   resolves the config itself (`resolve_config`) and saves the resolved config with its artifacts
-  (Q422). The later stages join as they are built.
-- CLI: `python -m core_modelling run <config>… [--stages …] [--entity …] [--env …]`, `decide`
+  (Q422). The later stages join as they are built (M2.4).
+- CLI: `python -m core_modelling run <config>… [--stages …] [--entity …] [--run …] [--env …]`, `decide`
   ([config](config.md)) with `--keep`, `--findings` and `--sign-off --run r007`, `runs` and
-  `show-run` (these three need `--entity`; requirement 1); `__main__` parses and calls. `run --stages training`
-  is built; `evaluation` and `run --run r007` are planned for M2.3 major step 3.
+  `show-run` (these three need `--entity`; requirement 1); `__main__` parses and calls.
   `init <folder>` is planned for M2.4: it copies the shipped notebooks out of the wheel and
   refuses to overwrite (D-137).
 - Public API of Stage 2: `run_eda`, `run_feature_checks`, `StageResult` and

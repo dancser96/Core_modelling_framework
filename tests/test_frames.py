@@ -55,6 +55,7 @@ WEEK = PERIODS["week"]
 SUNDAYS = [date(2025, 1, 5) + timedelta(days=7 * i) for i in range(10)]  # 2025-W01 … W10
 WINDOW_LABELS = ["2025-03", "2025-04", "2025-05", "2025-06", "2025-07", "2025-08"]
 PRUNED = ["income", "segment", "cc_limit"]  # a feature set without the other candidates
+CARRIED = ["age", "onboarding_channel", "income"]  # Evaluation's `carry`: new, a stratum, a feature
 
 
 @pytest.fixture(scope="module")
@@ -134,8 +135,8 @@ def pruned_frames(
 @pytest.fixture(scope="module")
 def pruned_rows(spark: SparkSession, env: EnvironmentConfig, in_memory: UseCaseConfig) -> Frames:
     """Evaluation's frames on three features (`PRUNED`): the stratum `onboarding_channel` is
-    not among them."""
-    return build_frames(in_memory, ENTITY, env, spark, "evaluation", features=PRUNED)
+    not among them; `CARRIED` names a feature, the stratum and `age`, which rides along."""
+    return build_frames(in_memory, ENTITY, env, spark, "evaluation", features=PRUNED, carry=CARRIED)
 
 
 @pytest.fixture(scope="module")
@@ -360,14 +361,18 @@ def test_evaluation_rows_hold_test_and_validation_with_the_strata(
     pruned_rows: Frames, in_memory: UseCaseConfig
 ) -> None:
     """Evaluation's `rows` stay in Spark and nothing is collected: the keys, `part`, the three
-    features, the stratum not among them (`onboarding_channel`), `target` and `split`, no
-    modelling tag (each is 1 on eligible rows); the strata never join the features; `part` is
-    `test` on the window's test split and `validation` on the validation period, whose rows hold
-    clients of both splits; no sampling ran."""
+    features, the stratum not among them (`onboarding_channel`), the carried `age` (a carried
+    stratum or feature rides once), `target` and `split`, no modelling tag (each is 1 on
+    eligible rows); the strata never join the features; `part` is `test` on the window's test
+    split and `validation` on the validation period, whose rows hold clients of both splits; no
+    sampling ran. `eligible_rows` is each period's eligible rows, as the contract counted them."""
     rows = pruned_rows.rows
     assert isinstance(rows, DataFrame) and pruned_rows.train is None
-    assert rows.columns == ["unit_id", "period", "part", *PRUNED, "onboarding_channel",
+    assert rows.columns == ["unit_id", "period", "part", *PRUNED, "onboarding_channel", "age",
                             "target", "split"]  # fmt: skip
+    eligible_rows = next(e for e in pruned_rows.log if e.get("check") == "eligible_rows")
+    assert pruned_rows.meta["eligible_rows"] == eligible_rows["per_period"]
+    assert list(pruned_rows.meta["eligible_rows"]) == [*WINDOW_LABELS, "2025-11"]
     assert pruned_rows.meta["collect"] == []
     assert "sampling" not in [entry["step"] for entry in pruned_rows.log]
     parts = {
@@ -477,7 +482,14 @@ def test_features_are_required_by_the_modelling_stages_and_refused_by_eda(
     """Training and Evaluation without `features`, with an empty list or with a repeated name
     fail naming `resolve_features`, before the panel is built; `eda` with `features` fails;
     Training refuses a held or an excluded feature; a name that is no candidate (the lineage
-    `cc_flag`, the framework's `target`) fails naming it."""
+    `cc_flag`, the framework's `target`) fails naming it, among the features or carried;
+    `carry` is refused for EDA and Training before the panel is built."""
+    for stage in ("eda", "training"):
+        with pytest.raises(ValueError, match=rf"`carry` is Evaluation's .* the {stage} frames"):
+            build_frames(in_memory, ENTITY, env, spark, stage, features=["income"], carry=[])
+    message = r"carry names \['cc_flag', 'target'\], which are not candidates of the panel"
+    with pytest.raises(ValueError, match=message):
+        build_frames(in_memory, ENTITY, env, spark, "evaluation", ["income"], ["cc_flag", "target"])
     for stage in ("training", "evaluation"):
         with pytest.raises(ValueError, match=rf"the {stage} frames need `features`: pass resolve_"):
             build_frames(in_memory, ENTITY, env, spark, stage)

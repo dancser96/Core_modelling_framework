@@ -34,7 +34,8 @@ decision:                                # required · set before any result, ne
   # what the model is compared with: the train base rate (regression: the train mean) and the
   # best single feature by train concordance; add a score column of a source for a model it
   # replaces, e.g. {previous_model: old_score}, {historic_predicted_rate: 0.02} for a rate already
-  # in use (or a column holding it)
+  # in use (or a column holding it). Name each form at most once: its score column is
+  # baseline_ plus the form's name, one per form
   baselines: [population_base_rate, single_feature]
 
 # only the entities this use case applies to; data is never merged across them (D-034)
@@ -289,11 +290,17 @@ evaluation:
   slices:
     top_pct: null  # null · level: autonomous [0.01, 0.1] · assisted [0.01, 0.05, 0.1]
     top_n: []                            # e.g. [10000]
-  # the report's views to leave out, by name (evaluation.md); every view renders by default and
-  # the summary always; leave out the slow ones on a quick run
+  # the report's views to leave out; every view renders by default and the summary always.
+  # Names: metrics, curves, capture, reliability, score_distribution, strata, importance,
+  # beeswarm, effects, waterfalls, sign_off, search and the extended thresholds,
+  # permutation_importance, pdp_ice, validation_test_clients. A regression has no classes, so
+  # curves, score_distribution and thresholds are not available there. A wrong name is refused
+  # before anything is scored
   skip_views: []
-  # every interval is a client bootstrap: more replicates (at least 20) steady the bounds' last
-  # digit and cost time; level is the coverage
+  # every interval is a client bootstrap, run on the cells the scores are summed into, so more
+  # replicates steady the bounds' last digit and cost time; fewer than 20 give no usable
+  # percentile interval. 200 keeps the bounds steady at a cost of seconds; level is the
+  # coverage, 0.95 a 95% interval
   intervals: {replicates: 200, level: 0.95}
 
 inference:

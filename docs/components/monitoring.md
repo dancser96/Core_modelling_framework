@@ -1,5 +1,5 @@
 # Monitoring
-**Status:** designing · **Legacy:** none (score/outcome logging was prepared in the crunch) · earlier name: Tracking
+**Status:** designing; its input, the drift reference Evaluation writes, built 2026-11-17 (M2.3 major step 3) · **Legacy:** none (score/outcome logging was prepared in the crunch) · earlier name: Tracking
 **Related:** [inference](inference.md) · [lifecycle](lifecycle.md) · [reporting](reporting.md) · [dataset](dataset.md)
 (drift baselines) · [evaluation](evaluation.md) (writes the drift reference) · [model bundle](model_bundle.md)
 (the run folder, `model_hash`, the encoder) · [EDA](eda.md) (the edges, levels and PSI) · [target factory](target_factory.md) (labels) · D-007, D-009, D-016, D-021, D-040, D-054, D-079, D-139, D-141 · OD-13, OD-14
@@ -34,27 +34,51 @@ flags, and where they are written. The content is a few health and drift measure
    data, so it works the day labels exist.
 
 ## The drift reference (written by Evaluation, D-054)
-Layer 2's yardstick, one per run, written by Evaluation into the run's `evaluation/` folder
-(`build_drift_reference`, [evaluation](evaluation.md)) and keyed by the bundle's `model_hash`
-([model bundle](model_bundle.md)). No extra Spark pass: EDA already counted every feature on
-every eligible row.
-1. **The final features' distributions over the observation window**, per period and pooled over
-   the window, taken from the run's own `stage2/` copy of EDA's counts (D-139 (b)), so an EDA
-   rerun never changes it:
-   - a numeric: EDA's stored bin edges, plus the null bin;
-   - a categorical: EDA's levels, the 50 largest and the rest as `__other__`, plus `null`;
-   - per bin or level: its share of the period's rows.
-2. **The distribution of the test scores** per period, in quantile groups of the score, from
-   Evaluation's score cells.
+The only part of Monitoring that exists. Layer 2's
+yardstick, one per run: Evaluation writes it into the run's `evaluation/` folder
+(`evaluation/drift_reference.py::build_drift_reference(run_folder, cells, features)`, called by
+[evaluation](evaluation.md)), and it belongs to the bundle's `model_hash`, which
+`evaluation.json` records ([model bundle](model_bundle.md)). No extra Spark pass: EDA already
+counted every feature on every eligible row, and the score side reuses Evaluation's score cells.
+1. **The final features' distributions over the observation window** (the bundle's features,
+   in its order), per test period and pooled over them, from the run's own `stage2/` copy of
+   EDA's counts (D-139 (b)), so an EDA rerun never changes it:
+   - a numeric: EDA's stored bins (one more than its edges, labelled as EDA's counts table
+     labels them), then the null bin;
+   - a categorical: EDA's kept levels (the 50 largest) in EDA's order, then `__other__` and
+     `null` at EDA's bin orders;
+   - per bin or level: its rows (the copy's current cells, folds and target bins added up) and
+     its share of the period's rows. Every bin has a row in every period, an empty one at 0.
+2. **The distribution of the test scores** (`score`), from the test part's score cells at
+   replicate 0 (the actual rows, no bootstrap weight): the score bins pooled over the test
+   periods and merged into 10 quantile groups of about equal rows (`merge_bins`, a mass point
+   its own group), each with its lowest and highest score; per test period and pooled, each
+   group's rows and share. It holds test clients only, while production also scores the train
+   clients the model was fitted on, so an overfitted model starts Monitoring with a score PSI
+   above zero.
 3. **On the true eligible population:** EDA's counts are every eligible row regardless of label,
    and test is never sampled; the training sample's skew never enters.
-4. **A valid input of `psi`:** each feature's shares are the `expected_shares` of
-   `statistics/distributions.psi` in the bins Monitoring will count production rows into; a test
-   checks it.
-5. **EDA's levels, not the encoder's:** Monitoring maps a level through the encoder (its pooled
-   levels and `__other__`) when it is built.
-6. **Versioned** (`CLAUDE.md` §2): its own schema version; an Evaluation rerun rewrites it with
-   `evaluation/`.
+4. **A valid input of `psi`:** each period's shares, empty bins at 0, sum to 1 over a bin list
+   fixed per feature: they are the `expected_shares` of `statistics/distributions.psi` in the
+   bins Monitoring will count production rows into; a test checks it.
+5. **How Monitoring bins production data:** a numeric on `drift_edges` as EDA's counts table
+   did (`[e_i, e_{i+1})`); a score into the last group whose `score_min` is at or below it, the
+   first group taking every lower score. **EDA's levels, not the encoder's:** Monitoring maps a
+   level through the encoder (its pooled levels and `__other__`) when it is built.
+6. **Fails loud** when a final feature has no cells in the copy or in a test period, when a
+   level falls outside its bins, or when the cells hold no test row at replicate 0.
+7. **Versioned** (`CLAUDE.md` §2): `DRIFT_REFERENCE_SCHEMA_VERSION = 1`, stamped as
+   `drift_reference_schema_version` in `evaluation.json`. Nothing reads it yet: Monitoring
+   checks it when it is built. An Evaluation rerun rewrites the reference with `evaluation/`.
+
+**Stored tables** (`evaluation/tables/`, named with the prefix `drift_` because `features` is
+already the feature table's name):
+
+| Table | Grain | Columns |
+|---|---|---|
+| `drift_features` | final feature × test period or `pooled` × bin | `feature, kind, period, bin_order, bin, rows, share` |
+| `drift_edges` | final numeric feature × edge | `feature, position, edge` (EDA's edges as the run copied them) |
+| `drift_scores` | test period or `pooled` × score group | `period, group, score_min, score_max, rows, share` |
 
 ## Design constraints
 - Source-table quality (schema, freshness, nulls, ranges) is the **data observability

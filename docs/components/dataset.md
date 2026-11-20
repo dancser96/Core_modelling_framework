@@ -75,7 +75,7 @@ to latest:
 
 ## Frames (D-030, D-131, D-135)
 `Frames(snapshot, rows, train, log, meta)`, built by `build_frames(cfg, entity,
-env, spark, stage, features)` for `stage` `eda`, `training` or `evaluation`, which builds only
+env, spark, stage, features, carry)` for `stage` `eda`, `training` or `evaluation`, which builds only
 the parts the stage gets (`STAGE_PARTS`: `eda` the snapshot and `rows`, `training` train,
 `evaluation` `rows`; Feature Checks is no frame stage: it reads EDA's artifacts only, [feature
 checks](feature_checks.md)):
@@ -117,13 +117,18 @@ checks](feature_checks.md)):
   every eligible row of the validation period `v`, with `part` (`test` | `validation`) beside the
   client's `split`: validation rows hold clients of both splits, so Evaluation can also show
   validation on test clients only. It carries the keys, `part`, the `features` passed (the run's
-  final list), the `strata.variables` not already among them, `target` and `split`; the strata
-  ride along for the stratified tables and never join the feature list, and a stratum must be a
-  candidate. It carries no modelling tag: every row is eligible, so each tag would be 1 (EDA
+  final list), the `strata.variables` and then `carry` not already among them, `target` and
+  `split`; the strata and the `carry` columns (a baseline's column, the single feature the model
+  lacks) ride along for the stratified tables and the baselines and never join the feature
+  list, and each must be a candidate. It carries no modelling tag: every row is eligible, so each tag would be 1 (EDA
   refuses a tag as a stratum for the same reason). Evaluation scores it inside Spark
   (`score_spark`, [model bundle](model_bundle.md)) and aggregates its metrics there (D-141); it
   needs no train row.
 - In both modelling frames rows with a null target are dropped, with the share logged per period.
+  Evaluation's `meta["eligible_rows"]` is `{period label: eligible rows}` for the window's periods
+  and `v`, over both splits and from the same pass, null targets counted: a `top_n` list is cut
+  from every eligible client before any target is known, so the slice is a share of this count,
+  not of the rows scored ([evaluation](evaluation.md)).
 - `log`: the join, eligibility, contract, compared-periods (`eda`: the labels per group, and
   `missing_window` when the panel lacks a window period, T19), null-target, sampling (`training`)
   and collect logs, in order.
@@ -670,8 +675,9 @@ dataset writes no artifact under `roots.data`: the model input goes where the en
 source entry for `data.model_input` points, and EDA writes the counts tables under
 `<roots.data>/<use_case>/04_feature/<ddh>/eda/tables/`, with no entity segment, since the root
 is one entity's area and the data-definition hash carries the entity (D-136; [EDA](eda.md)).
-- `build_frames(cfg, entity, env, spark, stage: str, features: list[str] | None = None) -> Frames`
-  (public, D-024): `stage` is `eda` (`snapshot` collected, `rows` left in Spark), `training`
+- `build_frames(cfg, entity, env, spark, stage: str, features: list[str] | None = None, carry:
+  list[str] | None = None) -> Frames` (public, D-024; `carry` is `evaluation`'s only and any
+  other stage with it fails): `stage` is `eda` (`snapshot` collected, `rows` left in Spark), `training`
   (train, with its folds, collected) or `evaluation` (`rows`: test and validation, left in Spark;
   Stage 3), the `STAGE_PARTS` dict; anything else fails naming the three. Before the panel is built: `training` / `evaluation` with a null
   `time.validation_period` (an EDA-only config) fail, so do they without `features`, with an empty
@@ -695,16 +701,18 @@ is one entity's area and the data-definition hash carries the entity (D-136; [ED
   `check_folds` runs on it before the frame leaves Spark through `collect_frame`. For
   `evaluation` (Stage 3): the window's test-split rows with `part = "test"`, then every eligible
   row of the validation period, both splits, with `part = "validation"`, selected as `unit_id,
-  period, part`, `features`, the strata variables not among them, `target`, `split`, returned
-  as `rows`, uncollected; no modelling tag (every row is eligible).
+  period, part`, `features`, the strata variables and then the `carry` columns not among them
+  (each once), `target`, `split`, returned as `rows`, uncollected; no modelling tag (every row
+  is eligible). The same eligibility and null-target drop as Training's frame; `meta` gains
+  `eligible_rows`.
 - `@dataclass Frames(snapshot, rows, train, log, meta)`, in that order (Stage 3: no `test` or
   `validation` field): `snapshot` and `train` are pandas frames and `rows` a Spark `DataFrame`
   (EDA's compared periods for `eda`, test and validation for `evaluation`), each `None` when the
   stage didn't ask for it; the frames carry `unit_id` (a string) and `period` (a date, the
   period's last day). After them the snapshot holds the supported candidates, the modelling tags,
   `eligible`, `target` and `split`; train holds the `features` passed, `target`, `split` and the
-  fold columns; Evaluation's `rows` `part`, the `features` passed, the strata not among them,
-  `target` and `split`. `period` stays a date; the counts tables and
+  fold columns; Evaluation's `rows` `part`, the `features` passed, the strata and `carry`
+  columns not among them, `target` and `split`. `period` stays a date; the counts tables and
   the log carry the period's label instead (`spec.label`). A future frame goes last, since the
   fields are positional. `log` is the list of entries in order, each with a fixed `step`: `join`
   (one per source: the spine's rows per

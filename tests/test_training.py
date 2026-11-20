@@ -35,7 +35,13 @@ from core_modelling.run import run
 from core_modelling.runs import list_runs, show_run
 from core_modelling.statistics.losses import mean_fold_loss
 from core_modelling.training import run_training
-from core_modelling.training.gate import STAGE2_FILE, STAGE2_TABLES
+from core_modelling.training.gate import (
+    STAGE2_FILE,
+    STAGE2_TABLES,
+    Stage2,
+    read_stage2_copy,
+    save_stage2,
+)
 from core_modelling.training.ledger_run import read_run_ledger
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,9 +107,9 @@ def test_the_run_folder_holds_every_artifact(
 def test_the_run_keeps_its_stage2_versions_and_the_report_blocks(
     trained: StageResult, trained_env: EnvironmentConfig
 ) -> None:
-    """`stage2/_stage2.json` records the versions of the copies and the two runs' tokens; the
-    metrics carry their optimism note; the views hold the search's best and the calibration's
-    train-side metrics."""
+    """`stage2/_stage2.json` records the versions of the copies and the two runs' tokens, and
+    `read_stage2_copy` reads every copy back; the metrics carry their optimism note; the views
+    hold the search's best and the calibration's train-side metrics."""
     folder = Path(models_dir(trained_env, trained.config, trained.meta["run_id"]))
     versions = json.loads((folder / "stage2" / STAGE2_FILE).read_text())
     assert versions == {
@@ -111,10 +117,40 @@ def test_the_run_keeps_its_stage2_versions_and_the_report_blocks(
         "ledger_schema_version": LEDGER_SCHEMA_VERSION,
         "runs": trained.meta["stage2"],
     }
+    assert set(read_stage2_copy(str(folder))) == {"ledger", *STAGE2_TABLES}
     note = trained.meta["metrics"]["note"]
     assert isinstance(note, str) and note
     assert "best" in trained.views["search"]
     assert "metrics" in trained.views["calibration"]
+
+
+def test_the_stage2_copy_reads_back_and_refuses_a_version_it_cannot_read(
+    tmp_path: Path,
+) -> None:
+    """No Spark: a copy `save_stage2` wrote reads back table by table (the final features'
+    rows, every candidate's ledger row); a missing `_stage2.json` and an EDA or ledger version
+    other than this framework's are refused, the message naming both versions."""
+    tables = {name: pd.DataFrame({"feature": ["age", "income"], "n": [1, 2]})
+              for name in STAGE2_TABLES}  # fmt: skip
+    ledger = pd.DataFrame({"feature": ["age", "income", "segment"]})
+    stage2 = Stage2({"schema_version": STAGE_SCHEMA_VERSIONS["eda"]}, tables, {}, ledger,
+                    {"eda": "aa", "feature_checks": "bb"})  # fmt: skip
+    run_folder = tmp_path / "r001"
+    run_folder.mkdir()
+    save_stage2(str(run_folder / "stage2"), stage2, final=["income"])
+    copy = read_stage2_copy(str(run_folder))
+    pd.testing.assert_frame_equal(copy["ledger"], ledger)
+    assert all(copy[name]["feature"].tolist() == ["income"] for name in STAGE2_TABLES)
+    versions_file = run_folder / "stage2" / STAGE2_FILE
+    versions = json.loads(versions_file.read_text())
+    for key, older in (("eda_schema_version", 4), ("ledger_schema_version", 2)):
+        versions_file.write_text(json.dumps({**versions, key: older}))
+        current = versions[key]
+        with pytest.raises(ValueError, match=rf"has {key} {older}, this framework reads {current}"):
+            read_stage2_copy(str(run_folder))
+    versions_file.unlink()
+    with pytest.raises(FileNotFoundError, match=rf"holds no {STAGE2_FILE}"):
+        read_stage2_copy(str(run_folder))
 
 
 def test_the_kept_model_is_the_one_the_search_judged(trained: StageResult) -> None:
@@ -251,10 +287,18 @@ def test_run_adds_the_missing_stages_at_autonomous_and_training_alone_refuses(
     assert 0 < len(meta["final_features"]) <= len(A_FEW_CANDIDATES)
 
 
+@pytest.fixture(scope="module")
+def family_env_file(dev_output: tuple[str, dict], tmp_path_factory: pytest.TempPathFactory) -> str:
+    """An environment file on the dev preset with a data root of its own. The family runs read
+    the sources directly; under `dev_env_file` they would meet `dev_stage2`'s EDA, which read the
+    model input, and Training refuses artifacts read from other data."""
+    return str(write_environment_file(dev_output[0], tmp_path_factory.mktemp("family_env")))
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize("family", ["lgbm", "xgboost", "xgb_limitdepth", "catboost"])
 def test_every_family_trains_end_to_end_on_dev(
-    family: str, spark: SparkSession, dev_env_file: str, tmp_path: Path
+    family: str, spark: SparkSession, family_env_file: str, tmp_path: Path
 ) -> None:
     """Each family alone through the whole stage on the `dev` preset, on every candidate in
     force (no selection rule, so the declared categoricals and the constrained numeric stay):
@@ -271,7 +315,7 @@ def test_every_family_trains_end_to_end_on_dev(
     )  # fmt: skip
     path = tmp_path / "config.yml"
     path.write_text(yaml.safe_dump(raw))
-    out = run(path, env_path=dev_env_file, stages=["training"], entity=ENTITY)
+    out = run(path, env_path=family_env_file, stages=["training"], entity=ENTITY)
     meta, tables = read_stage(out[ENTITY]["training"]["cc_acquisition"]["folder"], "training")
     oof, trials = tables["oof"], tables["trials"]
     assert meta["best"]["family"] == family and len(trials) == 3

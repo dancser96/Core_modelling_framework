@@ -633,6 +633,12 @@ The run folder's layout is [model bundle](model_bundle.md#the-run-folder)'s. Tra
 6. Then the `run` entry of stage `training` in the audit log, with the run number and no
    `periods`, so a Training run never blocks moving the validation period (D-088).
 
+Evaluation reads `training.json` (`metrics`, `written_at`, `timings.seconds`, `sampling`, besides
+the keys the card takes) and the tables `signoff`, `trials` and `explanation_sample` (the report
+draws them; it stores all three again under `evaluation/tables/` as `training_*`), `calibration`
+and `selection` (the card), and nothing else
+([evaluation](evaluation.md#what-evaluation-writes)).
+
 A folder without `training/` is a crashed run, listed as incomplete; its number stays taken while
 the folder exists ([model bundle](model_bundle.md#requirements-and-design-constraints)). Training writes no drift reference: Evaluation does, from `stage2/` (D-054).
 
@@ -715,8 +721,9 @@ A named model family tuned with Optuna (D-020), behind the same `FAMILIES` inter
   `metric_loss`, `mean_fold_loss`, `metric_value`, `row_concordance`.
 - `training/ledger_run.py`: `build_run_ledger`, `save_run_ledger`, `read_run_ledger`,
   `signoff_table`; `training/tables.py`: `oof_table`, `explanation_sample`, `train_metrics`;
-  `training/views.py`: `search_summary`, `search_progress_chart`, `selection_view`,
-  `calibration_view`, `signoff_view`, `training_views` (the blocks notebook 04 shows).
+  `training/views.py`: `search_summary`, `search_table`, `search_progress_chart`,
+  `selection_view`, `calibration_view`, `signoff_view`, `training_views` (the blocks notebook 04
+  shows; `search_table` and `signoff_view` are Evaluation's report's too).
 - `reporting/explain_charts.py`: `importance_bar`, `beeswarm`, `waterfall`, `dependence`, drawn
   from the libraries' own contributions, no `shap` import.
 - `training/run.py`: `run_training`; its lines in the top-level `run.py` (`STAGES["training"]`,
@@ -814,6 +821,7 @@ def train_metrics(metric: str, task: str, y: np.ndarray, fold: np.ndarray, margi
 
 # views.py, reporting/explain_charts.py
 def search_summary(trials: pd.DataFrame, metric: str) -> pd.DataFrame: ...
+def search_table(trials: pd.DataFrame, metric: str) -> Styler: ...   # shared with Evaluation's report
 def search_progress_chart(trials: pd.DataFrame, metric: str) -> go.Figure: ...
 def selection_view(run_ledger: pd.DataFrame, selection: pd.DataFrame) -> dict: ...
 def calibration_view(calibration: pd.DataFrame, task: str) -> dict: ...
@@ -839,8 +847,8 @@ T45 (a time budget cuts trees), T46 (FLAML's refit on every row), T47 (NaN fold 
 crunch's downsampling and calibration lessons in `docs/context/lessons.md`.
 
 ### Sources
-The measurements on the pinned versions are in the stage's research note, which moves to
-`docs/guides/modelling_faq.md` at the stage's close.
+The measurements on the pinned versions are in the stage's research note, in
+[modelling_faq](../guides/modelling_faq.md).
 - [Bischl23] Bischl et al. 2023, Hyperparameter optimization, https://arxiv.org/abs/2107.05847
 - [CalArena26] Berta et al. 2026, CalArena, https://arxiv.org/abs/2605.30188
 - [Cawley10] Cawley and Talbot 2010, On over-fitting in model selection,
@@ -869,6 +877,11 @@ The measurements on the pinned versions are in the stage's research note, which 
   https://xgboost.readthedocs.io/en/stable/tutorials/param_tuning.html
 
 ## Open questions
+- Training's warnings are free text, so the model card carries Evaluation's considerations only.
+  Codes with values in `training.json` would let the card carry Training's too.
+- A regression's train concordance is computed on rows, Evaluation's on score cells, which
+  reads up to about 0.01 higher, so a test value above train's is no finding
+  ([evaluation](evaluation.md)).
 - The floor for a feature judged non-monotone on train reads its best-order concordance, which
   sits 2.5 to 2.8 SE above 0.5 on noise; the rule's margin is the only guard today.
 

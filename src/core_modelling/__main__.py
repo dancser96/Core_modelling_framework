@@ -1,6 +1,7 @@
 """The CLI (D-024): `python -m core_modelling run <config>… [--stages …] [--entity …]` runs the
-stages; `decide <config> --entity E --reason R …` appends one decision to the audit log (D-125),
-e.g. `--keep F… --findings S…`, or the feature sign-off with `--sign-off --run r007`; `runs
+stages, and `run <config> --stages evaluation --run r007` evaluates a named run; `decide
+<config> --entity E --reason R …` appends one decision to the audit log (D-125), e.g. `--keep
+F… --findings S…`, or the feature sign-off with `--sign-off --run r007`; `runs
 <config> --entity E` lists the use case's runs and `show-run <config> --entity E --run r007`
 shows one (D-139). Parsing only; the logic is `run`, `record_decision`, `sign_off`, `list_runs`
 and `show_run`.
@@ -61,6 +62,9 @@ def _build_parser() -> argparse.ArgumentParser:
     runner.add_argument("config", nargs="+", help="the use-case config file(s)")
     runner.add_argument("--stages", nargs="+", choices=list(STAGES), help="default: all built")
     runner.add_argument("--entity", help="default: every entity the config lists")
+    runner.add_argument(
+        "--run", metavar="RUN", help="with --stages evaluation: e.g. r007 (default: the latest)"
+    )
     runner.add_argument("--env", help=ENV_HELP)
     _add_decide(commands)
     runs = commands.add_parser("runs", help="list the runs of a use case")
@@ -120,7 +124,9 @@ def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
     if args.command == "run":
-        out = run(args.config, env_path=args.env, stages=args.stages, entity=args.entity)
+        out = run(
+            args.config, env_path=args.env, stages=args.stages, entity=args.entity, run=args.run
+        )
         for entity, stages in out.items():
             print(f"{entity}: ran {', '.join(stages)}")
     elif args.command == "decide":

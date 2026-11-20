@@ -3,18 +3,21 @@ config variants several modules read, EDA's frames and EDA's runs on the unit pr
 trained runs, and an audit-log entry builder.
 
 The unit preset is generated in memory once and written to disk once. The dev preset is written
-once per session by a separate process, for the trap acceptance test (`test_traps.py`), with an
-environment file on it. The canonical dataset is written once per session by a separate process
-(`python -m synthetic`), for the slow tests (`pytest -m slow`). Each slow test checks one family
-of it in a separate process too: a family's working set at the canonical size reaches several GB
+once per session by a separate process, with an environment file on it, and run through Target
+Factory, EDA and Feature Checks once (`dev_stage2`) for the trap acceptance test
+(`test_traps.py`) and the modelling acceptance tests (`test_modelling_acceptance.py`). The
+canonical dataset is written once per session by a separate process (`python -m synthetic`),
+for the slow tests (`pytest -m slow`). Each slow test checks one family of it in a separate
+process too: a family's working set at the canonical size reaches several GB
 (the panel is sorted, joined and turned into bools, copies of the columns read), so the test run
 itself stays small and every family's memory goes back to the system when it ends.
 
 EDA's frames and the two EDA runs (the card config and the regression variant) are built once per
 session and shared: `test_eda.py` reads the runs and Feature Checks' tests run on a copy of their
 data root. The two trained runs (`trained_card`, `trained_regression`) are built once on another
-copy, after Feature Checks there, for Training's and Evaluation's tests. A shared value is
-read-only; a test that changes one, or a file under it, works on its own copy.
+copy, after Feature Checks there, for Training's and Evaluation's tests, and evaluated once there
+(`evaluated_card`, `evaluated_regression`). A shared value is read-only; a test that changes
+one, or a file under it, works on its own copy.
 """
 
 import os
@@ -44,13 +47,19 @@ from core_modelling.environment import (
     feature_dir,
     get_spark_session,
 )
+from core_modelling.evaluation import run_evaluation
 from core_modelling.feature_checks import run_feature_checks
+from core_modelling.run import run
 from core_modelling.training import run_training
 from synthetic.generate import generate_mart
 from synthetic.output import load_truth, write_mart
 
 ENTITY = "entity_a"
+# the two example configs, frozen copies, that the dev preset's Stage 2 runs (`dev_stage2`)
+DEV_CONFIGS = [Path(__file__).resolve().parent / "conf" / name
+               for name in ("cc_acquisition.yml", "td_acquisition.yml")]  # fmt: skip
 QUICK_SEARCH = {"estimator_list": ["lgbm"], "max_iter": 4}  # a search of seconds, for the tests
+QUICK_INTERVALS = {"intervals": {"replicates": 20}}  # the fewest replicates the schema allows
 # The regression variant's sections: card spend summed forward for holders, on the mart alone.
 REGRESSION = {
     "task": "regression",
@@ -213,6 +222,14 @@ def with_training(cfg: UseCaseConfig, **training: object) -> UseCaseConfig:
     return UseCaseConfig.model_validate(data)
 
 
+def with_evaluation(cfg: UseCaseConfig, **evaluation: object) -> UseCaseConfig:
+    """`cfg` with its evaluation section's fields changed, validated: no earlier stage's settings
+    digest covers the intervals, so EDA's, Feature Checks' and Training's artifacts stay valid."""
+    data = cfg.model_dump()
+    data["evaluation"] = _merged(data["evaluation"], evaluation)
+    return UseCaseConfig.model_validate(data)
+
+
 @pytest.fixture(scope="session")
 def trained_env(
     spark: SparkSession,
@@ -236,14 +253,14 @@ def trained_env(
 
 @pytest.fixture(scope="session")
 def card_quick(in_memory: UseCaseConfig) -> UseCaseConfig:
-    """The card config with `QUICK_SEARCH`."""
-    return with_training(in_memory, **QUICK_SEARCH)
+    """The card config with `QUICK_SEARCH` and `QUICK_INTERVALS`."""
+    return with_evaluation(with_training(in_memory, **QUICK_SEARCH), **QUICK_INTERVALS)
 
 
 @pytest.fixture(scope="session")
 def regression_quick(regression_cfg: UseCaseConfig) -> UseCaseConfig:
-    """The regression variant with `QUICK_SEARCH`."""
-    return with_training(regression_cfg, **QUICK_SEARCH)
+    """The regression variant with `QUICK_SEARCH` and `QUICK_INTERVALS`."""
+    return with_evaluation(with_training(regression_cfg, **QUICK_SEARCH), **QUICK_INTERVALS)
 
 
 @pytest.fixture(scope="session")
@@ -260,6 +277,30 @@ def trained_regression(
 ) -> StageResult:
     """The regression variant's Training run on `trained_env`."""
     return run_training(regression_quick, ENTITY, trained_env, spark)
+
+
+@pytest.fixture(scope="session")
+def evaluated_card(
+    spark: SparkSession,
+    trained_env: EnvironmentConfig,
+    card_quick: UseCaseConfig,
+    trained_card: StageResult,
+) -> StageResult:
+    """The card run's Evaluation on `trained_env`, its run named."""
+    return run_evaluation(card_quick, ENTITY, trained_env, spark, trained_card.meta["run_id"])
+
+
+@pytest.fixture(scope="session")
+def evaluated_regression(
+    spark: SparkSession,
+    trained_env: EnvironmentConfig,
+    regression_quick: UseCaseConfig,
+    trained_regression: StageResult,
+) -> StageResult:
+    """The regression variant's run's Evaluation on `trained_env`, its run named."""
+    return run_evaluation(
+        regression_quick, ENTITY, trained_env, spark, trained_regression.meta["run_id"]
+    )
 
 
 def build_entry(seq: int, op: str, **fields: object) -> Entry:
@@ -349,6 +390,21 @@ def write_environment_file(out_dir: str, root: Path) -> Path:
 def dev_env_file(dev_output: tuple[str, dict], tmp_path_factory: pytest.TempPathFactory) -> str:
     """An environment file on the written dev preset under a temporary data root."""
     return str(write_environment_file(dev_output[0], tmp_path_factory.mktemp("dev_env")))
+
+
+@pytest.fixture(scope="session")
+def dev_stage2(spark: SparkSession, dev_env_file: str) -> dict[str, str]:
+    """Target Factory on `DEV_CONFIGS` (one model input), then EDA and Feature Checks per
+    config, on the dev preset under `dev_env_file`, once per session: each config's Feature
+    Checks folder, by use case. The trap test reads them; a module that trains or decides works
+    on a copy of the data-definition folder holding them."""
+    run(DEV_CONFIGS, env_path=dev_env_file, stages=["target_factory"])
+    folders = {}
+    for config in DEV_CONFIGS:
+        paths = run(config, env_path=dev_env_file, stages=["eda", "feature_checks"])
+        for use_case, written in paths[ENTITY]["feature_checks"].items():
+            folders[use_case] = written["folder"]
+    return folders
 
 
 @pytest.fixture(scope="session")

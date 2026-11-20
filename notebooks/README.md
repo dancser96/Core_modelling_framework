@@ -44,7 +44,7 @@ Anything worth keeping moves into the config, an audit-log entry or the package.
 
 Notebooks: `00_synthetic_data` (exists; dev only and temporary: a visual tour of the synthetic data,
 with its checks in an appendix, see `docs/components/test_harness.md`; not a guided stage notebook).
-`00_eda_fc_helper` (a reference while reading the EDA and Feature Checks code, not a stage: it reads both stages' stored artifacts read-only through `feature_dir`, `read_stage`, `read_ledger` and `show_decisions`, no Spark session and no entry, and shows each one's grain, columns, writers, readers and a few telling rows: `eda.json`, the counts table first, then `ranking`, `client_constant`, `correlation` and every other EDA table, the ledger, `feature_checks.json` and its five tables, the decision audit log; run `02_eda` and `03_feature_checks` first). `00_modelling_helper` (built in M2.3 step 1; dev only, a reference while reading the modelling code, not a stage: on the use case's own train rows it calls the functions Training will call and shows what each returns, with its grain, columns and what right looks like: the features in force, the training frame with the client folds, the encoder, the four families with their round trips, the bundle with its manifest and scoring in pandas and in Spark, the run record; everything it writes goes to a temporary folder; run `02_eda` and `03_feature_checks` first; sections 7 to 9, its Training section, read a trained run without writing: `training.json`, the six tables with checks that they agree with each other (each family's budget, the out-of-fold rows, the contributions adding up to the out-of-fold margin), the per-run ledger and `stage2/`; run `04_training` first; it gains an Evaluation section in step 3). `01_target_factory` (built with Stage 1: the targets, the model input saved, the frames).
+`00_eda_fc_helper` (a reference while reading the EDA and Feature Checks code, not a stage: it reads both stages' stored artifacts read-only through `feature_dir`, `read_stage`, `read_ledger` and `show_decisions`, no Spark session and no entry, and shows each one's grain, columns, writers, readers and a few telling rows: `eda.json`, the counts table first, then `ranking`, `client_constant`, `correlation` and every other EDA table, the ledger, `feature_checks.json` and its five tables, the decision audit log; run `02_eda` and `03_feature_checks` first). `00_modelling_helper` (built in M2.3 step 1; dev only, a reference while reading the modelling code, not a stage: on the use case's own train rows it calls the functions Training will call and shows what each returns, with its grain, columns and what right looks like: the features in force, the training frame with the client folds, the encoder, the four families with their round trips, the bundle with its manifest and scoring in pandas and in Spark, the run record; everything it writes goes to a temporary folder; run `02_eda` and `03_feature_checks` first; sections 7 to 9, its Training section, read a trained run without writing: `training.json`, the six tables with checks that they agree with each other (each family's budget, the out-of-fold rows, the contributions adding up to the out-of-fold margin), the per-run ledger and `stage2/`; run `04_training` first; section 10, its Evaluation section, reads an evaluated run the same way: `evaluation.json`, its tables with the contributions adding up to the scored margin, and the scores table; run `05_evaluation` first). `01_target_factory` (built with Stage 1: the targets, the model input saved, the frames).
 `02_eda` (built with Stage 2, nine steps: `run_eda` on one config; the report's views with how to
 read each number: the choices, the headline and the warnings (the how-to-read notes in step 3's
 text), the funnel, the sources per period, the target per period and by stratum, the ranking, the
@@ -69,10 +69,19 @@ so the examples train with them). `04_training` (built in M2.3 step 2, nine step
 the feature set in force and the warnings; what the search did (the table per family, the
 progress chart, the chosen configuration); selection's three rules; the calibration with the
 out-of-fold numbers and why they are optimistic; the explanation charts; the sign-off view,
-which `05_evaluation` signs; the runs so far with `list_runs` and `show_run`; how to iterate
+which `05_evaluation` guides; the runs so far with `list_runs` and `show_run`; how to iterate
 through `record_decision`: a `keep` or an `exclude`, a quick run then a main run's budget per
-family through `training.trials`, other `training` settings). `05_evaluation` (planned, M2.3
-step 3).
+family through `training.trials`, other `training` settings). `05_evaluation` (built in M2.3 step 3,
+twelve steps and a closing checklist: pick a run with `list_runs` and `run_evaluation`'s
+default, the latest trained run of the data definition; `run_evaluation` and where
+`report.html` is; the report view by view from `result.views` with how to read each: the
+summary, the metrics per period, the curves, capture and slices, reliability and the score
+distribution, the strata; the explanations: importance and the beeswarm, the effects beside
+EDA's lift, the waterfalls, permutation importance and PDP with ICE, and a `shap.Explanation`
+from the stored contributions for `shap`'s own plots; the search, thresholds and validation on
+test clients only; the model card; `compare_runs`, differences on test only, validation
+reported and never chosen on; the feature sign-off as `sign_off` and `exclude` call text, not
+run; what must be true before the run is taken further).
 Planned, created as their stages are built: `06_register_promote`, `07_inference`, `08_monitoring`. No notebook deploys: the change-request process runs `deploy`
 (D-033). The feature sign-off is recorded after training and before register, at every automation
 level. At the `assisted` level the review's `keep` / `exclude` entries precede training; at

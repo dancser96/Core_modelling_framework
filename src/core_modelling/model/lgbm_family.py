@@ -118,11 +118,13 @@ def fit(X: pd.DataFrame, y: np.ndarray, params: dict, task: str) -> lgb.Booster:
     return model.fit(X, y, categorical_feature=categorical).booster_
 
 
-def predict(booster: lgb.Booster, X: pd.DataFrame) -> np.ndarray:
+def predict(booster: lgb.Booster, X: pd.DataFrame, threads: int | None = None) -> np.ndarray:
     """The margin from every tree: log-odds for binary, the raw output for regression (the log
-    scale under Tweedie and Poisson, A42)."""
+    scale under Tweedie and Poisson, A42). `threads` caps LightGBM's threads (None: its default,
+    every core); the margins are the same at any count."""
+    extra = {} if threads is None else {"num_threads": threads}
     return booster.predict(
-        _values(booster, X), raw_score=True, num_iteration=booster.current_iteration()
+        _values(booster, X), raw_score=True, num_iteration=booster.current_iteration(), **extra
     )
 
 

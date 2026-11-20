@@ -9,7 +9,11 @@ the per-period estimate with their intervals, the rare effect, the concordance f
 its SE, the support in effective clients and its name, the events warning, the headline, the
 level encoding's shrinkage, whether a lift exists, the target class and how an estimate is
 printed and named. Training reads the calibration's fits (every method the task allows, with
-their evidence and warnings) and the loss its table shows per method. The modelling choices
+their evidence and warnings) and the loss its table shows per method. Evaluation reads the
+metric function on score cells, the metrics that read the score's order only, the decision
+metric's key among them, the reliability's group count, the range a baseline column must keep
+to be a prediction, the metrics a stratum level cannot have, and whether the threshold table
+carries a false positive rate (the ROC's x), besides the target class. The modelling choices
 (the metrics, objectives and calibration methods each task allows, with their defaults) are the
 config schema's `TASK_CHOICES`, which each task's entry carries too: the schema checks and
 fills them at load and cannot import this module.
@@ -58,6 +62,7 @@ from core_modelling.statistics.distributions import (
     variance_from_sums,
 )
 from core_modelling.statistics.intervals import t_interval, wilson_interval
+from core_modelling.statistics.metrics import binary_metrics, regression_metrics
 
 SHOWN_VALUES = 3  # bad target values named in the error
 TARGET_BINS = 20  # quantile bins of a regression target in the counts table
@@ -298,12 +303,17 @@ def _binary_target_bins(known: np.ndarray, exact: bool) -> None:
     return None
 
 
+# The zero bin of a regression target: [0, the next float up), so 0 is always its own bin
+# (EDA's target bins and Evaluation's cells share it).
+ZERO_BIN_EDGES = np.array([0.0, np.nextafter(0.0, np.inf)])
+
+
 def _regression_target_bins(known: np.ndarray, exact: bool) -> np.ndarray:
     """The edges of `TARGET_BINS` quantile bins of the known targets (every value a bin when
     `exact`), 0 always its own bin, so the units with a non-zero target are a sum of cells."""
     known = np.asarray(known, dtype=float)
     edges = quantile_edges(known, np.unique(known).size if exact else TARGET_BINS)
-    return np.unique(np.concatenate([edges, [0.0, np.nextafter(0.0, np.inf)]]))
+    return np.unique(np.concatenate([edges, ZERO_BIN_EDGES]))
 
 
 def _known_values(target: pd.Series) -> np.ndarray:
@@ -585,6 +595,33 @@ TASK_SPECS = {
         "calibration_fits": _binary_calibration_fits,
         "calibration_loss": "log_loss",  # each method's out-of-fold loss in the table
         "flaml_task": "classification",  # FLAML's name for the search's task
+        "cell_metrics": binary_metrics,  # (score cells, base) -> Evaluation's metrics
+        "roc_curve": True,  # the threshold table's false positive rate exists
+        # the cell metrics that read the score's order only: a raw feature fills them
+        "order_metrics": ("roc_auc", "ap"),
+        "metric_keys": {},  # decision.metric -> its key in `cell_metrics`, where they differ
+        # a cell metric's direction, +1 where higher is better and −1 where lower is: the
+        # difference between two runs (`compare_runs`) reads `better` or `worse` by it
+        "metric_directions": {
+            "roc_auc": 1,
+            "ap": 1,
+            "log_loss": -1,
+            "log_loss_skill": 1,
+            "brier_skill": 1,
+        },
+        # the cell metrics without a direction: the support, the target's level, and the levels
+        # whose right value is 1 or 0, so a difference between two runs never reads them
+        "undirected_metrics": (
+            "rows",
+            "events",
+            "base_rate",
+            "observed_to_expected",
+            "calibration_slope",
+            "calibration_intercept",
+        ),
+        "reliability_groups": 10,  # the reliability table's score groups
+        "prediction_range": (0.0, 1.0),  # a baseline column outside it predicts no rate
+        "strata_absent_metrics": (),  # what a stratum level's cells cannot give
     },
     "regression": {
         **TASK_CHOICES["regression"],
@@ -620,5 +657,15 @@ TASK_SPECS = {
         "calibration_fits": _regression_calibration_fits,
         "calibration_loss": None,  # the level factor's interval is the evidence instead
         "flaml_task": "regression",
+        "cell_metrics": regression_metrics,
+        "roc_curve": False,
+        "order_metrics": ("concordance",),
+        "metric_keys": {"tweedie_deviance": "deviance", "poisson_deviance": "deviance"},
+        "metric_directions": {"concordance": 1, "r2": 1, "rmse": -1, "mae": -1, "deviance": -1},
+        "undirected_metrics": ("rows", "events", "mean", "predicted_to_observed"),
+        "reliability_groups": 20,
+        "prediction_range": None,  # an amount may take any value
+        # a stratum's cells carry no target bins, so a level has no concordance
+        "strata_absent_metrics": ("concordance",),
     },
 }

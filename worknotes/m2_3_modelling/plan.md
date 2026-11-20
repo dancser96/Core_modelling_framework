@@ -566,6 +566,85 @@ paragraph. Start: `worknotes/handovers/m2-3-evaluation.md`.
     `environment.py`; a private Poisson client weight exists in `statistics/calibration.py`
     (pandas, for the level factor), beside the Spark `client_weights` this step builds.
 
+**Settled at the start of step 3** (the orchestrator, 2026-11-17; every brief builds on these;
+each is a default for the EDS's veto, listed first in review guide 3).
+- **A92 The score cells are one long frame per scorer** (the model, and each baseline that
+  ranks). Keys: `part`, `period`, the columns of `by`, `score_bin` (int, ascending in the
+  score), `target_bin` (binary: the target, 0 or 1; regression: the target's bin as EDA's
+  counts table cuts it, `tasks.TARGET_BINS`, zero in its own bin), `replicate` (0 is the rows
+  as they are; 1 to R the client-bootstrap replicates). Sums, each weighted by the replicate's
+  client weight (weight 1 at replicate 0): `rows`, `target_sum`, `score_sum`, `sq_error_sum`
+  (binary: the Brier sum), `abs_error_sum`, `loss_sum` (binary: the log loss on the score
+  clipped to [1e-15, 1 − 1e-15]; regression: the deviance of the objective or the decision,
+  Tweedie at the constant 1.5; null when the scorer has no such loss), `target_sq_sum`,
+  `link_sum` (binary: the clipped score's logit, which the calibration slope reads; null for
+  regression and for a scorer that is no probability). Beside them `score_min` and
+  `score_max`, the bin's unweighted extremes (the drift reference's edges). The exact sums are
+  computed per row in Spark, so only the rank metrics, the slices, the curves and the slope
+  carry the binning's tolerance. Only non-empty cells are rows.
+- **A93 Bins.** Quantile bins of the scorer's column over every scored row, cut once per scorer
+  so each `by` shares them: `SCORE_BINS` 200 for binary and 50 for regression (with the 20
+  target bins a regression cell count stays near binary's); 50 for the strata's cells. Named
+  constants beside `score_cells`; the builder may move them after measuring the tolerance and
+  the memory, and says so. **As built after the ML audit (2026-11-17): binary has 380 bins
+  with a dense top tail (`SCORE_GRID`, down to 0.001% of the rows in the top 0.1%), the
+  strata every fourth edge (95), regression 50; `evaluation.md` → Score cells.**
+- **A94 `client_weights(client, replicates, salt)` returns one `array<int>` column,** element
+  r − 1 the Poisson(1) weight of replicate r: `xxhash64(client, r, salt)` to a uniform, then
+  the inverse Poisson CDF, in Spark column expressions only (no UDF). How `score_cells` sums
+  the array (exploded, or per partition in pandas) is the builder's, measured.
+- **A95 The metric functions read one replicate's cells** (no `replicate` column needed), and
+  `bootstrap_intervals(replicate_cells, metric, level)` takes the long frame of replicates 1
+  to R and a metric that returns `dict[str, float]`, and returns `dict[str, tuple[float,
+  float]]`: one pass per replicate gives every metric's interval (the spec's signature
+  returned one pair).
+- **A96 Slices on cells.** The cut bin is split in proportion to its rows (no row-level tie, so
+  Q629's seeded tie rule belongs to Inference's list, not here). `slice_metrics(cells, slices,
+  population)` is called per period; `population` is that period's eligible row count over
+  both splits, which `build_frames(…, "evaluation")` adds as `meta["population"]` (`{period:
+  rows}`, one Spark count).
+- **A97 The frames carry extra columns.** `build_frames(…, "evaluation", features, carry=[…])`:
+  `carry` rides along as the strata do (a column that is no candidate is refused). Evaluation
+  passes the single feature when the bundle lacks it and the columns `decision.baselines`
+  names. `add_baselines` adds one score column per ranking baseline, `baseline_<form>`; the
+  scores table stores them, so every cell, a re-render and `compare_runs` read the stored
+  scores alone.
+- **A98 Signatures.** `metric_tables(cells: dict[str, pd.DataFrame], cfg, base: float,
+  population: dict[str, int]) -> dict[str, pd.DataFrame]` (`cells` keyed by what `by` was:
+  `"all"`, `"split"`, each stratum; the tables `metrics`, `slices`, `curves`, `reliability`,
+  `score_distribution`, `strata`); `base` is the unsampled train split's rate (regression: the
+  train mean), read from the run folder, added to `training.json` if a task lacks it.
+  `encoding_shares(rows: DataFrame, bundle: Bundle) -> pd.DataFrame` (per part and feature:
+  rows, the null share, the unseen-level share; Spark) and `feature_table(contributions:
+  pd.DataFrame, shares: pd.DataFrame, run_ledger: pd.DataFrame, stage2: dict) ->
+  pd.DataFrame`, both in `evaluation/explain.py`.
+- **A99 `read_stage2(run_folder) -> dict[str, pd.DataFrame]`** in `training/gate.py`, beside
+  `save_stage2`: it checks `_stage2.json` first and refuses a version it cannot read; nothing
+  else opens `stage2/`.
+- **A100 The run parameter.** `run(config_paths, env_path, stages, entity, run=None)` and the
+  CLI's `run --run r007`: allowed only with `--stages evaluation` alone and one config, refused
+  otherwise before anything runs. The other stage functions gain no unused parameter.
+- **A101 The scores are written first, by Spark, into the temporary folder `write_stage`
+  swaps in,** then read back for every cell; the metrics never rescore.
+- **A102 The tables the charts draw** (each also carries `part` once `metric_tables` stacks the
+  parts). `threshold_table`: one row per score bin from the top, cumulative: `score_bin,
+  threshold, rows, target, depth, capture, rate, lift, false_positive_rate` (`target` the
+  events or the amount so far, `rate` the precision or the mean target, the last null for
+  regression): the ROC, precision–recall and capture curves are its columns.
+  `reliability_table`: `group, rows, predicted, observed`. `distribution_table`: `score_bin,
+  score, class, rows, share` (the share within the class; the per-task class as in
+  `tasks.py`). `metrics`: `metric, part, period` (or `pooled`)`, stratum, level, value, low,
+  high, rows, events, insufficient`. `slice_metrics` returns additive counts per slice (`rows`,
+  `target` and the part's totals), so the periods add up before capture, rate and lift are
+  derived.
+- **The pandas mirror.** `statistics/score_cells.py` (m3.1) holds the cells' names as plain data
+  (`CELL_KEYS`, `CELL_SUMS`, `SCORE_BINS`, `STRATA_BINS`) and `cells_from_rows(rows, task, by,
+  …)`, one replicate's cells from binned rows with a `weight`; the Spark aggregate is tested
+  against it.
+- **Split of m3.3:** m3.3a (now, beside m3.1): `evaluation/scores.py`, the frames' `carry` and
+  `population`, `read_stage2`, the prediction threads; m3.3b (after m3.1): `baselines.py`,
+  `tables.py`, `drift_reference.py`. m3.6 starts with m3.1.
+
 **m3.1 ∥ The metrics and the client bootstrap** (*free*) · `builder` · Opus · xhigh
 - Owns: `statistics/metrics.py`, `statistics/bootstrap.py`, `tests/test_metrics.py`,
   `tests/test_bootstrap.py`; seam: `tasks.py`.

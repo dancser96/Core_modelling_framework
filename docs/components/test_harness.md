@@ -1306,7 +1306,28 @@ on the Mac: generation 80 s, the six Spark stage runs about 240 s), and
 - **The inverted-U age** (a loan-target trap) is covered by a unit test on a synthetic column
   built in the test ([EDA](eda.md)), not by the acceptance test.
 - Null controls (`null_control`) carry no signal: window concordance below 0.55 and no flag.
-- No model beats the oracle (M2.3).
+- **No model beats the oracle: the modelling acceptance tests** (`tests/test_modelling_acceptance.py`,
+  marker `acceptance`, built 2026-11-17, M2.3 step 3; [evaluation](evaluation.md)). The card
+  config runs through Training and Evaluation three times on the `dev` preset (`lgbm`, 15 trials,
+  100 bootstrap replicates), each run on its own copy of the data-definition folder the trap test
+  also uses, so a person's decision in one run never reaches another. The oracle's AUC is the
+  truth's window probability of the card target against the scores table's own target, on the
+  validation rows; the standard error is read from the bootstrap interval:
+  - **Baseline:** the plain run's validation AUC is above the single-feature baseline's, which
+    must be available. A failure means the search, selection or encoding loses what one feature
+    ranks.
+  - **Oracle bound:** the plain run's validation AUC is at most the oracle's plus two standard
+    errors. A failure means a leak reached the model or the scores' rows or labels differ from
+    the truth's.
+  - **The check can fail:** a person keeps the strongest leak trap (a `keep` entry in the audit
+    log), the trap is among the final features, and the validation AUC exceeds the oracle's plus
+    two standard errors. Without it the bound above could pass with a leak in the model.
+  - **Level:** the test part's observed to expected, pooled, is within 10% of 1 for the plain run
+    and for a run under `negative_downsampling` (keep fraction 0.25, asserted in
+    `training.json`), which checks the calibration and the prior-shift offset.
+
+  Measured on the 8 GB laptop: with the trap test, 20 passed in 6 min 45 s. They run in the
+  default suite; `pytest -m "not slow and not traps and not acceptance"` skips them.
 
 The tests compare against the spec and the oracle, never against stored values, so the same
 tests run inside the bank, where the package goes as code and no dataset is copied in (D-041).

@@ -80,7 +80,7 @@ last and M2.4's four):
 |---|---|---|---|---|
 | M2.1 Foundation | 10-26 – 11-02 | 6 | One config gives the train, test and validation frames, with eligibility and split logs | Built (0.2.0), reviewed and closed by the EDS |
 | M2.2 Understanding | 11-03 – 11-13 | 9 | The traps are flagged, the EDA + Feature Checks report opens offline and reads well, the ledger shows each feature's trail | Built (0.3.0; D-134–D-138), reviewed with a codebase review and closed by the EDS on 2026-11-11; the LDS tries it with `worknotes/lds_run_guide.md`; the questions it raised: `docs/guides/eda_fc_faq.md` |
-| M2.3 Modelling | 11-16 – 11-24 | 6 | A calibrated model beats the baselines and never the oracle; the four families round-trip without pickle; no CV fold mixes a client's rows (D-106) | In progress: step 1 (the spec and Foundations) built and reviewed by the EDS 2026-11-16; step 2 (Training) built 2026-11-16, in the EDS's review; step 3 (Evaluation) next |
+| M2.3 Modelling | 11-16 – 11-24 | 6 | A calibrated model beats the baselines and never the oracle; the four families round-trip without pickle; no CV fold mixes a client's rows (D-106) | In progress: step 1 (the spec and Foundations) built and reviewed by the EDS 2026-11-16; step 2 (Training) built 2026-11-16 and step 3 (Evaluation) built 2026-11-17 (0.4.0), both in the EDS's joint review |
 | M2.4 Operations | 11-25 – 12-04 | 4 | Register, promote, deploy, score and monitor from the CLI and the notebooks | — |
 
 M3 and M4 deepen across stages rather than stage by stage.

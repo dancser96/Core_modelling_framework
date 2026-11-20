@@ -6,11 +6,13 @@ seeded sample of train rows with their raw feature values and out-of-fold contri
 the explanation charts draw from. `train_metrics` are the run's numbers on train: the decision's
 metric out of fold and the concordance out of fold and in sample. All of it is train-only
 evidence (D-031) and optimistic: the features and the configuration were chosen on these folds.
+`train_level` reads a run's train level back for Evaluation and `compare_runs`.
 """
 
 import numpy as np
 import pandas as pd
 
+from core_modelling.artifacts import local_path, stage_json
 from core_modelling.model.bundle import OUTPUT_COLUMNS
 from core_modelling.model.calibration import apply_calibration
 from core_modelling.sources import KEYS
@@ -104,3 +106,18 @@ def train_metrics(
         "in_sample_concordance": row_concordance(y, in_sample),
         "note": OPTIMISM_NOTE,
     }
+
+
+def train_level(run_folder: str) -> float:
+    """The unsampled train split's rate (regression: its mean), the `base` the skill scores and
+    the `population_base_rate` read (D-098): `training.json`'s `sampling.true_rate` when
+    Training sampled, else the target mean of `oof.parquet`, which then holds every train row
+    and is read for that one column."""
+    folder = local_path(run_folder)
+    training = stage_json(folder, "training")
+    if not training:
+        raise FileNotFoundError(f"no training artifacts in {run_folder}: run Training first")
+    if training["sampling"]["method"] is not None:
+        return float(training["sampling"]["true_rate"])
+    oof = pd.read_parquet(folder / "training" / "tables" / "oof.parquet", columns=["target"])
+    return float(oof["target"].mean())

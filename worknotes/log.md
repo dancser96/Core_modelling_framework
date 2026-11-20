@@ -2,6 +2,34 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-11-17 — M2.3 major step 3 (Evaluation) built; final runs
+- Built in four waves by Opus builders and doc-writers; the main thread wrote the briefs, ran
+  Spark and kept the checkpoint. Every plan item m3.1 to m3.10 is built; version 0.4.0; nothing
+  is committed. The build stopped for no question: 44 defaults, A92–A135, lead the review
+  guide (`worknotes/m2_3_modelling/review_guide_3.md`), A103–A108 first.
+- Reviews at the close: the ML audit (1 blocking, 8 should-fix), the compatibility check (no
+  break, a minor bump), the silent-failure audit (0 blocking, 4 should-fix, all fixed), a code
+  review of the fix round (0 blocking, 4 should-fix fixed, 2 nits left). No leak, no split or
+  time violation.
+- The blocking finding: with top bins of 0.1% of the rows, average precision from cells read
+  4.7% low at a 1% base rate and up to 61% low at 0.05%. Binary now has 380 bins (0.001% bins
+  in the top 0.1%) and reads within 0.0015 of the row value; regression has 50 (A103, T50).
+- Final runs, after the last code edit. Full suite with the slow tests: 1204 passed, 5 failed,
+  26 min 9 s. The causes were outside the framework's code:
+  - a comment in `TEMPLATE.yml` written as a placeholder failed the filled-template test;
+  - the four slow family tests shared a data root with `dev_stage2`, whose EDA had read the
+    model input, so Training refused the artifacts as read from other data. File order had
+    hidden it until the acceptance tests came before `test_training.py`. The family tests have
+    a data root of their own now.
+- Reruns: the config tests 138 passed; the trap and family tests in one session 156 passed,
+  1 failed (`lgbm`, the laptop's socket-buffer fault in a collect, T51); the four family
+  tests alone 4 passed, 4 min 43 s. The whole suite was not run twice.
+- Notebooks `05_evaluation` (17 code cells) and `00_modelling_helper` (16): executed as scratch
+  copies against `dev`, no error. One run evaluated twice: all 20 tables of
+  `evaluation/tables/` identical, on `dev` only. `ruff check .` and the format check pass.
+- Not measured, for the review: the bootstrap's time at bank size, Spark scoring on executors,
+  the report's 5.9 MB page in the bank's browser (review guide 3, "Open risks").
+
 ### 2026-11-17 — M2.3 major step 2: Q668–Q673 answered at their defaults; steps 2 and 3 reviewed together
 - The EDS answered Q668–Q673 at their defaults; Q667 (option 1) was answered on 11-16. Record:
   `worknotes/m2_3_modelling/answers.md`.

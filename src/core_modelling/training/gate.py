@@ -7,15 +7,24 @@ the one those two runs wrote. `feature_set` gives the feature set in force and w
 opens its log with: the held, excluded and kept features with the entries that set them.
 `check_counts` and `check_kinds` compare the panel Training reads with what EDA saw (D-088): the
 per-period counts on every client of the window, and each feature's type. `save_stage2` writes
-the run's own copy of what it read. Nothing here runs an upstream stage: at `autonomous` that is
+the run's own copy of what it read, and `read_stage2_copy` (Evaluation's) reads it back after
+checking the versions it records. Nothing here runs an upstream stage: at `autonomous` that is
 `run`'s job (D-132), so the refusals name `run`.
 """
 
+import json
 from dataclasses import dataclass
 
 import pandas as pd
 
-from core_modelling.artifacts import local_path, read_upstream, write_json, write_parquet
+from core_modelling.artifacts import (
+    STAGE_SCHEMA_VERSIONS,
+    local_path,
+    read_parquet,
+    read_upstream,
+    write_json,
+    write_parquet,
+)
 from core_modelling.config import UseCaseConfig
 from core_modelling.config.replay import Entry
 from core_modelling.environment import EnvironmentConfig, feature_dir
@@ -141,6 +150,32 @@ def save_stage2(folder: str, stage2: Stage2, final: list[str]) -> None:
         "runs": stage2.tokens,
     }
     write_json(versions, target / STAGE2_FILE)
+
+
+def read_stage2_copy(run_folder: str) -> dict[str, pd.DataFrame]:
+    """The run's own copy of Stage 2 (`<run_folder>/stage2/`, `save_stage2`'s) by table name:
+    `ledger` and `STAGE2_TABLES`. `STAGE2_FILE` is read first, and a copy of an EDA stage
+    version or a ledger schema version this framework does not read is refused, naming both
+    versions: the copies carry no sidecar of their own. The only reader of `stage2/`."""
+    folder = local_path(run_folder) / "stage2"
+    versions_file = folder / STAGE2_FILE
+    if not versions_file.is_file():
+        raise FileNotFoundError(
+            f"{folder} holds no {STAGE2_FILE}: the run's copy of Stage 2 is missing or "
+            "unfinished; train the run again"
+        )
+    versions = json.loads(versions_file.read_text())
+    readable = {"eda_schema_version": STAGE_SCHEMA_VERSIONS["eda"],
+                "ledger_schema_version": LEDGER_SCHEMA_VERSION}  # fmt: skip
+    for key, current in readable.items():
+        if versions.get(key) != current:
+            raise ValueError(
+                f"{folder}: the copy has {key} {versions.get(key)}, this framework reads "
+                f"{current}; evaluate the run with the framework version that trained it, or "
+                "train it again"
+            )
+    names = ["ledger", *STAGE2_TABLES]
+    return {name: read_parquet(folder / f"{name}.parquet") for name in names}
 
 
 def check_counts(population: pd.DataFrame, eda_population: list[dict]) -> None:

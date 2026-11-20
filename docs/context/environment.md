@@ -57,8 +57,8 @@ plotly and jinja2 are already pinned):**
 
 **Dev-only tools** (`requirements-dev.txt`, never needed inside the bank): pytest, ruff,
 ipykernel, nbformat and nbclient. plotly renders charts in a notebook only with nbformat; Jupyter
-installs it inside the bank, but `ipykernel` alone doesn't locally (D-013). nbclient re-runs a
-notebook headless and in place (`jupyter execute --inplace <notebook>`; the EDS, Q561,
+installs it inside the bank, but `ipykernel` alone doesn't locally (D-013). nbclient (0.11.0
+installed) re-runs a notebook headless and in place (`jupyter execute --inplace <notebook>`; the EDS, Q561,
 2026-11-10).
 
 A package that other packages pull in must be pinned even before our code uses it: without the
@@ -143,9 +143,20 @@ multi-objective studies and pruning against 5.0 before relying on them.
   - scikit-learn forests have none (D-051). Not tested: categorical features (the framework
     encodes them to codes before FLAML) and models fitted by Training's own function.
 - **Assumed, unverified:** no internet access from the bank's notebooks, so reports embed plotly.js
-  instead of loading it from a CDN (~4–5 MB per report, not optimised in Phase 2, D-036). Plotly
+  instead of loading it from a CDN (~4–6 MB per report, not optimised in Phase 2, D-036; the model
+  results report measured 5.9 MB for a binary run and 5.6 MB for a regression run). Plotly
   rendering and report opening time inside the bank's JupyterLab are also unverified; the EDS's
   JupyterLab test inside the bank shows both.
+- **Assumed, unverified (Evaluation, M2.3 step 3):** to check or time inside the bank
+  ([evaluation](../components/evaluation.md#open-questions)):
+  - Evaluation scores inside Spark through `mapInPandas`, rebuilding the model once per
+    partition and setting `threads` from the task's CPUs (`spark.task.cpus`); verified locally
+    only;
+  - `score_edges` runs two `approxQuantile` passes per binary scorer: time it on a large scores
+    table;
+  - `frames.rows` is computed about six times per Evaluation run;
+  - the cells collected to the driver grow with the periods and the replicates: per replicate,
+    at 1M rows over 12 periods, about 6,900 per-period cells and 700 pooled.
 
 ## Change requests
 

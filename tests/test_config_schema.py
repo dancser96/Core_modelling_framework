@@ -379,6 +379,12 @@ def test_n_without_a_top_n_decision_is_refused(tmp_path: Path, raw: dict) -> Non
     assert "decision.type is 'probability'" in error
 
 
+def test_a_baseline_form_named_twice_is_refused(tmp_path: Path, raw: dict) -> None:
+    """Two previous models are refused at load: each form has one score column."""
+    raw["decision"]["baselines"] = [{"previous_model": "old_score"}, {"previous_model": "older"}]
+    assert "decision.baselines names ['previous_model'] more than once" in _error(tmp_path, raw)
+
+
 def test_metric_must_be_one_the_task_allows(tmp_path: Path, raw: dict) -> None:
     """scikit-learn's 'average_precision' is FLAML's 'ap' (T9); a regression metric is refused
     for a binary task."""
@@ -835,7 +841,7 @@ def test_stage_3_fields_round_trip(tmp_path: Path, raw: dict) -> None:
     the replay validates again."""
     raw["decision"]["baselines"] = [
         "population_base_rate", {"previous_model": "old_score"},
-        {"historic_predicted_rate": 0.02}, {"historic_predicted_rate": "campaign_rate"},
+        {"historic_predicted_rate": "campaign_rate"},
     ]  # fmt: skip
     raw["features"]["order"] = {"risk_band": ["low", "medium", "high"]}
     range_leaf = {"low": 8, "high": 127, "log": True, "integer": True, "start": 31}
@@ -855,6 +861,16 @@ def test_stage_3_fields_round_trip(tmp_path: Path, raw: dict) -> None:
     assert dumped["training"]["search_space"]["lgbm"]["max_bin"] == {"value": 63}
     assert dumped["training"]["calibration"] == {"method": "beta"}
     assert dumped["evaluation"]["intervals"] == {"replicates": 50, "level": 0.95}
+    assert UseCaseConfig.model_validate(dumped) == cfg
+
+
+def test_a_historic_predicted_rate_given_as_a_number_round_trips(tmp_path: Path, raw: dict) -> None:
+    """The number form of `historic_predicted_rate` (one rate in use) loads as a number and
+    survives the JSON dump; the column form is the Stage 3 round trip's."""
+    raw["decision"]["baselines"] = ["population_base_rate", {"historic_predicted_rate": 0.02}]
+    cfg = _load(tmp_path, raw)
+    dumped = cfg.model_dump(mode="json")
+    assert dumped["decision"]["baselines"] == raw["decision"]["baselines"]
     assert UseCaseConfig.model_validate(dumped) == cfg
 
 

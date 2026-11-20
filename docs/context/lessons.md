@@ -56,6 +56,10 @@ harness, an environment adapter and explicit invariants. Legacy file references 
 | T45 | A FLAML time budget cuts trees the log does not show | Under `time_budget`, FLAML 2.7.0 stops adding LightGBM's and XGBoost's trees at a per-fold deadline, while its log keeps the configured `n_estimators`: a trial is judged on fewer trees than its configuration names, so the configuration the framework refits is not the model the search judged. Read from FLAML 2.7.0's source by the Stage 3 ML audit, 2026-11-16; not run | `training.time_budget_s` makes the run "reproducible to the recipe, not the model"; after the fold models Training compares their mean fold loss with the best trial's (`check_judged_model`): an error under a trial budget, a warning with both numbers under a time budget |
 | T46 | FLAML refits the best trial on every row, whatever `retrain_full` says | With `eval_method="cv"` and `max_iter > 0`, FLAML 2.7.0 refits the best configuration on the whole frame at the end of the search (`retrain_final` is true), even with `retrain_full=False`. Found by the Stage 3 search build, 2026-11-16 | Left on: one fit per family, about a quarter of one trial at five folds; Training never reads that model and refits through `FAMILIES` (D-140 (a)) |
 | T47 | FLAML logs NaN for an undefined fold metric | When the metric is not defined on a validation fold (`roc_auc` or `ap` on a fold without a positive; NaN in scikit-learn 1.8), or a custom metric returns NaN or infinity, FLAML 2.7.0 logs that loss and searches on without raising; with every trial NaN its `best_config` is None. Found by the Stage 3 library check, 2026-11-16 | `check_search` refuses any non-finite fold loss after each family's search; `metric_loss` refuses a non-finite loss in the framework's own fits |
+| T48 | Spark's `greatest` and `least` skip nulls | A clip written as `least(greatest(col, lo), hi)` turns a null into a bound, since both functions ignore a null argument. Met in the single-feature baseline's score, where a null must stay the lowest | Guard the clip: `F.when(col.isNotNull(), F.least(F.greatest(col, lo), hi))`, so a null stays null and takes the lowest score afterwards (`evaluation/baselines.py`) |
+| T49 | A package `__init__` that imports its run module makes import cycles | `evaluation/__init__.py` imports `run_evaluation`, so a module of another package that imports one constant from `evaluation` pulls the whole stage in (met between `reporting/card.py` and `evaluation`) | A constant shared across packages lives in the lower package (`statistics/`), which imports no stage |
+| T50 | Metrics from binned scores need bins as fine as the decision | With top bins of 0.1% of the rows, average precision read up to 5% too low at a 1% base rate and up to 61% too low below it, and the calibration intercept drifted. Found by Evaluation's measurement on 1 to 2 million simulated rows at base rates from 0.05% to 5% | Binary's grid has 0.001% bins in the top 0.1%, cut by a second quantile pass over the top 1% (`statistics/score_cells.py::bin_quantiles`, `evaluation/cells.py::score_edges`). Measure a binned metric against its row-level value at the rarest rate in play |
+| T51 | `No buffer space available` in an Arrow collect on the 8 GB laptop | Under memory pressure (sub-agents running `pytest`, or a collect right after the generator's process and a heavy session fixture) a `toPandas()` fails with `java.net.SocketException: No buffer space available (Write failed)` and pyarrow's `Invalid flatbuffers message`. The same collect passes when the test runs again (met in Stage 3 under both conditions) | It is the machine, not the code: run Spark from the main thread while no agent runs `pytest`, and run the failed test again alone before looking for a code fault. A failure that repeats alone is a code fault |
 | T25 | Quantile bins that collapse into one bucket | `pd.qcut(..., duplicates="drop")` on a zero-inflated or discrete column puts most quantile edges on one value and leaves one bucket for everything else; fixed-width `pd.cut` on a skewed column puts nearly every row into the first bucket. Seen in EDA plot code (the EDS, 2026-11-03), before the counts table was built | The edges rule: values holding at least `1 / bins` of the rows (mass points) are singleton bins and the quantile edges are taken over the remaining values; charts merge cells by cumulative row share, never by equal width; a test asserts the bin count on constructed columns and on every synthetic numeric (`docs/components/eda.md`, D-135) |
 
 ## Statistical lessons
@@ -141,7 +145,7 @@ harness, an environment adapter and explicit invariants. Legacy file references 
   makes them guided (instructions on what to look at and decide) and lets users copy them to explore
   (D-039).
 
-## Build-process lessons (Stage 2)
+## Build-process lessons (Stages 2 and 3)
 
 - **Measure the load-bearing facts before the build.** A facts spike on the pinned versions
   settled the counts design before any module was written: one explode pass over every numeric
@@ -163,6 +167,20 @@ harness, an environment adapter and explicit invariants. Legacy file references 
   copies in `tests/conf/`, and one cheap test loads every example in `conf/base/`.
 - **A stale-file scan walks the gitignored folders too.** A 120 MB model input that nothing read
   sat in `data/` for two weeks because the scan covered tracked files only.
+- **A sub-agent stopped by the usage limit keeps its work.** Resume it by message after the
+  reset rather than start a new one. A review agent inherits the main thread's model unless one
+  is named, so name it in the brief.
+- **A test that asserts "nothing left behind" must first reach the point where something could
+  be left.** The staged-scores test looked in a folder that never existed, so it passed whatever
+  the code did; make the code get as far as the write, then assert.
+- **Only the full run with the slow tests puts every session fixture in one process.** The four
+  slow family tests passed alone and failed in the full run: they shared a data root with a
+  session fixture whose EDA had read the model input, and Training refuses artifacts read from
+  other data. File order had hidden it. Tests that read one data definition from different
+  sources get a data root each, and the full run includes the slow tests once per major step.
+- **A template comment is test input.** A comment in `TEMPLATE.yml` written as a placeholder
+  (`<name>`) fails the filled-template test, so whoever edits the template runs
+  `tests/test_config_schema.py`.
 - **Simplifications the codebase review tried and dropped** (2026-11-10), so nobody retries them:
   fitting a categorical's fold encodings once per feature (needs a parameter with no caller); one
   dotted-path walk shared by `levels.py` and `replay.py` (an import cycle); a refusal on the

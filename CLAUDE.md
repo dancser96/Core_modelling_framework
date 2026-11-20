@@ -21,10 +21,11 @@ of every live model. Where we start from and where we want to reach: `docs/conte
 - **Integrations (first release):** the feature store upstream; the data observability framework
   only gets a production model's source tables pointed to it at deploy. LLM-assisted modelling
   comes in Phase 3 (D-021).
-- **Current state:** Phase 2: Target Factory, EDA and Feature Checks are built (0.3.0). Of
-  M2.3, the foundations are built (the modelling config fields, client folds, the encoder,
-  four model families, the bundle and scoring, numbered runs; `0.4.0.dev0`); Training and
-  Evaluation are specified and come next. The crunch
+- **Current state:** Phase 2: Target Factory, EDA and Feature Checks are built (0.3.0). M2.3
+  Modelling is built (0.4.0): the foundations (the modelling config fields, client folds, the
+  encoder, four model families, the bundle and scoring, numbered runs), Training, and
+  Evaluation with the model results report, the model card and `compare_runs`; the EDS's
+  joint review of Training and Evaluation is open. The crunch
   implementation in `legacy/propensity_crunch/` is reference only. Status: `docs/UPDATES.md`. Plan
   and open decisions: `docs/roadmap.md`. Vocabulary: `docs/glossary.md`. Reading order and the
   stage → component map: `docs/README.md`.
@@ -328,7 +329,7 @@ Each fact has **one owner doc**; every other doc links to it instead of repeatin
 | `docs/components/<c>.md` | One component or versioned artifact, in three levels: summary (≈ 4%), how it fits together (with the summary ≈ 20%), details; template in `docs/components/README.md` | committed | Working on it |
 | `docs/context/lessons.md` | Traps (T-nn) and lessons | committed | Before related code |
 | `docs/context/environment.md` | Versions and bank behaviour | committed | IO / dependencies |
-| `docs/guides/*.md` | How-tos: setup, Claude Code workflow, skills & agents; a closed stage's questions and answers (`eda_fc_faq.md`) | committed | As needed |
+| `docs/guides/*.md` | How-tos: setup, Claude Code workflow, skills & agents; a closed stage's questions and answers (`eda_fc_faq.md`, `modelling_faq.md`) | committed | As needed |
 | `worknotes/sync.md` | Sync page for the builder and the Lead DS: what to review, open questions for both, recent developments | committed | Before each sync; `/brief` |
 | `worknotes/log.md` | Verbose trail behind the sync page | committed | When detail is needed |
 | `worknotes/handovers/<topic>.md` | One chat handover per topic (several in parallel) | committed | Only via `/resume <topic>` |
@@ -489,6 +490,6 @@ docs/context/              project.md, environment.md, lessons.md
 docs/architecture.md       target design
 docs/decisions.md          decision log
 docs/components/           one doc per component or versioned artifact
-docs/guides/               setup (WSL2 / macOS), Claude Code workflow, skills & agents, EDA + Feature Checks FAQ
+docs/guides/               setup (WSL2 / macOS), Claude Code workflow, skills & agents, EDA + Feature Checks FAQ, Training + Evaluation FAQ
 .claude/                   project skills, subagents, commands, hooks and scripts
 ```

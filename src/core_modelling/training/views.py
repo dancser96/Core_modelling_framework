@@ -84,6 +84,16 @@ def search_summary(trials: pd.DataFrame, metric: str) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=SEARCH_COLUMNS)
 
 
+def search_table(trials: pd.DataFrame, metric: str) -> Styler:
+    """The search per family (`search_summary`) as a table, the one notebook 04 and the model
+    results report show."""
+    caption = (
+        f"The search per family; best_fold_metric is the fold {metric}, the mean over every "
+        "dealing's folds, and best_trial its trial"
+    )
+    return style_table(search_summary(trials, metric), caption=caption)
+
+
 def search_progress_chart(trials: pd.DataFrame, metric: str) -> go.Figure:
     """The best fold metric so far against the family's cumulative seconds, one stepped line per
     family in run order: how fast each family's search settles, to spend a main run's budget."""
@@ -317,10 +327,6 @@ def training_views(
     final = run_ledger.loc[run_ledger["selected"], "feature"].tolist()
     sample = tables["explanation_sample"]
     contributions = sample_contributions(sample, final)
-    caption = (
-        f"The search per family; best_fold_metric is the fold {metric}, the mean over every "
-        "dealing's folds, and best_trial its trial"
-    )
     return {
         "opening": paragraph(
             f"Run {run}: {opening['features']} features in force; held "
@@ -332,7 +338,7 @@ def training_views(
         ),
         "warnings": blocks.warnings_block(warnings),
         "search": {
-            "summary": style_table(search_summary(tables["trials"], metric), caption=caption),
+            "summary": search_table(tables["trials"], metric),
             "progress": search_progress_chart(tables["trials"], metric),
             "best": _best_table(best),
         },

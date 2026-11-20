@@ -71,11 +71,13 @@ stays taken while the folder exists.
 5. `load_bundle` reads the files as bytes, recomputes `model_hash`, refuses a difference from
    the manifest, and returns a `Bundle` built from those bytes: the booster, the encoder, the
    calibration and the feature list.
-6. `score_frame(bundle, frame)` encodes the frame, predicts the margin through the family's
-   `predict` and applies the calibration. `score_spark` runs the same function per partition
-   with `mapInPandas`: the driver ships the bundle's bytes and each partition rebuilds the model
-   once, in memory, verifying the hash again; an executor writes no file, and one whose model
-   library differs in version from the driver's fails loud.
+6. `score_frame(bundle, frame, threads=None)` encodes the frame, predicts the margin through
+   the family's `predict` and applies the calibration. `score_spark` runs the same function per
+   partition with `mapInPandas`: the driver ships the bundle's bytes and each partition rebuilds
+   the model once, in memory, verifying the hash again; an executor writes no file, and one
+   whose model library differs in version from the driver's fails loud. A partition predicts on
+   its Spark task's CPUs (`spark.task.cpus`), since LightGBM and XGBoost otherwise take every
+   core of the host, which the executor's other tasks share.
 
 ### The functions in brief
 - `model/encoder.py`: `fit_encoder`, `encode_frame`, `select_encoder`.
@@ -114,7 +116,9 @@ stays taken while the folder exists.
 4. **The loader pins what the libraries leave open:** the frame is put in the encoder's column
    order (LightGBM accepts a wrong order silently), numerics are float64, XGBoost predicts with
    its explicit tree range, CatBoost's declared categoricals are integers. A feature missing
-   from the frame fails loud.
+   from the frame fails loud. A family's `predict` takes an optional thread count (None: the
+   library's default, every core); the margins are the same at any count (measured), and
+   XGBoost's booster gets its own thread setting back after the call.
 5. **One `model_hash` per model in every family, on every machine:** CatBoost's five
    run-specific metadata entries are deleted before saving and LightGBM's text model is saved
    without its thread-count line; the models score the same without them.
@@ -269,7 +273,7 @@ encode_frame(frame, encoder) -> tuple[pd.DataFrame, pd.DataFrame]
 select_encoder(encoder, features) -> dict
 
 FAMILIES[name].fit(X, y, params, task) -> object
-FAMILIES[name].predict(booster, X) -> np.ndarray                 # the margin, float64
+FAMILIES[name].predict(booster, X, threads=None) -> np.ndarray   # the margin, float64
 FAMILIES[name].describe(booster) -> dict
 FAMILIES[name].save(booster, path) -> None
 FAMILIES[name].load(data) -> object                              # the model file's bytes
@@ -289,7 +293,7 @@ check_params(family, params) -> None                             # before the fi
 LINK_BY_OBJECTIVE: dict[str, str]                                # training.objective → link
 uncalibrated(objective) -> dict                                  # the calibration that changes nothing
 apply_calibration(margin, calibration, task) -> tuple[np.ndarray, np.ndarray]
-score_frame(bundle, frame) -> pd.DataFrame                       # public: margin, score_raw, score
+score_frame(bundle, frame, threads=None) -> pd.DataFrame         # public: margin, score_raw, score
 score_spark(folder, rows, keep) -> DataFrame
 
 models_dir(env, cfg, *parts) -> str

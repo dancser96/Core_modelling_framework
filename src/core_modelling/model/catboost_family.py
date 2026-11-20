@@ -119,10 +119,13 @@ def fit(X: pd.DataFrame, y: np.ndarray, params: dict, task: str) -> CatBoost:
     return MODEL_CLASSES[task](**library).fit(X, y)
 
 
-def predict(booster: CatBoost, X: pd.DataFrame) -> np.ndarray:
+def predict(booster: CatBoost, X: pd.DataFrame, threads: int | None = None) -> np.ndarray:
     """The margin from every tree, CatBoost's raw formula value: log-odds for binary, the raw
-    output for regression (the log scale under Tweedie and Poisson, A42)."""
-    return booster.predict(_frame(booster, X), prediction_type="RawFormulaVal")
+    output for regression (the log scale under Tweedie and Poisson, A42). `threads` caps
+    CatBoost's threads (None: its default, -1, every core); the margins are the same at any
+    count."""
+    count = -1 if threads is None else threads
+    return booster.predict(_frame(booster, X), prediction_type="RawFormulaVal", thread_count=count)
 
 
 def contributions(booster: CatBoost, X: pd.DataFrame) -> np.ndarray:

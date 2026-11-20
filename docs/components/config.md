@@ -4,7 +4,8 @@
 set and the paths built 2026-11-03 (m1.2); the Stage 3 config sections (`training`, `evaluation`,
 `decision.metric` and `baselines`, `features.order`), the `run` and `sign_off` entries and the
 loggable training and evaluation settings built in M2.3 major step 1 (2026-11-13/14), in place,
-for the EDS's review; `schema_version` stays 1 (no bumps in 0.x until user testing, D-136
+for the EDS's review; Evaluation (major step 3) added no field and one load refusal, a baseline
+form named twice; `schema_version` stays 1 (no bumps in 0.x until user testing, D-136
 extending D-007 (c)) ·
 **Legacy:** `configs/_schema.py`, `configs/_TEMPLATE.yaml`
 **Related:** [dataset](dataset.md) (time model, frames, the model input) · [feature ledger](feature_ledger.md) ·
@@ -121,7 +122,7 @@ features:
 strata:
   variables: [segment, onboarding_channel]
   max_levels: 10                         # the rest pooled as `__other__`; a numeric deep dive's groups
-  min_events: 50                         # fewer positive events in a stratum (regression: units with a non-zero target): shown as insufficient (D-082); also the shrinkage weight of the level encoding
+  min_events: 50                         # fewer positive events in a stratum (regression: units with a non-zero target): shown as insufficient (D-082; Evaluation counts positive rows, so pooled over periods an outcome counts once per period whose window holds it); also the shrinkage weight of the level encoding
 
 eda:
   snapshot: last                         # last (the window's last period) | a period inside the window
@@ -218,7 +219,7 @@ resolved config always states the value in force and a `set` on `training.object
 | Field | Default | What it sets | Loggable (reruns from) |
 |---|---|---|---|
 | `decision.metric` | `null`: `log_loss` for `probability` and `threshold`, `roc_auc` for `ranking` and `top_n`; `rmse` for regression | The search metric and the headline metric. Binary allows `log_loss`, `roc_auc`, `ap`; regression `rmse`, `mae`, `r2`, `tweedie_deviance`, `poisson_deviance`. Checked against the task at load. The Tweedie deviance is computed at a fixed variance power of 1.5. A deviance needs `training.objective: tweedie` or `poisson` (their predictions are always positive): any other objective with it is refused at load | never (§4.3) |
-| `decision.baselines` | `[population_base_rate, single_feature]` | What Evaluation compares the model with: `population_base_rate` (the train mean for regression), `single_feature` (the best single feature by train concordance), `{previous_model: <column>}` (a score column of a source), `{historic_predicted_rate: <number or column>}` (a number is one rate in use; a column is judged like a previous model) | never |
+| `decision.baselines` | `[population_base_rate, single_feature]` | What Evaluation compares the model with: `population_base_rate` (the train mean for regression), `single_feature` (the best single feature by train concordance), `{previous_model: <column>}` (a score column of a source), `{historic_predicted_rate: <number or column>}` (a number is one rate in use; a column is judged like a previous model). Each form at most once, checked at load | never |
 | `features.order` | `{}` | `{feature: [levels, lowest first]}`: the feature is an ordered categorical, encoded as its position in the list. A train level missing from the list fails loud; a name that is no candidate, or no categorical, is refused when the frames are built | yes (Training) |
 
 **`training`**
@@ -249,11 +250,20 @@ resolved config always states the value in force and a `set` on `training.object
 
 | Field | Default | What it sets | Loggable (reruns from) |
 |---|---|---|---|
-| `slices.top_pct` | by level | The slices are cut inside each period | yes (EDA, which shows the decision slices) |
+| `slices.top_pct` | by level: `[0.01, 0.1]` autonomous, `[0.01, 0.05, 0.1]` assisted | Shares of the ranking, each in (0, 1], at which the metrics are cut; the slices are cut inside each period | yes (EDA, which shows the decision slices) |
 | `slices.top_n` | `[]` | A `top_n` is a share of one period's eligible population | yes (EDA) |
-| `skip_views` | `[]` | The report's views to leave out, by name ([evaluation](evaluation.md)); every view renders by default and the summary always | yes (Evaluation) |
-| `intervals.replicates` | `200` | The client bootstrap's replicates, at least 20 | yes (Evaluation) |
-| `intervals.level` | `0.95` | The interval's coverage | yes (Evaluation) |
+| `skip_views` | `[]` | The report's views to leave out, by name (the list below). Every view renders by default and the summary always. Change it to leave out views you do not need. A name that is no view, or `summary`, is refused when Evaluation starts, before anything is scored, with the list of valid names | yes (Evaluation) |
+| `intervals.replicates` | `200` | The client bootstrap's replicates, at least 20 (fewer give no usable percentile interval). More steady the bounds' last digit and cost time; fewer speed a draft run | yes (Evaluation) |
+| `intervals.level` | `0.95` | The interval's coverage, strictly between 0 and 1 | yes (Evaluation) |
+
+The names `skip_views` accepts, the same for both tasks (the report and its views:
+[evaluation](evaluation.md)):
+- core: `metrics`, `curves`, `capture`, `reliability`, `score_distribution`, `strata`,
+  `importance`, `beeswarm`, `effects`, `waterfalls`, `sign_off`, `search`;
+- extended: `thresholds`, `permutation_importance`, `pdp_ice`, `validation_test_clients`.
+
+`curves`, `score_distribution` and `thresholds` are not available for regression (the target is
+an amount, without classes): they render as that one line, and skipping them changes nothing.
 
 **Gone,** each refused at load as an unknown key: `decision.gate_metric` and the `lifecycle`
 section (no gates, D-032; the section returns when M2.4 gives it content);

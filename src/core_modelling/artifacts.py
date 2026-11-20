@@ -214,33 +214,74 @@ def _swap_in(temporary: Path, target: Path) -> None:
         shutil.rmtree(aside)
 
 
-def write_stage(
-    result: StageResult, folder: str, name: str, texts: dict[str, str] | None = None
-) -> dict[str, str]:
-    """Write a stage's artifacts into `folder` whole, replacing an older run's folder, through a
-    temporary sibling that is removed when any write fails; `texts` adds text files by name (the
-    rendered `report.html`). Returns each file's full path by its path relative to the folder,
-    plus `folder`. A meta that sets a stamp key, or leftovers of an unfinished earlier write,
-    fail loud. The stage saves the ledger before calling it, so `<name>.json` is the commit
-    marker (`save_ledger` says why)."""
-    reserved = sorted(set(STAMP_KEYS) & set(result.meta))
-    if reserved:
-        raise ValueError(f"stage {name}: the meta may not set {reserved}; write_stage stamps them")
-    target = local_path(folder)
+def _move_folders(staged: dict[str, Path], temporary: Path) -> list[str]:
+    """Move folders written beforehand into the temporary folder, each under its name, after
+    the stage's own files; a name that is not plain or that the stage writes itself fails."""
+    for key, path in staged.items():
+        destination = temporary / key
+        if destination.parent != temporary or destination.exists():
+            raise ValueError(
+                f"write_stage: the folder {key!r} must be a plain name the stage does not write "
+                "itself"
+            )
+        path.rename(destination)
+    return list(staged)
+
+
+def check_siblings(
+    target: Path, name: str, staged: dict[str, Path], keys: tuple[str, ...] = ()
+) -> None:
+    """Fail loud on a folder to move in that is not the sibling `<folder>.<key>-<pid>`, and on
+    siblings an unfinished earlier write left: `.tmp-*`, `.old-*`, and `.<key>-*` for each
+    folder moved in (`staged`) or to be staged later (`keys`), other than the one handed in now.
+    `write_stage` runs it; a stage that computes for long runs it first, with no `staged` and
+    the keys of the folders it will stage, so a leftover fails before the work."""
+    for key, path in staged.items():
+        beside = path.parent == target.parent and path.name.startswith(f"{target.name}.{key}-")
+        if not (beside and path.is_dir()):
+            raise ValueError(
+                f"stage {name}: the folder {key!r} must be a written folder named "
+                f"{target.name}.{key}-<pid> beside the stage's; got {path}"
+            )
     stale = sorted(
         str(path)
-        for kind in ("tmp", "old")
+        for kind in ("tmp", "old", *staged, *keys)
         for path in target.parent.glob(f"{target.name}.{kind}-*")
+        if path not in staged.values()
     )
     if stale:
         raise ValueError(
             f"stage {name}: {stale} are left from an earlier write that did not finish; look at "
             "them and remove them before rerunning"
         )
+
+
+def write_stage(
+    result: StageResult,
+    folder: str,
+    name: str,
+    texts: dict[str, str] | None = None,
+    folders: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Write a stage's artifacts into `folder` whole, replacing an older run's folder, through a
+    temporary sibling that is removed when any write fails; `texts` adds text files by name (the
+    rendered `report.html`), `folders` moves in folders already written as `<folder>.<key>-<pid>`
+    (Evaluation's scores table, which Spark writes) under their key, after the stage's own files
+    and before the swap. Returns each file's full path, and each moved folder's, by its path
+    relative to the folder, plus `folder`. A meta that sets a stamp key, or leftovers of an
+    unfinished earlier write, fail loud. The stage saves the ledger before calling it, so
+    `<name>.json` is the commit marker (`save_ledger` says why)."""
+    reserved = sorted(set(STAMP_KEYS) & set(result.meta))
+    if reserved:
+        raise ValueError(f"stage {name}: the meta may not set {reserved}; write_stage stamps them")
+    target = local_path(folder)
+    staged = {key: local_path(path) for key, path in (folders or {}).items()}
+    check_siblings(target, name, staged)
     temporary = target.with_name(f"{target.name}.tmp-{os.getpid()}")
     temporary.mkdir(parents=True)
     try:
         written = _write_files(result, temporary, name) + _write_texts(texts or {}, temporary)
+        written += _move_folders(staged, temporary)
     except BaseException:
         shutil.rmtree(temporary)
         raise
@@ -252,6 +293,23 @@ def read_stage(folder: str, name: str) -> tuple[dict, dict[str, pd.DataFrame]]:
     """A stage's json and every table it wrote, by table name; a stage not run yet, written under
     another `schema_version` than `STAGE_SCHEMA_VERSIONS` gives it, or whose tables on disk differ
     from those it wrote, fails saying what to do."""
+    meta = read_stage_meta(folder, name)
+    tables = local_path(folder) / "tables"
+    found = {table.stem for table in tables.glob("*.parquet")}
+    recorded = meta.get("tables", [])
+    missing, extra = sorted(set(recorded) - found), sorted(found - set(recorded))
+    if missing or extra:
+        raise ValueError(
+            f"{tables} lacks the {name} tables {missing} and holds {extra}, which the {name} "
+            f"run did not write: rerun the {name} stage"
+        )
+    return meta, {table: read_parquet(tables / f"{table}.parquet") for table in recorded}
+
+
+def read_stage_meta(folder: str, name: str) -> dict:
+    """A stage's json alone, for a reader that needs few of its tables; a stage not run yet, or
+    written under another `schema_version` than `STAGE_SCHEMA_VERSIONS` gives it, fails saying
+    what to do."""
     path = local_path(folder) / f"{name}.json"
     if not path.is_file():
         raise FileNotFoundError(f"no {name} artifacts at {folder}: run the {name} stage first")
@@ -264,16 +322,7 @@ def read_stage(folder: str, name: str) -> tuple[dict, dict[str, pd.DataFrame]]:
             "stage, then the stages after it, or raise the use case's framework pin when it is "
             "newer"
         )
-    tables = local_path(folder) / "tables"
-    found = {table.stem for table in tables.glob("*.parquet")}
-    recorded = meta.get("tables", [])
-    missing, extra = sorted(set(recorded) - found), sorted(found - set(recorded))
-    if missing or extra:
-        raise ValueError(
-            f"{tables} lacks the {name} tables {missing} and holds {extra}, which the {name} "
-            f"run did not write: rerun the {name} stage"
-        )
-    return meta, {table: read_parquet(tables / f"{table}.parquet") for table in recorded}
+    return meta
 
 
 def _settings(resolved: UseCaseConfig, paths: list[str]) -> dict[str, object]:

@@ -137,6 +137,16 @@ class Decision(StrictModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _check_baselines_named_once(self) -> "Decision":
+        """Each baseline form at most once: a ranking form's score column is `baseline_<form>`,
+        one per form."""
+        names = [b if isinstance(b, str) else next(iter(b.model_dump())) for b in self.baselines]
+        repeated = sorted({name for name in names if names.count(name) > 1})
+        if repeated:
+            raise ValueError(f"decision.baselines names {repeated} more than once; name each once")
+        return self
+
 
 class SourceKeys(StrictModel):
     """A source's own key column names; a field left out is named as in `data.keys`."""

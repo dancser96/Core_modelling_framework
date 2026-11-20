@@ -210,6 +210,35 @@ def test_a_text_file_is_committed_with_the_stage(cc_config: UseCaseConfig, tmp_p
     assert [path.name for path in tmp_path.iterdir()] == ["eda"]
 
 
+def test_a_folder_written_beforehand_is_moved_in_with_the_stage(
+    cc_config: UseCaseConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A folder handed to `write_stage` (Evaluation's scores, which Spark writes beside the stage
+    as `<folder>.scores-<pid>`) is inside the stage folder after the commit and in the returned
+    paths, the stamp's tables unchanged; a write failing before the swap leaves no stage folder
+    and the handed-in folder where it was, which a later write names as left over."""
+    folder, staged = tmp_path / "evaluation", tmp_path / "evaluation.scores-1"
+    staged.mkdir()
+    (staged / "part-0.parquet").write_bytes(b"rows")
+    scores = {"scores": str(staged)}
+    paths = write_stage(_result(cc_config), str(folder), "evaluation", folders=scores)
+    assert Path(paths["scores"], "part-0.parquet").read_bytes() == b"rows"
+    assert [path.name for path in tmp_path.iterdir()] == ["evaluation"]
+    assert read_stage(str(folder), "evaluation")[0]["tables"] == ["ranking", "cells"]
+    other, staged = tmp_path / "other", tmp_path / "other.scores-2"
+    staged.mkdir()
+    _fail_second_parquet(monkeypatch)
+    with pytest.raises(OSError, match="planted"):
+        write_stage(_result(cc_config), str(other), "evaluation", folders={"scores": str(staged)})
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["evaluation", "other.scores-2"]
+    (tmp_path / "other.scores-3").mkdir()
+    again = {"scores": str(tmp_path / "other.scores-3")}
+    with pytest.raises(ValueError, match=r"other\.scores-2'\] are left from an earlier write"):
+        write_stage(_result(cc_config), str(other), "evaluation", folders=again)
+    with pytest.raises(ValueError, match=r"must be a written folder named other\.scores-<pid>"):
+        write_stage(_result(cc_config), str(other), "evaluation", folders={"scores": str(folder)})
+
+
 def test_the_meta_may_not_set_the_stamp(cc_config: UseCaseConfig, tmp_path: Path) -> None:
     """`schema_version` and the other stamped keys come from `write_stage` only."""
     result = _result(cc_config)

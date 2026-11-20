@@ -119,12 +119,20 @@ def fit(X: pd.DataFrame, y: np.ndarray, params: dict, task: str) -> xgb.Booster:
     return MODEL_CLASSES[task](**library).fit(X, y).get_booster()
 
 
-def predict(booster: xgb.Booster, X: pd.DataFrame) -> np.ndarray:
+def predict(booster: xgb.Booster, X: pd.DataFrame, threads: int | None = None) -> np.ndarray:
     """The margin from every tree: log-odds for binary, the raw output for regression (the log
-    scale under Tweedie and Poisson, A42)."""
-    margin = booster.predict(
-        _matrix(booster, X), output_margin=True, iteration_range=_every_tree(booster)
-    )
+    scale under Tweedie and Poisson, A42). `threads` caps XGBoost's threads for this call, on
+    the booster and its matrix, and the booster's own setting is restored after it (None: that
+    setting, every core on a loaded booster); the margins are the same at any count."""
+    before = json.loads(booster.save_config())["learner"]["generic_param"]["nthread"]
+    if threads is not None:  # set on the booster itself, so it is put back below
+        booster.set_param({"nthread": threads})
+    try:
+        margin = booster.predict(
+            _matrix(booster, X, threads), output_margin=True, iteration_range=_every_tree(booster)
+        )
+    finally:
+        booster.set_param({"nthread": before})
     return margin.astype(np.float64)
 
 
@@ -169,14 +177,19 @@ def load(data: bytes) -> xgb.Booster:
     return booster
 
 
-def _matrix(booster: xgb.Booster, X: pd.DataFrame) -> xgb.DMatrix:
-    """`X` as XGBoost's matrix: float64 values in the booster's column order, with the
-    booster's own feature names and types. XGBoost 3.2 scores the same without the types (a
-    categorical split lives in its tree); they are passed so the matrix matches the booster."""
+def _matrix(booster: xgb.Booster, X: pd.DataFrame, threads: int | None = None) -> xgb.DMatrix:
+    """`X` as XGBoost's matrix, built on `threads` (None: every core): float64 values in the
+    booster's column order, with the booster's own feature names and types. XGBoost 3.2 scores
+    the same without the types (a categorical split lives in its tree); they are passed so the
+    matrix matches the booster."""
     names = booster.feature_names
     values = order_frame(FAMILY, X, names).to_numpy(np.float64, na_value=np.nan)
     return xgb.DMatrix(
-        values, feature_names=names, feature_types=booster.feature_types, enable_categorical=True
+        values,
+        feature_names=names,
+        feature_types=booster.feature_types,
+        enable_categorical=True,
+        nthread=threads,
     )
 
 

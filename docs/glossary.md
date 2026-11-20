@@ -153,7 +153,10 @@ Whether this glossary is also published to the wider unit is part of the open do
   with a non-zero target for an amount. On one period it equals the positive rows; pooled over
   the window it counts each client once (a window's SE takes it in effective clients), so it is
   below `positive_rows` there. A group or period below its floor (`strata.min_events`; 20 in a
-  deep dive's groups) is greyed as insufficient.
+  deep dive's groups) is greyed as insufficient. In Evaluation `events` are positive rows, not
+  distinct clients: a conversion counts once in every period whose target window holds it, so up
+  to `w` times in a pooled part or a stratum level (regression: the rows with a non-zero target)
+  (`docs/components/evaluation.md`).
 - **Data definition / data-definition hash:** the task, entity, sources (by logical name; where
   each physically is, its path or table in the environment file, is each stage's sources digest
   instead, which a later stage checks), eligibility, target
@@ -413,12 +416,15 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Exit point:** an output another team builds on: the scores table and manifest, the model
   bundle, registry records, monitoring tables, the model card. Their shapes come close to final
   before their contents deepen (D-022).
-- **Model card:** the generated, versioned record of a model's facts.
+- **Model card:** the generated, versioned record of a model's facts: `model_card.json`, written
+  by Evaluation from the run folder and its tables, rendered as `model_card.html` (tables only;
+  `docs/components/reporting.md`).
 - **Model bundle:** the saved model a run produces (encoder, model, calibration): the library's
   native model file, `bundle.json` and `manifest.json`, in versioned formats (D-051); never a
   pickle (`docs/components/model_bundle.md`).
 - **Drift reference:** the feature and score distributions written by Evaluation per run, on the
-  true population, that monitoring compares against (D-054).
+  true population, that monitoring compares against (D-054): three tables in `evaluation/tables/`
+  (`docs/components/monitoring.md`).
 - **Framework pin:** the framework version a use case runs with. Its models are scored with it, and
   the use case upgrades it at its own pace (D-047).
 - **Base image:** the internal devcontainer image the package ships in, through Nexus. Images are
@@ -458,6 +464,21 @@ Whether this glossary is also published to the wider unit is part of the open do
   rows its driver holds (`docs/components/evaluation.md`). Training writes its own of train
   rows, with their out-of-fold contributions, for the sign-off view
   (`docs/components/training.md`).
+- **Score cells:** the one aggregate of a scorer's scores that every Evaluation metric reads: sums
+  per part, period, score bin and target bin (and per stratum level), summed in Spark from the
+  scores table, with one set per client-bootstrap replicate; only they reach the driver
+  (`docs/components/evaluation.md`).
+- **Client bootstrap:** Evaluation's intervals: each client carries one Poisson weight per
+  replicate (200 by default), so a client's rows move together, and the interval is the middle
+  share of the metric over the replicates. A formula that counts rows would be too narrow, since
+  a client sits in several periods (D-141 (c); `docs/components/evaluation.md`).
+- **Row loss:** the loss of one row, whose mean is a metric: the log loss, or the Tweedie or
+  Poisson deviance. A scorer's cells carry the row loss of the decision's metric if it is one,
+  else of the run's objective, so the metrics on it are exact sums and not binned
+  (`docs/components/evaluation.md`).
+- **Effects table:** per feature and EDA group, the model's mean contribution on the explanation
+  sample beside EDA's lift for the same group; it draws the model results report's effects view
+  (`docs/components/evaluation.md`).
 - **Model results report:** `evaluation/report.html`, Evaluation's report: seventeen views, all on
   by default, with no pass or fail line (`docs/components/reporting.md`).
 - **Lift:** a group's rate (or mean) divided by the base, the snapshot's base rate or mean; 1 is

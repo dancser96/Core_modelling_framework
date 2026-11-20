@@ -9,8 +9,9 @@ feature values (numbers, level texts, nulls). The charts take shap's colours
 (`THEME["contribution"]`: red raises, blue lowers, blue to red for a low to high value, grey for
 a missing value) and the house fonts, titles and margins (`charts.apply_theme`). The beeswarm
 and the dependence scatter are the named row-level exceptions to "every figure is
-pre-aggregated" (requirement 5): each draws at most `ROW_CAP` seeded rows per feature. Traces are
-SVG only, as in `charts.py`.
+pre-aggregated" (requirement 5): each draws at most `ROW_CAP` seeded rows per feature. Beside
+them, `pdp_ice_chart` draws Evaluation's partial dependence and ICE table. Traces are SVG only,
+as in `charts.py`.
 """
 
 import numpy as np
@@ -29,6 +30,9 @@ MARKER_SIZE = 5
 MIN_GROUP_ROWS = 20  # sample rows below which a group's mean contribution is greyed
 PART_NAMES = ("test", "train, out of fold")  # the importance bars' legend when `compare` is given
 LIFT_COLUMNS = ["group", "lift", "lift_low", "lift_high", "support", "insufficient"]
+# `effect_chart`'s mean-contribution columns, by `group_means`' names for them
+MEAN_COLUMNS = {"mean_contribution": "estimate", "mean_low": "low", "mean_high": "high",
+                "sample_rows": "support", "sample_insufficient": "insufficient"}  # fmt: skip
 
 
 def _check_contributions(
@@ -356,7 +360,7 @@ def _scatter(contributions: pd.Series, values: pd.Series, colour: pd.Series | No
     return fig
 
 
-def _group_means(contributions: pd.Series, groups: pd.Series, order: list[str]) -> pd.DataFrame:
+def group_means(contributions: pd.Series, groups: pd.Series, order: list[str]) -> pd.DataFrame:
     """The mean contribution per group with its 95% t interval, one row per group of `order`
     (a group without a sampled row keeps its row, empty): `group, estimate, low, high, support`
     (the sampled rows) and `insufficient` below `MIN_GROUP_ROWS`. Receives one row per sampled
@@ -396,13 +400,30 @@ def _beside_lift(contributions: pd.Series, values: pd.Series, lift: pd.DataFrame
             f"dependence: the values {stray[:5]} are not groups of the lift table; with a lift "
             "table, values must hold each row's EDA group label"
         )
-    name = str(values.name)
-    means = _group_means(contributions, labels, list(groups))
+    means = group_means(contributions, labels, list(groups))
+    stored = {short: long for long, short in MEAN_COLUMNS.items()}
+    table = lift.assign(group=groups, **{stored[c]: means[c].to_numpy() for c in stored})
+    return effect_chart(table.assign(feature=str(values.name)))
+
+
+def effect_chart(table: pd.DataFrame) -> go.Figure:
+    """One feature's mean contribution per group with its interval (a group under
+    `MIN_GROUP_ROWS` sample rows greyed) beside EDA's lift by the same groups, two panels.
+    Receives one row per group in group order: `feature`, `MEAN_COLUMNS` and `LIFT_COLUMNS`,
+    the lift's interval in lift units (Evaluation's effects table, one feature's rows)."""
+    lacking = [c for c in ["feature", *MEAN_COLUMNS, *LIFT_COLUMNS] if c not in table.columns]
+    if lacking:
+        raise ValueError(f"effect_chart: the table lacks the columns {lacking}")
+    names = table["feature"].unique()
+    if len(names) != 1:
+        raise ValueError(f"effect_chart: one feature's rows expected, got {list(names)}")
+    name = str(names[0])
+    means = table[["group", *MEAN_COLUMNS]].rename(columns=MEAN_COLUMNS)
     left = charts.bar_with_intervals(
         means, "group", title=f"Mean contribution by {name}", x_title=name,
         y_title="Mean contribution to the margin",
     )  # fmt: skip
-    right = charts.lift_chart(lift, "group", title=f"EDA: lift by {name}", x_title=name)
+    right = charts.lift_chart(table, "group", title=f"EDA: lift by {name}", x_title=name)
     return charts.side_by_side(left, right)
 
 
@@ -425,3 +446,53 @@ def dependence(
     if colour is not None:
         raise ValueError("dependence: colour applies to the scatter, not to the groups beside lift")
     return _beside_lift(contributions, values, lift)
+
+
+def _pdp_and_ice(table: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray]:
+    """One feature's partial dependence rows in grid order and its ICE scores as an array of
+    one row per ICE row and one column per grid point; fails unless the table holds one
+    feature with a `pdp` row at every point the ICE rows cover."""
+    names = table["feature"].unique()
+    if len(names) != 1:
+        raise ValueError(f"pdp_ice_chart: one feature's rows expected, got {list(names)}")
+    pdp = table.loc[table["curve"] == "pdp"].sort_values("point").reset_index(drop=True)
+    ice = table.loc[table["curve"] == "ice"].pivot(index="row", columns="point", values="score")
+    if pdp.empty or not set(ice.columns) <= set(pdp["point"]):
+        raise ValueError(f"pdp_ice_chart: {names[0]} has no partial dependence row per point")
+    return pdp, ice.reindex(columns=pdp["point"]).to_numpy(dtype=float)
+
+
+def pdp_ice_chart(table: pd.DataFrame, y_format: str | None = None) -> go.Figure:
+    """Partial dependence over the ICE lines of one feature: the mean score over the sample at
+    each grid point as one line, each ICE row's scores as a thin muted line beneath it; a
+    categorical (its `level` set) as points per level in grid order. `y_format` is the score's
+    d3 format (the task's `axis_format`). Receives `partial_dependence`'s long rows of one
+    feature: `feature, curve, row, point, value, level, score`."""
+    pdp, ice = _pdp_and_ice(table)
+    name, categorical = str(pdp["feature"].iloc[0]), bool(pdp["level"].notna().any())
+    grid = pdp["level"].astype(str) if categorical else pdp["value"].astype(float)
+    if categorical:
+        x, y = np.tile(grid.to_numpy(dtype=object), len(ice)), ice.ravel()
+    else:  # one trace for every ICE row, each row's line ended by a gap (NaN)
+        x = np.tile(np.r_[grid.to_numpy(), np.nan], len(ice))
+        y = np.c_[ice, np.full(len(ice), np.nan)].ravel()
+    hover = f"%{{y:{y_format or '.4g'}}}<extra></extra>"
+    fig = go.Figure(go.Scatter(
+        x=x, y=y.astype("float32"), mode="markers" if categorical else "lines",
+        name=f"ICE: {len(ice)} sampled rows", opacity=0.35,
+        line={"color": THEME["muted"], "width": 1}, marker={"color": THEME["muted"], "size": 4},
+        hovertemplate=f"ICE {hover}",
+    ))  # fmt: skip
+    fig.add_trace(go.Scatter(
+        x=grid, y=pdp["score"], mode="markers" if categorical else "lines+markers",
+        name="Partial dependence (mean)", line={"color": THEME["accent"], "width": 3},
+        marker={"color": THEME["accent"], "size": 10 if categorical else 6},
+        hovertemplate=f"mean {hover}",
+    ))  # fmt: skip
+    scores = np.r_[ice.ravel(), pdp["score"].to_numpy(dtype=float)]
+    apply_theme(fig, f"Partial dependence and ICE: {name}", name, "Score", 420)
+    fig.update_yaxes(range=charts.axis_range(scores, None, from_zero=False), tickformat=y_format,
+                     showgrid=False, ticks="outside")  # fmt: skip
+    axis = {"type": "category", "categoryorder": "array", "categoryarray": list(grid)}
+    fig.update_xaxes(showgrid=False, ticks="outside", **(axis if categorical else {}))
+    return fig

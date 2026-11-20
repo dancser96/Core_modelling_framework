@@ -2,7 +2,8 @@
 ground truth", feature_checks.md "Trap acceptance test").
 
 Target Factory, EDA and Feature Checks run once on the `dev` preset (20,000 clients, generated
-from its seed in the test run) for the two example configs, card and term-deposit acquisition.
+from its seed in the test run) for the two example configs, card and term-deposit acquisition
+(`dev_stage2` in `conftest.py`, shared with the modelling acceptance tests).
 The acceptance list is `truth.json`'s trap list: each row, keyed by trap kind and target, is
 mapped to the findings that must catch it (`TRAP_FINDINGS`, `KIND_CHECKS`), to the findings it
 must not raise as a control close to their thresholds (`CONTROL_FINDINGS`; a row may be both), a
@@ -24,13 +25,11 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-from pyspark.sql import SparkSession
 
 from core_modelling.artifacts import read_stage
 from core_modelling.config import UseCaseConfig, load_config
 from core_modelling.feature_checks.findings import FINDINGS
 from core_modelling.ledger import read_ledger
-from core_modelling.run import run
 from core_modelling.statistics.scope import NULL_SHARE_RANGE
 from synthetic.mechanisms.mart import parse_column
 from synthetic.output import read_output
@@ -145,15 +144,12 @@ class TrapRun:
 
 
 @pytest.fixture(scope="module")
-def trap_runs(spark: SparkSession, dev_env_file: str) -> dict[str, TrapRun]:
-    """Target Factory on both configs (one model input), then EDA and Feature Checks per
-    config, each run once; by the truth's target."""
-    run(list(CONFIGS.values()), env_path=dev_env_file, stages=["target_factory"])
+def trap_runs(dev_stage2: dict[str, str]) -> dict[str, TrapRun]:
+    """Both configs' EDA and Feature Checks artifacts from the session's one run of Target
+    Factory, EDA and Feature Checks on them (`dev_stage2`); by the truth's target."""
     out = {}
     for target, config in CONFIGS.items():
-        run(config, env_path=dev_env_file, stages=["eda"])
-        paths = run(config, env_path=dev_env_file, stages=["feature_checks"])
-        folder = Path(paths["entity_a"]["feature_checks"][config.stem]["folder"])
+        folder = Path(dev_stage2[config.stem])
         eda, tables = read_stage(str(folder.parent / "eda"), "eda")
         _, check_tables = read_stage(str(folder), "feature_checks")
         ledger = read_ledger(str(folder.parent))

@@ -9,10 +9,13 @@ addendum, section B). EDA and then Feature Checks run per config and return the 
 replayed, D-125), and Feature Checks reads EDA's artifacts, so it runs after EDA. Training trains
 one numbered run per config and returns the paths of its `training/` folder; at `autonomous` it
 first runs whichever of EDA and Feature Checks has not run on the config's data definition
-(D-132). Evaluation and the later stages arrive with M2.3–M2.4.
+(D-132). Evaluation evaluates per config the latest trained run of its data definition, or
+the run named (`run=`, with Evaluation alone and one config), and returns the paths of its
+`evaluation/` folder. The later stages arrive with M2.4.
 """
 
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 from pyspark.sql import SparkSession
@@ -22,6 +25,7 @@ from core_modelling.config.audit_log import resolve_config
 from core_modelling.dataset import save_model_input
 from core_modelling.eda import run_eda
 from core_modelling.environment import EnvironmentConfig, get_spark_session, load_environment
+from core_modelling.evaluation import run_evaluation
 from core_modelling.feature_checks import run_feature_checks
 from core_modelling.target_factory import run_target_factory
 from core_modelling.training import run_training
@@ -80,11 +84,24 @@ def _run_training_stage(
     return out
 
 
+def _run_evaluation_stage(
+    cfgs: list[UseCaseConfig],
+    entity: str,
+    env: EnvironmentConfig,
+    spark: SparkSession,
+    run: str | None = None,
+) -> dict:
+    """Every config's Evaluation, by use case: the paths it wrote. `run` names the run to
+    evaluate (given with one config only), else each config's latest trained run is."""
+    return {cfg.use_case: run_evaluation(cfg, entity, env, spark, run).paths for cfg in cfgs}
+
+
 STAGES: dict[str, Stage] = {
     "target_factory": _run_target_factory_stage,
     "eda": _run_eda_stage,
     "feature_checks": _run_feature_checks_stage,
     "training": _run_training_stage,
+    "evaluation": _run_evaluation_stage,
 }  # the run order
 
 
@@ -116,10 +133,13 @@ def run(
     env_path: str | None = None,
     stages: list[str] | None = None,
     entity: str | None = None,
+    run: str | None = None,
 ) -> dict:
-    """The stages (default: every built stage, `training` included since 0.4.0) for the
-    entities (the one given, which every config must list; default: the configs' entities, which
-    must agree) of one config or a list; per entity and stage, what the stage returned.
+    """The stages (default: every built stage, `training` and `evaluation` included since
+    0.4.0) for the entities (the one given, which every config must list; default: the configs'
+    entities, which must agree) of one config or a list; per entity and stage, what the stage
+    returned. `run` names the trained run Evaluation evaluates (`r007`): it is accepted with
+    `stages=["evaluation"]` and one config only, and refused before anything runs otherwise.
 
     The asked stages run in `STAGES` order, whatever order they are given in, so
     `stages=["feature_checks", "eda"]` refreshes EDA before Feature Checks reads it.
@@ -132,6 +152,11 @@ def run(
     paths = [config_paths] if isinstance(config_paths, str | Path) else list(config_paths)
     if not paths:
         raise ValueError("run needs at least one config")
+    if run is not None and (stages != ["evaluation"] or len(paths) != 1):
+        raise ValueError(
+            f"run={run!r} names one trained run: give it with stages=['evaluation'] and one "
+            f"config; got the stages {stages} and {len(paths)} configs"
+        )
     cfgs = [load_config(path) for path in paths]
     entities = _entities(cfgs, entity)
     env = load_environment(env_path)
@@ -141,5 +166,6 @@ def run(
         out[name] = {}
         for stage in stages:
             print(f"run {stage} for {name}")
-            out[name][stage] = STAGES[stage](cfgs, name, env, spark)
+            runner = STAGES[stage] if run is None else partial(STAGES[stage], run=run)
+            out[name][stage] = runner(cfgs, name, env, spark)
     return out

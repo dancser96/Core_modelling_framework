@@ -22,7 +22,7 @@ from core_modelling.config.schema import Strata
 from core_modelling.dataset.counts import LEVEL_CAP, NULL_BIN
 from core_modelling.eda.population import cap_levels, known_rows, strata_frame, summarise_groups
 from core_modelling.statistics.cells import group_of_bins
-from core_modelling.statistics.distributions import bin_labels, merge_bins
+from core_modelling.statistics.distributions import bin_labels, bin_orders, merge_bins
 from core_modelling.statistics.scope import scope_statistics
 from core_modelling.tasks import TASK_SPECS
 
@@ -35,15 +35,6 @@ def dive_group_count(kind: str, levels: int, max_levels: int) -> int | None:
     numeric with at most `max_levels` (`strata.max_levels`) distinct non-null eligible values
     (`levels`), else `max_levels`, the number of merged groups to aim for."""
     return None if kind == "categorical" or levels <= max_levels else max_levels
-
-
-def bin_orders(values: pd.Series, edges: np.ndarray | None) -> np.ndarray:
-    """Each value's bucket on the interior `edges` as the counts table's `Bucketizer` gives it,
-    `np.digitize`'s index (`[e_i, e_{i+1})`, -0.0 as 0.0); -1 for a null or NaN; 0 without
-    edges."""
-    numbers = values.to_numpy(dtype=float, na_value=np.nan) + 0.0
-    orders = np.zeros(numbers.size, dtype=int) if edges is None else np.digitize(numbers, edges)
-    return np.where(np.isnan(numbers), -1, orders)
 
 
 def _merged(per_bin: pd.DataFrame, groups: int | None, edges: np.ndarray | None) -> pd.DataFrame:

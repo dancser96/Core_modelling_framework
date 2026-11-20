@@ -232,13 +232,15 @@ def _render_section(
     return "\n".join(body), toc
 
 
-def render_report(title: str, sections: list[tuple[str, list]]) -> str:
+def render_report(title: str, sections: list[tuple[str, list]], plotly: bool = True) -> str:
     """The sections as one self-contained HTML page; the caller writes it with its artifacts.
 
     A block is a Styler, a plotly figure, a str (an HTML fragment, inserted as is) or a
-    `(heading, blocks)` tuple (a subsection with its own anchor).
+    `(heading, blocks)` tuple (a subsection with its own anchor). `plotly` False embeds no
+    plotly.js, for a page of tables only (the model card).
     """
     counter = itertools.count(1)
+    script = f'<script type="text/javascript">{get_plotlyjs()}</script>' if plotly else ""
     bodies, tocs = [], []
     for number, section in enumerate(sections, start=1):
         heading, blocks = _heading_and_blocks(section, f"section {number}")
@@ -249,7 +251,7 @@ def render_report(title: str, sections: list[tuple[str, list]]) -> str:
         f'<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
         f'<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>{escape(title)}</title><style>{_report_css()}</style>"
-        f'<script type="text/javascript">{get_plotlyjs()}</script></head><body>\n'
+        f"{script}</head><body>\n"
         f'<h1>{escape(title)}</h1>\n<nav class="toc"><ul>{"".join(tocs)}</ul></nav>\n'
         + "\n".join(bodies)
         + "\n</body></html>\n"

@@ -12,8 +12,12 @@ selected in Spark to the keys, the features, `target`, `split` and the fold colu
 carries the window's population counts on every client, which Training checks against EDA's
 (D-088). Evaluation
 gets `rows`, one Spark frame of the test split and every validation-period row (both splits),
-scored inside Spark and never collected: `part` says which, and the strata ride along for
-the stratified tables without joining the features. EDA's kinds come from
+scored inside Spark and never collected: `part` says which, and the strata and the `carry`
+columns ride along for the stratified tables and the baselines without joining the features;
+its meta's `eligible_rows` holds each period's eligible rows, which a `top_n` slice is a share
+of: every eligible client, a null target included, since a list is cut before any target is
+known.
+EDA's kinds come from
 the Spark schema (`detect_kinds`) and the unsupported columns are dropped before anything is
 collected. The meta
 also carries the D-088 population counts (only the frames hold the panel) and each column's
@@ -58,7 +62,16 @@ SNAPSHOT_CALLOUT = (
     f"({SPARK_SETTINGS}), or pick a smaller eda.snapshot population through eligibility, which "
     "changes the data-definition hash and reruns EDA; the analysis population is never sampled"
 )
-CALLOUTS = {"snapshot": SNAPSHOT_CALLOUT, "train": TRAINING_CALLOUT}
+EXPLANATION_CALLOUT = (
+    "the explanation sample is a capped, seeded sample of test rows with the model's features, "
+    "so its size follows the feature count; raise collect_budget_gb in the environment file "
+    f"with the Spark settings ({SPARK_SETTINGS})"
+)
+CALLOUTS = {
+    "snapshot": SNAPSHOT_CALLOUT,
+    "train": TRAINING_CALLOUT,
+    "explanation_sample": EXPLANATION_CALLOUT,
+}
 
 
 @dataclass
@@ -84,14 +97,16 @@ def build_frames(
     spark: SparkSession,
     stage: str,
     features: list[str] | None = None,
+    carry: list[str] | None = None,
 ) -> Frames:
     """The frames `stage` works on (`STAGE_PARTS`: `eda` the snapshot collected and `rows` left
     in Spark; `training` train collected; `evaluation` `rows` left in Spark), from the model
     input when the config names one, else built in memory with the same logs. `features` is the
     modelling stages' feature set, `resolve_features(ledger, resolved)`: their frames carry the
     keys, those features, `target`, `split` and the stage's own columns only; `eda` reads every
-    candidate."""
-    _check_request(cfg, stage, features)
+    candidate. `carry` is Evaluation's only: candidates that ride along as the strata do (the
+    single feature the model lacks, a baseline's column), never among the features."""
+    _check_request(cfg, stage, features, carry)
     if cfg.data.model_input is None:
         panel, log, meta = build_panel(cfg, entity, env, spark)
     else:
@@ -101,7 +116,7 @@ def build_frames(
     if stage == "eda":
         frames["snapshot"], frames["rows"] = _eda_frames(panel, cfg, env, log, meta)
     else:
-        frames.update(_modelling_frames(panel, cfg, env, log, meta, features, stage))
+        frames.update(_modelling_frames(panel, cfg, env, log, meta, features, stage, carry or []))
     meta["collect"] = [entry for entry in log if entry["step"] == "collect"]
     return Frames(
         snapshot=frames.get("snapshot"),
@@ -112,13 +127,20 @@ def build_frames(
     )
 
 
-def _check_request(cfg: UseCaseConfig, stage: str, features: list[str] | None) -> None:
-    """A stage the frames serve; `eda` without `features`; a modelling stage with a validation
-    period and a non-empty `features` naming each feature once; for Training the resolved
-    config and no held or excluded feature (§4.6; Evaluation reads the features its model was
-    trained on). Checked before the panel is built."""
+def _check_request(
+    cfg: UseCaseConfig, stage: str, features: list[str] | None, carry: list[str] | None
+) -> None:
+    """A stage the frames serve; `carry` for Evaluation only; `eda` without `features`; a
+    modelling stage with a validation period and a non-empty `features` naming each feature
+    once; for Training the resolved config and no held or excluded feature (§4.6; Evaluation
+    reads the features its model was trained on). Checked before the panel is built."""
     if stage not in STAGE_PARTS:
         raise ValueError(f"unknown stage {stage!r}; the frames serve {sorted(STAGE_PARTS)}")
+    if carry is not None and stage != "evaluation":
+        raise ValueError(
+            f"`carry` is Evaluation's (the columns its baselines read); the {stage} frames "
+            "carry none"
+        )
     if stage == "eda":
         if features is not None:
             raise ValueError(
@@ -261,11 +283,16 @@ def _modelling_frames(
     meta: dict,
     features: list[str],
     stage: str,
+    carry: list[str],
 ) -> dict[str, pd.DataFrame | DataFrame]:
     """The modelling stage's part from the eligible rows with a known target
     (`_modelling_rows`): Training's `train` (`_training_frame`), Evaluation's `rows`
-    (`_evaluation_rows`). The null-target entry joins the log. A feature that is no candidate of
-    the panel, or a feature or stratum named like a further dealing's fold column, fails
+    (`_evaluation_rows`, with `carry`). The null-target entry joins the log; Evaluation's meta
+    gains `eligible_rows`, `{period label: eligible rows}` of the window's periods and the
+    validation period over both splits, from the null-target pass's own count. It counts the
+    rows with a null target on purpose: a `top_n` list is cut from every eligible client,
+    whether or not its target is known yet (Q629). A feature that is no candidate
+    of the panel, or a feature or stratum named like a further dealing's fold column, fails
     loud."""
     unknown = [name for name in features if name not in meta["candidates"]]
     if unknown:
@@ -285,12 +312,13 @@ def _modelling_frames(
         )
     kinds = detect_kinds(panel.schema, meta["candidates"], cfg.features.kinds)
     meta["kinds"] = {name: kinds[name] for name in features}  # the panel's, for Training's gate
-    modelling, null_log = _modelling_rows(panel, cfg, stage == "evaluation")
+    modelling, null_log, eligible_rows = _modelling_rows(panel, cfg, stage == "evaluation")
     log.append(null_log)
     if stage == "training":
         meta["population"] = _window_population(panel, cfg)
         return {"train": _training_frame(modelling, cfg, env, log, meta, features)}
-    return {"rows": _evaluation_rows(modelling, cfg, meta, features)}
+    meta["eligible_rows"] = eligible_rows
+    return {"rows": _evaluation_rows(modelling, cfg, meta, features, carry)}
 
 
 def _window_population(panel: DataFrame, cfg: UseCaseConfig) -> pd.DataFrame:
@@ -330,25 +358,27 @@ def _training_frame(
 
 
 def _evaluation_rows(
-    modelling: DataFrame, cfg: UseCaseConfig, meta: dict, features: list[str]
+    modelling: DataFrame, cfg: UseCaseConfig, meta: dict, features: list[str], carry: list[str]
 ) -> DataFrame:
     """Evaluation's `rows`, a lazy Spark frame never collected: one row per unit, period and
     part, the window's test split (`part` `test`) then every row of the validation period, both
     splits (`part` `validation`), with the columns `unit_id, period, part`, `features`, the
-    strata not among them, `target`, `split`. The strata ride along for the stratified tables
-    and never join `features`; a stratum that is no candidate fails loud. No modelling tag: every
-    row is eligible, so each is 1."""
-    strata = cfg.strata.variables
-    unknown = [name for name in strata if name not in meta["candidates"]]
-    if unknown:
-        raise ValueError(
-            f"strata.variables names {unknown}, which are not candidates of the panel; a "
-            "stratum is a candidate column (a lineage or framework column is none)"
-        )
+    strata and then `carry` not among them (each once), `target`, `split`. The strata and
+    `carry` ride along for the stratified tables and the baselines and never join `features`; a
+    stratum or a carried column that is no candidate fails loud. No modelling tag: every row is
+    eligible, so each is 1."""
+    for setting, names in (("strata.variables", cfg.strata.variables), ("carry", carry)):
+        unknown = [name for name in names if name not in meta["candidates"]]
+        if unknown:
+            raise ValueError(
+                f"{setting} names {unknown}, which are not candidates of the panel; a column "
+                "riding along is a candidate column (a lineage or framework column is none)"
+            )
     test = _window(modelling, cfg).where("split = 'test'").withColumn("part", F.lit("test"))
     validation = modelling.where(F.col("period") == cfg.time.validation_period)
     validation = validation.withColumn("part", F.lit("validation"))
-    riding = [name for name in strata if name not in features]
+    along = dict.fromkeys([*cfg.strata.variables, *carry])  # each once, in order
+    riding = [name for name in along if name not in features]
     columns = [*KEYS, "part", *features, *riding, "target", "split"]
     return test.unionByName(validation).select(*columns)
 
@@ -361,10 +391,11 @@ def _window(panel: DataFrame, cfg: UseCaseConfig) -> DataFrame:
 
 def _modelling_rows(
     panel: DataFrame, cfg: UseCaseConfig, with_validation: bool
-) -> tuple[DataFrame, dict]:
+) -> tuple[DataFrame, dict, dict[str, int]]:
     """The eligible rows with a known target, in the window and, `with_validation`, at the
     validation period only (the panel carries labels beyond them, which no fit may see, §4.4);
-    the share of eligible rows dropped for a null target, per period, logged and printed."""
+    the share of eligible rows dropped for a null target, per period, logged and printed; and
+    from the same pass the eligible rows per period label, null targets included."""
     eligible = panel.where(F.col("eligible") == 1)
     window, spec = cfg.time.observation_window, period_spec(cfg)
     periods = F.col("period").between(window.first, window.last)
@@ -373,14 +404,19 @@ def _modelling_rows(
     eligible = eligible.where(periods)
     counts = (
         eligible.groupBy("period")
-        .agg((1 - F.count("target") / F.count(F.lit(1))).alias("null_share"))
+        .agg(
+            (1 - F.count("target") / F.count(F.lit(1))).alias("null_share"),
+            F.count(F.lit(1)).alias("eligible_rows"),
+        )
         .orderBy("period")
         .collect()
     )
     shares = label_by_period(counts, "null_share", spec)
     print("null targets dropped from the modelling frames, per period: "
           + ", ".join(f"{p} {s:.1%}" for p, s in shares.items()))  # fmt: skip
-    return eligible.where(F.col("target").isNotNull()), {"step": "null_target", "share": shares}
+    entry = {"step": "null_target", "share": shares}
+    population = label_by_period(counts, "eligible_rows", spec)
+    return eligible.where(F.col("target").isNotNull()), entry, population
 
 
 def detect_kinds(
