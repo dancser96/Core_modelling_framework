@@ -16,6 +16,9 @@ author.
    alternative.
 3. Classify each finding as **blocking** (violates a rule) or **suggestion** (taste). Fix the
    blocking ones, or justify each explicitly to the user.
+4. Set no numeric target. A line or word count rewards cosmetic cuts over real simplification:
+   remove genuine redundancy and report what was found, never a percentage. Lean code is written
+   the first time, so a builder's brief asks for the smallest readable code up front.
 
 ## Checklist
 

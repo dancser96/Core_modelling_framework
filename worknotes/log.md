@@ -2,6 +2,30 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-11-20 — The Chief DS joins the repo; his status page; entry points; the memory audit
+- 2026-11-20, the CDS asked to be a collaborator: he reads everything and may raise pull
+  requests. The EDS: the repo docs keep saying that development happens outside the bank.
+- 2026-11-20, `worknotes/cds_pulse_check.md` written for him on the EDS's notes: what is built
+  beside what it replaced in the crunch, the code split by kind (1,166 functions, about 14,200
+  lines of function code, 1,900 of declarative data, 5,400 of docstrings and comments), one
+  measured run, the key features. No future dates and no release plan on that page.
+- 2026-11-20, entry points brought up to date: the root `README.md` (0.4.0, Training and
+  Evaluation built), `worknotes/sync.md` rewritten from its 11-03 state, the stage map in
+  `docs/README.md`, the WSL2 guide's verify step, `data/README.md`, `tests/README.md`, one FAQ
+  line, the worknotes file table, "the builder" replaced by "the EDS" as a role label. The log
+  was not pruned to its seven working days; `/brief` does that.
+- 2026-11-20, finding: of Claude's 39 memory notes on the Mac, eight working rules are stated
+  nowhere in the repo, so another person's session would not follow them (numbering under
+  parallel sessions, one worknotes file per topic, stage notes holding the current round only,
+  notebooks rewritten in place, no numeric cut targets, no policing with data quality upstream,
+  a stage using only its own config sections, unanswered questions never deleted).
+- 2026-11-20, Q674 and Q675 answered by the EDS: the eight rules are in their owner docs
+  (`CLAUDE.md` §3, §8, §9, `worknotes/README.md`, `notebooks/README.md`, the
+  `simplicity-review` skill), and a review fix goes back to the builder that wrote the code
+  unless it is a single edit (the `delegation` skill).
+- Files: the entry-point docs above and those owner docs; nothing committed.
+- Decisions / open decisions: D-072 (t)
+
 ### 2026-11-17 — M2.3 major step 3 (Evaluation) built; final runs
 - Built in four waves by Opus builders and doc-writers; the main thread wrote the briefs, ran
   Spark and kept the checkpoint. Every plan item m3.1 to m3.10 is built; version 0.4.0; nothing

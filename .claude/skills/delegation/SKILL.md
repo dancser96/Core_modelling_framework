@@ -147,7 +147,9 @@ Two variants:
    output (`verification-before-completion`). The full suite runs only when a major step or a
    multi-module build is finished, on the main thread in the background (D-072 (m)).
 3. Run the reviewers in parallel: `code-reviewer` always, the §10 specialists whose trigger
-   applies, and `simplicity-review` on code. Fix or explicitly justify every finding.
+   applies, and `simplicity-review` on code. Fix or explicitly justify every finding. A fix goes
+   back to the builder that wrote the code (`SendMessage`); the main thread applies one itself
+   only when it is a single edit that needs no further reading of the code.
 4. Read every doc diff in full against §8 before the EDS sees it: verdict first, one owner per
    fact, edited in place, nothing restated, roles only. A doc the EDS has to rewrite cost more
    than it saved.

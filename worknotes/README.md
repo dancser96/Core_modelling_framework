@@ -1,6 +1,6 @@
 # worknotes — shared working notes (committed)
 
-Working notes for **the framework's builder and the Lead DS**. They are committed, so they sync
+Working notes for **the EDS and the Lead DS**. They are committed, so they sync
 between machines and the Lead DS can read them before the daily ~1h sync. Claude maintains them. They
 are **never loaded at session start**; they are read only when asked (`CLAUDE.md` §0, §8).
 
@@ -9,16 +9,23 @@ are **never loaded at session start**; they are read only when asked (`CLAUDE.md
 | `sync.md` | The sync page: what happened in short, what the LDS should review and weigh in on, questions, what changed in the last 2 and 7 working days | Refreshed only by `/brief` or when the EDS asks (D-072 (h)) | Before each sync; `/brief` |
 | `log.md` | The verbose trail, newest first: what changed, why, files, decisions | Appended when a turn settles something or produces a finding; the last 7 working days only, older entries deleted at each `/brief` (git keeps them) | When the detail behind a sync item is needed |
 | `handovers/<topic>.md` | A chat handover, one file per topic, so several topics can run in parallel. Also the checkpoint Claude writes at the end of each minor step of a build (D-072 (p)) | `/handover <topic>`, or Claude at a minor step's end (overwrites that topic's file) | Via `/resume <topic>`; added back automatically after an auto-compaction |
-| `<stage>/` (now `m2_3_modelling/`: `questions.md`, the design questions' closed form: the research note, which is kept through the stage, the settled design in one table and what the spec and the plan need; `answers.md`, the 68 settled questions with the EDS's answers verbatim and an index of their outcomes; `plan.md`, the build plan: three major steps with a status table, and the shapes each step hands to the next; `prototype_explain_charts.py.txt`, the chart prototype the build starts from) | The folder of the stage being built: its design questions with defaults, the answers record, the agreed build plan, the review guide. Written for the EDS, the active developer and the decision-maker; an LDS review joins it only when the EDS asks for one (D-072 (i)). One stage is built at a time. When the EDS closes the stage the folder is deleted whole, without waiting for the LDS (D-072 (n)): what lasts has moved to the owner docs, the lessons and the stage's FAQ (`docs/guides/eda_fc_faq.md` for M2.2), and git keeps the rest | At the start of each stage, updated through it | The EDS answers the questions, approves the plan and reviews with the guide |
+| `<stage>/` (now `m2_3_modelling/`: `questions.md`, the design questions' closed form: the research note, which is kept through the stage, the settled design in one table and what the spec and the plan need; `answers.md`, the 68 settled questions with the EDS's answers verbatim and an index of their outcomes; `plan.md`, the build plan: three major steps with a status table, and the shapes each step hands to the next; `review_guide.md` and `review_guide_3.md`, the EDS's review guides for Training and for Evaluation; `prototype_explain_charts.py.txt`, the chart prototype the build started from) | The folder of the stage being built: its design questions with defaults, the answers record, the agreed build plan, the review guide. Written for the EDS, the active developer and the decision-maker; an LDS review joins it only when the EDS asks for one (D-072 (i)). One stage is built at a time. When the EDS closes the stage the folder is deleted whole, without waiting for the LDS (D-072 (n)): what lasts has moved to the owner docs, the lessons and the stage's FAQ (`docs/guides/eda_fc_faq.md` for M2.2), and git keeps the rest | At the start of each stage, updated through it | The EDS answers the questions, approves the plan and reviews with the guide |
 | `cds_pulse_check.md` | One page for the Chief DS: what is built and what it replaced in the crunch, the code's size, the key features and the decisions behind them | Written 2026-11-20 on the EDS's request; a snapshot, not kept current | The CDS, at the check-in; deleted afterwards on the EDS's word |
-| `lds_run_guide.md` | The steps for the LDS to run EDA and Feature Checks locally on the latest `main`, and the five things to look out for | Written 2026-11-10, updated at M2.2's close (2026-11-11) | The LDS; deleted when the LDS has finished trying |
+| `lds_run_guide.md` | The steps for the LDS to run EDA, Feature Checks, Training and Evaluation locally on the latest `main`, and the five things to look out for | Written 2026-11-10, updated at M2.2's close (2026-11-11); Training and Evaluation added 2026-11-20 | The LDS; deleted when the LDS has finished trying |
 
 **Rules**
-- These files are visible to the Lead DS. No bank data, no internal identifiers, no people's names
+- These files are visible to the Lead DS and the Chief DS. No bank data, no internal identifiers, no people's names
   (roles only).
 - They are not a second source of truth. Decisions go to `docs/decisions.md`, open questions to
   `docs/roadmap.md` (OD-nn), and status to `docs/UPDATES.md`. The notes link to them by number.
 - Keep `sync.md` short enough to read in five minutes. Detail goes to `log.md`.
+- A new topic's questions and plan get their own file here, registered in the table above. Never
+  append them to a file another chat is writing, such as the current stage's `questions.md`;
+  that file gets a one-line pointer at most. Question numbers still continue across files
+  (`CLAUDE.md` §8, References).
+- A stage's questions, plan and review files hold the current round only. An answered round
+  leaves its file once its outcomes are in the owner docs, the log and the stage's answers
+  record; no file grows into a history.
 
 **Writing `sync.md` for the LDS.** The EDS works on the framework about 6 hours a day; the LDS spends
 30–60 minutes. The LDS reads the design and the important parts of the code, not all of it, tries

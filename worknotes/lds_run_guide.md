@@ -1,4 +1,4 @@
-# Running EDA and Feature Checks locally (for the LDS)
+# Running EDA, Feature Checks, Training and Evaluation locally (for the LDS)
 
 Do everything in a VS Code terminal at the repo root:
 

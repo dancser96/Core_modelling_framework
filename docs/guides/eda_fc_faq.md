@@ -48,8 +48,8 @@ Because it is not per use case. It is a source in the environment file with a lo
 several use cases may share one table: both examples read `retail_acquisition_input`.
 
 **Can a `revert` undo the flags Feature Checks wrote?**
-Yes, on purpose: a revert is a person's explicit act. Training will open with the held, excluded
-and kept features in force and warn when fewer are held than Feature Checks' run held
+Yes, on purpose: a revert is a person's explicit act. Training opens with the held, excluded
+and kept features in force and warns when fewer are held than Feature Checks' run held
 ([training](../components/training.md), requirement 1).
 
 ## The counts table

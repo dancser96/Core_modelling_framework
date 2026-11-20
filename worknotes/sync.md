@@ -1,22 +1,46 @@
 # Sync page
-_For the EDS and the LDS · last updated: 2026-11-03 (Stage 2's key decisions: flags that act, no sampling, one statistics engine) · last sync: 2026-11-03_
+_For the EDS and the LDS · last updated: 2026-11-20 (the modelling stage as built; the Chief DS joins the repo) · last sync: not recorded since 2026-11-03_
 
-**In short (11-02 to 11-03):** The EDS settled how Stage 2 (EDA, Feature Checks, the feature
-ledger and the reports) behaves; nothing of it is coded yet. A flag now has teeth: a flagged
-feature is held out of training at every automation level, including autonomous, until a person
-keeps or excludes it; signals that are only worth a look (drift, near-duplicate features, odd
-null patterns) are notes and hold nothing out. Nothing is sampled: the statistics over the whole
-observation window are computed in Spark as one table of counts, and the latest snapshot is
-analysed on every client. One statistics engine serves both tasks, with concordance (AUC for
-binary, its generalisation for regression) as the single ranking scale. Leakage in time is
-caught by checking whether a feature keeps its signal when lagged by one period. Columns full of
-zeros or a few repeated values get those values as their own bins, so no feature collapses into
-one bucket. No config format versions are bumped while the framework is pre-release.
+**In short (11-12 to 11-20):** The modelling stage is built: one command trains a calibrated
+model and evaluates it, for a binary and a regression target; the EDS's review of both is open,
+so expect rough edges. FLAML only searches, one model family at a time on client folds, and the
+framework itself fits every model it keeps; nothing is imputed and calibration is fitted out of
+fold. Evaluation scores the test clients and the validation period inside Spark, reads every
+metric from binned scores with client-bootstrap intervals, and shows the model against the
+declared baselines with no pass or fail line. A run is a numbered folder complete in itself; a
+model is saved without pickle under one hash. The Chief DS has joined the repo as a collaborator
+and has a one-page status.
 
 Detail behind each item: `worknotes/log.md`. How this page is written: `worknotes/README.md`.
 
 ## For the LDS: to review (most important first, then newest)
-**Your view wanted on: the short-term open decisions** in `docs/roadmap.md` → Open decisions (OD-01, OD-06, OD-08, OD-12, OD-18, OD-23)
+**Your view wanted on: the short-term open decisions** in `docs/roadmap.md` → Open decisions (OD-06, OD-08, OD-18, OD-23)
+- [ ] **Decision: FLAML only searches; the framework fits what is kept** — D-140;
+      `docs/components/training.md` → Level 1, then "The search", "Selection" and "Fold models
+      and calibration" — feedback wanted: is one trial-budgeted search per family the comparison
+      you'd trust, and would you miss anything on the "Deliberately not built" list (class
+      weights, imputation, isotonic)?
+- [ ] **Decision: metrics from score cells with client-bootstrap intervals; baselines, no gates**
+      — D-141; `docs/components/evaluation.md` → Level 1, then "Metrics", "Intervals: the client
+      bootstrap", "Baselines" and "What the report states" — feedback wanted: are these the
+      metrics and baselines you'd judge a propensity model on, and is leaving the verdict to the
+      person right?
+- [ ] **Decision: a numbered run complete in itself; the bundle without pickle under one hash**
+      — D-139; `docs/components/model_bundle.md` → Level 1, then "The run folder" and "The
+      hashes" — feedback wanted: are three names for a person (data definition, run, model
+      version) enough to find and compare models?
+- [ ] **Training, as built** — `training/selection.py` → `apply_cluster_rule`, `apply_floor`,
+      `prune_by_importance`; `training/search.py` → `fit_parameters`, `check_search`,
+      `check_judged_model`; `training/fold_models.py` → `fit_fold_models`;
+      `statistics/calibration.py` → `fit_platt`, `fit_beta`, `prior_shift_offset` — feedback
+      wanted: does anything fitted or selected here see test or validation rows, and are the
+      three selection rules the ones you'd apply?
+- [ ] **Evaluation, as built** — `statistics/score_cells.py` → `quantile_passes`, `pool_cells`;
+      `statistics/bootstrap.py` → `bootstrap_intervals`; `statistics/metrics.py` →
+      `binary_metrics`, `slice_metrics`; `evaluation/baselines.py` → `choose_single_feature`,
+      `compare_baselines`; `evaluation/compare.py` → `compare_runs` — feedback wanted: are the
+      binned metrics and the client bootstrap right for rare targets, and does any read of the
+      validation period feed a choice?
 - [ ] **Decision: an open flag holds the feature out of training at both levels** — D-134;
       `docs/components/feature_checks.md` → Level 1, then "Flags act: the hold-out" and "The two
       automation levels and the review"; `docs/components/feature_ledger.md` → Level 1 and the
@@ -49,68 +73,43 @@ None open.
 
 | Question | Context | Current leaning | Needs |
 |---|---|---|---|
-| Is MLflow available inside the bank (OD-08)? | MLflow in Phase 2 is the goal; its shape is settled (D-111): M2.4's records map onto it, it goes in with the integrations in M4 | Ask at the platform learn session | EDS + LDS, with the platform / MLOps team |
-| Has the Phase 2 plan been agreed with stakeholders (OD-01)? | Stages and depth per component are a working assumption; nothing in the repo records the buy-in | Confirm, then move the plan into the roadmap | EDS + LDS, then stakeholders |
+| Is MLflow available inside the bank (OD-08)? | Its shape is settled (D-111): the framework's own records map one-to-one onto it | Ask the platform / MLOps team | EDS + LDS, with the platform / MLOps team |
+| Who builds the registry and the deployment path (OD-23)? | Downstream questions go to the platform / MLOps team (D-079); register, promote and deploy stay thin but real until then | Agree whether that team builds or advises | EDS + LDS, with the platform / MLOps team |
+| How are the registered and production folders laid out per entity × domain (OD-06)? | The sandpit root is settled (D-136); permissions are the platform's | The same shape as the sandpit root | EDS + LDS |
+| Do manifests sit beside the score files or apart (OD-18)? | Manifests beside the score files break a Hive table over the scores | Apart | EDS + LDS |
 
-## Last 2 working days (11-02 to 11-03)
-- **Flags act; notes inform (11-02 → 11-03).** An open flag holds the feature out of training at
-  both levels until a `keep` or `exclude` entry; the held set is written into the resolved
-  config, so two runs with different held features never share a hash. For Training, a held
-  feature acts as an excluded one without a final decision. Flags: quality (all null, constant,
-  ≥ 95% null, ≥ 99% one value, over 50 levels), leakage (too strong, nulls that predict the target, a rare value
-  with a large lift), time alignment, unstable signal across periods. Notes: drift (PSI), near-
-  duplicate pairs, null patterns. Drift is a note because a flag would hold every trending
-  legitimate feature out of an autonomous model. — look at: D-134; `feature_checks.md` (summary)
-- **No sampled analysis; one statistics engine (11-02 → 11-03).** EDA and Feature Checks use
-  every client: the window and the later periods as one Spark counts table (feature, period,
-  bin, target bin, lagged, n, sum of target), the snapshot collected whole for the pairwise
-  matrix and the row-level views. Every statistic is read from counts: concordance, the
-  best-order concordance (the signal of a non-monotone feature like an inverted-U age), shares,
-  Wilson intervals, PSI between named periods (window start to end; window end to the latest
-  period). 100 bins by default, switchable off for small populations; a value holding a large
-  share gets its own bin (T25). No chart draws individual clients. — look at: D-135; `eda.md`
-  (summary)
-- **Time alignment as a lag check; a look-ahead finding (11-02).** A feature that loses more
-  than half its signal when lagged by one period is flagged (it may be stamped after the fact);
-  a feature constant per client yet predictive is flagged as possible look-ahead (the
-  feature-store stand-in's trap). This replaces the earlier backward-label check, which
-  degenerates under a precondition eligibility. — look at: D-029, D-134; `feature_checks.md`
-- **Layout and compatibility while pre-release (11-02).** Artifacts under root (the entity's
-  area) → use case → layer; config and log formats change in place, no version bumps or
-  migrations until user testing starts. — look at: D-136
-- **What Stage 2 ships (11-03).** EDA and Feature Checks with their reports, the feature ledger
-  (one wide row per candidate), notebooks 02 and 03 whose guide text is a main deliverable,
-  regression handled for real on a variant config, the synthetic traps as an acceptance test.
-  The plan waits for the EDS's approval. — look at: D-137
+## Last 2 working days (11-19 to 11-20)
+- **The Chief DS joins the repo (11-20).** He asked to be a collaborator: he reads everything
+  and may raise pull requests. A one-page status was written for him: what is built beside what
+  it replaced in the crunch, the code's size, the key features and the decisions behind them. —
+  look at: `worknotes/cds_pulse_check.md`
+- **Training and Evaluation are on `main` (11-20).** Both run from the notebooks and the CLI,
+  and the run guide has the steps. The EDS's joint review of the two is open, and a contract it
+  changes is fixed in both. — look at: `worknotes/lds_run_guide.md`;
+  `worknotes/m2_3_modelling/review_guide.md` and `review_guide_3.md`
 
 ## To try
-- Nothing of Stage 2 runs yet. Walk through the summary level of `docs/components/eda.md` and
-  `docs/components/feature_checks.md` · the list of checks and views, the flag thresholds, what a
-  flag does at the autonomous level.
-- `notebooks/01_target_factory.ipynb` on the synthetic dev data, or
-  `python -m core_modelling run conf/base/cc_acquisition.yml conf/base/td_acquisition.yml --stages
-  target_factory --env conf/local/environment.yml` · the two target summaries, the one table with
-  both target columns, each use case's own eligibility on read, and the feature-store stand-in
-  joined as a source with its own key names.
-- `pytest tests/test_source_mistakes.py -q` · one test per planted source mistake (padded ids,
-  periods dated on the 15th, a column shared with the mart, another id system…); read the
-  messages a DS would see.
+- Training and Evaluation — `worknotes/lds_run_guide.md`, steps 8–9
+  (`notebooks/04_training.ipynb`, then `notebooks/05_evaluation.ipynb`) · the sign-off table
+  (could you defend every feature?), the search view (how close the four families land), the
+  model against each baseline in the report's summary, the metrics per period with the
+  validation period beside them, the reliability view.
+- EDA and Feature Checks — the same guide, steps 1–7 · the held list: the planted traps (`trap`
+  in the name) should be there, and few honest features.
 
-## Last 7 working days (10-26 to 10-30)
-- 10-30 — **Integrations narrowed**: data observability only gets a production model's source
-  tables at deploy; the feature store leans towards an extract joined like any other source;
-  built: per-source key names, a feature-store stand-in with a look-ahead trap, mistake tests
-  for every source guardrail — D-021, D-129, OD-26
-- 10-30 — **Stage 2 scope**: between thin and deep with every key component in; the AUC
-  standard-error rule in the lessons was 1.7× too conservative — `docs/context/lessons.md`
-- 10-29 — **Two example use cases in one model input**; a source column named like a framework
-  column read as `source_<name>`; the use case name rule freed — D-128, D-129
-- 10-29 — **Working rules**: the LDS reads the important code and tries the notebooks; stage
-  notes are written for the EDS — D-072 (i)
-- 10-28 — **Stage 1 addendum**: the unit of analysis as `time.period` (month, week, day); the
-  model input as sources plus one target per use case, eligibility and split derived on read;
-  `revert` in the audit log — D-129, D-131
-- 10-28 — **Stage 1 review applied**: two eligibility lists, the null-handling knobs removed, the
-  split and sampling as one hash draw — D-029, D-030, D-131
-- 10-26 → 10-27 — **Stage 1 (M2.1 Foundation) built end to end, version 0.2.0** — D-129–D-133,
-  `docs/components/dataset.md`
+## Last 7 working days (11-12 to 11-18)
+- 11-17 — **Evaluation built**: scoring inside Spark, metric tables with client-bootstrap
+  intervals, the seventeen-view report, the model card, `compare_runs`. The ML audit found
+  average precision reading low from coarse score bins at rare base rates; binary now has 380
+  bins, dense at the top — D-141, `docs/components/evaluation.md`
+- 11-16 — **Training built**: the gate, three selection rules on train statistics, one FLAML
+  search per family, the fold models, calibration, the bundle, the sign-off table. The reviews
+  closed three findings: the search could judge another LightGBM constraint method than the
+  kept model used; under a time budget the judged and the kept model can differ; the floor read
+  a mark that had seen test labels — D-140, `docs/components/training.md`
+- 11-14 → 11-16 — **Stage 3 foundations built and reviewed by the EDS**: the modelling config
+  fields, client folds, the encoder, four model families with non-pickle round trips, the
+  bundle, numbered runs — D-139, `docs/components/model_bundle.md`
+- 11-12 → 11-13 — **Stage 3 design closed**: four families in the default list, 60 trials at
+  `autonomous`, monotone constraints in, no gates; FLAML median-imputes numeric nulls unless
+  its transformer is switched off, so the framework encodes the data itself — D-094, D-140

@@ -17,7 +17,7 @@
 - Generator validation tests for the synthetic data (`docs/components/test_harness.md`).
 - One end-to-end test on synthetic data with **real local PySpark**, no stubs:
   `test_run.py::test_run_two_configs_runs_every_stage` runs every built stage through `run` on
-  the two example configs at once (one model input, then EDA and Feature Checks per config).
+  the two example configs at once (one model input, then EDA, Feature Checks, Training and Evaluation per config).
   The tests read frozen copies of the examples in `tests/conf/`, so a try-out in `conf/base/`
   changes no test; `test_config_schema.py::test_the_shipped_examples_load` checks that every
   example there still loads. From

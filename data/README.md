@@ -11,7 +11,7 @@ short form, D-088), which contains the entity. Reports live beside their artifac
 | Path under the root | Holds |
 |---|---|
 | `<use_case>/04_feature/<ddh>/` | Per data definition: `decisions/` (the audit log, `<seq>.json`), `eda/`, `feature_checks/`, `ledger.parquet` and `_ledger.json` (the feature ledger) |
-| `<use_case>/06_models/<run_id>/` | **Local tier** training runs (M2.3; the bank-side layout per entity × domain is OD-06) |
+| `<use_case>/06_models/<run_id>/` | **Local tier** runs, one numbered folder each: `run.json`, the model bundle, the per-run ledger, the `stage2/` copies, `training/` and, once evaluated, `evaluation/` (the bank-side layout per entity × domain is OD-06) |
 | `<use_case>/07_model_output/` | Scoring batches (M2.4; layout of scores vs manifests under review, OD-18) |
 
 The inputs are the environment file's `sources`, mapped by logical name wherever they physically

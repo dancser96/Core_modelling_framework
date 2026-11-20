@@ -14,6 +14,8 @@ package functions and a way to learn how things work under the hood (D-039,
   the test's list. It still defines nothing and is committed without outputs.
 - One notebook per stage, **never** one per use case. To work on another use case, change the config
   path in the first cell and rerun.
+- A notebook is rewritten in place. No copy of the old version or its outputs is kept anywhere
+  unless the EDS asks: outputs come back by rerunning, and git has the committed version.
 - Every notebook has the same shape:
   1. **Guide cell:** what this stage is for, what to look at, which decisions to record in the
      decision audit log (`record_decision`, D-125), and links to the docs. Written as

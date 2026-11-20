@@ -121,10 +121,10 @@ milestones: `docs/roadmap.md`.
 
 ## People and rhythm
 
-Short forms in notes and meeting material: **EDS** (the builder, the Expert DS), **LDS** (the Lead DS), **CDS** (the
+Short forms in notes and meeting material: **EDS** (the Expert DS, who builds the framework), **LDS** (the Lead DS), **CDS** (the
 Chief DS).
 
-- **The framework's builder** (the Expert DS) does the work and owns every design decision; all
+- **The Expert DS** builds the framework and owns every design decision; all
   decisions flow through them.
 - **The Lead DS** reviews in a daily ~1-hour sync (design, reviews, ideas). Each sync is prepared with
   `/brief` from `worknotes/sync.md`.
@@ -165,7 +165,7 @@ versions write to the same shared tables (`CLAUDE.md` §2).
    models were built, promoted and scored end to end. Code: `legacy/propensity_crunch/`. Lessons:
    `docs/context/lessons.md`.
 3. **Phase 2 (now):** back to the drawing board with the crunch takeaways. In October 2026, three
-   review rounds with the builder and notes from the Lead DS reshaped the scope: domain- and
+   review rounds with the EDS and notes from the Lead DS reshaped the scope: domain- and
    entity-agnostic, observation windows, two modelling paths, a full lifecycle, guided usage
    (D-020 to D-043). On 2026-10-15 the Chief DS reviewed the design and left it to the EDS and LDS,
    adding feature store and data observability integration to the first release (D-021, D-023, D-024, D-031, D-051, D-073, D-079).

@@ -200,7 +200,13 @@ The 0.x pre-release promises nothing; shared formats freeze from release 1.0's f
   entities it applies to (D-034).
 - **Standalone stages.** Target Factory, EDA, Feature Checks, Training, Evaluation, register /
   promote / deploy, Inference and Monitoring each run on their own from a config and write their own
-  artifacts; EDA, Feature Checks, Evaluation and Monitoring also write a report (D-036).
+  artifacts; EDA, Feature Checks, Evaluation and Monitoring also write a report (D-036). A stage
+  uses only the config sections it owns and what earlier stages wrote: whatever depends on a
+  later section (eligibility, candidates, the contract, the split) is derived on read, never
+  stored early (D-131).
+- **No policing; data quality is upstream.** The framework never hides data from a data
+  scientist to enforce discipline, and no config field repairs a source: it shows the share
+  (nulls, leavers, coverage) and points upstream (D-029, D-131).
 - **Stepwise traceability.** Filters and selections are ordered steps in config, and each step logs
   what it removed or flagged and why. Every candidate feature's path (checks, human decisions,
   automated selection, use in the model) is recorded in the feature ledger.
@@ -330,7 +336,7 @@ Each fact has **one owner doc**; every other doc links to it instead of repeatin
 | `docs/context/lessons.md` | Traps (T-nn) and lessons | committed | Before related code |
 | `docs/context/environment.md` | Versions and bank behaviour | committed | IO / dependencies |
 | `docs/guides/*.md` | How-tos: setup, Claude Code workflow, skills & agents; a closed stage's questions and answers (`eda_fc_faq.md`, `modelling_faq.md`) | committed | As needed |
-| `worknotes/sync.md` | Sync page for the builder and the Lead DS: what to review, open questions for both, recent developments | committed | Before each sync; `/brief` |
+| `worknotes/sync.md` | Sync page for the EDS and the Lead DS: what to review, open questions for both, recent developments | committed | Before each sync; `/brief` |
 | `worknotes/log.md` | Verbose trail behind the sync page | committed | When detail is needed |
 | `worknotes/handovers/<topic>.md` | One chat handover per topic (several in parallel) | committed | Only via `/resume <topic>` |
 
@@ -381,6 +387,9 @@ copies of a decision: those go to `worknotes/log.md`, `docs/decisions.md` or the
 file). Q-, R-, A- and V-numbers cite a stage's question, remark and plan-default rounds. Those
 records are deleted when the stage closes (git keeps them), so a sentence that cites one must
 stand without it; N-numbers are the null-value assumptions in `docs/components/eda.md` → Nulls.
+Several sessions number at once: right before adding a D-row or numbering questions, re-read the
+highest D-number in both tables of `docs/decisions.md` and the highest Q-number under
+`worknotes/` and `docs/`, and number from there.
 
 **Style.** Verdict first, concise, integrated: edit text in place, don't append "update" sections.
 Flag anything unverified. No flowcharts or ASCII diagrams: they don't wrap on small screens. Use a
@@ -412,6 +421,8 @@ numbered list for a flow, nested bullets for a tree and a narrow table for a map
   - Ask numbered questions (continue the numbering across rounds), each with your proposed default.
     A question that cites a decision or open decision summarises it in brackets, e.g. "D-007
     (shared tables only grow within a major version)", so nobody has to switch files (D-072).
+  - An unanswered question is never deleted. A skipped one takes its default, unless the whole
+    round went unanswered.
   - For genuine choices, lay out the options with when-to-use guidance and a recommendation.
   - Match the altitude to the phase: directions first, details when that component is designed.
 - **Verify, don't assume.** Check library behaviour against the pinned version. Say when something is
@@ -480,7 +491,7 @@ conf/local/                gitignored: environment-specific paths/tables/theme (
 data/                      gitignored: Kedro-style layered data folders (see data/README.md)
 notebooks/                 guided interface notebooks (rules: notebooks/README.md)
 tests/                     light tests (policy: tests/README.md)
-worknotes/                 sync page + log for the builder and the Lead DS, chat handovers
+worknotes/                 sync page + log for the EDS and the Lead DS, chat handovers
 legacy/propensity_crunch/  crunch implementation — reference only
 docs/README.md             reading order + stage → component map (the docs' front door)
 docs/UPDATES.md            state + major changes (read first)

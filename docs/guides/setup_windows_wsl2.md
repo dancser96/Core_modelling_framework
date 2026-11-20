@@ -4,7 +4,7 @@
 into WSL. The Mac and the PC then use the same shell commands, and PySpark avoids the
 Windows-native workarounds.
 
-**Status:** deferred. The builder works on the Mac only until large data or heavy testing needs
+**Status:** deferred. The EDS works on the Mac only until large data or heavy testing needs
 the PC. [Switching from the Mac](#switching-from-the-mac) lists everything that doesn't travel
 with git; keep it current whenever something machine-local is added on the Mac.
 
@@ -134,6 +134,7 @@ Everything committed travels with git. These don't:
    `.claude/settings.local.json` (copy: it keeps the account's synced plugins and connectors out
    of this repo), `data/` (regenerate the synthetic data from its seed
    rather than copying it).
-4. **Verify:** `pytest` green, then run step 0's proof on the PC
-   (`docs/components/test_harness.md`).
+4. **Verify:** `pytest` green, then create the `dev` data and run the first stage on it:
+   `python -m synthetic --preset dev --out data/01_raw/synthetic_dev`, then
+   `python -m core_modelling run conf/base/cc_acquisition.yml --stages target_factory --env conf/local/environment.yml`.
 
