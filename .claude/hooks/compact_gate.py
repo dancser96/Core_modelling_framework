@@ -1,6 +1,7 @@
-"""Let auto-compaction through only right after a checkpoint, and hand the checkpoint back.
+"""Let auto-compaction through only right after a checkpoint, hand the checkpoint back, and show
+the main thread its context size.
 
-Claude Code runs this file as two hooks (`.claude/settings.json`):
+Claude Code runs this file as three hooks (`.claude/settings.json`):
 
 - `PreCompact`, trigger `auto`: the main thread's context has passed the auto-compact window.
   Compacting loses nothing that matters only when the main thread's last tool-using response
@@ -9,6 +10,11 @@ Claude Code runs this file as two hooks (`.claude/settings.json`):
   checkpoint or the ceiling. A manual `/compact` and a subagent's compaction are never blocked.
 - `SessionStart`, source `compact`: prints that handover, which Claude Code adds to the compacted
   context.
+- `PostToolUse`: the gauge. The model sees no token count of its own, so a missed checkpoint
+  used to let the context grow unseen to the ceiling (588k on 2026-11-23). Once the main
+  thread's context crosses `NOTICE_AT` the hook adds one line to its context, and above
+  `URGENT_AT`, where compaction is being held back, one line after every tool call until a
+  checkpoint lets it through.
 
 The gate holds a compaction back only when it is sure it is safe to: the model has a 1M-token
 window and the context is well below it. Whatever it cannot read (an unknown model, an empty
@@ -25,8 +31,11 @@ from pathlib import Path
 CHECKPOINT_DIR = Path(__file__).resolve().parents[2] / "worknotes" / "handovers"
 # Models with a 1M-token window. On any other model the gate stands aside.
 LARGE_WINDOW_MODELS = ("claude-fable-5", "claude-opus-5", "claude-sonnet-5", "claude-haiku-5-5")
-# Tokens, measured on the last request: leaves room for one very large turn before the window ends.
-CONTEXT_CEILING = 600_000
+# Tokens, measured on the last request. Past it a compaction goes through without a checkpoint:
+# above it the second half of a build costs most (the EDS, 2026-11-24; it was 600k).
+CONTEXT_CEILING = 400_000
+NOTICE_AT = 250_000  # the gauge's one early line: checkpoint at the next boundary
+URGENT_AT = 300_000  # `autoCompactWindow` in `.claude/settings.json`: compaction is held back
 TAIL_BYTES = 4_000_000  # of the transcript: holds the last response and its tool results
 
 SUMMARY_INSTRUCTIONS = """The main thread has just written its checkpoint to {checkpoint}, and \
@@ -55,9 +64,11 @@ def read_tail(transcript_path: str) -> list[dict]:
     return records
 
 
-def measure_context(records: list[dict]) -> tuple[int, str]:
-    """Return the context size in tokens and the model of the main thread's last request."""
-    for record in reversed(records):
+def measure_requests(records: list[dict]) -> list[tuple[int, str]]:
+    """Return the context size in tokens and the model of each of the main thread's requests,
+    in order (one per `message.id`)."""
+    sizes = {}
+    for record in records:
         message = record["message"]
         usage = message.get("usage")
         if record["type"] == "assistant" and usage and message.get("model") != "<synthetic>":
@@ -66,8 +77,14 @@ def measure_context(records: list[dict]) -> tuple[int, str]:
                 + usage.get("cache_creation_input_tokens", 0)
                 + usage.get("cache_read_input_tokens", 0)
             )
-            return size, message.get("model", "")
-    return 0, ""
+            sizes[message["id"]] = (size, message.get("model", ""))
+    return list(sizes.values())
+
+
+def measure_context(records: list[dict]) -> tuple[int, str]:
+    """Return the context size in tokens and the model of the main thread's last request."""
+    requests = measure_requests(records)
+    return requests[-1] if requests else (0, "")
 
 
 def find_failed_calls(records: list[dict]) -> set[str]:
@@ -137,11 +154,46 @@ def print_checkpoint(hook_input: dict) -> int:
     return 0
 
 
+def gauge_line(requests: list[tuple[int, str]]) -> str | None:
+    """The gauge's line for the main thread's last request, or None: once on crossing
+    `NOTICE_AT`, then after every tool call from `URGENT_AT` on."""
+    if not requests or not requests[-1][1].startswith(LARGE_WINDOW_MODELS):
+        return None
+    size = requests[-1][0]
+    before = requests[-2][0] if len(requests) > 1 else 0
+    if size >= URGENT_AT:
+        return (
+            f"Context gauge: {size:,} tokens. Auto-compaction is held back until a checkpoint: "
+            f"write worknotes/handovers/<topic>.md now, as the last tool call of this response "
+            f"(at {CONTEXT_CEILING:,} it compacts without one)."
+        )
+    if before < NOTICE_AT <= size:
+        return (
+            f"Context gauge: {size:,} tokens. Write the checkpoint "
+            f"(worknotes/handovers/<topic>.md) at the next step boundary: a wave, a fix round, "
+            f"a Spark batch or an agent's report all count."
+        )
+    return None
+
+
+def show_gauge(hook_input: dict) -> int:
+    """Add the gauge's line, if any, to the main thread's context."""
+    if hook_input.get("agent_id"):
+        return 0
+    line = gauge_line(measure_requests(read_tail(hook_input["transcript_path"])))
+    if line:
+        output = {"hookEventName": "PostToolUse", "additionalContext": line}
+        print(json.dumps({"hookSpecificOutput": output}))
+    return 0
+
+
 def main() -> int:
     """Run the hook that the input names."""
     hook_input = json.load(sys.stdin)
     if hook_input["hook_event_name"] == "PreCompact":
         return gate_compaction(hook_input)
+    if hook_input["hook_event_name"] == "PostToolUse":
+        return show_gauge(hook_input)
     return print_checkpoint(hook_input)
 
 

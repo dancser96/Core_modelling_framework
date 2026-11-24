@@ -17,6 +17,17 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/compact_gate.py\""
+          }
+        ]
+      }
+    ],
     "PreCompact": [
       {
         "matcher": "auto",
