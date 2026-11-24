@@ -72,8 +72,9 @@ resume on either machine.
   "in parallel" calls it explicitly.
 - **A long build compacts itself at checkpoints.** Claude ends every minor step by writing
   `worknotes/handovers/<topic>.md`. Once the context is past 300k tokens, auto-compaction goes
-  through right after such a checkpoint and nowhere else, except at 600k tokens, and
-  the checkpoint is added back to the new context (D-072 (p)). A manual `/compact` always
+  through right after such a checkpoint and nowhere else, except at 400k tokens, and
+  the checkpoint is added back to the new context (D-072 (p)). Since Claude sees no token
+  count of its own, a hook adds its context size to its context from 250k on. A manual `/compact` always
   works. In a conversation nothing is compacted for you: run `/handover <topic>` before a long
   break, otherwise the whole context is re-written at full price when you return after more
   than an hour.

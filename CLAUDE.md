@@ -464,7 +464,7 @@ numbered list for a flow, nested bullets for a tree and a narrow table for a map
 | Subagent | `ml-correctness-auditor` | Changes to targets, dataset/splits, features, training, evaluation, calibration, inference |
 | Subagent | `compat-guardian` | Changes to config schemas, public API or artifact formats |
 | Hook | `keep_awake.sh` | Automatic: keeps the Mac awake for an hour after each tool call (T41) |
-| Hook | `compact_gate.py` | Automatic: lets auto-compaction through only right after a checkpoint, and adds the checkpoint back (D-072 (p)) |
+| Hook | `compact_gate.py` | Automatic: lets auto-compaction through only right after a checkpoint (or at 400k), adds the checkpoint back, and shows the main thread its context size from 250k (D-072 (p)) |
 
 Vendored items and their sources: `.claude/skills/SOURCES.md`. How to add more:
 `docs/guides/skills_and_agents.md`.

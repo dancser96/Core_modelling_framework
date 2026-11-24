@@ -41,7 +41,7 @@ gets them through git.
 | Subagent | `researcher` | Gathers and checks evidence against the pinned versions, with a source for every claim; never designs. Sonnet, `high` |
 | Subagent | `doc-writer` | Writes docs from substance given in the brief, to the §8 style; never decides what is true. Opus, `high` |
 | Hook | `keep_awake.sh` | Before every tool call: keeps the Mac awake for an hour, so background agents are not stalled by idle sleep (`lessons.md` T41). Does nothing on Linux and WSL |
-| Hook | `compact_gate.py` | Before an auto-compaction: lets it through only when the main thread's last tool call wrote a handover, or at 600k tokens. After a compaction: adds that handover back (D-072 (p)) |
+| Hook | `compact_gate.py` | Before an auto-compaction: lets it through only when the main thread's last tool call wrote a handover, or at 400k tokens. After a compaction: adds that handover back. After each main-thread tool call: a context gauge, one line on crossing 250k and one after every call from 300k until a checkpoint (D-072 (p)) |
 | Plugin | `pyright-lsp` | Live Python type checking for Claude (enabled in `.claude/settings.json`; optional local `pyright`) |
 
 Vendored items are adapted to this repo; sources, commits and local changes are in

@@ -12,8 +12,13 @@ neighbouring days share one entry, each keeping its date. Template and rules: `w
   updated; the roadmap backlog holds the frozen folder per format version from 1.0, to be
   decided earlier if pre-release runs in the bank must survive an upgrade.
 - Also the context lesson: the compact gate blocks auto-compaction until a checkpoint, and
-  none was written after about 195k on 11-23, so the main thread reached 588k. Proposed to the
-  EDS: a 400k ceiling and a context-size hook (no go yet).
+  none was written after about 195k on 11-23, so the main thread reached 588k. Built on the
+  EDS's go: the gate's ceiling is 400k (was 600k), and the same hook now runs on `PostToolUse`
+  as a context gauge, one line on crossing 250k and one after every tool call from 300k until
+  a checkpoint. Replayed on the 11-23 transcript it would first have fired at 256k; checked
+  live once with a lowered threshold (the line reached the main thread's context); 0.02 s a
+  call; silent in subagents by the hook input's `agent_id`, as the gate already reads it (not
+  yet seen live in a subagent). D-072 (p), `CLAUDE.md` §10 and both guides updated.
 
 ### 2026-11-22→11-23 — Independent audit of Stage 3 major steps 2 and 3 (Training, Evaluation)
 - 2026-11-22, the EDS asked for an independent audit of both steps' code with lower-model
