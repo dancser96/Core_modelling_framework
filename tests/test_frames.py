@@ -289,12 +289,15 @@ def test_modelling_frames_hold_eligible_labelled_rows_split_by_client(
 ) -> None:
     """Training's train and Evaluation's test rows share the window and no client; the
     validation rows are the OOT period; the keys, the features, `target` and `split` (and each
-    stage's own columns) only; every row with a known target; train plus test are the eligible
-    labelled rows of the window (EDA's `rows` with a label), the snapshot period's among them;
-    validation is the eligible rows of its period less the null targets; the null-target entry
-    covers the window and v for Evaluation; the collect measurements in Training's meta."""
+    stage's own columns) only; a known target on every train and validation row, while the test
+    part keeps its null-target rows (scored for the drift reference only); train plus test's
+    labelled rows are the eligible labelled rows of the window (EDA's `rows` with a label), the
+    snapshot period's among them; validation is the eligible rows of its period less the null
+    targets; the null-target entry covers the window and v for Evaluation; the collect
+    measurements in Training's meta."""
     train = training_frames.train
-    test = collected_rows[collected_rows["part"] == "test"]
+    tested = collected_rows[collected_rows["part"] == "test"]
+    test = tested[tested["target"].notna()]
     validation = collected_rows[collected_rows["part"] == "validation"]
     assert not set(train["unit_id"]) & set(test["unit_id"])
     assert (train["split"] == "train").all() and (test["split"] == "test").all()
@@ -302,8 +305,9 @@ def test_modelling_frames_hold_eligible_labelled_rows_split_by_client(
     window = in_memory.time.observation_window
     periods = set(train["period"]) | set(test["period"])
     assert min(periods) == window.first and max(periods) == window.last and len(periods) == 6
-    for frame in (train, collected_rows):
+    for frame in (train, validation):
         assert frame["target"].notna().all()
+    assert tested["target"].isna().any()  # the preset's leavers have no target
     assert train.columns.tolist() == ["unit_id", "period", *candidates, "target", "split",
                                       "cv_fold"]  # fmt: skip
     labelled_rows = eda_frames.rows.where(F.col("target").isNotNull()).select("unit_id", "period")
@@ -450,12 +454,12 @@ def test_contract_checks_count_the_unsampled_population(
 ) -> None:
     """The contract runs before any sampling (§4.8): the downsampled build's contract entries
     are the unsampled build's, and each window period's eligible rows less the null targets are
-    the unsampled train and test rows of that period."""
+    the unsampled train and labelled test rows of that period."""
     contract = [entry for entry in evaluation_frames.log if entry["step"] == "contract"]
     assert [entry for entry in downsampled_frames.log if entry["step"] == "contract"] == contract
     eligible_rows = next(entry for entry in contract if entry["check"] == "eligible_rows")
     null_share = next(e for e in evaluation_frames.log if e["step"] == "null_target")["share"]
-    test = collected_rows[collected_rows["part"] == "test"]
+    test = collected_rows[(collected_rows["part"] == "test") & collected_rows["target"].notna()]
     unsampled = pd.concat([training_frames.train, test])["period"]
     per_period = unsampled.map(lambda period: f"{period:%Y-%m}").value_counts()
     for label in WINDOW_LABELS:
@@ -877,6 +881,23 @@ def test_unknown_stage_null_validation_period_and_empty_frame_are_refused(
             build_frames(eda_only, ENTITY, env, spark, stage)
     with pytest.raises(ValueError, match="the frame 'x' is empty"):
         estimate_collect(spark.createDataFrame([], "unit_id int"), "x")
+
+
+def test_spark_known_rows_skip_the_count_and_a_wrong_number_is_refused(
+    spark: SparkSession, env: EnvironmentConfig
+) -> None:
+    """Rows the caller knows are taken as given, with no count (an estimate on a stated number
+    reads it back); a collect whose frame holds another number of rows fails loud, so a wrong
+    known number never reaches the budget check unnoticed."""
+    frame = spark.createDataFrame(
+        [("u1", date(2025, 3, 31), 1), ("u2", date(2025, 3, 31), 2)],
+        "unit_id string, period date, x int",
+    )
+    assert estimate_collect(frame, "train", rows=7)["rows"] == 7
+    collected, entry = collect_frame(frame, "train", env, rows=2)
+    assert len(collected) == 2 and entry["rows"] == 2
+    with pytest.raises(ValueError, match="2 rows collected, 3 expected"):
+        collect_frame(frame, "train", env, rows=3)
 
 
 def test_a_level_order_names_a_categorical_candidate() -> None:

@@ -80,7 +80,7 @@ last and M2.4's four):
 |---|---|---|---|---|
 | M2.1 Foundation | 10-26 – 11-02 | 6 | One config gives the train, test and validation frames, with eligibility and split logs | Built (0.2.0), reviewed and closed by the EDS |
 | M2.2 Understanding | 11-03 – 11-13 | 9 | The traps are flagged, the EDA + Feature Checks report opens offline and reads well, the ledger shows each feature's trail | Built (0.3.0; D-134–D-138), reviewed with a codebase review and closed by the EDS on 2026-11-11; the LDS tries it with `worknotes/lds_run_guide.md`; the questions it raised: `docs/guides/eda_fc_faq.md` |
-| M2.3 Modelling | 11-16 – 11-24 | 6 | A calibrated model beats the baselines and never the oracle; the four families round-trip without pickle; no CV fold mixes a client's rows (D-106) | In progress: step 1 (the spec and Foundations) built and reviewed by the EDS 2026-11-16; step 2 (Training) built 2026-11-16 and step 3 (Evaluation) built 2026-11-17 (0.4.0), both in the EDS's joint review |
+| M2.3 Modelling | 11-16 – 11-24 | 6 | A calibrated model beats the baselines and never the oracle; the four families round-trip without pickle; no CV fold mixes a client's rows (D-106) | In progress: step 1 (the spec and Foundations) built and reviewed by the EDS 2026-11-16; step 2 (Training) built 2026-11-16 and step 3 (Evaluation) built 2026-11-17 (0.4.0); an independent audit of both (2026-11-22) applied 2026-11-23 (0.5.0); both in the EDS's joint review |
 | M2.4 Operations | 11-25 – 12-04 | 4 | Register, promote, deploy, score and monitor from the CLI and the notebooks | — |
 
 M3 and M4 deepen across stages rather than stage by stage.
@@ -102,7 +102,7 @@ the first cut. Stage 5 (integrations and release) runs in M4 and both run-throug
 | 2 | Reporting | thin (HTML, embedded plotly, styled tables) | deep (theme file) | — |
 | 2 | Synthetic data | as accepted (M1) plus the LDS's noise, constant, redundant and very-low-fill columns (0.5.0) and a trap and a control for every Feature Checks finding, the `unstable` kind included (0.6.0) | as the pre-release | — |
 | 3 | Training (FLAML) | thin; client groups (D-106); calibration: Platt and beta for binary, the level factor for regression, with the prior-shift offset (D-049); fitting the calibrator at the true rate is decided in M3; bundle shape final | deep (categoricals, automated selection; retraining keeps the data definition, D-052) | — |
-| 3 | Evaluation | thin (the seventeen views, reliability among them, D-141) | deep (comparison, stratified) | Window ablation and the sweep function |
+| 3 | Evaluation | thin (the report's views, reliability among them, D-141) | deep (comparison, stratified) | Window ablation and the sweep function |
 | 3 | Model card | shape final | deep | — |
 | 4 | Lifecycle (register / promote / deploy) | thin; records shape final (D-111) | deep (registry tables, inventory) | — |
 | 4 | Inference | thin; scores table and manifest shape final | deep (reinference) | — |
@@ -119,8 +119,15 @@ the first cut. Stage 5 (integrations and release) runs in M4 and both run-throug
 ### Work streams beside the critical path
 - **Spikes:** (1) FLAML 2.7's group split, (2) non-pickle round trips for `lgbm`, `xgboost`,
   `catboost` and (3) Arrow `toPandas` with date columns are done (Claude ran them on 2026-11-11;
-  results in `docs/context/environment.md`). Still open: (5) plotly in the bank's JupyterLab,
-  opening time included (the EDS, inside, later). Spike 4 is dropped (D-036).
+  results in `docs/context/environment.md`). Still open, for the EDS's next trip inside:
+  (5) plotly in the bank's JupyterLab, opening time included, with a beeswarm hover on a large
+  and a tiny value (250,000 and 1.234e-05); (6) a Spark executor's Python: `core_modelling`
+  itself and all three model libraries must import there, whatever the bundle's family (beside
+  T40); (7) the first import writes matplotlib's font cache into `$HOME`, on the driver and on
+  each worker, which a read-only home would refuse; (8) one model from one config at two thread
+  counts (`threads` in the environment file) with categorical features, since the saved models
+  were byte-identical at 1 to 8 threads for every family on the development machine only.
+  Spike 4 is dropped (D-036).
 - **Learn sessions, booked by the LDS, by 11-06:** platform / MLOps (change-request steps and the
   freeze, MLflow's availability OD-08, the registry owner OD-23, Sonar's quality gate,
   scheduling); the feature store team (OD-26: how a use case reads from it; its design is written
@@ -189,7 +196,20 @@ the first cut. Stage 5 (integrations and release) runs in M4 and both run-throug
 - Typed parquet schemas for every stage's tables before the 1.0 freeze (D-007): a text or list
   column that is all null is written as type `null` or `list<null>`, so a table's schema
   follows its data; fixed once in `write_parquet` for every stage (M2.4, with the 1.0 hardening;
-  the EDS, Q670, 2026-11-17) — `context/lessons.md`
+  the EDS, 2026-11-17). Seen in Training's tables and in Evaluation's: `metrics.stratum` and
+  `level` without configured strata, and an empty `strata` or `permutation_importance` table
+  (T44) — `context/lessons.md`
+- A frozen run folder per format version, from release 1.0's first run in the bank (D-007,
+  D-139 (f)): one small trained and evaluated run committed with the tests, which every later
+  version must open through the contract and score as it did, plus a test that the writers
+  still write its format, so no format changes under an unchanged version. Until then the
+  contract is tested on the run the suite writes (`tests/test_run_contract.py`). Earlier if runs
+  the pre-release trains in the bank must survive an upgrade: decide before the December move
+  (the EDS, 2026-11-24) — `test_harness.md`
+- Local-filesystem assumptions to lift with M2.4's transport: the scores table's write (Spark
+  writes to a bare path, Python then renames and removes it, which point at different places
+  under a cluster master or an HDFS default filesystem), the run number's `mkdir` and the stage
+  folder's rename — `evaluation.md`, `model_bundle.md`
 - Window ablation, "does a multi-month window beat a single month?" (a nice to have in M4) —
   design in `dataset.md`
 - Target Factory: one binary rule family with lineage (M2 thin), the other rule families and
@@ -208,7 +228,7 @@ the first cut. Stage 5 (integrations and release) runs in M4 and both run-throug
   three selection rules (M2.3) and richer categorical handling (M4); production retraining on the same data
   definition is the default deploy path (D-052) — `training.md`
 - Evaluation: metrics from the per-task spec with client-bootstrap intervals, pooled and per
-  period, the baselines comparison, the stratified table, the seventeen views, the model card
+  period, the baselines comparison, the stratified table, the report's views, the model card
   and `compare_runs` for two runs (M2.3); the comparison report over many runs and sweeps (M4) —
   `evaluation.md`
 - Reporting: HTML writer, plotly, chart rules, choices block, model card (M2 thin, M4 deep) —
@@ -352,6 +372,7 @@ direction or needs people outside the team.
 | OD-26 | **Upstream:** feature store integration (D-021): how a use case reads from the feature store, alone or with other sources (point-in-time reads; how its entities and features map onto the data definition and its hash); how the work splits with the feature store team | Leaning (the EDS, 2026-10-30; an update may follow): little build outside the bank. Inside the bank the EDS adds an example notebook that loads features from the feature store, applies the format fixes and saves them as a dataset, which the environment file maps like any other source (a path or a table) and Target Factory joins to the others; the adapter then needs no `feature_store` format (refused at load today), and the outside-bank example's merge runs on a synthetic stand-in ([merges and mistake tests](components/test_harness.md#merges-and-mistake-tests)). Still to settle: (i) point in time: one row per unit per period holding the values as of that period, never today's values stamped on history (`CLAUDE.md` §4.1); (ii) production: inference reads the sources for every scored period, so the extract is refreshed by a job, not a notebook (`CLAUDE.md` §3), with the same fixes as for training (§4.9); leaning: the feature store team or an upstream job writes it as a table, read like any other, else a small framework function does the read and the fixes for both the notebook and inference; the notebook's instructions require one row per unit per period, as of that period; (iii) a saved period never changes afterwards, since the hashes see logical names, not contents (§4.10, D-079); (iv) which fixes the framework makes: the id cast, period tags and per-source key names (D-129, 2026-10-30); clashing columns are renamed in the extract. Limited to Stage 1 in Phase 2; feedback into the feature store stays on the Phase 3 wishlist (D-021) | EDS after the work stream, with the feature store team | `components/environment.md` |
 | OD-27 | **Lifecycle:** retraining in production. The CDS prefers models retrained in production rather than moved there | Shape settled (D-052): the bundle carries the recipe (`recipe_hash`); production refits it on the same window and clients, only the inference month moving, and passes a check against its evaluated parent (label-free agreement on the inference month, its own test-split AUC and calibration per window month, rows and positive events per month against the parent's EDA artifact, tolerances declared beforehand, never the validation month) before it scores. Retraining is the Phase 2 default, and deploying the fitted model without a retrain is also allowed (D-033). Still open, with the platform / MLOps team in M4: whether production has the data and compute to train; determinism; what "deployed" then records | EDS + LDS, with the platform / MLOps team (M4) | `components/lifecycle.md` |
 | OD-28 | **Inference:** a rank score beside the calibrated probability? Scores are compared across products downstream (D-049); in the long run a rank or normalised score may serve that comparison better than probabilities alone | Not before release 1.0; probabilities with correct calibration until then | EDS + LDS | `components/inference.md` |
+| OD-29 | **Identities:** how the hashes stay put across releases within a major. Today every hash covers fields left at their default, so one added field moves the data-definition hash and orphans a use case's Stage 2 folder, audit log and runs when its pin is raised (D-047); one global `HASH_VERSION` also guards the bundle and the sign-off, so bumping it for that refuses every stored bundle; and the "schema change, not a data change" message of D-088 is not built | Before 1.0's first row in the bank: hash only the fields that are set, with defaults and level fills frozen within a major; a version per hash family in place of the global one; `schema_version` out of the hashed dump; the seeded draws pinned by tests | EDS | `worknotes/m2_3_modelling/hashes_and_compatibility.md` until built, then `components/config.md` → Identities |
 
 ## Chief DS topics
 

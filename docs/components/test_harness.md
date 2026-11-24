@@ -6,7 +6,8 @@ adds the slim `holdings` table (2026-10-26, D-129); 0.5.2 tags the holdings' mon
 **Legacy:** `tests/smoke_test.py` (stub-based — do not copy its stubs)
 **Related:** [dataset](dataset.md) (time model) · [target factory](target_factory.md) ·
 [EDA](eda.md) · [feature checks](feature_checks.md) · [environment](environment.md) ·
-[config](config.md) · `tests/README.md` · `synthetic/REVIEW.md` (review guide) · D-003, D-011, D-014, D-020, D-029,
+[config](config.md) · [model bundle](model_bundle.md) (the run folder's contract) ·
+`tests/README.md` · `synthetic/REVIEW.md` (review guide) · D-003, D-011, D-014, D-020, D-029,
 D-041, D-064, D-083 · OD-17, OD-26
 
 Read it in three levels:
@@ -68,6 +69,8 @@ will read real data. Stubs hid every environment bug in the crunch (T15).
 - **A ceiling:** for each of 12 standard targets, the oracle's AUC (about 0.7–0.95) is what a
   perfect model would reach. A model that beats it by more than about two standard errors on
   positive events is leaking (D-100 (e)).
+- **The run folder's contract:** the run the suite writes is opened through the contract, and
+  damaged copies of it are refused by name ([below](#the-run-folders-contract)).
 
 **How it is trusted.** 10 check families compare 1,374 statistics with this spec, and all pass at
 100k (0.6.0, 2026-11-10). The checks are written from the spec and never call the code that makes
@@ -1331,6 +1334,23 @@ on the Mac: generation 80 s, the six Spark stage runs about 240 s), and
 
 The tests compare against the spec and the oracle, never against stored values, so the same
 tests run inside the bank, where the package goes as code and no dataset is copied in (D-041).
+Nothing is stored until 1.0 (below).
+
+### The run folder's contract
+`tests/test_run_contract.py` (Spark, on the session's `evaluated_card` run) opens the run folder
+Training and Evaluation wrote through `open_run_folder`
+([model bundle](model_bundle.md#requirements-and-design-constraints), item 7): one run across
+its pieces, the per-run ledger and the `stage2/` copy read back. A copy of the folder damaged
+in 18 ways (a file deleted, a version changed, a key or a column removed, a JSON truncated, …)
+is refused each time, the error naming the damage.
+
+Until 1.0 no run folder is stored in the repo: 0.x promises no older format (D-007), so this
+version only has to read what it writes, and a stored folder would be regenerated at every
+bump (the EDS, 2026-11-24). From 1.0's first run in the bank, a frozen run folder per format
+version is committed with the tests: every later version must load it and reproduce its
+bundle's scores, and a test compares what the writers write with it, so no format changes
+under an unchanged version (D-139 (f); `docs/roadmap.md`, backlog). It comes earlier if runs
+the pre-release trains in the bank must survive an upgrade.
 
 Already in place: a code rule (`tests/test_code_rules.py`) asserts that `src/core_modelling/`
 never contains `_trap_`. The framework finds traps from their statistics, never from names, since

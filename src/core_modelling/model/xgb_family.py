@@ -33,7 +33,7 @@ from core_modelling.model.family_inputs import (
 FAMILY = "xgboost / xgb_limitdepth"  # one module serves both entries, so messages name both
 FILE_NAME = "model.json"
 MODEL_CLASSES = {"binary": xgb.XGBClassifier, "regression": xgb.XGBRegressor}
-OBJECTIVES = {  # Q639's names in XGBoost's words
+OBJECTIVES = {  # the config's objective names in XGBoost's words
     "binary": {"log_loss": {"objective": "binary:logistic"}},
     "regression": {
         "squared_error": {"objective": "reg:squarederror"},
@@ -73,7 +73,7 @@ def fixed_params(
     threads: int,
     tweedie_variance_power: float | None,
 ) -> dict:
-    """The constants every XGBoost fit of a run shares, trials and final fit alike (A55): the
+    """The constants every XGBoost fit of a run shares, trials and final fit alike: the
     objective (with the variance power under Tweedie; Huber, pseudo-Huber here, has its delta
     fixed at 1.0), the seed, the threads, the declared categoricals as feature types, and the
     monotone constraints as a bracketed string over every feature (a short tuple is padded)."""
@@ -121,27 +121,34 @@ def fit(X: pd.DataFrame, y: np.ndarray, params: dict, task: str) -> xgb.Booster:
 
 def predict(booster: xgb.Booster, X: pd.DataFrame, threads: int | None = None) -> np.ndarray:
     """The margin from every tree: log-odds for binary, the raw output for regression (the log
-    scale under Tweedie and Poisson, A42). `threads` caps XGBoost's threads for this call, on
+    scale under Tweedie and Poisson). `threads` caps XGBoost's threads for this call, on
     the booster and its matrix, and the booster's own setting is restored after it (None: that
     setting, every core on a loaded booster); the margins are the same at any count."""
+    return _predict(booster, X, threads, output_margin=True)
+
+
+def contributions(booster: xgb.Booster, X: pd.DataFrame, threads: int | None = None) -> np.ndarray:
+    """XGBoost's own per-feature contributions to the margin (SHAP's tree values), one column
+    per feature in the booster's order and the base value last; a row sums to its margin.
+    `threads` as in `predict`."""
+    return _predict(booster, X, threads, pred_contribs=True)
+
+
+def _predict(
+    booster: xgb.Booster, X: pd.DataFrame, threads: int | None, **output: bool
+) -> np.ndarray:
+    """`booster.predict` from every tree with `output` (the margin or the contributions) as
+    float64, on `threads` set on the booster and its matrix, the booster's own setting restored
+    after the call."""
     before = json.loads(booster.save_config())["learner"]["generic_param"]["nthread"]
     if threads is not None:  # set on the booster itself, so it is put back below
         booster.set_param({"nthread": threads})
     try:
-        margin = booster.predict(
-            _matrix(booster, X, threads), output_margin=True, iteration_range=_every_tree(booster)
+        values = booster.predict(
+            _matrix(booster, X, threads), iteration_range=_every_tree(booster), **output
         )
     finally:
         booster.set_param({"nthread": before})
-    return margin.astype(np.float64)
-
-
-def contributions(booster: xgb.Booster, X: pd.DataFrame) -> np.ndarray:
-    """XGBoost's own per-feature contributions to the margin (SHAP's tree values), one column
-    per feature in the booster's order and the base value last; a row sums to its margin."""
-    values = booster.predict(
-        _matrix(booster, X), pred_contribs=True, iteration_range=_every_tree(booster)
-    )
     return values.astype(np.float64)
 
 

@@ -8,14 +8,15 @@ on the snapshot's edges (`bin_edges`, T25), a categorical mapped to the window's
 (`window_levels`), null and a float NaN always the null bin (N2, N5). A categorical's window
 cells also carry the client's `fold`, so its level encoding can be fitted on other clients than
 the ones it orders (`concordance.cross_fitted_concordance`): the same client sits in every
-period, so leaving a period out leaves the client in (V16). Each pass is one
+period, so leaving a period out leaves the client in. Each pass is one
 `explode(array(struct(...)))` and one `groupBy`, whose partial aggregation collapses the exploded
 rows inside each partition, so the shuffle carries cells, not rows (the plan's spike: 15–18 s
 and a 3 MB shuffle over the six-month canonical window; a per-feature loop was 4.5× slower, so
 there is no fallback). `client_constant_shares`, `population_counts` and `window_clients` are
 the other tables, `compared_periods` picks the periods and `estimate_cells` guards `eda.bins:
-null`. Spark SQL and JVM transformers only, no pandas UDF: nothing Python-side runs on the
-bank's executors. What the statistics read from the cells is `docs/components/eda.md`'s.
+null`; `cap_levels` is the pandas side of the same level names, for a collected column. Spark
+SQL and JVM transformers only, no pandas UDF: nothing Python-side runs on the bank's executors.
+What the statistics read from the cells is `docs/components/eda.md`'s.
 """
 
 from datetime import date
@@ -29,7 +30,7 @@ from pyspark.sql.types import DoubleType, FloatType
 
 from core_modelling.config import UseCaseConfig
 from core_modelling.periods import Period, period_spec
-from core_modelling.statistics.distributions import bin_labels, quantile_edges
+from core_modelling.statistics.distributions import bin_labels, level_text, quantile_edges
 
 LEVEL_CAP = 50  # categorical levels kept per feature, by window frequency; the rest pooled
 POOLED_LEVEL_CAP = 10_000  # window levels listed per feature; past it, every level not kept pools
@@ -41,7 +42,7 @@ RESERVED_BINS = (NULL_BIN, OTHER, NEW)  # a real level of these names is quoted:
 # … and so is a blank one, `''` or `' '` (N3: never trimmed); Java's `\s`, ASCII only
 BLANK_LEVEL = r"^[ \t\n\x0B\f\r]*$"
 CONSTANT_CHUNK = 50  # columns per client-constant job: one job over 139 filled the 2 GB heap
-ENCODING_FOLDS = 5  # client folds on a categorical's cells, for the cross-fitted encoding (V16)
+ENCODING_FOLDS = 5  # client folds on a categorical's cells, for the cross-fitted encoding
 CELL_COLUMNS = ["feature", "period", "lagged", "fold", "bin", "bin_order", "is_null",
                 "target_bin", "n", "sum_y", "sum_y2"]  # fmt: skip
 
@@ -127,6 +128,23 @@ def window_levels(
         levels[row.feature].append(row.level)
     over = {row.feature for row in collected if row.levels > POOLED_LEVEL_CAP}
     return levels, [name for name in categoricals if name in over]
+
+
+def cap_levels(values: pd.Series, max_levels: int) -> pd.Series:
+    """Each value as a level label, an ordered categorical on the same index: the `max_levels`
+    levels with the most rows (ties by label) as their text (`level_text`, so a snapshot table
+    names a level as the counts table's cells do), a real level named
+    like a reserved bin or blank quoted (`'null'`, `''`, `' '`), the rest `__other__`, null (a
+    NaN too) its own level `null` (N16); ordered by rows, then `__other__`, then `null`."""
+    text = values.dropna().map(level_text).astype(str)  # str: an empty map keeps a float dtype
+    quoted = text.isin(RESERVED_BINS) | text.str.match(BLANK_LEVEL)
+    text = text.where(~quoted, "'" + text + "'")
+    counts = text.value_counts().sort_index().sort_values(ascending=False, kind="stable")
+    kept = list(counts.index[:max_levels])
+    order = kept + ([OTHER] if len(counts) > max_levels else [])
+    order += [NULL_BIN] if values.isna().any() else []
+    labels = text.where(text.isin(kept), OTHER).reindex(values.index).fillna(NULL_BIN)
+    return pd.Series(pd.Categorical(labels, categories=order, ordered=True), index=values.index)
 
 
 def count_cells(

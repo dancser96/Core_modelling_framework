@@ -1,30 +1,25 @@
 """Training's row tables and train-side metrics (training.md → "What Training writes").
 
 `oof_table` is the `oof` table: every train row's out-of-fold margin and scores, which the
-calibration was fitted on and which Evaluation reads beside test. `explanation_sample` is a
+calibration was fitted on and which Evaluation reads beside test, and the final model's score on
+the same row it was fitted on, from which Evaluation takes train's in-sample concordance on the
+cells test is read on. `explanation_sample` is a
 seeded sample of train rows with their raw feature values and out-of-fold contributions, which
 the explanation charts draw from. `train_metrics` are the run's numbers on train: the decision's
 metric out of fold and the concordance out of fold and in sample. All of it is train-only
 evidence (D-031) and optimistic: the features and the configuration were chosen on these folds.
-`train_level` reads a run's train level back for Evaluation and `compare_runs`.
+The sample's column names and the readers of these tables are `run_artifacts.py`'s.
 """
 
 import numpy as np
 import pandas as pd
 
-from core_modelling.artifacts import local_path, stage_json
 from core_modelling.model.bundle import OUTPUT_COLUMNS
 from core_modelling.model.calibration import apply_calibration
+from core_modelling.run_artifacts import BASE_COLUMN, CONTRIBUTION_SUFFIX, EXPLANATION_ROWS
 from core_modelling.sources import KEYS
 from core_modelling.statistics.losses import mean_fold_loss, metric_value, row_concordance
-from core_modelling.training.fold_models import FOLD_COLUMN
-
-EXPLANATION_ROWS = 5000  # the explanation sample: this many seeded train rows, or every row
-CONTRIBUTION_SUFFIX = "__contribution"  # a feature's contribution column in the sample
-BASE_COLUMN = (
-    "base_value"  # the contributions' base value: a row's contributions and it sum to its margin
-)
-
+from core_modelling.training.fold_models import FOLD_COLUMN, out_of_fold_loss
 
 # Stored with the train-side numbers, so nobody reads them as a test result
 OPTIMISM_NOTE = (
@@ -34,16 +29,23 @@ OPTIMISM_NOTE = (
 
 
 def oof_table(
-    train: pd.DataFrame, margins: np.ndarray, calibration: dict, task: str
+    train: pd.DataFrame,
+    margins: np.ndarray,
+    calibration: dict,
+    task: str,
+    in_sample: np.ndarray,
 ) -> pd.DataFrame:
-    """One row per train row as trained: the keys, `cv_fold`, `target` and the out-of-fold
-    `margin`, `score_raw` and `score` under the bundle's `calibration`. `margins` is aligned
-    with `train`. A non-finite score fails loud, as `score_frame` refuses one."""
+    """One row per train row as trained: the keys, `cv_fold`, `target`, the out-of-fold
+    `margin`, `score_raw` and `score` under the bundle's `calibration`, and `score_in_sample`,
+    the final model's `score` on the row it was fitted on (`in_sample`, its margins). Both
+    arrays are aligned with `train`. A non-finite score fails loud, as `score_frame` refuses
+    one."""
     score_raw, score = apply_calibration(margins, calibration, task)
+    _, score_in_sample = apply_calibration(in_sample, calibration, task)
     table = train[[*KEYS, FOLD_COLUMN, "target"]].assign(
-        margin=margins, score_raw=score_raw, score=score
+        margin=margins, score_raw=score_raw, score=score, score_in_sample=score_in_sample
     )
-    for name in OUTPUT_COLUMNS:
+    for name in [*OUTPUT_COLUMNS, "score_in_sample"]:
         count = int((~np.isfinite(table[name])).sum())
         if count:
             raise ValueError(
@@ -72,13 +74,6 @@ def explanation_sample(train: pd.DataFrame, contributions: pd.DataFrame, seed: i
     return pd.concat(parts, axis=1).reset_index(drop=True)
 
 
-def sample_contributions(sample: pd.DataFrame, features: list[str]) -> pd.DataFrame:
-    """The explanation sample's contributions under the features' own names, one column per
-    feature: the shape the explanation charts take beside `sample[features]`, the raw values."""
-    columns = [f"{name}{CONTRIBUTION_SUFFIX}" for name in features]
-    return sample[columns].set_axis(features, axis=1)
-
-
 def train_metrics(
     metric: str,
     task: str,
@@ -97,27 +92,12 @@ def train_metrics(
     true one. The concordance (the AUC for a binary target) is given out of fold, the mean over
     the folds, and in sample, for the train–test gap Evaluation shows (D-106).
     """
-    _, score = apply_calibration(margins, {**calibration, "offset": 0.0}, task)
+    loss = out_of_fold_loss(metric, y, margins, fold, {**calibration, "offset": 0.0}, task)
     concordance = mean_fold_loss("concordance", y, margins, fold)
     return {
         "metric": metric,
-        "out_of_fold": metric_value(metric, mean_fold_loss(metric, y, score, fold)),
+        "out_of_fold": metric_value(metric, loss),
         "out_of_fold_concordance": metric_value("concordance", concordance),
         "in_sample_concordance": row_concordance(y, in_sample),
         "note": OPTIMISM_NOTE,
     }
-
-
-def train_level(run_folder: str) -> float:
-    """The unsampled train split's rate (regression: its mean), the `base` the skill scores and
-    the `population_base_rate` read (D-098): `training.json`'s `sampling.true_rate` when
-    Training sampled, else the target mean of `oof.parquet`, which then holds every train row
-    and is read for that one column."""
-    folder = local_path(run_folder)
-    training = stage_json(folder, "training")
-    if not training:
-        raise FileNotFoundError(f"no training artifacts in {run_folder}: run Training first")
-    if training["sampling"]["method"] is not None:
-        return float(training["sampling"]["true_rate"])
-    oof = pd.read_parquet(folder / "training" / "tables" / "oof.parquet", columns=["target"])
-    return float(oof["target"].mean())

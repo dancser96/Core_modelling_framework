@@ -13,21 +13,22 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from core_modelling import __version__
 from core_modelling.artifacts import StageResult, read_stage
 from core_modelling.evaluation.card import (
-    CARD_SCHEMA_VERSION,
     _check_evaluation,
-    _check_run_pieces,
     _plain,
-    _read_run_json,
     _recorded_considerations,
+    _records,
     _require,
     _warning_codes,
     build_card,
 )
 from core_modelling.model.bundle import Bundle, load_bundle
-from core_modelling.reporting.card import CARD_SECTIONS, render_card
+from core_modelling.reporting.card import CARD_SCHEMA_VERSION, CARD_SECTIONS, render_card
+from core_modelling.run_artifacts import _check_run_pieces, _read_run_json
 from core_modelling.runs import RUN_SCHEMA_VERSION
+from core_modelling.statistics.score_cells import PARTS
 
 
 @pytest.fixture(params=["evaluated_card", "evaluated_regression"])
@@ -62,12 +63,19 @@ def test_card_holds_every_section_and_survives_json(evaluated: StageResult) -> N
 
 
 def test_card_holds_the_final_features_and_the_metric_rows(evaluated: StageResult) -> None:
-    """The final list is the bundle's; every metric row of Evaluation's table is a record."""
+    """The final list is the bundle's; every metric row of Evaluation's table is a record; the
+    card names the framework version writing it; each part's rows per period, pooled and on the
+    validation period's test clients sit under their own keys."""
     card, tables, run_folder = _written_card(evaluated)
     final = [row["feature"] for row in card["features"]["final"]]
     assert sorted(final) == sorted(load_bundle(f"{run_folder}/bundle").features)
     assert len(card["performance"]["metrics"]) == len(tables["metrics"])
     assert card["details"]["task"] == evaluated.config.task
+    assert card["details"]["framework_versions"]["card"] == __version__
+    data = card["data"]
+    assert {row["part"] for row in data["rows_pooled"]} == set(PARTS)
+    assert {row["part"] for row in data["rows_per_period"]} == set(PARTS)
+    assert len(data["rows_validation_test_clients"]) == 1
 
 
 def test_card_from_memory_is_the_card_from_the_folder(evaluated: StageResult) -> None:
@@ -107,6 +115,15 @@ def test_plain_gives_json_types() -> None:
         _plain({"a": float("inf")})
     with pytest.raises(TypeError, match="Timestamp"):
         _plain({"a": pd.Timestamp("2025-01-31")})
+
+
+def test_a_training_record_enters_the_card_with_the_declared_keys_only() -> None:
+    """A key Training adds stays out of the card; a declared key a record lacks fails naming
+    it."""
+    records = [{"family": "lgbm", "trials": 4, "new_column": 1}]
+    assert _records(records, ("family", "trials"), "search") == [{"family": "lgbm", "trials": 4}]
+    with pytest.raises(ValueError, match=r"search lacks \['seconds'\]"):
+        _records(records, ("family", "seconds"), "search")
 
 
 def test_considerations_are_codes_from_facts() -> None:
@@ -149,7 +166,7 @@ def test_card_refuses_another_run_or_config() -> None:
     run, manifest, training, meta, bundle = _run_pieces()
     _check_run_pieces(run, manifest, training, bundle)
     _check_evaluation(run, meta, bundle, "c")
-    with pytest.raises(ValueError, match="name the runs"):
+    with pytest.raises(ValueError, match="name the runs.*one folder, one run"):
         _check_run_pieces(run, manifest, {**training, "run_id": "r002"}, bundle)
     with pytest.raises(ValueError, match="meta names run r002"):
         _check_evaluation(run, {**meta, "run_id": "r002"}, bundle, "c")
@@ -161,8 +178,8 @@ def test_card_refuses_a_missing_key(tmp_path: Path) -> None:
     """A `run.json` or a meta without a key the card reads fails naming the key."""
     path = tmp_path / "run.json"
     path.write_text(json.dumps({"run_schema_version": RUN_SCHEMA_VERSION, "run_id": "r001"}))
-    with pytest.raises(ValueError, match="lacks .*'use_case'"):
-        _read_run_json(str(path))
+    with pytest.raises(ValueError, match="lacks the keys .*'use_case'"):
+        _read_run_json(tmp_path)
     with pytest.raises(ValueError, match=r"Evaluation's meta lacks \['warnings'\]"):
         _require({"run_id": "r001"}, ("run_id", "warnings"), "Evaluation's meta")
 
@@ -182,3 +199,25 @@ def test_render_card_on_a_small_card() -> None:
     assert page.count("<p>none</p>") == len(CARD_SECTIONS) - 3
     assert ">nan<" not in page
     assert "<script" not in page
+
+
+def test_render_card_refuses_another_schema_version_naming_both() -> None:
+    """A card of another version, or none, is refused with its version and the one read."""
+    card = {"schema_version": CARD_SCHEMA_VERSION + 1, "details": {}}
+    with pytest.raises(
+        ValueError,
+        match=rf"schema_version {CARD_SCHEMA_VERSION + 1}.*version {CARD_SCHEMA_VERSION}",
+    ):
+        render_card(card)
+    with pytest.raises(ValueError, match="schema_version None"):
+        render_card({"details": {}})
+
+
+def test_the_card_page_prints_integers_as_they_are_and_floats_plainly() -> None:
+    """A seed reads 20240101, never 20,240,101; a float keeps `plain_number`'s digits."""
+    details = {"use_case": "u", "run_id": "r001", "entity": "e", "seed": 20240101, "rate": 0.12345}
+    card = {"schema_version": CARD_SCHEMA_VERSION, "details": details,
+            **{name: {} for name in CARD_SECTIONS[1:]}}  # fmt: skip
+    page = render_card(card)
+    assert ">20240101<" in page and "20,240,101" not in page
+    assert ">0.1235<" in page

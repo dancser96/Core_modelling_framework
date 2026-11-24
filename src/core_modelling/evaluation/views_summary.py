@@ -16,7 +16,7 @@ from core_modelling.config.identities import short
 from core_modelling.config.schema import Baseline
 from core_modelling.evaluation.tables import headline_names, metric_key, pooled_metrics
 from core_modelling.evaluation.views import (
-    VIEWS_BY_TASK,
+    few_events,
     interval_text,
     interval_texts,
     labelled_metrics,
@@ -81,8 +81,7 @@ def _how_to_read(resolved: UseCaseConfig) -> list[str]:
         "after each value, value (low to high), and drawn as error bars. A value reads "
         "undefined where the data leave the metric without one, and (no interval) follows it "
         "where the metric was undefined in at least one bootstrap replicate.",
-        f"Grey means too little support, still shown: fewer than strata.min_events = "
-        f"{resolved.strata.min_events} {VIEWS_BY_TASK[resolved.task]['events']} (the events "
+        f"Grey means too little support, still shown: {few_events(resolved)} (the events "
         "column) in a period or a level. An outcome counts once in every period whose target "
         "window holds it, so a pooled row can count it up to the window's length in periods. "
         "Read the interval, not the point.",
@@ -93,10 +92,11 @@ def _how_to_read(resolved: UseCaseConfig) -> list[str]:
 
 def _statements(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseConfig) -> str:
     """What the numbers cannot say on their own, as a list (evaluation.md "What the report
-    states"): the optimism of Training's out-of-fold metric, the train-to-test gap, the labels
+    states"): the optimism of Training's out-of-fold metric, the train-to-test gap (a regression's
+    train concordance read on test's score cells, `in_sample_concordance_cells`), the labels
     Stage 2's decisions saw, validation's role, the periods earlier runs scored, the pooling
-    note and the task's own statement (`VIEWS_BY_TASK`)."""
-    training, clause = meta["training"], VIEWS_BY_TASK[resolved.task]["gap_clause"]
+    note and the task's own statement (`summary_statement`)."""
+    training, on_cells = meta["training"], meta["in_sample_concordance_cells"]
     order = TASK_SPECS[resolved.task]["order_metrics"][0]
     pooled = pooled_metrics(tables["metrics"]).set_index(["part", "metric"])["value"]
     earlier = sorted({entry["validation_period"] for entry in meta["earlier_validations"]})
@@ -105,13 +105,16 @@ def _statements(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseCo
         f"Training's out-of-fold {training['metric']}, {plain_number(training['out_of_fold'])}, "
         "is optimistic: the features and the configuration were chosen on the same folds; test "
         "is the first honest number for those choices.",
-        f"Train {order}, on the rows the model was fitted on, "
-        f"{plain_number(training['in_sample_concordance'])}; test "
-        f"{plain_number(pooled[('test', order)])}: the gap is how far the model fits its own rows"
-        + (f"; {clause}." if clause else "."),
+        f"Train {order}, on the rows the model was fitted on"
+        + (", read on the same score cells as test's" if on_cells is not None else "")
+        + f", {plain_number(training['in_sample_concordance'] if on_cells is None else on_cells)}; "
+        f"test {plain_number(pooled[('test', order)])}: the gap is how far the model fits its "
+        "own rows.",
         "People's feature decisions in EDA and Feature Checks saw every eligible client, test "
         "labels included; the validation period, whose labels they never saw, is the one honest "
-        "number.",
+        "number, though its headline pools the clients of both splits, most of them train "
+        "clients: only the view \"Validation on test clients only\" shows the test clients "
+        "alone.",
         "Validation is reported, never chosen on: when test chose among variants, the gap from "
         "test to validation mixes overfitting with selection.",
         f"Earlier Evaluation runs scored the validation periods {', '.join(earlier)}."
@@ -123,7 +126,7 @@ def _statements(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseCo
             f"on {', '.join(sorted(set(differs['part'])))}: the base rate moved inside the "
             "window; read the values per period."
         )
-    statement = VIEWS_BY_TASK[resolved.task]["statement"]
+    statement = TASK_SPECS[resolved.task]["summary_statement"]
     items += [statement] if statement else []
     return "<ul>" + "".join(f"<li>{escape(item)}</li>" for item in items) + "</ul>"
 
@@ -153,10 +156,17 @@ def baseline_table(baselines: pd.DataFrame) -> pd.DataFrame:
     return wide.rename_axis(index=None, columns=None).reset_index(names="scorer")
 
 
+def _warnings_blocks(meta: dict) -> list:
+    """The Warnings section: Evaluation's own warnings (each one's `text`), then the list "From
+    Training" (`meta["training_warnings"]`, Training's own sentences)."""
+    own = warnings_block([warning["text"] for warning in meta["warnings"]])
+    return [own, ("From Training", [warnings_block(meta["training_warnings"])])]
+
+
 def summary_view(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseConfig) -> list:
     """View 1: what was evaluated and chosen (D-032), the headline numbers with their intervals,
     the model beside each baseline, the reading notes, what the numbers cannot say and the
-    warnings (each warning's `text`)."""
+    warnings: Evaluation's and Training's."""
     numbers = _headline_numbers(tables["metrics"], meta, resolved)
     comparison = style_table(
         baseline_table(labelled_metrics(tables["baselines"], meta["row_loss"])),
@@ -170,5 +180,5 @@ def summary_view(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseC
         ("Baselines", [comparison]),
         ("How to read", _how_to_read(resolved)),
         ("What these numbers cannot say", [_statements(tables, meta, resolved)]),
-        ("Warnings", [warnings_block([warning["text"] for warning in meta["warnings"]])]),
+        ("Warnings", _warnings_blocks(meta)),
     ]  # fmt: skip

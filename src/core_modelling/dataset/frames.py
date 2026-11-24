@@ -4,19 +4,18 @@
 input through `model_input.read_model_input`) and builds the stage's parts (`STAGE_PARTS`). EDA
 gets the **snapshot**, the `eda.snapshot` period collected whole (every row after the analysis
 filters: the keys, the supported candidates, the modelling tags, `eligible`, `target`, `split`),
-and **`rows`**, the Spark frame of the eligible rows of the compared periods with the label kept
-in the window only, never collected. Both modelling stages read the eligible rows with a known
-target. Training gets `train` alone, never a test or validation row (§4.4): the window's train
-split, sampled when declared, with the client folds (`folds.py`, checked before the collect),
+and **`rows`**, the Spark frame of the eligible rows of the compared periods with the label kept in
+the window only, never collected. Training reads the eligible rows with a known target; Evaluation
+also scores the test part's null-target rows, for the drift reference only (its metrics read the
+known targets). Training gets `train` alone, never a test or validation row (§4.4): the window's
+train split, sampled when declared, with the client folds (`folds.py`, checked before the collect),
 selected in Spark to the keys, the features, `target`, `split` and the fold columns; its meta
-carries the window's population counts on every client, which Training checks against EDA's
-(D-088). Evaluation
-gets `rows`, one Spark frame of the test split and every validation-period row (both splits),
-scored inside Spark and never collected: `part` says which, and the strata and the `carry`
-columns ride along for the stratified tables and the baselines without joining the features;
-its meta's `eligible_rows` holds each period's eligible rows, which a `top_n` slice is a share
-of: every eligible client, a null target included, since a list is cut before any target is
-known.
+carries the window's population counts on every client, which Training checks against EDA's (D-088).
+Evaluation gets `rows`, one Spark frame of the test split and every validation-period row (both
+splits), scored inside Spark and never collected: `part` says which, and the strata and the `carry`
+columns ride along for the stratified tables and the baselines without joining the features; its
+meta's `eligible_rows` holds each period's eligible rows, which a `top_n` slice is a share of: every
+eligible client, a null target included, since a list is cut before any target is known.
 EDA's kinds come from
 the Spark schema (`detect_kinds`) and the unsupported columns are dropped before anything is
 collected. The meta
@@ -67,6 +66,11 @@ EXPLANATION_CALLOUT = (
     "so its size follows the feature count; raise collect_budget_gb in the environment file "
     f"with the Spark settings ({SPARK_SETTINGS})"
 )
+NULL_TARGETS = {  # what a modelling stage does with the eligible rows whose target is null
+    "training": "dropped from the train frame",
+    "evaluation": "scored in the test part for the drift reference only, never in a metric; "
+    "dropped at the validation period",
+}
 CALLOUTS = {
     "snapshot": SNAPSHOT_CALLOUT,
     "train": TRAINING_CALLOUT,
@@ -285,13 +289,13 @@ def _modelling_frames(
     stage: str,
     carry: list[str],
 ) -> dict[str, pd.DataFrame | DataFrame]:
-    """The modelling stage's part from the eligible rows with a known target
-    (`_modelling_rows`): Training's `train` (`_training_frame`), Evaluation's `rows`
-    (`_evaluation_rows`, with `carry`). The null-target entry joins the log; Evaluation's meta
-    gains `eligible_rows`, `{period label: eligible rows}` of the window's periods and the
-    validation period over both splits, from the null-target pass's own count. It counts the
-    rows with a null target on purpose: a `top_n` list is cut from every eligible client,
-    whether or not its target is known yet (Q629). A feature that is no candidate
+    """The modelling stage's part from the eligible rows (`_modelling_rows`): Training's
+    `train` (`_training_frame`, a known target only), Evaluation's `rows` (`_evaluation_rows`,
+    with `carry`). The null-target entry joins the log; Evaluation's meta gains
+    `eligible_rows`, `{period label: eligible rows}` of the window's periods and the validation
+    period over both splits, from the null-target pass's own count. It counts the rows with a
+    null target on purpose: a `top_n` list is cut from every eligible client, whether or not
+    its target is known yet. A feature that is no candidate
     of the panel, or a feature or stratum named like a further dealing's fold column, fails
     loud."""
     unknown = [name for name in features if name not in meta["candidates"]]
@@ -312,11 +316,12 @@ def _modelling_frames(
         )
     kinds = detect_kinds(panel.schema, meta["candidates"], cfg.features.kinds)
     meta["kinds"] = {name: kinds[name] for name in features}  # the panel's, for Training's gate
-    modelling, null_log, eligible_rows = _modelling_rows(panel, cfg, stage == "evaluation")
+    modelling, null_log, eligible_rows = _modelling_rows(panel, cfg, stage)
     log.append(null_log)
     if stage == "training":
         meta["population"] = _window_population(panel, cfg)
-        return {"train": _training_frame(modelling, cfg, env, log, meta, features)}
+        known = modelling.where(F.col("target").isNotNull())
+        return {"train": _training_frame(known, cfg, env, log, meta, features)}
     meta["eligible_rows"] = eligible_rows
     return {"rows": _evaluation_rows(modelling, cfg, meta, features, carry)}
 
@@ -352,7 +357,8 @@ def _training_frame(
     train = assign_folds(train, cfg)
     meta["folds"] = fold_counts(train, cfg)
     check_folds(meta["folds"])
-    frame, entry = collect_frame(train, "train", env)
+    known = int(meta["folds"].loc[meta["folds"]["dealing"] == 1, "rows"].sum())  # each row once
+    frame, entry = collect_frame(train, "train", env, rows=known)
     log.append(entry)
     return frame
 
@@ -361,9 +367,11 @@ def _evaluation_rows(
     modelling: DataFrame, cfg: UseCaseConfig, meta: dict, features: list[str], carry: list[str]
 ) -> DataFrame:
     """Evaluation's `rows`, a lazy Spark frame never collected: one row per unit, period and
-    part, the window's test split (`part` `test`) then every row of the validation period, both
-    splits (`part` `validation`), with the columns `unit_id, period, part`, `features`, the
-    strata and then `carry` not among them (each once), `target`, `split`. The strata and
+    part, the window's test split (`part` `test`, a null target included: its scores describe
+    the population the drift reference holds, and no metric reads them) then every row of the
+    validation period with a known target, both splits (`part` `validation`), with the columns
+    `unit_id, period, part`, `features`, the strata and then `carry` not among them (each
+    once), `target`, `split`. The strata and
     `carry` ride along for the stratified tables and the baselines and never join `features`; a
     stratum or a carried column that is no candidate fails loud. No modelling tag: every row is
     eligible, so each is 1."""
@@ -375,7 +383,9 @@ def _evaluation_rows(
                 "riding along is a candidate column (a lineage or framework column is none)"
             )
     test = _window(modelling, cfg).where("split = 'test'").withColumn("part", F.lit("test"))
-    validation = modelling.where(F.col("period") == cfg.time.validation_period)
+    validation = modelling.where(
+        (F.col("period") == cfg.time.validation_period) & F.col("target").isNotNull()
+    )
     validation = validation.withColumn("part", F.lit("validation"))
     along = dict.fromkeys([*cfg.strata.variables, *carry])  # each once, in order
     riding = [name for name in along if name not in features]
@@ -390,16 +400,17 @@ def _window(panel: DataFrame, cfg: UseCaseConfig) -> DataFrame:
 
 
 def _modelling_rows(
-    panel: DataFrame, cfg: UseCaseConfig, with_validation: bool
+    panel: DataFrame, cfg: UseCaseConfig, stage: str
 ) -> tuple[DataFrame, dict, dict[str, int]]:
-    """The eligible rows with a known target, in the window and, `with_validation`, at the
+    """The eligible rows, a null target included, in the window and, for Evaluation, at the
     validation period only (the panel carries labels beyond them, which no fit may see, §4.4);
-    the share of eligible rows dropped for a null target, per period, logged and printed; and
-    from the same pass the eligible rows per period label, null targets included."""
+    the share of eligible rows with a null target, per period, logged and printed with what the
+    `stage` does with them (`NULL_TARGETS`); and from the same pass the eligible rows per period
+    label, null targets included."""
     eligible = panel.where(F.col("eligible") == 1)
     window, spec = cfg.time.observation_window, period_spec(cfg)
     periods = F.col("period").between(window.first, window.last)
-    if with_validation:
+    if stage == "evaluation":
         periods |= F.col("period") == cfg.time.validation_period
     eligible = eligible.where(periods)
     counts = (
@@ -412,11 +423,11 @@ def _modelling_rows(
         .collect()
     )
     shares = label_by_period(counts, "null_share", spec)
-    print("null targets dropped from the modelling frames, per period: "
+    print(f"null targets {NULL_TARGETS[stage]}, per period: "
           + ", ".join(f"{p} {s:.1%}" for p, s in shares.items()))  # fmt: skip
     entry = {"step": "null_target", "share": shares}
     population = label_by_period(counts, "eligible_rows", spec)
-    return eligible.where(F.col("target").isNotNull()), entry, population
+    return eligible, entry, population
 
 
 def detect_kinds(
@@ -470,10 +481,13 @@ def check_level_orders(order: dict[str, list[str]], kinds: dict[str, str]) -> No
         )
 
 
-def estimate_collect(frame: DataFrame, name: str) -> dict:
-    """The frame's exact rows, its bytes per row measured on a sample in pandas and the estimate
-    at the conversion peak (twice the frame, D-133); an empty frame fails loud."""
-    rows = frame.count()
+def estimate_collect(frame: DataFrame, name: str, rows: int | None = None) -> dict:
+    """The frame's exact rows (counted unless the caller knows them: `rows`), its bytes per row
+    measured on a sample in pandas and the estimate at the conversion peak (twice the frame,
+    D-133); an empty frame fails loud. The sample is read even when `rows` is known, since
+    bytes per row is not, and the budget check runs before the collect."""
+    if rows is None:
+        rows = frame.count()
     if rows == 0:
         raise ValueError(f"the frame {name!r} is empty: no row to collect")
     sample = frame.limit(SAMPLE_ROWS).toPandas()
@@ -482,11 +496,15 @@ def estimate_collect(frame: DataFrame, name: str) -> dict:
     return {"rows": rows, "columns": len(frame.columns), "estimate_bytes": estimate}
 
 
-def collect_frame(frame: DataFrame, name: str, env: EnvironmentConfig) -> tuple[pd.DataFrame, dict]:
+def collect_frame(
+    frame: DataFrame, name: str, env: EnvironmentConfig, rows: int | None = None
+) -> tuple[pd.DataFrame, dict]:
     """The frame collected to pandas after the printout: rows, columns and the estimate; above
     the budget the callout worded for the frame (`CALLOUTS`) with the budget, and the collect
-    proceeds. Sorted by the keys with a fresh index; the measured size joins the entry."""
-    estimate = estimate_collect(frame, name)
+    proceeds. Sorted by the keys with a fresh index; the measured size joins the entry. `rows`
+    is the frame's row count when the caller already knows it (no count is run); a collect of
+    another size fails loud."""
+    estimate = estimate_collect(frame, name, rows)
     budget = int(env.collect_budget_gb * GB)
     print(f"collect {name}: {estimate['rows']:,} rows × {estimate['columns']} columns, "
           f"≈ {estimate['estimate_bytes'] / GB:.2f} GB at the conversion peak")  # fmt: skip
@@ -497,6 +515,11 @@ def collect_frame(frame: DataFrame, name: str, env: EnvironmentConfig) -> tuple[
     # (the association's cap) must pick the same rows on a rerun of the same data (T34, §4.10);
     # sorted in Spark, so pandas holds no second copy at the peak
     collected = frame.orderBy("unit_id", "period").toPandas()
+    if len(collected) != estimate["rows"]:
+        raise ValueError(
+            f"collect {name}: {len(collected):,} rows collected, {estimate['rows']:,} expected; "
+            "the rows known before the collect are not the frame's"
+        )
     measured = int(collected.memory_usage(deep=True).sum())
     print(f"  collected {name}: {measured / GB:.2f} GB in pandas")
     entry = {"step": "collect", "frame": name, **estimate, "measured_bytes": measured,

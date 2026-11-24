@@ -58,7 +58,7 @@ plotly and jinja2 are already pinned):**
 **Dev-only tools** (`requirements-dev.txt`, never needed inside the bank): pytest, ruff,
 ipykernel, nbformat and nbclient. plotly renders charts in a notebook only with nbformat; Jupyter
 installs it inside the bank, but `ipykernel` alone doesn't locally (D-013). nbclient (0.11.0
-installed) re-runs a notebook headless and in place (`jupyter execute --inplace <notebook>`; the EDS, Q561,
+installed) re-runs a notebook headless and in place (`jupyter execute --inplace <notebook>`; the EDS,
 2026-11-10).
 
 A package that other packages pull in must be pinned even before our code uses it: without the
@@ -140,8 +140,12 @@ multi-objective studies and pruning against 5.0 before relying on them.
   - `xgboost`: JSON and UBJSON, into a fresh sklearn wrapper or a `Booster`, are bit-identical;
   - `catboost`: `.cbm` is bit-identical; its JSON loads back but differs by up to 2e-16 (binary)
     and 1e-13 (regression, values in the hundreds);
-  - scikit-learn forests have none (D-051). Not tested: categorical features (the framework
-    encodes them to codes before FLAML) and models fitted by Training's own function.
+  - scikit-learn forests have none (D-051).
+- **Verified (2026-11, local, the audit):** the same round trips hold with categorical features,
+  which the framework encodes to codes before any library sees them, and for models fitted by
+  Training's own function: a bundle written and loaded back scores a frame exactly as the fitted
+  model does, for every family on a binary target and for `lgbm` on a regression target
+  (`tests/test_bundle.py`).
 - **Assumed, unverified:** no internet access from the bank's notebooks, so reports embed plotly.js
   instead of loading it from a CDN (~4–6 MB per report, not optimised in Phase 2, D-036; the model
   results report measured 5.9 MB for a binary run and 5.6 MB for a regression run). Plotly
@@ -188,6 +192,16 @@ decides.
 - Marts usually hold 24 months of history. A use case starts from 100–300 candidate features,
   often pre-filtered from thousands (especially with the feature store), so the framework's
   candidate lists and patterns are a second filter, not the first (the EDS, 2026-10-20).
+- Threads: the environment file's optional `threads` sets the model libraries' threads in
+  Training; null means every core of the machine, which on a shared node or in a container may
+  be more than the run is given, so there it is set to the cores the run has
+  ([environment adapter](../components/environment.md), which also says when a shared
+  environment file may set it). Training records the thread count and the versions of the
+  libraries it ran with in `training.json`
+  ([training](../components/training.md#the-search), item 12). Measured on the development
+  machine: the models were byte-identical at 1 to 8 threads for every family (LightGBM 4.6.0,
+  XGBoost 3.2.0, CatBoost 1.2.8); not checked with declared categoricals or on the bank's
+  hardware.
 - Retail scale is ~2M rows per period × ~50 columns per model (ceiling ~5M × 400).
   Single-node pandas and FLAML are fine **if** columns and rows are pruned in Spark first. With
   multi-period observation windows this becomes e.g. ~24M unit-periods for 12 periods, beyond the row

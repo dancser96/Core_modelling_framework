@@ -1,14 +1,15 @@
 """The score cells in Spark: the one aggregate every Evaluation metric reads, summed from the
-scores table (evaluation.md → "Score cells", A92–A94).
+scores table (evaluation.md → "Score cells").
 
-`score_edges` cuts one scorer's bins once over every scored row, at `bin_quantiles`'
-probabilities (a regression target's bins as `tasks.TASK_SPECS` cuts them); `score_cells` then
-sums the rows into `statistics/score_cells.py`'s cells, replicate 0 as the rows are and 1 to R
-weighted by `client_weights`, a stratum's levels capped first as EDA caps them
-(`stratum_labels`). Each row's weights are exploded and summed in one `groupBy`, whose partial
-aggregation collapses the exploded rows inside each partition, so the shuffle carries cells,
-not rows (the counts table's pattern): pure Spark SQL, nothing Python-side on the executors and
-no weight array through Arrow. Only the cells reach the driver.
+`score_edges` cuts one scorer's bins once over every scored row with a known target, at
+`bin_quantiles`' probabilities (the task's `score_grid`; a regression target's bins as
+`tasks.TASK_SPECS` cuts them); `score_cells` then sums the rows into
+`statistics/score_cells.py`'s cells, replicate 0 as the rows are and 1 to R weighted by
+`client_weights`, a stratum's levels capped first as EDA caps them (`stratum_labels`). Each
+row's weights are exploded and summed in one `groupBy`, whose partial aggregation collapses the
+exploded rows inside each partition, so the shuffle carries cells, not rows (the counts table's
+pattern): pure Spark SQL, nothing Python-side on the executors and no weight array through
+Arrow. Only the cells reach the driver.
 """
 
 import math
@@ -21,8 +22,7 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import DoubleType, FloatType
 
 from core_modelling.config import UseCaseConfig
-from core_modelling.dataset.counts import NULL_BIN, OTHER
-from core_modelling.eda.population import cap_levels
+from core_modelling.dataset.counts import NULL_BIN, OTHER, cap_levels
 from core_modelling.periods import period_spec
 from core_modelling.statistics.losses import TWEEDIE_METRIC_POWER
 from core_modelling.statistics.metrics import NAN
@@ -32,26 +32,21 @@ from core_modelling.statistics.score_cells import (
     CELL_SUMS,
     PARTS,
     PROBABILITY_CLIP,
-    ROW_LOSSES,
-    STRATA_STEP,
     quantile_passes,
 )
 from core_modelling.tasks import TASK_SPECS, ZERO_BIN_EDGES
 
-WEIGHT_SALT = "client_bootstrap"  # fixed, so two runs on the same rows share the weights (A47)
+WEIGHT_SALT = "client_bootstrap"  # fixed, so two runs on the same rows share the weights
 UNIFORM_BITS = 53  # a double holds a uniform of this many random bits exactly
 POISSON_MAX = 17  # the largest weight: P(X > 17) < 2⁻⁵³, below the uniform's resolution
 # P(X ≤ k) of a Poisson(1) for k = 0 … POISSON_MAX − 1, the inverse CDF's thresholds
 POISSON_CDF = np.cumsum([math.exp(-1) / math.factorial(k) for k in range(POISSON_MAX)])
 SKETCH_POINTS = 4000  # quantiles of a regression target its bins are cut from (EDA's rules)
-# `approxQuantile`'s rank error, as a share of the rows it reads: a tenth of the narrowest score
-# bin of each pass (0.1% of every row in the body; 0.001% of every row, so 0.1% of the tail's,
-# in the tail) and below the target sketch's spacing (2.5e-4); its summary keeps of the order
-# of 1 / error entries per partition
+# `approxQuantile`'s rank error, as a share of the rows it reads: at most a tenth of the
+# narrowest score bin of each pass (binary's: 0.1% of every row in the body; 0.001% of every
+# row, so 0.1% of the tail's, in the tail) and below the target sketch's spacing (2.5e-4); its
+# summary keeps of the order of 1 / error entries per partition
 QUANTILE_ERROR = 1e-4
-# A regression objective's deviance when the decision's metric names none (binary: always log)
-OBJECTIVE_LOSSES = {"log_loss": "log_loss", "tweedie": "tweedie_deviance",
-                    "poisson": "poisson_deviance"}  # fmt: skip
 
 
 def client_weights(client: Column, replicates: int, salt: str) -> Column:
@@ -60,7 +55,7 @@ def client_weights(client: Column, replicates: int, salt: str) -> Column:
     (`_poisson_weight`). Two `transform`s over `sequence(1, replicates)`, so the plan holds one
     hash and one sum of 17 comparisons whatever the replicate count, and each element's hash is
     computed once. Column expressions only, so a client's rows share each weight and the
-    weights repeat on every run and machine that hashes the same client (A47, A94)."""
+    weights repeat on every run and machine that hashes the same client."""
     if replicates < 1:
         raise ValueError(f"client_weights: replicates must be at least 1, got {replicates}")
     replicate = F.sequence(F.lit(1), F.lit(replicates))
@@ -91,25 +86,28 @@ def scorer_loss(cfg: UseCaseConfig, objective: str) -> str | None:
     deviance under Tweedie or Poisson), else None. `objective` is the run's, from its
     `run.json`, not the config's: a run named for Evaluation or `compare_runs` may have been
     trained under another. The Tweedie deviance is at the metric's constant power, never the
-    objective's (A67)."""
+    objective's."""
     if cfg.decision.metric in ROW_LOSSES:
         return cfg.decision.metric
-    return OBJECTIVE_LOSSES.get(objective)
+    return TASK_SPECS[cfg.task]["objective_losses"].get(objective)
 
 
 def score_edges(
     scores: DataFrame, cfg: UseCaseConfig, column: str = "score"
 ) -> dict[str, np.ndarray | None]:
-    """One scorer's bin edges, cut once over every scored row so each `by` shares them (A93):
-    `score` the quantiles at `bin_quantiles`, `strata` every `STRATA_STEP`-th of them, so a
+    """One scorer's bin edges, cut once over the scored rows with a known target (`scores` as
+    the caller passes them) so each `by` shares them:
+    `score` the quantiles at `bin_quantiles`, `strata` every `strata_step`-th of them, so a
     stratum's bin is whole score bins, `target` the task's target bins as EDA cuts them from
     `SKETCH_POINTS` quantiles (`target_bins`: None for a 0/1 target, its own bin). One Spark
     job over `column` and `target` takes the body's quantiles (`quantile_passes`); a task with
-    a tail (binary's top 1%) takes the tail's in a second, over the rows at or above the body's
-    last edge. A value that fills a bin becomes its own bin (`quantile_edges`' mass point), so
-    the edges ascend strictly. When the body's last edge sits on a block of tied scores, the
-    whole block joins the tail and its bins widen by the block's share: valid, only coarser."""
-    body, tail = quantile_passes(cfg.task)
+    a tail (the top 1% for both tasks) takes the tail's in a second, over the rows at or above
+    the body's last edge. A value that fills a bin becomes its own bin (`quantile_edges`' mass
+    point), so the edges ascend strictly. When the body's last edge sits on a block of tied
+    scores, the whole block joins the tail and its bins widen by the block's share: valid, only
+    coarser."""
+    spec = TASK_SPECS[cfg.task]
+    body, tail = quantile_passes(spec["score_grid"], spec["tail_start"])
     sketch = [(i + 0.5) / SKETCH_POINTS for i in range(SKETCH_POINTS)]
     quantiles = scores.approxQuantile([column, "target"], [*body, *sketch], QUANTILE_ERROR)
     score_values, target_values = (np.asarray(values, dtype=float) for values in quantiles)
@@ -120,11 +118,11 @@ def score_edges(
         top_cuts = np.asarray(top.approxQuantile(column, tail.tolist(), QUANTILE_ERROR), float)
         _check_quantiles({column: top_cuts})
         score_cuts = np.concatenate([score_cuts, top_cuts])
-    step = STRATA_STEP[cfg.task]
+    step = spec["strata_step"]
     return {
         "score": _distinct_edges(score_cuts),
         "strata": _distinct_edges(score_cuts[step - 1 :: step]),
-        "target": TASK_SPECS[cfg.task]["target_bins"](target_sketch, False),
+        "target": spec["target_bins"](target_sketch, False),
     }
 
 
@@ -207,6 +205,30 @@ def score_cells(
     return ordered.sort_values(["replicate", *keys]).reset_index(drop=True)
 
 
+def reference_score_counts(
+    scores: DataFrame, cfg: UseCaseConfig, edges: dict[str, np.ndarray | None]
+) -> pd.DataFrame:
+    """The drift reference's score side, collected: the test part's rows per period (its
+    label) and score bin on the model's `score` edges, with each bin's lowest and highest
+    score, `period, score_bin, rows, score_min, score_max`. Unlike the cells it counts every
+    scored test row, a null target included, so it describes the population Inference scores;
+    one Spark aggregate, no replicate. A null or NaN score fails loud, as in the cells, which
+    never see the null-target rows."""
+    test = scores.where(F.col("part") == "test")
+    binned = _bucketized(test, {"score_bin": ("score", edges["score"])})
+    counts = binned.groupBy("period", "score_bin").agg(
+        F.count(F.lit(1)).alias("rows"),
+        F.min("score").alias("score_min"),
+        F.max("score").alias("score_max"),
+    )
+    table = counts.toPandas()
+    if table.empty:
+        raise ValueError("reference_score_counts: the scores hold no test row")
+    _check_scored(table, "score", edges["score"].size)
+    table["period"] = table["period"].map(period_spec(cfg).label)
+    return table.sort_values(["period", "score_bin"]).reset_index(drop=True)
+
+
 def _check_request(scores: DataFrame, by: list[str], column: str, loss: str | None) -> None:
     """Fail loud before Spark runs on a scorer column or a `by` column the scores lack, a `by`
     column that is a cell key, or a loss `ROW_LOSSES` does not hold."""
@@ -279,14 +301,22 @@ def _check_other(cells: pd.DataFrame, other_rows: dict[str, int]) -> None:
 def _binned(
     scores: DataFrame, column: str, edges: np.ndarray, target_edges: np.ndarray | None
 ) -> DataFrame:
-    """The scores with `score_bin` (int, ascending in `column`) and `target_bin` (int: a 0/1
-    target itself when `target_edges` is None, else its bucket on them), from one `Bucketizer`
-    with `handleInvalid="keep"`: bucket i is [e_i, e_{i+1}) over [−inf, *edges, inf], a NaN
-    lands in bucket len(edges) + 1 and a null stays null. Values are normalised with `+ 0.0`
-    first (Java orders −0.0 below 0.0, `counts._bucketize`)."""
+    """The scores with `score_bin` (ascending in `column`) and `target_bin` (a 0/1 target
+    itself when `target_edges` is None, else its bucket on them), both int (`_bucketized`)."""
     splits: dict[str, tuple[str, np.ndarray]] = {"score_bin": (column, edges)}
     if target_edges is not None:
         splits["target_bin"] = ("target", target_edges)
+    binned = _bucketized(scores, splits)
+    if target_edges is None:
+        binned = binned.withColumn("target_bin", F.col("target").cast("int"))
+    return binned
+
+
+def _bucketized(scores: DataFrame, splits: dict[str, tuple[str, np.ndarray]]) -> DataFrame:
+    """The scores with one int column per entry of `splits` (`name: (source column, edges)`),
+    from one `Bucketizer` with `handleInvalid="keep"`: bucket i is [e_i, e_{i+1}) over [−inf,
+    *edges, inf], a NaN lands in bucket len(edges) + 1 and a null stays null. Values are
+    normalised with `+ 0.0` first (Java orders −0.0 below 0.0, `counts._bucketize`)."""
     values = [(F.col(source) + 0.0).alias(f"{name}_value") for name, (source, _) in splits.items()]
     bucketizer = Bucketizer(
         splitsArray=[[-np.inf, *map(float, cut), np.inf] for _, cut in splits.values()],
@@ -295,15 +325,14 @@ def _binned(
         handleInvalid="keep",
     )
     binned = bucketizer.transform(scores.select("*", *values)).drop(*[f"{n}_value" for n in splits])
-    target_bin = F.col("target") if target_edges is None else F.col("target_bin")
-    return binned.withColumn("score_bin", F.col("score_bin").cast("int")).withColumn(
-        "target_bin", target_bin.cast("int")
-    )
+    for name in splits:
+        binned = binned.withColumn(name, F.col(name).cast("int"))
+    return binned
 
 
 def _row_terms(score: Column, loss: str | None) -> dict[str, Column]:
     """Each row's value of every sum but `rows`, named as its sum, and the scorer as `scorer`
-    (for the extremes): `score_cells.cells_from_rows`' terms in Spark."""
+    (for the extremes)."""
     target, score = F.col("target").cast("double"), score.cast("double")
     error, null = target - score, F.lit(None).cast("double")
     return {
@@ -311,7 +340,7 @@ def _row_terms(score: Column, loss: str | None) -> dict[str, Column]:
         "score_sum": score,
         "sq_error_sum": error * error,
         "abs_error_sum": F.abs(error),
-        "loss_sum": ROW_LOSS_COLUMNS[loss](target, score) if loss else null,
+        "loss_sum": ROW_LOSSES[loss](target, score) if loss else null,
         "target_sq_sum": target * target,
         "link_sum": _logit(score) if loss == "log_loss" else null,
         "scorer": score,
@@ -357,10 +386,9 @@ def _poisson_deviance(target: Column, score: Column) -> Column:
     return F.when((target >= 0) & (score > 0), deviance).otherwise(NAN)
 
 
-# `ROW_LOSSES` as Spark columns. Not shared with it: those take numpy arrays (scipy's `xlogy`,
-# `np.clip`) and refuse a row outside the domain at once, which a lazy column cannot; a test
-# compares the two per loss (`test_evaluation_tables.py`)
-ROW_LOSS_COLUMNS = {
+# The row losses `loss_sum` can hold, the only definition: their mean over the rows is
+# scikit-learn's metric of that name, which the tests check through their pandas oracle
+ROW_LOSSES = {
     "log_loss": _log_loss,
     "tweedie_deviance": _tweedie_deviance,
     "poisson_deviance": _poisson_deviance,
@@ -370,8 +398,10 @@ ROW_LOSS_COLUMNS = {
 def _check_cells(cells: pd.DataFrame, column: str, loss: str | None, edge_count: int) -> None:
     """On replicate 0, where every row counts once: fail loud on a part of `PARTS` without a
     cell (the rows are never collected, so nothing earlier notices a test split or a
-    validation period without an eligible row with a known target), on rows whose score is
-    null or NaN (no bin, or the NaN bucket), and on rows outside the loss's domain."""
+    validation period without an eligible row with a known target), on rows with a null
+    target (the scores table keeps the test part's for the drift reference; every cell reads
+    the rows with a known target only), on rows whose score is null or NaN (no bin, or the NaN
+    bucket), and on rows outside the loss's domain."""
     first = cells[cells["replicate"] == 0]
     missing = [part for part in PARTS if part not in set(first["part"])]
     if missing:
@@ -379,12 +409,13 @@ def _check_cells(cells: pd.DataFrame, column: str, loss: str | None, edge_count:
             f"the {' and '.join(missing)} part has no scored row: no eligible row with a known "
             "target in the test split's window periods or at the validation period"
         )
-    unbinned = first["score_bin"].isna() | (first["score_bin"] > edge_count)
-    if unbinned.any():
+    unlabelled = int(first.loc[first["target_bin"].isna(), "rows"].sum())
+    if unlabelled:
         raise ValueError(
-            f"`{column}` is null or NaN on {int(first.loc[unbinned, 'rows'].sum()):,} scored "
-            "rows; a scorer gives every row a number"
+            f"score_cells: {unlabelled:,} rows have a null target; the cells read the rows with a "
+            "known target only: pass scores.where(target is not null)"
         )
+    _check_scored(first, column, edge_count)
     if loss is None:
         return
     sums = ["loss_sum", "link_sum"] if loss == "log_loss" else ["loss_sum"]
@@ -395,4 +426,15 @@ def _check_cells(cells: pd.DataFrame, column: str, loss: str | None, edge_count:
             f"the {loss} of `{column}` is undefined on some of {rows:,} scored rows: the log "
             "loss needs a 0/1 target and a score in [0, 1], a deviance a target >= 0 and a "
             "score > 0"
+        )
+
+
+def _check_scored(counts: pd.DataFrame, column: str, edge_count: int) -> None:
+    """Fail loud on rows of `counts` (one row per `score_bin` group, with `rows`) whose score is
+    null or NaN: no bin, or the NaN bucket past the last of `edge_count` edges."""
+    unbinned = counts["score_bin"].isna() | (counts["score_bin"] > edge_count)
+    if unbinned.any():
+        raise ValueError(
+            f"`{column}` is null or NaN on {int(counts.loc[unbinned, 'rows'].sum()):,} scored "
+            "rows; a scorer gives every row a number"
         )

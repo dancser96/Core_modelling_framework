@@ -8,8 +8,7 @@ Expert DS's joint review of steps 2 and 3 is still open, so an answer may change
 
 **Related:** [training](../components/training.md) · [evaluation](../components/evaluation.md) ·
 [model bundle](../components/model_bundle.md) (the run folder, the bundle, the calibration's
-formulas, the hashes) · [reporting](../components/reporting.md) (the seventeen views, the model
-card) · [monitoring](../components/monitoring.md) (the drift reference) ·
+formulas, the hashes) · [reporting](../components/reporting.md) (the views, the model card) · [monitoring](../components/monitoring.md) (the drift reference) ·
 [config](../components/config.md#the-modelling-fields-stage-3) · [feature
 ledger](../components/feature_ledger.md) · [EDA and Feature Checks
 FAQ](eda_fc_faq.md) · `notebooks/00_modelling_helper.ipynb` (each artifact's grain and columns,
@@ -37,7 +36,10 @@ By default the latest run with the config's data-definition hash and the same di
 Training's settings, so changing an evaluation setting or a baseline never orphans a run.
 `run="r007"` (CLI `--run r007`) evaluates any run of the same data definition with the current
 evaluation settings. A rerun rewrites `evaluation/` whole and never touches `training/`, the
-bundle or the per-run ledger ([evaluation](../components/evaluation.md) → Finding the run).
+bundle or the per-run ledger, and gives the same tables to the binning's tolerance (the headline
+metrics to four digits), not bit for bit: the score bins' edges come from an approximate quantile
+that moves inside its rank error with the partition layout
+([evaluation](../components/evaluation.md) → Finding the run, Score cells).
 
 **EDA was rerun with another setting. Can an older run still be evaluated?**
 Yes. Training copies into the run's `stage2/` every candidate's Stage 2 ledger rows and EDA's
@@ -116,24 +118,40 @@ selection [Cawley10][Boyd13][McDermott24] ([training](../components/training.md)
 item 9).
 
 **What does the floor do, and when should I lower it?**
-It drops a feature whose train concordance is below 0.5 + z · SE, with `floor_z: 2` and the SE on
-effective train clients: about 0.509 at 3,870 converting clients, 0.533 at 300. With few converting
-clients the floor is high and drops real but weak features: below about 300, set `floor_z` to 1 or
-`null` and rely on kept features and pruning. A univariate floor also drops a feature that only
-works in interaction [GE03], which pruning would keep; a `keep` is measured and never dropped. Open:
-a feature non-monotone on train is judged on its best-order concordance, which sits 2.5 to 2.8 SE
-above 0.5 on noise ([training](../components/training.md) → Selection, with the table of drop
-chances).
+The floor and the cluster rule are the screen: it fits no model and runs before the run number is
+taken, so a screen that leaves no feature takes none. The floor drops a feature unless its train
+concordance, or its null indicator's, reaches 0.5 + z · SE, with `floor_z: 2` and each SE on
+effective train clients: about 0.509 at 3,870 converting clients, 0.533 at 300. The nulls count
+because the libraries take them natively and nothing is imputed, so a feature whose being filled
+predicts the target is used by the model. Features null on the same rows share one null
+indicator, so that pattern clears at most one of them (`represented_by` names it): otherwise one
+pattern, such as "fewer than six months on the book" nulling every six-month rollup, would pass
+ten features on the synthetic data whatever their values. With few converting clients the floor is high and drops
+real but weak features: below about 300, set `floor_z` to 1 or `null` and rely on kept features and
+pruning. A univariate floor also drops a feature that only works in interaction [GE03], which
+pruning would keep; a `keep` is measured and never dropped. Open: a feature non-monotone on train
+is judged on its best-order concordance, which sits 2.5 to 2.8 SE above 0.5 on noise
+([training](../components/training.md) → Selection, with the table of drop chances).
 
 **Trees ignore noise. Why select features at all, and what does pruning add?**
 Accuracy hardly suffers (0.004 to 0.008 AUC to 390 noise columns [Grinsztajn22]), but search time
 grows in a straight line with the features, and noise fills the importance chart and the sign-off
 list. Pruning asks whether the model still needs a feature once the others are there: five seeded
 noise columns join the frame, LightGBM's fold models rank every feature's out-of-fold contribution
-share, and the features doing no better than the best noise column go, unless the out-of-fold loss
-rises, when nothing is pruned. The AutoML tools do this in place of a univariate floor
-[AG-FS][mljar][probatus]. Every drop is a row of the per-run ledger, never an audit-log entry,
-since the next run recomputes its own (D-125: the audit log holds what shapes a run's input).
+share, and the features doing no better than the best noise column are the candidates to drop. The
+pruning model has its own size, set by the frame: 4 leaves, ⌈10 · P / 3⌉ trees for P columns and
+three columns a tree, so each column is offered to about ten trees. A model of the search's start
+size cannot split every column of a wide frame; with no split on any noise column the threshold is
+0 and every unsplit real feature would look like noise, so a best noise share of 0 prunes nothing
+and the run warns. With candidates, two more fits, with and without them, each offer every column
+to every tree on at most 300 trees and are compared on the out-of-fold loss; any rise undoes the
+drops. (At three columns a tree the two frames would draw different columns, and that chance alone
+would move the loss.) The comparison judges the candidates as a set: one needed feature keeps them
+all, many weak ones go together, and a feature that works only jointly with another is not
+reliably caught, so a `keep` is the answer there ([training](../components/training.md) →
+Selection, with the measurements). The AutoML tools do this in place of a univariate floor [AG-FS][mljar][probatus]. Every drop
+is a row of the per-run ledger, never an audit-log entry, since the next run recomputes its own
+(D-125: the audit log holds what shapes a run's input).
 
 **Why are class weights refused?**
 `scale_pos_weight`, `is_unbalance`, `class_weight`, `class_weights` and `auto_class_weights` count a
@@ -209,16 +227,16 @@ people's feature decisions in EDA and Feature Checks have seen test labels (D-03
 states both ([evaluation](../components/evaluation.md) → What the report states).
 
 **Why are the metrics computed from score cells?**
-Test and validation are scored inside Spark and never collected or sampled (§4.8), so every metric
-reads one aggregate per scorer: rows and sums per part, period, score bin and target bin, as EDA's
-statistics read its counts table (D-141 (b): the driver holds rows only for the explanation
-sample). A bootstrap replicate is the same cells weighted by its client weights, so 200 replicates
-of every metric cost seconds. The losses and errors are exact per-row sums; the rank metrics,
-slices, curves and calibration slope carry the binning's tolerance. Binary's 380 score bins grow
-finer towards the top, down to 0.001% of the rows in the top 0.1%, where average precision and
-the top slices are read: average precision from cells is within 0.0015 of the row value from a
-0.05% to a 5% base rate, where bins of 0.1% read up to 61% too low
-([evaluation](../components/evaluation.md) → Score cells).
+Test and validation are scored inside Spark and no metric reads a collected or sampled row (§4.8),
+so every metric reads one aggregate per scorer: rows and sums per part, period, score bin and
+target bin, as EDA's statistics read its counts table (D-141 (b): the driver holds test rows only
+for the two seeded samples of the explanation views). A bootstrap replicate is the same cells
+weighted by its client weights, so 200 replicates of every metric cost seconds. The losses and
+errors are exact per-row sums; the rank metrics, slices, curves and calibration slope carry the
+binning's tolerance. The score bins grow finer towards the top, where average precision and the
+top slices are read, and a second quantile pass cuts the tail: average precision from cells is
+within 0.0015 of the row value from a 0.05% to a 5% base rate, where bins of 0.1% read up to 61%
+too low (the grids and their counts: [evaluation](../components/evaluation.md) → Score cells).
 
 **What are the baselines, and which should I declare?**
 `decision.baselines`, by default `[population_base_rate, single_feature]` (D-009, D-141 (e)):
@@ -268,7 +286,8 @@ rate moved inside the window and the per-period values are the ones to read
 Observed to expected is shown per period on test and on validation, with no correction: an
 intercept update would need labels that arrive `w` periods late, and the true rate the offset uses
 is the train split's, pooled over the window (D-098). Scores read as conditional on staying through
-the target window, since rows with a null target are dropped.
+the target window: a row with a null target is in no metric (Evaluation scores the test part's
+null-target rows for the drift reference only, and drops them at the validation period).
 
 **What is "validation on test clients only"?**
 The validation period holds every eligible client of both splits, and train clients' earlier
@@ -287,7 +306,10 @@ They describe the model, not the world, and nothing is chosen on them (§4.4). T
 the families' own, equal to SHAP's tree explainer on the pinned versions, on the margin's scale
 (log-odds; the log scale for Tweedie and Poisson), from 5,000 seeded test rows plus three waterfall
 rows. Correlated features split credit arbitrarily, so permutation importance permutes a redundancy
-cluster as one and flags where its ranks disagree with the contributions'. The effects view sets
+cluster as one and flags where its ranks disagree with the contributions'. It runs on its own
+seeded test sample of up to 50,000 rows, since 5,000 rows hold too few events at a rare rate, and
+reads "Not available" below `strata.min_events` events in it, for a target of one value, or for a
+deviance without a log link. The effects view sets
 the mean contribution per EDA group beside EDA's lift: lift is the feature alone, a contribution is
 given the other features, so the two may differ for a correlated feature. Partial dependence moves
 one feature while the others stay, which creates unlikely rows when features are correlated; the 50
@@ -326,9 +348,9 @@ differenced ([evaluation](../components/evaluation.md) → `compare_runs`).
 It is Monitoring's yardstick: what a production model's inputs and scores should look like, keyed
 by `model_hash` (D-054: monitoring's inputs are produced upstream, by Evaluation). It takes the
 final features' shares per period from the run's copy of EDA's counts, which cover every eligible
-row and not the training sample, and the test scores' distribution in ten quantile groups. Test
-scores rather than train ones, because train scores are in sample and spread more than unseen
-clients' will. Each feature's shares are a valid input to the PSI function
+row and not the training sample, and the test scores' distribution in ten quantile groups, from
+every eligible test row scored, null targets included. Test scores rather than train ones,
+because train scores are in sample and spread more than unseen clients' will. Each feature's shares are a valid input to the PSI function
 ([monitoring](../components/monitoring.md) → The drift reference).
 
 ## The research note

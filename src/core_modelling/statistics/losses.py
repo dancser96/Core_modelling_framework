@@ -8,9 +8,9 @@ fold models' out-of-fold metric and the search's two deviance metrics all read `
 headline (the AUC for a binary target), out of fold and in sample (D-106).
 `prediction` is always `score_raw` (`model/calibration.py`): the probability for a binary
 task, the prediction in the target's units for regression. The Tweedie deviance is taken at a
-fixed variance power, whatever the objective's, so a training setting cannot move the yardstick
-(A67). Evaluation's metrics are computed on score cells (`metrics.py`, M2.3 step 3); these row
-forms are their oracle in the tests.
+fixed variance power, whatever the objective's, so a training setting cannot move the
+yardstick. Evaluation's metrics are computed on score cells (`metrics.py`); these row forms are
+their oracle in the tests.
 """
 
 from collections.abc import Callable
@@ -28,7 +28,7 @@ from sklearn.metrics import (
     root_mean_squared_error,
 )
 
-TWEEDIE_METRIC_POWER = 1.5  # the yardstick's variance power, never the objective's (A67)
+TWEEDIE_METRIC_POWER = 1.5  # the yardstick's variance power, never the objective's
 
 
 def _binary_log_loss(y: np.ndarray, prediction: np.ndarray) -> float:

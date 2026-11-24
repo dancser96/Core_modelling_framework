@@ -20,15 +20,24 @@ import plotly.graph_objects as go
 
 from core_modelling.reporting import charts
 from core_modelling.reporting.charts import NULL_LABEL, apply_theme
+from core_modelling.reporting.formats import plain_number
+from core_modelling.reporting.model_charts import part_colour
 from core_modelling.reporting.theme import THEME
 from core_modelling.statistics.intervals import t_interval
+from core_modelling.statistics.score_cells import PARTS
 
 ROW_CAP = 1500  # rows the beeswarm and the dependence scatter draw per feature (requirement 5)
 SEED = 0  # the dependence scatter's sample and jitter
 SWARM_HEIGHT = 0.42  # half the height of a beeswarm row, in rows
 MARKER_SIZE = 5
+# A hover number in d3's decimal notation (`r`, never an exponent) to four significant digits with
+# thousands separators and no trailing zeros: `plain_number`'s digits up to 9,999, where it keeps
+# every integer digit and this rounds (123,456 reads 123,500). Per-point text would grow the page.
+HOVER_FORMAT = ",.4~r"
 MIN_GROUP_ROWS = 20  # sample rows below which a group's mean contribution is greyed
-PART_NAMES = ("test", "train, out of fold")  # the importance bars' legend when `compare` is given
+# The importance bars' parts when `compare` is given, coloured as the model charts colour theirs
+PART_NAMES = (PARTS[0], "train, out of fold")
+PART_ORDER = [*PARTS, PART_NAMES[1]]
 LIFT_COLUMNS = ["group", "lift", "lift_low", "lift_high", "support", "insufficient"]
 # `effect_chart`'s mean-contribution columns, by `group_means`' names for them
 MEAN_COLUMNS = {"mean_contribution": "estimate", "mean_low": "low", "mean_high": "high",
@@ -75,12 +84,12 @@ def _is_numeric(values: pd.Series) -> bool:
 
 
 def _format_value(value: object) -> str:
-    """A feature value as a label shows it: `null` when missing, a number to four significant
-    digits, a level as its text."""
+    """A feature value as a label shows it: `null` when missing, a number through
+    `plain_number` (never scientific notation), a level as its text."""
     if pd.isna(value):
         return NULL_LABEL
     if isinstance(value, int | float | np.number) and not isinstance(value, bool):
-        return f"{value:.4g}"
+        return plain_number(value)
     return str(value)
 
 
@@ -148,10 +157,10 @@ def _add_points(
 
 
 def _hover_values(by: pd.Series) -> tuple[np.ndarray, str]:
-    """`by`'s known values as hover data and their placeholder: numbers as compact floats, to
-    four significant digits, levels as text."""
+    """`by`'s known values as hover data and their placeholder: numbers as compact floats shown
+    in `HOVER_FORMAT`, levels as text."""
     if _is_numeric(by):
-        return by.to_numpy(dtype="float32"), "%{customdata:.4g}"
+        return by.to_numpy(dtype="float32"), f"%{{customdata:{HOVER_FORMAT}}}"
     return by.astype(str).to_numpy(), "%{customdata}"
 
 
@@ -164,17 +173,17 @@ def importance_bar(
     bar per feature, its shares from its own frame so the two compare, in the main frame's
     order. Receives one row per sampled row and one column per feature."""
     _check_contributions(contributions)
-    parts = [(contributions, THEME["contribution"]["raises"], "the contributions hold")]
+    parts = [(contributions, "the contributions hold")]
     if compare is not None:
         _check_contributions(compare)
         if set(compare.columns) != set(contributions.columns):
             raise ValueError("importance_bar: compare must hold the same features")
-        parts.append((compare, THEME["contribution"]["neutral"], "compare holds"))
+        parts.append((compare, "compare holds"))
     ranked = _ranked(contributions)
     shown, others = list(ranked[:top]), list(ranked[top:])
     labels = shown + ([f"Sum of {len(others)} other features"] if others else [])
     fig, highest = go.Figure(), 0.0
-    for (frame, colour, which), name in zip(parts, PART_NAMES[: len(parts)], strict=True):
+    for (frame, which), name in zip(parts, PART_NAMES[: len(parts)], strict=True):
         mean = frame.abs().mean()
         if mean.sum() == 0:  # the shares would be 0 / 0
             raise ValueError(f"importance_bar: {which} only zero contributions")
@@ -184,13 +193,13 @@ def importance_bar(
         highest = max(highest, *heights)
         fig.add_trace(go.Bar(
             x=heights, y=labels, orientation="h", name=name if part else None,
-            marker_color=colour,
+            marker_color=part_colour(name, PART_ORDER),
             text=[f"{h:.1%}" for h in heights], textposition="outside", cliponaxis=False,
             hovertemplate=f"%{{y}}: %{{x:.1%}}{part}<extra></extra>",
         ))  # fmt: skip
     height = 26 * len(labels) * len(parts) + 140
     x_title = "Share of the mean |contribution| to the margin"
-    apply_theme(fig, "Global feature importance", x_title, "", height)
+    apply_theme(fig, "Global feature importance", x_title, "Feature", height)
     fig.update_layout(showlegend=compare is not None, barmode="group")
     fig.update_xaxes(showgrid=False, range=[0, 1.15 * highest], ticks="outside", tickformat=".0%")
     fig.update_yaxes(autorange="reversed", showgrid=False)
@@ -237,7 +246,9 @@ def beeswarm(
     fig.add_vline(x=0, line_color=THEME["muted"], line_width=1)
     height = 34 * len(features) + 150
     title = "Feature contributions, one point per sampled row"
-    apply_theme(fig, title, "Contribution to the margin (higher raises the score)", "", height)
+    apply_theme(
+        fig, title, "Contribution to the margin (higher raises the score)", "Feature", height
+    )
     fig.update_xaxes(showgrid=False, ticks="outside")
     fig.update_yaxes(tickvals=list(range(len(features)))[::-1], ticktext=features,
                      range=[-0.7, len(features) - 0.3], griddash="dot")  # fmt: skip
@@ -260,6 +271,12 @@ def _waterfall_steps(
     return np.array(steps), labels
 
 
+def _signed(step: float) -> str:
+    """A step with its sign, in `plain_number`'s digits: a small step keeps its size, never
+    `+0.00`."""
+    return f"+{plain_number(step)}" if step > 0 else plain_number(step)
+
+
 def waterfall(
     contributions: pd.Series, base: float, values: pd.Series, shown: int = 9
 ) -> go.Figure:
@@ -280,7 +297,7 @@ def waterfall(
     fig.add_trace(go.Scatter(
         x=end, y=y, mode="markers+text", hoverinfo="skip", marker_color=colours, marker_size=9,
         marker_symbol=["triangle-right" if s > 0 else "triangle-left" for s in steps],
-        text=[f"{s:+.2f}" for s in steps], textfont={"color": colours},
+        text=[_signed(s) for s in steps], textfont={"color": colours},
         textposition=["middle right" if s > 0 else "middle left" for s in steps],
     ))  # fmt: skip
     for i in range(len(steps) - 1):  # dotted connectors between the bars' ends
@@ -296,7 +313,7 @@ def waterfall(
     low, high = min(start.min(), end.min(), base), max(start.max(), end.max(), base)
     pad = 0.12 * (high - low) or 0.1
     title = f"One row: margin {margin:.2f} from the base value {base:.2f}"
-    apply_theme(fig, title, "Margin", "", 34 * len(steps) + 170)
+    apply_theme(fig, title, "Margin", "Feature = value", 34 * len(steps) + 170)
     fig.update_xaxes(range=[low - pad, high + pad], showgrid=False, ticks="outside",
                      title_standoff=55)  # fmt: skip
     fig.update_yaxes(tickvals=list(y), ticktext=labels, showgrid=False)
@@ -316,7 +333,7 @@ def _value_positions(values: pd.Series) -> tuple[np.ndarray, list[str] | None]:
 
 
 def _scatter(contributions: pd.Series, values: pd.Series, colour: pd.Series | None) -> go.Figure:
-    """`dependence` without a lift table: the contribution against the value for at most
+    """`dependence`'s scatter: the contribution against the value for at most
     `ROW_CAP` seeded rows, a level jittered around its position, a missing value in a `null`
     strip on the left (drawn only when a sampled value is missing); coloured by `colour` when
     given."""
@@ -328,7 +345,7 @@ def _scatter(contributions: pd.Series, values: pd.Series, colour: pd.Series | No
     if levels is not None:
         x = x + rng.uniform(-0.3, 0.3, x.size)
     strip = rng.uniform(-0.35, 0.35, x.size)
-    known = f"{name} = %{{x:.4g}}<br>" if levels is None else ""  # a level reads on its tick
+    known = f"{name} = %{{x:{HOVER_FORMAT}}}<br>" if levels is None else ""  # a level: its tick
     hovers = {"x": f"{known}contribution %{{y:.3f}}",
               "x2": f"{name} = {NULL_LABEL}<br>contribution %{{y:.3f}}"}  # fmt: skip
     scale_title = "" if colour is None else str(colour.name)
@@ -379,33 +396,6 @@ def group_means(contributions: pd.Series, groups: pd.Series, order: list[str]) -
     return table
 
 
-def _beside_lift(contributions: pd.Series, values: pd.Series, lift: pd.DataFrame) -> go.Figure:
-    """`dependence` with EDA's lift table: the mean contribution per group (every row of the
-    sample) on the left, EDA's lift by the same groups on the right. `values` holds each row's
-    EDA group label (a missing value is the group `null`); `lift` has `LIFT_COLUMNS`, the lift's
-    interval in lift units."""
-    lacking = [column for column in LIFT_COLUMNS if column not in lift.columns]
-    if lacking:
-        raise ValueError(f"dependence: the lift table lacks the columns {lacking}")
-    for where, column in (("lift table's groups", lift["group"]), ("values", values)):
-        if column.isna().any() and column.eq(NULL_LABEL).any():  # they would merge into one group
-            raise ValueError(
-                f"dependence: the {where} hold both the text {NULL_LABEL!r} and a missing value"
-            )
-    groups = lift["group"].astype(object).where(lift["group"].notna(), NULL_LABEL).astype(str)
-    labels = values.astype(object).where(values.notna(), NULL_LABEL).astype(str)
-    stray = sorted(set(labels) - set(groups))
-    if stray:
-        raise ValueError(
-            f"dependence: the values {stray[:5]} are not groups of the lift table; with a lift "
-            "table, values must hold each row's EDA group label"
-        )
-    means = group_means(contributions, labels, list(groups))
-    stored = {short: long for long, short in MEAN_COLUMNS.items()}
-    table = lift.assign(group=groups, **{stored[c]: means[c].to_numpy() for c in stored})
-    return effect_chart(table.assign(feature=str(values.name)))
-
-
 def effect_chart(table: pd.DataFrame) -> go.Figure:
     """One feature's mean contribution per group with its interval (a group under
     `MIN_GROUP_ROWS` sample rows greyed) beside EDA's lift by the same groups, two panels.
@@ -428,24 +418,13 @@ def effect_chart(table: pd.DataFrame) -> go.Figure:
 
 
 def dependence(
-    contributions: pd.Series,
-    values: pd.Series,
-    colour: pd.Series | None = None,
-    lift: pd.DataFrame | None = None,
+    contributions: pd.Series, values: pd.Series, colour: pd.Series | None = None
 ) -> go.Figure:
-    """A feature's contribution against its value; `values` means two things. Without `lift`,
-    `values` holds the raw values and the figure is a scatter of at most `ROW_CAP` seeded rows,
-    coloured by a second feature's values `colour` when given. With `lift` (EDA's group table
-    for the feature, with `lift_low` and `lift_high`), `values` holds each row's EDA group
-    label and the figure is two panels: the mean contribution per group with its interval,
-    beside EDA's lift; `colour` does not apply. Receives one row per sampled row, the series on
-    the same index."""
+    """A feature's contribution against its raw value: a scatter of at most `ROW_CAP` seeded
+    rows, coloured by a second feature's values `colour` when given. Receives one row per
+    sampled row, the series on the same index."""
     _check_contributions(contributions, values, colour)
-    if lift is None:
-        return _scatter(contributions, values, colour)
-    if colour is not None:
-        raise ValueError("dependence: colour applies to the scatter, not to the groups beside lift")
-    return _beside_lift(contributions, values, lift)
+    return _scatter(contributions, values, colour)
 
 
 def _pdp_and_ice(table: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray]:

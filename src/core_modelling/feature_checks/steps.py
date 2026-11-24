@@ -9,7 +9,7 @@ reasons, decided before computing (D-035), and, for redundancy, the clusters tab
 judges and changes nothing: a flag holds a feature out of training until a person keeps or
 excludes it, a note never does (D-134).
 
-No check skips a feature for low support (Q540): each computes on the support there is, and a
+No check skips a feature for low support: each computes on the support there is, and a
 finding with an SE states in its detail its support in effective clients and its SE, and "not
 significant at this support" when its value is not more than 2 SE past its threshold (`_evidence`;
 4 for a best-order value, EDA's margin for the same in-sample gain), the SE taken at the threshold:
@@ -96,7 +96,7 @@ def check_quality(inputs: CheckInputs, params: Quality) -> StepResult:
     in that order: a feature gets the first that applies, so an all-null column is neither
     constant nor high-missing. Null counts as a value, so one value plus nulls is not constant
     (N4). Near-constant's detail is the minority's effect where it exists (`_minority_effect`,
-    the rare-value rule's): a 99%-zero flag can carry real lift at low prevalence (Q440).
+    the rare-value rule's): a 99%-zero flag can carry real lift at low prevalence.
     High-cardinality and the two null notes apply independently; `nulls_informative` needs a
     labelled null and non-null window row (`_null_rows_exist`)."""
     ledger = inputs.ledger
@@ -360,8 +360,8 @@ def _minority_effect(pooled: pd.DataFrame, inputs: CheckInputs) -> tuple[dict | 
     rows against the dominant value's (Cohen's h on the rates, d on the means; signed, so a
     minority below the dominant value reads negative), its SE on both sides' rows in effective
     clients and its support the minority's events in effective clients (`_effective_side`): a
-    client labelled in several periods of the pooled window counts about once (A28). Computed
-    on any support (Q540); `rare_effect_unavailable` names what cannot exist. None and '' when
+    client labelled in several periods of the pooled window counts about once. Computed
+    on any support; `rare_effect_unavailable` names what cannot exist. None and '' when
     no value dominates.
     """
     dominant = _dominant_value(pooled, inputs.dominant_share_min)
@@ -566,7 +566,7 @@ def check_stability(inputs: CheckInputs, params: Stability) -> StepResult:
 def _heterogeneity(inputs: CheckInputs) -> pd.DataFrame:
     """One row per read candidate (the ledger's index), over the window periods with a
     concordance in EDA's `concordance_per_period` (below `strata.min_events` support included:
-    its `insufficient` is a display mark, Q540): `heterogeneity_p` (Cochran's Q, weights
+    its `insufficient` is a display mark): `heterogeneity_p` (Cochran's Q, weights
     `_period_ses`), `concordance_range`, `tested` (the periods, comma-separated) and
     `least_support` (the thinnest period's); NaN and '' with fewer than two such periods.
 

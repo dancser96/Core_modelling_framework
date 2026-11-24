@@ -16,20 +16,16 @@ from conftest import build_entry
 from core_modelling.config.identities import feature_signature, resolved_input_hash
 from core_modelling.config.replay import Entry, replay, validate_raw
 from core_modelling.config.schema import UseCaseConfig
-from core_modelling.training.ledger_run import (
-    SIDECAR_FILE,
-    build_run_ledger,
-    read_run_ledger,
-    save_run_ledger,
-    signoff_table,
-)
-from core_modelling.training.views import (
+from core_modelling.reporting.training_views import (
     calibration_view,
     search_progress_chart,
     search_summary,
     selection_view,
     signoff_view,
 )
+from core_modelling.run_artifacts import SIDECAR_FILE, read_run_ledger
+from core_modelling.training.ledger_run import build_run_ledger, ledger_warnings, save_run_ledger
+from core_modelling.training.signoff import signoff_table
 
 # The features that entered selection; `grade` is an ordered categorical.
 ENTERED = ["bal", "bal_6m", "tenure", "prod", "grade", "noise"]
@@ -50,22 +46,23 @@ ENTRIES = [
 
 def _selection() -> pd.DataFrame:
     """The cluster rule keeps `bal` over `bal_6m` and the kept `tenure` beside it, the floor
-    drops `noise`, pruning protects `tenure` and was undone for `prod`."""
+    drops `noise` and `prod` passes it on its nulls, pruning protects `tenure` and was undone
+    for `prod`."""
     rows = [
-        ("bal", "cluster", 0.70, 0.70, "passed", None),
-        ("bal_6m", "cluster", 0.68, 0.70, "dropped", "bal"),
-        ("tenure", "cluster", 0.60, 0.70, "protected", None),
-        ("bal", "floor", 0.70, 0.52, "passed", None),
-        ("tenure", "floor", 0.60, 0.52, "passed", None),
-        ("prod", "floor", 0.55, 0.52, "passed", None),
-        ("grade", "floor", 0.58, 0.52, "passed", None),
-        ("noise", "floor", 0.501, 0.52, "dropped", None),
-        ("bal", "prune", 0.6, 0.01, "passed", None),
-        ("tenure", "prune", 0.005, 0.01, "protected", None),
-        ("prod", "prune", 0.004, 0.01, "undone", None),
-        ("grade", "prune", 0.05, 0.01, "passed", None),
+        ("bal", "cluster", 0.70, 0.70, "passed", None, None),
+        ("bal_6m", "cluster", 0.68, 0.70, "dropped", "bal", None),
+        ("tenure", "cluster", 0.60, 0.70, "protected", None, None),
+        ("bal", "floor", 0.70, 0.52, "passed", None, "concordance"),
+        ("tenure", "floor", 0.60, 0.52, "passed", None, "concordance"),
+        ("prod", "floor", 0.55, 0.52, "passed", None, "null_concordance"),
+        ("grade", "floor", 0.58, 0.52, "passed", None, "concordance_best_order"),
+        ("noise", "floor", 0.501, 0.52, "dropped", None, None),
+        ("bal", "prune", 0.6, 0.01, "passed", None, None),
+        ("tenure", "prune", 0.005, 0.01, "protected", None, None),
+        ("prod", "prune", 0.004, 0.01, "undone", None, None),
+        ("grade", "prune", 0.05, 0.01, "passed", None, None),
     ]
-    columns = ["feature", "rule", "value", "threshold", "outcome", "represented_by"]
+    columns = ["feature", "rule", "value", "threshold", "outcome", "represented_by", "cleared_by"]
     return pd.DataFrame(rows, columns=columns)
 
 
@@ -166,7 +163,8 @@ def test_the_run_ledger_has_the_doc_columns_and_round_trips(
     ledger = _run_ledger()
     assert list(ledger.columns) == [
         "feature", "selected", "dropped_by", "cluster_value", "cluster_threshold",
-        "cluster_outcome", "floor_value", "floor_threshold", "floor_outcome", "prune_value",
+        "cluster_outcome", "floor_value", "floor_threshold", "floor_outcome",
+        "floor_cleared_by", "prune_value",
         "prune_threshold", "prune_outcome", "represents", "protected", "in_model", "splits",
         "gain_share", "contribution_share", "contribution_rank", "direction_model",
         "direction_agrees", "levels_kept", "null_share", "infinite_share", "other_share",
@@ -180,9 +178,9 @@ def test_the_run_ledger_has_the_doc_columns_and_round_trips(
     with pytest.raises(FileExistsError, match="written once"):
         save_run_ledger(ledger, str(tmp_path), META)
     sidecar = json.loads((tmp_path / SIDECAR_FILE).read_text())
-    assert sidecar["ledger_run_schema_version"] == 1 and sidecar["stage2"] == META["stage2"]
-    (tmp_path / SIDECAR_FILE).write_text(json.dumps({**sidecar, "ledger_run_schema_version": 2}))
-    with pytest.raises(ValueError, match="ledger_run_schema_version 2.*train a new run"):
+    assert sidecar["ledger_run_schema_version"] == 2 and sidecar["stage2"] == META["stage2"]
+    (tmp_path / SIDECAR_FILE).write_text(json.dumps({**sidecar, "ledger_run_schema_version": 1}))
+    with pytest.raises(ValueError, match="ledger_run_schema_version 1.*train a new run"):
         read_run_ledger(str(tmp_path))
 
 
@@ -194,6 +192,9 @@ def test_the_rule_and_model_columns_follow_selection_and_the_model() -> None:
     noise = ledger.loc["noise"]
     assert noise["dropped_by"] == "floor" and not noise["selected"]
     assert noise["floor_value"] == 0.501 and noise["prune_outcome"] is None
+    assert noise["floor_cleared_by"] is None and ledger.loc["bal_6m", "floor_cleared_by"] is None
+    assert ledger.loc["prod", "floor_cleared_by"] == "null_concordance"
+    assert ledger.loc["bal", "floor_cleared_by"] == "concordance"
     model = ["in_model", "splits", "gain_share", "contribution_share", "contribution_rank",
              "direction_model", "direction_agrees"]  # fmt: skip
     assert noise[model].isna().all()
@@ -209,6 +210,16 @@ def test_the_rule_and_model_columns_follow_selection_and_the_model() -> None:
     assert ledger.loc["tenure", "direction_model"] == "-"
     assert prod["direction_model"] is None and prod["levels_kept"] == 2
     assert ledger.loc["grade", "levels_kept"] == 3
+
+
+def test_the_ledger_warns_on_a_wrong_constraint_and_a_final_feature_without_a_split() -> None:
+    """`bal`'s constraint goes against EDA's direction, and the final feature `grade` got no
+    split: each is one warning naming the features; a dropped feature is in neither."""
+    constraint, unused = ledger_warnings(_run_ledger())
+    assert constraint.startswith("the constraints on ['bal'] go against EDA's direction")
+    assert unused.startswith("the final features ['grade'] got no split in the final model")
+    everywhere = {feature: 1 for feature in FINAL}
+    assert ledger_warnings(_run_ledger(everywhere)) == [constraint]
 
 
 def test_a_family_without_split_counts_reads_in_model_from_the_gain() -> None:
@@ -288,25 +299,26 @@ def _calibration(task: str) -> pd.DataFrame:
         return pd.DataFrame({
             "method": ["none", "platt", "beta"], "chosen": [False, True, False],
             "parameters": ["{}", '{"a": 1.1, "b": -0.2}', "{}"],
-            "oof_log_loss": [0.21, 0.20, 0.199], "true_rate": [0.02] * 3,
+            "oof_loss": [0.21, 0.20, 0.199], "true_rate": [0.02] * 3,
             "sampled_rate": [0.1] * 3, "offset": [-1.69] * 3, "factor": [None] * 3,
             "factor_low": [None] * 3, "factor_high": [None] * 3, "half_total_rows": [None] * 3,
         })  # fmt: skip
     return pd.DataFrame({
         "method": ["mean"], "chosen": [True], "parameters": ['{"factor": 1.02}'],
-        "oof_log_loss": [None], "true_rate": [None], "sampled_rate": [None], "offset": [None],
+        "oof_loss": [None], "true_rate": [None], "sampled_rate": [None], "offset": [None],
         "factor": [1.02], "factor_low": [0.97], "factor_high": [1.08], "half_total_rows": [41],
     })  # fmt: skip
 
 
 @pytest.mark.parametrize("task", ["binary", "regression"])
 def test_every_view_builds_for_both_tasks(task: str, variant: Callable[..., UseCaseConfig]) -> None:
-    """Each view returns its keys; the selection view says what was dropped, the sign-off view
-    whether the list is signed and by which entry."""
+    """Each view returns its keys; the selection view says what was dropped and how many passed
+    the floor on their nulls, the sign-off view whether the list is signed and by which entry."""
     ledger = _run_ledger()
     selection = selection_view(ledger, _selection())
     assert set(selection) == {"summary", "counts", "dropped"}
     assert "4 of the 6 features" in selection["summary"]
+    assert "1 of the 5 features the floor measured passed it on their nulls" in selection["summary"]
     assert "Pruning was undone" in selection["dropped"][-1]
     calibration = calibration_view(_calibration(task), task)
     assert set(calibration) == {"methods", "summary"}

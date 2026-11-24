@@ -20,15 +20,25 @@ from core_modelling.config.replay import Entry
 from core_modelling.reporting import blocks
 from core_modelling.reporting.charts import apply_theme
 from core_modelling.reporting.explain_charts import beeswarm, importance_bar
-from core_modelling.reporting.formats import COUNT, SHARE, finding_number
+from core_modelling.reporting.formats import COUNT, SHARE, finding_number, plain_number
 from core_modelling.reporting.html import paragraph, style_table
 from core_modelling.reporting.theme import THEME
+from core_modelling.run_artifacts import (
+    LIST_COLUMNS,
+    OPPOSITE,
+    OUTCOMES,
+    RULES,
+    SECTIONS,
+    sample_contributions,
+)
 from core_modelling.statistics.losses import metric_value
-from core_modelling.training.ledger_run import LIST_COLUMNS, OPPOSITE, OUTCOMES, RULES, SECTIONS
-from core_modelling.training.tables import sample_contributions
+from core_modelling.tasks import TASK_SPECS
 
 SEARCH_COLUMNS = ["family", "trials", "seconds", "seconds_per_trial", "seconds_longest",
                   "best_fold_metric", "best_trial", "share_seconds"]  # fmt: skip
+SEARCH_FORMATS = {"trials": COUNT, "seconds": "{:.1f}", "seconds_per_trial": "{:.1f}",
+                  "seconds_longest": "{:.1f}", "best_fold_metric": plain_number,
+                  "share_seconds": SHARE}  # fmt: skip
 RULE_VALUES = (
     "value and threshold per rule: cluster, the train concordance against the representative's; "
     "floor, the train concordance (best order when the train split marks the feature "
@@ -91,7 +101,7 @@ def search_table(trials: pd.DataFrame, metric: str) -> Styler:
         f"The search per family; best_fold_metric is the fold {metric}, the mean over every "
         "dealing's folds, and best_trial its trial"
     )
-    return style_table(search_summary(trials, metric), caption=caption)
+    return style_table(search_summary(trials, metric), SEARCH_FORMATS, caption=caption)
 
 
 def search_progress_chart(trials: pd.DataFrame, metric: str) -> go.Figure:
@@ -130,13 +140,22 @@ def _rule_counts(selection: pd.DataFrame) -> Styler | str:
 
 def selection_view(run_ledger: pd.DataFrame, selection: pd.DataFrame) -> dict:
     """The selection blocks: `summary` (a line: how many features entered and how many are in
-    the final list), `counts` (per rule and outcome) and `dropped` (the dropped features with
-    their value and threshold, then a line when pruning was undone)."""
+    the final list, and when the floor ran, how many passed it on their nulls), `counts` (per
+    rule and outcome) and `dropped` (the dropped features with their value and threshold, then
+    a line when pruning was undone)."""
     selected, protected = int(run_ledger["selected"].sum()), int(run_ledger["protected"].sum())
-    summary = paragraph(
+    text = (
         f"{selected} of the {len(run_ledger)} features that entered selection are in the final "
         f"list; {protected} with a person's keep were measured by every rule and dropped by none."
     )
+    floor = selection.loc[selection["rule"] == "floor"]
+    if not floor.empty:
+        on_nulls = int((floor["cleared_by"] == "null_concordance").sum())
+        text += (
+            f" {on_nulls} of the {len(floor)} features the floor measured passed it on their "
+            "nulls: the value's concordance fell short, whether the value is missing cleared it."
+        )
+    summary = paragraph(text)
     dropped = selection.loc[selection["outcome"] == "dropped"]
     if dropped.empty:
         dropped_blocks: list = [paragraph("No feature was dropped by a selection rule.")]
@@ -180,27 +199,11 @@ def _regression_line(chosen: pd.Series) -> str:
     )
 
 
-# Per task: the calibration table's columns (any other is null for the task), its caption and
-# the summary line.
-CALIBRATION_BY_TASK = {
-    "binary": {
-        "columns": ["method", "chosen", "oof_log_loss", "parameters"],
-        "caption": "Every method considered on the out-of-fold margins inside train, the "
-        "bundle's marked chosen; the log loss is taken before the offset, at the sampled rate. "
-        "Each method's log loss is in sample, not cross-fitted: the method is fitted and judged "
-        "on the same rows, so one with more parameters never looks worse, and a gap in the "
-        "fourth decimal or beyond is no reason to switch",
-        "line": _binary_line,
-    },
-    "regression": {
-        "columns": ["method", "chosen", "factor", "factor_low", "factor_high", "half_total_rows",
-                    "parameters"],
-        "caption": "The level factor: the total observed over the total predicted out of fold, "
-        "its interval from a client bootstrap",
-        "line": _regression_line,
-    },
-}  # fmt: skip
-CALIBRATION_FORMATS = {"oof_log_loss": "{:.4f}", "factor": "{:.3f}", "factor_low": "{:.3f}",
+# The summary line per task, a function of this module, so it stays out of `tasks.TASK_SPECS`,
+# which must not import the reporting side (the table's columns and caption are its entries:
+# `calibration_table_columns`, `calibration_table_caption`).
+CALIBRATION_LINES = {"binary": _binary_line, "regression": _regression_line}
+CALIBRATION_FORMATS = {"oof_loss": "{:.4f}", "factor": "{:.3f}", "factor_low": "{:.3f}",
                        "factor_high": "{:.3f}", "half_total_rows": COUNT}  # fmt: skip
 
 
@@ -208,19 +211,17 @@ def calibration_view(calibration: pd.DataFrame, task: str) -> dict:
     """The calibration blocks: `methods` (binary: `none`, `platt` and `beta` with their
     out-of-fold log loss; regression: the level factor with its interval; the bundle's method
     marked `chosen`) and `summary` (one line on the bundle's method)."""
-    if task not in CALIBRATION_BY_TASK:
-        raise ValueError(
-            f"no calibration view for task {task!r}; tasks: {list(CALIBRATION_BY_TASK)}"
-        )
-    spec = CALIBRATION_BY_TASK[task]
+    if task not in CALIBRATION_LINES:
+        raise ValueError(f"no calibration view for task {task!r}; tasks: {list(CALIBRATION_LINES)}")
+    spec = TASK_SPECS[task]
     chosen = calibration.loc[calibration["chosen"].astype(bool)]
     if len(chosen) != 1:
         raise ValueError(f"the calibration table marks {len(chosen)} methods chosen, not one")
-    table = calibration[spec["columns"]].reset_index(drop=True)
+    table = calibration[spec["calibration_table_columns"]].reset_index(drop=True)
     formats = {column: f for column, f in CALIBRATION_FORMATS.items() if column in table}
     return {
-        "methods": style_table(table, formats, caption=spec["caption"]),
-        "summary": spec["line"](chosen.iloc[0]),
+        "methods": style_table(table, formats, caption=spec["calibration_table_caption"]),
+        "summary": CALIBRATION_LINES[task](chosen.iloc[0]),
     }
 
 

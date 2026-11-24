@@ -153,7 +153,7 @@ def test_the_ledger_reads_back_as_saved(tmp_path: Path) -> None:
 
 
 def test_save_ledger_refuses_a_derived_or_unowned_column_and_a_bad_meta(tmp_path: Path) -> None:
-    """A stored decision would go stale with the next entry (V10); a column no stage owns has no
+    """A stored decision would go stale with the next entry; a column no stage owns has no
     place in the file; the meta holds the data definition and one run token per stage whose
     columns the ledger holds, and nothing else."""
     with pytest.raises(ValueError, match=r"\['held'\] are derived"):

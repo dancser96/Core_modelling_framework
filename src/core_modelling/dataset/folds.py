@@ -13,7 +13,8 @@ regression, takes the plain hash fold, the draw cut into K. Dealing in turn need
 order, which is cheap for the few converting clients and would be a single-partition sort for
 millions of others. Train labels arrange train folds only: the frame passed in holds train
 rows alone. `fold_counts` counts each dealing's folds and `check_folds` fails loud on a fold
-without a train row or, for a binary task, without a positive row.
+without a train row, for a binary task without a positive row, and for either task on a fold
+whose targets take one value: no metric can judge a trial there.
 """
 
 import pandas as pd
@@ -24,7 +25,8 @@ from core_modelling.config import UseCaseConfig
 from core_modelling.dataset.split import hash_uniform
 from core_modelling.tasks import TASK_SPECS
 
-FOLD_COUNT_COLUMNS = ["dealing", "fold", "rows", "clients", "converting_clients", "positive_rows"]
+FOLD_COUNT_COLUMNS = ["dealing", "fold", "rows", "clients", "converting_clients", "positive_rows",
+                      "target_min", "target_max"]  # fmt: skip
 
 
 def fold_columns(repeats: int) -> list[str]:
@@ -71,14 +73,20 @@ def _dealt_folds(train: DataFrame, columns: list[str], folds: int, seed: int) ->
 def fold_counts(train: DataFrame, cfg: UseCaseConfig) -> pd.DataFrame:
     """One row per dealing (1 … R) and fold (0 … K−1), every fold listed, an empty one with zero
     counts: `FOLD_COUNT_COLUMNS`, the rows, the clients, the converting clients and the positive
-    rows (null for a regression), from one aggregate of the train rows with their fold columns."""
+    rows (null for a regression), and the fold's smallest and largest target, from one aggregate
+    of the train rows with their fold columns."""
     folds, repeats = cfg.training.folds, cfg.training.fold_repeats
     pairs = [
         F.struct(F.lit(dealing).alias("dealing"), F.col(name).alias("fold"))
         for dealing, name in enumerate(fold_columns(repeats), start=1)
     ]
     positive = F.col("target") == 1
-    counts = [F.count(F.lit(1)).alias("rows"), F.countDistinct("unit_id").alias("clients")]
+    counts = [
+        F.count(F.lit(1)).alias("rows"),
+        F.countDistinct("unit_id").alias("clients"),
+        F.min("target").cast("double").alias("target_min"),
+        F.max("target").cast("double").alias("target_max"),
+    ]
     balanced = TASK_SPECS[cfg.task]["balanced_folds"]
     if balanced:
         counts += [
@@ -98,9 +106,10 @@ def fold_counts(train: DataFrame, cfg: UseCaseConfig) -> pd.DataFrame:
 
 
 def check_folds(counts: pd.DataFrame) -> None:
-    """Fail loud, naming each (dealing, fold), on a fold without a train row and, for a binary
-    task (the positive counts not null), on a fold without a positive row: such a fold cannot
-    judge a trial."""
+    """Fail loud, naming each (dealing, fold), on a fold without a train row, for a binary task
+    (the positive counts not null) on a fold without a positive row, and on a fold whose targets
+    take one value (`target_min` equals `target_max`): such a fold cannot judge a trial, and a
+    regression's concordance or r2 is not defined on it."""
     first = counts[counts["dealing"] == 1]  # a client sits in one fold of each dealing
     empty = counts[counts["rows"] == 0]
     if len(empty):
@@ -108,15 +117,21 @@ def check_folds(counts: pd.DataFrame) -> None:
             f"the folds (dealing, fold) {_pairs(empty)} hold no train row: the train split has "
             f"{int(first['clients'].sum())} clients for {len(first)} folds"
         )
-    if counts["positive_rows"].isna().all():
-        return
-    without = counts[counts["positive_rows"] == 0]
+    without = counts[counts["positive_rows"] == 0]  # a regression's null counts never equal 0
     if len(without):
         raise ValueError(
             f"the folds (dealing, fold) {_pairs(without)} have no positive row: the train "
             f"split's {int(first['converting_clients'].sum())} converting clients cannot give "
             f"each of the {len(first)} folds one, and a fold without a positive event cannot "
             "judge a trial"
+        )
+    constant = counts[counts["target_min"] == counts["target_max"]]
+    if len(constant):
+        values = sorted(set(constant["target_min"].astype(float)))
+        raise ValueError(
+            f"the folds (dealing, fold) {_pairs(constant)} hold one target value ({values}): "
+            "no metric can tell a better trial from a worse one there; the target takes too "
+            "few values on the train split for the folds"
         )
 
 

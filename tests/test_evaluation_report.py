@@ -3,9 +3,12 @@ tables, the skip-views check on a config, and the rendered page of the card run 
 regression variant (Spark, through the session's `evaluated_card` and `evaluated_regression`).
 """
 
+from html import escape
+
 import pandas as pd
 import pytest
 from conftest import with_evaluation
+from pandas.io.formats.style import Styler
 
 from core_modelling.artifacts import StageResult
 from core_modelling.config import UseCaseConfig
@@ -13,13 +16,12 @@ from core_modelling.config.audit_log import COLUMNS
 from core_modelling.evaluation.report import (
     ALWAYS,
     NO_CLASSES,
-    TITLES,
     VIEWS,
-    build_report,
     check_skip_views,
     render_views,
     report_views,
 )
+from core_modelling.evaluation.tables import headline_names, metric_key, pooled_metrics
 from core_modelling.evaluation.views import (
     _period_rows,
     interval_text,
@@ -28,9 +30,11 @@ from core_modelling.evaluation.views import (
     validation_clients_view,
     wide_metrics,
 )
-from core_modelling.evaluation.views_summary import baseline_table
+from core_modelling.evaluation.views_summary import _warnings_blocks, baseline_table
+from core_modelling.reporting.blocks import warnings_block
 from core_modelling.reporting.html import paragraph
 from core_modelling.reporting.theme import THEME
+from core_modelling.statistics.score_cells import PARTS
 
 NO_DECISIONS = pd.DataFrame(columns=COLUMNS)  # the audit log's table, empty: the page's checks
 
@@ -118,13 +122,6 @@ def test_check_skip_views_refuses_an_unknown_name_and_the_summary(
     check_skip_views(with_evaluation(cc_config, skip_views=["metrics", "pdp_ice"]))
 
 
-def test_report_views_refuses_an_unknown_skip_name(cc_config: UseCaseConfig) -> None:
-    """`report_views` checks `evaluation.skip_views` itself before building any view, so a
-    misspelt name never leaves the page silently unchanged."""
-    with pytest.raises(ValueError, match="no_such_view"):
-        report_views({}, {}, with_evaluation(cc_config, skip_views=["no_such_view"]))
-
-
 def test_period_rows_put_test_periods_then_validation_then_pooled_then_the_mean() -> None:
     """Each part's periods in time order, validation's one period after test's, test pooled,
     the periods' mean last; validation's pooled row, a repeat of its period, left out."""
@@ -154,6 +151,30 @@ def test_a_row_below_the_support_rule_is_greyed_in_the_rendered_view(
     assert "0.9 (0.5 to 1)" in html
 
 
+def test_the_warnings_section_lists_evaluations_then_trainings() -> None:
+    """Evaluation's own warnings come first, then a "From Training" list from
+    `meta["training_warnings"]`."""
+    meta = {"warnings": [{"code": "a", "text": "own sentence"}],
+            "training_warnings": ["held feature released"]}  # fmt: skip
+    own, (heading, trained) = _warnings_blocks(meta)
+    assert own == warnings_block(["own sentence"])
+    assert heading == "From Training" and trained == [warnings_block(["held feature released"])]
+
+
+def test_a_new_view_is_one_row_of_the_views(
+    cc_config: UseCaseConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A row (title, section, view) added to `VIEWS` renders under its title in its section,
+    with no second structure to edit."""
+    row = {"title": "A new view", "section": "extended", "view": lambda *_: []}
+    monkeypatch.setitem(VIEWS, "new_view", row)
+    meta = {"run_id": "r001", "entity": "entity_a", "timings": {"seconds": {"scoring": 1.0}}}
+    views = {ALWAYS: [paragraph("the summary")], "new_view": [paragraph("shown")]}
+    log = [{"step": "collect", "frame": "explanation_sample", "rows": 10, "columns": 3}]
+    page = render_views(views, meta, cc_config, log, NO_DECISIONS)
+    assert page.index(">Extended</h") < page.index(">A new view</h") < page.index(">Appendix</h")
+
+
 def test_the_page_ends_with_the_appendix(cc_config: UseCaseConfig) -> None:
     """The rendered page holds the appendix: the resolved config, the audit log, the frames
     collected and the timings."""
@@ -168,17 +189,50 @@ def test_the_page_ends_with_the_appendix(cc_config: UseCaseConfig) -> None:
     assert "explanation_sample" in page
 
 
+def _titles() -> list[str]:
+    """Every view's title, in the report's order."""
+    return [row["title"] for row in VIEWS.values()]
+
+
 def _headings(page: str) -> list[str]:
     """The views' titles found in the page as headings."""
-    return [title for title in TITLES.values() if f">{title}</h" in page.replace("&#x27;", "'")]
+    return [title for title in _titles() if f">{title}</h" in page.replace("&#x27;", "'")]
+
+
+def _headline_texts(result: StageResult) -> list[str]:
+    """The pooled value and interval of each headline metric on each part, as the summary prints
+    them, from the stored metrics table."""
+    cfg = result.config
+    pooled = pooled_metrics(result.tables["metrics"]).set_index(["part", "metric"])
+    rows = [pooled.loc[(part, metric_key(cfg, name))] for part in PARTS
+            for name in headline_names(cfg)]  # fmt: skip
+    return [interval_text(row["value"], row["low"], row["high"]) for row in rows]
+
+
+def _assert_numbers_on_the_page(result: StageResult, page: str) -> None:
+    """The headline numbers, every warning's sentence (Evaluation's and Training's) and the
+    metrics view's pooled test row of the decision's metric are on the page."""
+    assert all(text in page for text in _headline_texts(result))
+    for warning in result.meta["warnings"]:
+        assert escape(warning["text"]) in page
+    for sentence in result.meta["training_warnings"]:
+        assert escape(sentence) in page
+    cfg = result.config
+    pooled = pooled_metrics(result.tables["metrics"]).set_index(["part", "metric"])
+    first = pooled.loc[("test", metric_key(cfg, cfg.decision.metric))]
+    table = VIEWS["metrics"]["view"](result.tables, result.meta, cfg)[0]
+    assert isinstance(table, Styler)
+    assert interval_text(first["value"], first["low"], first["high"]) in table.to_html()
 
 
 def test_the_card_report_holds_every_view(evaluated_card: StageResult) -> None:
-    """Every view's heading is on the binary page, none declared impossible for the task, and
-    plotly.js is embedded once, never loaded from a CDN."""
+    """Every view's heading is on the binary page, none declared impossible for the task, its
+    headline numbers and warnings are printed, and plotly.js is embedded once, never loaded
+    from a CDN."""
     result = evaluated_card
     page = render_views(result.views, result.meta, result.config, result.log, NO_DECISIONS)
-    assert _headings(page) == list(TITLES.values())
+    assert _headings(page) == _titles()
+    _assert_numbers_on_the_page(result, page)
     assert ">Appendix</h" in page
     assert f"Not available: {NO_CLASSES}." not in page
     assert page.count('<script type="text/javascript">/**') == 1
@@ -188,12 +242,14 @@ def test_the_card_report_holds_every_view(evaluated_card: StageResult) -> None:
 def test_the_regression_report_says_what_an_amount_cannot_show(
     evaluated_regression: StageResult,
 ) -> None:
-    """The regression page holds every heading, and the views declared impossible for an amount
-    read "not available" with their reason."""
+    """The regression page holds every heading and its headline numbers, and the views declared
+    impossible for an amount read "not available" with their reason."""
     result = evaluated_regression
     page = render_views(result.views, result.meta, result.config, result.log, NO_DECISIONS)
-    assert _headings(page) == list(TITLES.values())
-    impossible = [entry["regression"] for entry in VIEWS.values() if isinstance(entry, dict)]
+    assert _headings(page) == _titles()
+    _assert_numbers_on_the_page(result, page)
+    views = [entry["view"] for entry in VIEWS.values()]
+    impossible = [view["regression"] for view in views if isinstance(view, dict)]
     assert impossible == [NO_CLASSES] * 3
     assert page.count(f"Not available: {NO_CLASSES}.") == 3
 
@@ -202,7 +258,9 @@ def test_a_skipped_view_is_left_out_and_the_summary_stays(evaluated_card: StageR
     """A view named in `evaluation.skip_views` leaves the page; the summary always renders."""
     cfg = with_evaluation(evaluated_card.config, skip_views=["curves", "thresholds"])
     result = evaluated_card
-    page = build_report(result.tables, result.meta, cfg, result.log, NO_DECISIONS)
+    views = report_views(result.tables, result.meta, cfg)
+    page = render_views(views, result.meta, cfg, result.log, NO_DECISIONS)
     shown = _headings(page)
-    assert TITLES["curves"] not in shown and TITLES["thresholds"] not in shown
-    assert TITLES["summary"] in shown and TITLES["metrics"] in shown
+    titles = {name: row["title"] for name, row in VIEWS.items()}
+    assert titles["curves"] not in shown and titles["thresholds"] not in shown
+    assert titles["summary"] in shown and titles["metrics"] in shown

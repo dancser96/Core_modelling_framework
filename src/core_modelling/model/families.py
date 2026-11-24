@@ -2,8 +2,9 @@
 
 Every later step fits, scores, saves and explains a model through `FAMILIES[name]`, keyed by
 FLAML's learner names, so the search's trials, the fold models, the final fit, the bundle and
-scoring in Spark treat a model one way (Q617, A55). A family reads the encoder as plain data
-(`encoder.py` writes it) and saves the library's native file, never a pickle (D-051).
+scoring in Spark treat a model one way, with the same constants for every fit. A family reads
+the encoder as plain data (`encoder.py` writes it) and saves the library's native file, never a
+pickle (D-051).
 
 What every family pins, from the Stage 3 measurements on the pinned versions: the frame in the
 booster's own column order with numerics as float64 (LightGBM scores a wrong order silently),
@@ -36,11 +37,11 @@ class Family:
     parameter names its `fit` takes and the ones `fixed_params` owns (with what sets each)."""
 
     fit: Callable[[pd.DataFrame, np.ndarray, dict, str], object]
-    predict: Callable[[object, pd.DataFrame], np.ndarray]
+    predict: Callable[..., np.ndarray]  # (booster, X, threads=None): None is every core
     describe: Callable[[object], dict]
     save: Callable[[object, str], None]
     load: Callable[[bytes], object]  # the bytes of the file `save` wrote
-    contributions: Callable[[object, pd.DataFrame], np.ndarray]
+    contributions: Callable[..., np.ndarray]  # (booster, X, threads=None)
     # (task, objective, encoder, monotone, seed, threads, tweedie_variance_power) -> dict
     fixed_params: Callable[..., dict]
     file_name: str
@@ -67,7 +68,7 @@ def _family(module: ModuleType) -> Family:
 FAMILIES = {
     "lgbm": _family(lgbm_family),
     # One booster for both: FLAML's `xgboost` space has no `max_depth`, which `fit` reads as
-    # leaf-wise growth, while `xgb_limitdepth` searches the depth (Q651).
+    # leaf-wise growth, while `xgb_limitdepth` searches the depth.
     "xgboost": _family(xgb_family),
     "xgb_limitdepth": _family(xgb_family),
     "catboost": _family(catboost_family),
@@ -91,12 +92,17 @@ def check_searched(family: str, searched: dict) -> None:
 
 
 def check_monotone(
-    family: str, booster: object, X: pd.DataFrame, monotone: dict[str, str], rows: int = 200
+    family: str,
+    booster: object,
+    X: pd.DataFrame,
+    monotone: dict[str, str],
+    rows: int = 200,
+    threads: int | None = None,
 ) -> None:
     """Fail unless the margin follows every declared constraint. Each constrained feature is
     swept over about `GRID_POINTS` quantiles of its observed values in `X`, on the first `rows`
-    rows with the other columns held, and a step against the direction fails (Q650's check).
-    A constant feature is not tested: its grid holds one value and no step."""
+    rows with the other columns held, and a step against the direction fails; the sweep is
+    predicted on `threads`. A constant feature is not tested: its grid holds one value."""
     sample = X.head(rows)
     for name, direction in monotone.items():
         if X[name].isna().all():
@@ -106,7 +112,8 @@ def check_monotone(
             )
         grid = _sweep_grid(X[name])
         swept = pd.concat([sample.assign(**{name: value}) for value in grid], ignore_index=True)
-        margins = FAMILIES[family].predict(booster, swept).reshape(len(grid), len(sample))
+        margins = FAMILIES[family].predict(booster, swept, threads)
+        margins = margins.reshape(len(grid), len(sample))
         steps = np.diff(margins, axis=0) * DIRECTIONS[direction]
         wrong = int((steps < -TOLERANCE * max(1.0, np.abs(margins).max())).sum())
         if wrong:
@@ -119,6 +126,6 @@ def check_monotone(
 
 def _sweep_grid(values: pd.Series) -> np.ndarray:
     """About `GRID_POINTS` distinct observed values of a feature, at its quantiles, null left out
-    (the null branch is free under a constraint in LightGBM and XGBoost, Q650)."""
+    (the null branch is free under a constraint in LightGBM and XGBoost)."""
     observed = values.dropna().to_numpy(dtype=np.float64)
     return np.unique(np.quantile(observed, np.linspace(0, 1, GRID_POINTS), method="nearest"))

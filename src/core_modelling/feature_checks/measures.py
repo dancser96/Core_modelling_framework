@@ -54,7 +54,7 @@ def lagged_concordance(
 ) -> dict:
     """One feature's concordance on each row's value one period earlier against its current
     target, over `window[1:]`, read in the window's direction so a flip reads below 0.5 (N11);
-    computed on whatever support there is (Q540).
+    computed on whatever support there is.
 
     `cells` holds the feature's current and lagged cells. The window's first period is left
     out: its previous period is not in EDA's rows, so it has no lagged cells.

@@ -7,8 +7,10 @@ meta and the resolved config, and draws `reporting/explain_charts.py`'s charts, 
 renders again from `evaluation/` without Spark. Beside Evaluation's own explanation tables
 (`evaluation/explain.py`), the importance view reads Training's explanation sample, stored with
 them (`TRAIN_SAMPLE`, train out of fold), and the effects view the effects table
-(`evaluation/effects.py`: the mean contribution per EDA group beside EDA's lift). The views only
-draw; nothing is chosen on these numbers (`CLAUDE.md` §4.4).
+(`evaluation/effects.py`: the mean contribution per EDA group beside EDA's lift). Every view
+but the waterfalls reads the explanation sample's sampled rows only (`sampled_rows`), never the
+hand-picked waterfall rows. The views only draw; nothing is chosen on these numbers (`CLAUDE.md`
+§4.4).
 """
 
 import pandas as pd
@@ -16,13 +18,9 @@ from pandas.io.formats.style import Styler
 
 from core_modelling.config import UseCaseConfig
 from core_modelling.config.schema import LOG_LINK_OBJECTIVES
-from core_modelling.evaluation.effects import EFFECTS
-from core_modelling.evaluation.explain import (
-    DISAGREEMENTS,
-    MAX_EFFECTS,
-    TOP_EFFECTS,
-    WATERFALL_COLUMN,
-)
+from core_modelling.evaluation.effects import EFFECTS, MAX_EFFECTS, TOP_EFFECTS
+from core_modelling.evaluation.explain import WATERFALL_COLUMN, sampled_rows
+from core_modelling.evaluation.permutation import DISAGREEMENTS, PERMUTATIONS
 from core_modelling.reporting.blocks import not_available
 from core_modelling.reporting.explain_charts import (
     MIN_GROUP_ROWS,
@@ -36,10 +34,9 @@ from core_modelling.reporting.explain_charts import (
 )
 from core_modelling.reporting.formats import COUNT, SHARE, column_formats, plain_number
 from core_modelling.reporting.html import paragraph, style_table
+from core_modelling.run_artifacts import BASE_COLUMN, TRAIN_SAMPLE, sample_contributions
 from core_modelling.tasks import TASK_SPECS
-from core_modelling.training.tables import BASE_COLUMN, sample_contributions
 
-TRAIN_SAMPLE = "training_explanation_sample"  # Training's `explanation_sample`, as stored
 BEESWARM_TOP = 15
 WATERFALL_TITLES = {
     "highest": "The highest score of test",
@@ -53,14 +50,15 @@ def _final_features(tables: dict[str, pd.DataFrame]) -> list[str]:
     return tables["features"]["feature"].tolist()
 
 
-def _scale_note(resolved: UseCaseConfig) -> str:
-    """One line on the margin's scale the contributions are on."""
-    if resolved.task == "binary":
-        scale = "the log-odds"
-    elif resolved.training.objective in LOG_LINK_OBJECTIVES:
-        scale = f"the log scale of the {resolved.training.objective} objective"
+def _scale_note(meta: dict, resolved: UseCaseConfig) -> str:
+    """One line on the margin's scale the contributions are on, under the run's own objective
+    (`meta["choices"]["objective"]`, from its `run.json`): a named run may have been trained
+    under another than the evaluating config's."""
+    spec, objective = TASK_SPECS[resolved.task], meta["choices"]["objective"]
+    if spec["log_link_scale"] and objective in LOG_LINK_OBJECTIVES:
+        scale = spec["log_link_scale"].format(objective=objective)
     else:
-        scale = "the prediction's own scale"
+        scale = spec["margin_scale"]
     return paragraph(
         f"Contributions are the model library's own, on the margin's scale ({scale}), before "
         "calibration: a row's contributions and the base value sum to its margin."
@@ -71,19 +69,19 @@ def importance_view(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCa
     """View 8: each final feature's share of the mean absolute contribution, test beside train
     out of fold."""
     features = _final_features(tables)
-    test = sample_contributions(tables["contributions"], features)
+    test = sample_contributions(sampled_rows(tables["contributions"]), features)
     train = sample_contributions(tables[TRAIN_SAMPLE], features)
     text = (
         f"Test: the {len(test):,} rows of Evaluation's explanation sample. Train, out of fold: "
         f"Training's explanation sample, {len(train):,} train rows, each explained by the fold "
         "model that did not see it. A feature far apart in the two is worth a look."
     )
-    return [_scale_note(resolved), paragraph(text), importance_bar(test, compare=train)]
+    return [_scale_note(meta, resolved), paragraph(text), importance_bar(test, compare=train)]
 
 
 def beeswarm_view(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseConfig) -> list:
     """View 9: the `BEESWARM_TOP` features' contributions, `ROW_CAP` seeded test rows at most."""
-    sample, features = tables["contributions"], _final_features(tables)
+    sample, features = sampled_rows(tables["contributions"]), _final_features(tables)
     contributions = sample_contributions(sample, features)
     shown = min(ROW_CAP, len(sample))
     text = (
@@ -92,7 +90,7 @@ def beeswarm_view(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCase
         "value is grey."
     )
     fig = beeswarm(contributions, sample[features], BEESWARM_TOP, shown, resolved.training.seed)
-    return [_scale_note(resolved), paragraph(text), fig]
+    return [_scale_note(meta, resolved), paragraph(text), fig]
 
 
 def _left_out(rows: pd.DataFrame) -> str | None:
@@ -130,7 +128,7 @@ def _effect_blocks(tables: dict[str, pd.DataFrame], name: str, task: str) -> lis
         raise ValueError(f"the effects table has no row for the effect feature {name}")
     reason = rows["unavailable"].iloc[0]
     if reason:
-        sample = tables["contributions"]
+        sample = sampled_rows(tables["contributions"])
         text = (
             f"No EDA lift beside {name} ({reason}): its contribution against its value, "
             f"{min(ROW_CAP, len(sample)):,} seeded sample rows at most."
@@ -160,7 +158,7 @@ def effects_view(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseC
         f"{MIN_GROUP_ROWS} sample rows; right, EDA's lift by the same groups on its snapshot. "
         "The two should rise and fall together."
     )
-    blocks: list = [_scale_note(resolved), paragraph(text)]
+    blocks: list = [_scale_note(meta, resolved), paragraph(text)]
     return blocks + [(name, _effect_blocks(tables, name, resolved.task)) for name in names]
 
 
@@ -169,7 +167,7 @@ def waterfalls_view(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCa
     highest score, the row at the decision's cut and a typical row."""
     sample, features = tables["contributions"], _final_features(tables)
     cut = meta["choices"]["explanation_cut"]
-    blocks: list = [_scale_note(resolved)]
+    blocks: list = [_scale_note(meta, resolved)]
     for which, title in WATERFALL_TITLES.items():
         marked = sample.loc[sample[WATERFALL_COLUMN] == which]
         if len(marked) != 1:
@@ -200,24 +198,28 @@ def permutation_importance_view(
     said = "undefined" if correlation is None or pd.isna(correlation) else f"{correlation:.2f}"
     columns = ["cluster", "members", "loss_change", "loss_change_sd", "importance_rank",
                "contribution_share", "contribution_rank", "rank_gap", "disagrees"]  # fmt: skip
+    rows = meta["choices"]["permutation_rows"]
     caption = (
         f"Per redundancy cluster (Feature Checks'; a feature without one stands alone, cluster "
         f"empty): the change in the {resolved.decision.metric} loss when its members are "
-        "permuted together on the explanation sample, the mean over the permutations and their "
-        "standard deviation, largest first, beside the cluster's contribution share; disagrees "
-        f"marks the {DISAGREEMENTS} largest rank gaps"
+        f"permuted together on the permutation sample of {rows:,} seeded test rows, the mean over "
+        f"{PERMUTATIONS} permutations and their standard deviation, largest first, beside the "
+        "cluster's contribution share on the explanation sample; disagrees marks the "
+        f"{DISAGREEMENTS} largest rank gaps"
     )
     formats = {"loss_change": plain_number, "loss_change_sd": plain_number,
                "contribution_share": SHARE}  # fmt: skip
     text = (
-        f"Spearman's rank correlation of the two orders: {said}. A loss change within its "
-        "standard deviation is noise: permuting the cluster did not reliably change the loss."
+        f"Spearman's rank correlation of the two orders: {said}. The standard deviation covers "
+        f"the {PERMUTATIONS} permutations of the same rows only, not the draw of the rows: a "
+        "loss change within it is noise, while one beyond it can still move on another sample."
     )
     return [paragraph(text), style_table(table[columns], formats, caption=caption)]
 
 
 def pdp_ice_view(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseConfig) -> list:
-    """View 16: partial dependence over the ICE lines for view 10's features."""
+    """View 16: partial dependence over the ICE lines for view 10's features, each one its table
+    holds; the reason for the ones it leaves out when `meta["unavailable"]` names the table."""
     names, table = meta["choices"]["effect_features"], tables["partial_dependence"]
     if not names:
         return [paragraph("No effect feature: the model uses none.")]
@@ -226,6 +228,10 @@ def pdp_ice_view(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseC
         "kept: the mean score (partial dependence) over a line per sampled row (ICE). Lines "
         "that cross say the feature acts through others."
     )
+    blocks: list = [paragraph(text)]
+    reason = meta["unavailable"].get("partial_dependence")
+    if reason is not None:
+        blocks.append(not_available(reason))
     y_format = TASK_SPECS[resolved.task]["axis_format"]
-    charts = [pdp_ice_chart(table.loc[table["feature"] == name], y_format) for name in names]
-    return [paragraph(text), *charts]
+    drawn = [name for name in names if name in set(table["feature"])]
+    return blocks + [pdp_ice_chart(table.loc[table["feature"] == name], y_format) for name in drawn]

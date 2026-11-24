@@ -699,7 +699,7 @@ def test_association_table_methods_rows_and_seeded_cap(monkeypatch: pytest.Monke
 
 def test_cluster_features_on_a_hand_table() -> None:
     """Two linked pairs (one negative), one singleton; the not-compared pair a–f is never
-    linked, though f is close to b (average linkage, Q472)."""
+    linked, though f is close to b (average linkage)."""
     table = pd.DataFrame(
         [("a", "b", 0.96), ("c", "d", -0.93), ("a", "e", 0.2), ("b", "f", 0.95),
          ("a", "f", np.nan), ("c", "e", 0.1)],
@@ -800,8 +800,8 @@ def _rates(positives: int, rows: int) -> pd.DataFrame:
 
 
 def test_rare_effect_is_cohens_h_on_rates_and_cohens_d_on_means() -> None:
-    """Cohen's h reads a fivefold rate at 0.2% → 1% far below one at 5% → 25% (0.11 and 0.60,
-    Q539), signed, with SE √(1/n₁ + 1/n₂) on the effective sizes given, and exists for any two
+    """Cohen's h reads a fivefold rate at 0.2% → 1% far below one at 5% → 25% (0.11 and 0.60),
+    signed, with SE √(1/n₁ + 1/n₂) on the effective sizes given, and exists for any two
     rates; Cohen's d is the mean difference over the pooled SD from the sums of squares, its SE
     √((n₁ + n₂)/(n₁n₂) + d²/(2(n₁ + n₂))), not available under two rows a side or without
     spread, and refused when called there."""

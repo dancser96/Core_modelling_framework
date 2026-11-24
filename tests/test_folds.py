@@ -136,9 +136,12 @@ def test_regression_gets_plain_hash_folds_and_no_positive_counts(
     check_folds(counts)
 
 
-def _counts(positives: list[int | None], rows: list[int] | None = None) -> pd.DataFrame:
+def _counts(
+    positives: list[int | None], rows: list[int] | None = None, top: list[float] | None = None
+) -> pd.DataFrame:
     """A one-dealing counts table with the positive rows (and converting clients) given per
-    fold; `rows` per fold, ten each by default; None positives make it a regression's."""
+    fold; `rows` per fold, ten each by default; None positives make it a regression's. Each
+    fold's targets run from 0 to its entry of `top` (1 by default)."""
     rows = rows or [10] * len(positives)
     return pd.DataFrame(
         {
@@ -148,6 +151,8 @@ def _counts(positives: list[int | None], rows: list[int] | None = None) -> pd.Da
             "clients": [r // 2 for r in rows],
             "converting_clients": positives,
             "positive_rows": positives,
+            "target_min": 0.0,
+            "target_max": top or [1.0] * len(positives),
         }
     )[FOLD_COUNT_COLUMNS]
 
@@ -175,3 +180,12 @@ def test_check_folds_names_each_fold_without_a_positive_or_a_row() -> None:
     message = r"\[\(1, 2\)\] hold no train row: the train split has 12 clients for 3 folds"
     with pytest.raises(ValueError, match=message):
         check_folds(_counts([None] * 3, rows=[12, 12, 0]))
+
+
+def test_check_folds_refuses_a_fold_whose_targets_take_one_value() -> None:
+    """A regression fold whose targets are all one value has no concordance and gives every
+    trial the same r2, so it is refused before the collect, naming the fold and the value; a
+    fold with a spread passes."""
+    check_folds(_counts([None] * 3, top=[4.0, 0.5, 2.0]))
+    with pytest.raises(ValueError, match=r"\[\(1, 1\)\] hold one target value \(\[0.0\]\)"):
+        check_folds(_counts([None] * 3, top=[4.0, 0.0, 2.0]))

@@ -2,12 +2,14 @@
 score distribution, a metric by period and predicted against observed.
 
 Each function takes one of Evaluation's tables (`pd.DataFrame`, columns in docs/components/
-evaluation.md and the plan's A102) and returns a plotly figure with the chart rules applied
+evaluation.md) and returns a plotly figure with the chart rules applied
 (docs/components/reporting.md). None reads rows: the curve tables hold one row per score bin (up
 to 200) and a `part` column, so the functions assume neither a number of rows nor that both parts
 are present. A part keeps its colour across every chart (chart rule 6), present or not. The line
 charts reuse `charts.grouped_lines`; the rest use `charts.apply_theme`.
 """
+
+from collections.abc import Sequence
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -15,9 +17,7 @@ from plotly.subplots import make_subplots
 
 from core_modelling.reporting.charts import TITLE_SIZE, apply_theme, axis_range, grouped_lines
 from core_modelling.reporting.theme import THEME
-from core_modelling.statistics.score_cells import POOLED
-
-PART_ORDER = ("test", "validation")  # a fixed order, so a part keeps its colour in every chart
+from core_modelling.statistics.score_cells import MEAN, PARTS, POOLED
 
 
 def _require(df: pd.DataFrame, chart: str, *columns: str) -> None:
@@ -28,20 +28,25 @@ def _require(df: pd.DataFrame, chart: str, *columns: str) -> None:
 
 
 def _part_order(df: pd.DataFrame) -> list[str]:
-    """`PART_ORDER`, then any other part of the table sorted: the order that fixes the colours."""
-    extra = sorted(set(df["part"].astype(str)) - set(PART_ORDER))
-    return [*PART_ORDER, *extra]
+    """`PARTS`, then any other part of the table sorted: a fixed order, so a part keeps its
+    colour in every chart."""
+    extra = sorted(set(df["part"].astype(str)) - set(PARTS))
+    return [*PARTS, *extra]
+
+
+def part_colour(name: str, parts: Sequence[str] = PARTS) -> str:
+    """A part's colour by its place in `parts`, the one rule for every chart that tells parts
+    apart (chart rule 6): test the first sequence colour, validation the second."""
+    sequence = THEME["sequence"]
+    return sequence[list(parts).index(name) % len(sequence)]
 
 
 def _part_lines(df: pd.DataFrame) -> list[tuple[str, pd.DataFrame, str]]:
-    """Each part present: its name, its rows and its colour (by place in `_part_order`)."""
+    """Each part present: its name, its rows and its colour (`part_colour` by place in
+    `_part_order`)."""
     rows = dict(list(df.assign(part=df["part"].astype(str)).groupby("part", sort=False)))
-    sequence = THEME["sequence"]
-    return [
-        (name, rows[name], sequence[i % len(sequence)])
-        for i, name in enumerate(_part_order(df))
-        if name in rows
-    ]
+    order = _part_order(df)
+    return [(name, rows[name], part_colour(name, order)) for name in order if name in rows]
 
 
 def _reference_line(x: list[float], y: list[float], name: str) -> go.Scatter:
@@ -147,20 +152,20 @@ def _calibration_chart(
 
 
 def reliability_chart(reliability: pd.DataFrame, axis_format: str | None = ".1%") -> go.Figure:
-    """Reliability: the observed rate against the mean score of each `group` (10 quantile groups
-    of the score), one line per `part`, the diagonal dashed. `axis_format` is the task's (binary:
-    percent)."""
+    """Reliability: the observed rate against the mean score of each `group` (the task's
+    `reliability_groups` quantile groups of the score), one line per `part`, the diagonal
+    dashed. `axis_format` is the task's (binary: percent)."""
     return _calibration_chart(reliability, "reliability_chart", "Reliability",
                               "Predicted (mean score of the group)",
                               "Observed rate of the group", axis_format)  # fmt: skip
 
 
-def predicted_vs_observed(reliability: pd.DataFrame) -> go.Figure:
-    """Regression: the mean observed against the mean predicted amount in each of the 20 groups
-    of the prediction (`reliability_table` with 20 groups), one line per `part`, the diagonal
-    dashed."""
+def predicted_vs_observed(reliability: pd.DataFrame, *, groups: int) -> go.Figure:
+    """Regression: the mean observed against the mean predicted amount in each of the `groups`
+    groups of the prediction (the task's `reliability_groups`), one line per `part`, the
+    diagonal dashed."""
     return _calibration_chart(reliability, "predicted_vs_observed", "Predicted against observed",
-                              "Mean predicted (20 groups of the prediction)",
+                              f"Mean predicted ({groups} groups of the prediction)",
                               "Mean observed", None)  # fmt: skip
 
 
@@ -201,9 +206,8 @@ def score_distribution(distribution: pd.DataFrame) -> go.Figure:
         chance = _reference_line([0, 1], [1, 1], "chance (ratio 1)")
         chance.showlegend = col == 1
         fig.add_trace(chance, row=1, col=col)
-    apply_theme(
-        fig, "Score distribution by class", "Percentile of the score", "Ratio to chance", 380
-    )
+    apply_theme(fig, "Score distribution by class", "Percentile of the score", "", 380)
+    fig.update_yaxes(title_text="Ratio to chance", row=1, col=1)  # the panels share one y axis
     fig.update_xaxes(range=[0, 1], tickformat=".0%")
     ratios = data["ratio"].to_numpy(dtype=float)
     fig.update_yaxes(range=axis_range(ratios, 1.0, True))
@@ -216,18 +220,18 @@ def metric_lines(
 ) -> go.Figure:  # fmt: skip
     """One metric by `period` with its interval (`low`, `high`), one line per `part`; the
     validation period is a period of its own part. A row with `insufficient` true is greyed
-    (chart rule 3), never hidden. The `pooled` row is no point on the time axis and is left out
-    (the metrics table shows it). The table holds one metric; `from_zero`, `y_format` and
-    `reference` are the metric's (a concordance around 0.5: the data's span, a reference of
-    0.5)."""
+    (chart rule 3), never hidden. The `pooled` and `mean` rows are no point on the time axis and
+    are left out (the metrics table shows them). The table holds one metric; `from_zero`,
+    `y_format` and `reference` are the metric's (a concordance around 0.5: the data's span, a
+    reference of 0.5)."""
     _require(metrics, "metric_lines", "metric", "part", "period", "value", "low", "high",
              "insufficient")  # fmt: skip
     names = metrics["metric"].unique()
     if len(names) != 1:
         raise ValueError(f"metric_lines: draw one metric at a time; the table holds {list(names)}")
-    timed = metrics[metrics["period"].astype(str) != POOLED]
+    timed = metrics[~metrics["period"].astype(str).isin([POOLED, MEAN])]
     if timed.empty:
-        raise ValueError("metric_lines: the table holds no period besides the pooled row")
+        raise ValueError("metric_lines: the table holds no period besides the pooled and mean rows")
     # the pooled row made the column mixed; infer_objects gives the periods their date type back
     timed = timed.assign(period=timed["period"].infer_objects())
     timed = timed.sort_values("period", kind="stable")

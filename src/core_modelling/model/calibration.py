@@ -77,7 +77,7 @@ def _logit_input(m: np.ndarray, method: str, parameters: dict) -> np.ndarray:
 def check_calibration(calibration: dict, task: str) -> None:
     """Fail loud unless `calibration` has exactly `CALIBRATION_KEYS`, a link the task takes, a
     method the link takes with exactly its parameters, finite numbers that keep the model's
-    order (`_check_order_kept`), and a zero offset for a regression link (the prior-shift offset
+    order (`check_order_kept`), and a zero offset for a regression link (the prior-shift offset
     exists for binary only, §4.7)."""
     keys = sorted(calibration)
     if keys != sorted(CALIBRATION_KEYS):
@@ -107,7 +107,7 @@ def check_calibration(calibration: dict, task: str) -> None:
         )
     for name, value in [*calibration["parameters"].items(), ("offset", calibration["offset"])]:
         _check_number(value, name)
-    _check_order_kept(method, calibration["parameters"])
+    check_order_kept(method, calibration["parameters"])
     if link != "logit" and calibration["offset"] != 0:
         raise ValueError(
             f"the calibration's offset is {calibration['offset']} on the {link} link; the "
@@ -115,10 +115,14 @@ def check_calibration(calibration: dict, task: str) -> None:
         )
 
 
-def _check_order_kept(method: str, parameters: dict) -> None:
+def check_order_kept(method: str, parameters: dict) -> None:
     """Fail loud unless the map from margin to score is strictly increasing, so the score ranks
     as the margin does: Platt `a > 0`; beta `a ≥ 0` and `b ≥ 0`, not both zero (its slope in the
-    margin is `a·(1 − p) + b·p`); a factor `> 0`."""
+    margin is `a·(1 − p) + b·p`); a factor `> 0`. A parameter that is not a finite number is
+    refused first, since a NaN compares False and would pass. Training checks every fitted
+    method with it, whatever the method chosen, and the bundle the one it holds."""
+    for name, value in parameters.items():
+        _check_number(value, f"{method} parameter {name}")
     a, b = parameters.get("a"), parameters.get("b")
     reverses = (
         (method == "platt" and a <= 0)
@@ -128,7 +132,8 @@ def _check_order_kept(method: str, parameters: dict) -> None:
     if reverses:
         raise ValueError(
             f"the fitted {method} calibration {parameters} reverses or flattens the model's "
-            "order; the fit must be looked at, not applied"
+            "order: fitted on the out-of-fold margins, it means the model is anti-predictive "
+            "out of fold; look at the features and the target before training again"
         )
 
 

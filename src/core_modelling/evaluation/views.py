@@ -6,10 +6,10 @@ clients only (docs/components/reporting.md "The model results report"); the summ
 Each view is `(tables, meta, resolved) -> list` of blocks, read from Evaluation's stored tables,
 its meta (`evaluation.json`) and the resolved config only; views 12 and 13 read Training's
 `signoff` and `trials`, which `run_evaluation` stores among Evaluation's tables as
-`TRAINING_SIGNOFF` and `TRAINING_TRIALS`. A value prints with its client-bootstrap interval in
-one cell (`interval_text`), a reason where a cell is not available, and a row below
-`strata.min_events` greyed, never hidden. The explanation views are `views_explain.py`'s; the
-compatibility table and the page are `report.py`'s.
+`run_artifacts.TRAINING_SIGNOFF` and `TRAINING_TRIALS`. A value prints with its
+client-bootstrap interval in one cell (`interval_text`), a reason where a cell is not available,
+and a row below `strata.min_events` greyed, never hidden. The explanation views are
+`views_explain.py`'s; the compatibility table and the page are `report.py`'s.
 """
 
 from collections.abc import Callable
@@ -18,13 +18,8 @@ from functools import partial
 import pandas as pd
 
 from core_modelling.config import UseCaseConfig
-from core_modelling.evaluation.explain import curve_at_depths
-from core_modelling.evaluation.tables import (
-    CAPTURE_DEPTHS,
-    VALIDATION_TEST_CLIENTS,
-    metric_key,
-    pooled_metrics,
-)
+from core_modelling.evaluation.slices import CAPTURE_DEPTHS
+from core_modelling.evaluation.tables import VALIDATION_TEST_CLIENTS, metric_key, pooled_metrics
 from core_modelling.reporting.formats import COUNT, SHARE, plain_number
 from core_modelling.reporting.html import paragraph, style_table
 from core_modelling.reporting.model_charts import (
@@ -36,51 +31,38 @@ from core_modelling.reporting.model_charts import (
     roc_chart,
     score_distribution,
 )
+from core_modelling.reporting.training_views import (
+    search_progress_chart,
+    search_table,
+    signoff_view,
+)
+from core_modelling.run_artifacts import SECTIONS, TRAINING_SIGNOFF, TRAINING_TRIALS
+from core_modelling.statistics.metrics import curve_at_depths
 from core_modelling.statistics.score_cells import MEAN, PARTS, POOLED
 from core_modelling.tasks import TASK_SPECS
-from core_modelling.training.ledger_run import SECTIONS
-from core_modelling.training.views import search_progress_chart, search_table, signoff_view
 
 View = Callable[[dict[str, pd.DataFrame], dict, UseCaseConfig], list]
 Format = str | Callable[[float], str]
-TRAINING_SIGNOFF = "training_signoff"  # Training's `signoff` table, among Evaluation's tables
-TRAINING_TRIALS = "training_trials"  # Training's `trials` table, among Evaluation's tables
 HIDDEN_METRICS = ("mean_score", "mean_target")  # the baselines' inputs, not metrics to read
 REFERENCES = {"roc_auc": 0.5, "concordance": 0.5}  # read around chance: the data's span
 SUPPORT_FORMATS = {"rows": COUNT, "events": COUNT}
-# Per task: the calibration chart, the metrics beside it, the events below which a note warns
-# that the groups are noisy, the error metrics per stratum level, what the `events` column counts
-# (the greying's support), the clause on how train's and test's ordering metric are computed, the
-# strata note's sentence on its coarser score bins (binary only: `STRATA_STEP`) and the summary's
-# statement only the task needs (None: none).
-VIEWS_BY_TASK = {
-    "binary": {
-        "calibration_chart": partial(reliability_chart,
-                                     axis_format=TASK_SPECS["binary"]["axis_format"]),
-        "calibration_metrics": ["observed_to_expected", "calibration_slope",
-                                "calibration_intercept"],
-        "note_below_events": 200,
-        "strata_metrics": ["roc_auc", "observed_to_expected"],
-        "events": "positive rows",
-        "gap_clause": None,
-        "strata_clause": " A level's metrics are computed on coarser score bins than the pooled "
-                         "ones (every fourth edge), so a level's ordering metrics read slightly "
-                         "below what the pooled grid would give.",
-        "statement": "Average precision moves with the base rate: it is not comparable across "
-                     "use cases.",
-    },
-    "regression": {
-        "calibration_chart": predicted_vs_observed,
-        "calibration_metrics": ["predicted_to_observed"],
-        "note_below_events": None,
-        "strata_metrics": ["rmse", "mae", "predicted_to_observed"],
-        "events": "rows with a non-zero target",
-        "gap_clause": "train's is computed on rows, test's on score cells, which reads up to "
-                      "about 0.01 higher, so a test value above train's is no finding",
-        "strata_clause": "",  # a regression's levels keep the pooled grid
-        "statement": None,
-    },
-}  # fmt: skip
+# The calibration chart per task: a function of `reporting/`, so it stays out of
+# `tasks.TASK_SPECS`, which must not import the reporting side (the rest of the task's view
+# choices are its entries: `calibration_metrics`, `note_below_events`, `strata_metrics`,
+# `events_noun`, `strata_clause`, `summary_statement`).
+CALIBRATION_CHARTS = {
+    "binary": partial(reliability_chart, axis_format=TASK_SPECS["binary"]["axis_format"]),
+    "regression": partial(
+        predicted_vs_observed, groups=TASK_SPECS["regression"]["reliability_groups"]
+    ),
+}
+
+
+def few_events(resolved: UseCaseConfig) -> str:
+    """The support rule as the report words it, `fewer than 20 positive rows (strata.min_events)`:
+    the one sentence the summary, the metrics view and the strata view share."""
+    events = TASK_SPECS[resolved.task]["events_noun"]
+    return f"fewer than {resolved.strata.min_events} {events} (strata.min_events)"
 
 
 def interval_text(
@@ -167,11 +149,7 @@ def metrics_view(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseC
     plain = _plain_metrics(tables["metrics"])
     rows = labelled_metrics(_period_rows(plain), meta["row_loss"])
     table, short_rows = wide_metrics(rows, ["part", "period"])
-    caption = (
-        f"Every metric per period, value (interval); greyed: fewer than "
-        f"{resolved.strata.min_events} {VIEWS_BY_TASK[resolved.task]['events']} "
-        "(strata.min_events)"
-    )
+    caption = f"Every metric per period, value (interval); greyed: {few_events(resolved)}"
     key = metric_key(resolved, resolved.decision.metric)
     timed = _shown_parts(plain).loc[lambda df: (df["metric"] == key) & (df["period"] != MEAN)]
     lines = metric_lines(timed, from_zero=key not in REFERENCES, reference=REFERENCES.get(key))
@@ -188,16 +166,18 @@ def slice_table(slices: pd.DataFrame, task: str) -> pd.DataFrame:
     """One part's or several parts' slices (`tables.SLICE_COLUMNS`) for the capture view:
     `part, slice, declared` (a configured slice, else a fixed depth), the rows and the target
     captured, capture, the rate (regression: the mean) and lift, each with its interval as text,
-    and why a slice is not available (its value cells left empty)."""
+    and a `note`: why a slice is not available (its value cells left empty), else why a rate
+    shows no interval (`no_interval`)."""
     spec = TASK_SPECS[task]
     table = pd.DataFrame({
         "part": slices["part"], "slice": slices["slice"], "declared": slices["configured"],
         "rows": slices["rows"], spec["capture_noun"]: slices["target"],
         "capture": interval_texts(slices, "capture", SHARE),
         spec["estimate_noun"]: interval_texts(slices, "rate", spec["estimate_format"]),
-        "lift": interval_texts(slices, "lift", "{:.2f}"), "unavailable": slices["unavailable"],
+        "lift": interval_texts(slices, "lift", "{:.2f}"),
+        "note": slices["unavailable"].where(slices["unavailable"].ne(""), slices["no_interval"]),
     }).reset_index(drop=True)  # fmt: skip
-    absent = table["unavailable"].ne("").to_numpy()
+    absent = slices["unavailable"].ne("").to_numpy()
     table.loc[absent, ["capture", spec["estimate_noun"], "lift"]] = ""
     return table
 
@@ -209,8 +189,9 @@ def capture_view(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseC
     pooled = _shown_parts(slices.loc[slices["period"] == POOLED])
     table = slice_table(pooled, resolved.task)
     noun = TASK_SPECS[resolved.task]["capture_noun"]
+    depths = f"{CAPTURE_DEPTHS[0]:.0%} to {CAPTURE_DEPTHS[-1]:.0%}"
     caption = (
-        "The declared slices, then the depths 1 to 50%, each cut inside each period and added "
+        f"The declared slices, then the depths {depths}, each cut inside each period and added "
         "up over the part's periods; value (interval)"
     )
     formats = {"rows": COUNT, noun: COUNT}
@@ -222,18 +203,18 @@ def reliability_view(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseC
     """View 5: the score against the observed level in groups of the score (regression: the
     prediction), with the calibration metrics per part beside it; binary notes a part under 200
     events, whose groups are noisy."""
-    spec = VIEWS_BY_TASK[resolved.task]
+    spec = TASK_SPECS[resolved.task]
     pooled = pooled_metrics(tables["metrics"])
     pooled = _shown_parts(pooled.loc[pooled["metric"].isin(spec["calibration_metrics"])])
     table, _ = wide_metrics(pooled, ["part"])
-    blocks = [spec["calibration_chart"](_shown_parts(tables["reliability"])),
+    blocks = [CALIBRATION_CHARTS[resolved.task](_shown_parts(tables["reliability"])),
               style_table(table, SUPPORT_FORMATS, caption="Calibration, pooled per part, "
                                                           "value (interval)")]  # fmt: skip
     floor = spec["note_below_events"]
     few = table.loc[table["events"] < floor, "part"].tolist() if floor else []
     if few:
         note = (
-            f"Fewer than {floor} {spec['events']} on {', '.join(few)}: the groups are noisy; "
+            f"Fewer than {floor} {spec['events_noun']} on {', '.join(few)}: the groups are noisy; "
             "read the intervals, not the points."
         )
         blocks.append(paragraph(note))
@@ -263,12 +244,12 @@ def strata_view(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseCo
     if not variables:
         return [paragraph("No strata variables are configured (strata.variables).")]
     metrics, composition = tables["metrics"], tables["strata"]
-    chosen = metrics["metric"].isin(VIEWS_BY_TASK[resolved.task]["strata_metrics"])
+    chosen = metrics["metric"].isin(TASK_SPECS[resolved.task]["strata_metrics"])
     formats = {**SUPPORT_FORMATS, "population_share": SHARE, "list_share": SHARE, "capture": SHARE}
-    events, clause = (VIEWS_BY_TASK[resolved.task][key] for key in ("events", "strata_clause"))
+    clause = TASK_SPECS[resolved.task]["strata_clause"]
     blocks: list = [paragraph(
         "No tests across levels: many levels read together will show some differences by chance. "
-        f"Greyed: fewer than {resolved.strata.min_events} {events} (strata.min_events).{clause}"
+        f"Greyed: {few_events(resolved)}.{clause}"
     )]  # fmt: skip
     for variable in variables:
         levels = metrics.loc[chosen & (metrics["stratum"] == variable)]

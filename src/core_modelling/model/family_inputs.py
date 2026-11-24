@@ -12,7 +12,7 @@ import pandas as pd
 
 DIRECTIONS = {"increasing": 1, "decreasing": -1}
 # A class weight makes a model believe positives are more common than they are, and the
-# calibration undoes only the declared sampling (A4): the config refuses these names, and no
+# calibration undoes only the declared sampling: the config refuses these names, and no
 # family takes one either, whatever its estimator lists. Compared as given: the libraries are
 # case-sensitive, so a mixed-case name is outside every allowed set anyway.
 REWEIGHTING_PARAMS = (
@@ -30,7 +30,7 @@ POSITIONAL_PARAMS = ("monotone_constraints", "feature_types")
 
 def objective_params(family: str, task: str, objective: str, objectives: dict) -> dict:
     """A family's parameters for the objective, from its table `{task: {name: parameters}}`:
-    binary takes `log_loss` only, regression one of Q639's names."""
+    binary takes `log_loss` only, regression one of the config's regression objectives."""
     if task not in objectives:
         raise ValueError(f"{family}: unknown task {task!r}; expected one of {sorted(objectives)}")
     if objective not in objectives[task]:
@@ -42,7 +42,7 @@ def objective_params(family: str, task: str, objective: str, objectives: dict) -
 
 def tweedie_power(family: str, power: float | None) -> float:
     """Tweedie's variance power, checked: given, and strictly between 1 (Poisson) and 2
-    (gamma), the range of a mass at zero and a skewed positive part (Q639)."""
+    (gamma), the range of a mass at zero and a skewed positive part."""
     if power is None or not 1 < power < 2:
         raise ValueError(
             f"{family}: the Tweedie objective needs `training.tweedie_variance_power` in (1, 2); "
@@ -53,7 +53,7 @@ def tweedie_power(family: str, power: float | None) -> float:
 
 def declared_categoricals(encoder: dict) -> list[str]:
     """The unordered features a family declares categorical to its library: all of them under
-    `native`, none under `codes`, where their codes are plain numbers (Q609)."""
+    `native`, none under `codes`, where their codes are plain numbers."""
     if encoder["unordered"] == "codes":
         return []
     return [feature["name"] for feature in encoder["features"] if feature["kind"] == "unordered"]
@@ -62,7 +62,7 @@ def declared_categoricals(encoder: dict) -> list[str]:
 def monotone_directions(family: str, encoder: dict, monotone: dict[str, str]) -> list[int]:
     """The constraint per encoder feature, in the encoder's order: 1 increasing, -1 decreasing,
     0 free. A constraint on an unordered categorical or on a name the encoder lacks fails here,
-    before any library sees it (LightGBM would abort the process, XGBoost ignore it, Q650)."""
+    before any library sees it (LightGBM would abort the process, XGBoost ignore it)."""
     kinds = {feature["name"]: feature["kind"] for feature in encoder["features"]}
     for name, direction in monotone.items():
         if name not in kinds:

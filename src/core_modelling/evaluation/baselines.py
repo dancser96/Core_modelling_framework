@@ -4,7 +4,7 @@
 `population_base_rate` (the unsampled train split's rate, the `base` the skill scores are
 measured against) and a `historic_predicted_rate` number. The others are scored like the
 model, from one score column each, `baseline_<form>` (`baseline_columns`), which `add_baselines`
-adds to the evaluation rows before scoring, so the scores table stores them (A97): the
+adds to the evaluation rows before scoring, so the scores table stores them: the
 `single_feature`, a `previous_model` column and a `historic_predicted_rate` column. A null in
 any of them scores lowest, `NULL_SCORE`, so it ranks like the single feature's null.
 
@@ -16,10 +16,11 @@ front, from the form and a column's facts (`describe_baseline_columns`, one Spar
 which row loss a baseline's cells carry and which compared metrics it cannot fill, and why;
 the caller and `compare_baselines` both read it. `compare_baselines` sets the model beside each
 baseline at the decision's metric and the order metrics, on test and on validation; a cell a
-baseline cannot fill reads "not available: reason", decided before any number (D-035). Nothing
-passes or fails: the person who approves a promotion judges (D-032).
+baseline cannot fill reads "not available: reason", decided before any number (D-035), and a
+value the part's rows leave undefined reads `UNDEFINED`, so a blank cell never stands for one.
+Nothing passes or fails: the person who approves a promotion judges (D-032).
 
-`run`, as `carried_columns`, `baseline_columns` and `add_baselines` read it, holds `features`
+`choice`, as `carried_columns`, `baseline_columns` and `add_baselines` read it, holds `features`
 (the bundle's, `load_bundle(…).features`) and `single_feature` (`choose_single_feature` on the
 run's `read_run_ledger`, the `ledger` of `read_stage2_copy` and `run.json`'s
 `training_settings["features.order"]`; None when no feature qualifies).
@@ -32,6 +33,7 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import NumericType
 
 from core_modelling.config import UseCaseConfig
+from core_modelling.config.schema import DEVIANCE_METRICS
 from core_modelling.evaluation.cells import scorer_loss
 from core_modelling.evaluation.scores import BASELINE_PREFIX
 from core_modelling.evaluation.tables import pooled_metrics
@@ -42,13 +44,13 @@ from core_modelling.tasks import TASK_SPECS
 
 NULL_SCORE = -2 * CLIP  # a null's baseline score: below every value, clipped to ±CLIP
 COLUMN_FORMS = ("previous_model", "historic_predicted_rate")  # forms whose argument may be a column
-POSITIVE_LOSSES = ("tweedie_deviance", "poisson_deviance")  # a deviance needs a prediction > 0
 FACTS = ("null_share", "min", "max")  # what `describe_baseline_columns` gives per column
 MEAN_PREDICTION = "mean_prediction"  # the comparison's level row: a mean score, or a rate
 COMPARISON_COLUMNS = ["scorer", "part", "metric", "value", "low", "high", "unavailable"]
 RATE_ONLY = "not available: one rate for every row ranks nothing; it is compared on its rate"
 RAW_FEATURE = "not available: a raw feature's values are no prediction"
 NOT_CHOSEN = "not available: no numeric or ordered categorical feature has a train concordance"
+UNDEFINED = "not available: undefined on this part's rows"  # a NaN no reason was declared for
 
 
 def choose_single_feature(
@@ -86,6 +88,31 @@ def choose_single_feature(
     }
 
 
+def single_feature_warnings(
+    cfg: UseCaseConfig, single: dict | None, run_ledger: pd.DataFrame
+) -> list[dict]:
+    """Evaluation's warnings on the single-feature baseline (`single`, `choose_single_feature`'s):
+    configured but not chosen, or chosen with nulls on train, since it was chosen on the train
+    rows where it is known while its nulls score lowest on every row. The share is the per-run
+    ledger's `null_share` (the encoder's, on the train frame). Each is a `code`, its values and
+    the `text`."""
+    configured = "single_feature" in cfg.decision.baselines
+    if configured and single is None:
+        return [{"code": "single_feature_baseline_not_chosen",
+                 "text": f"the single-feature baseline is {NOT_CHOSEN}"}]  # fmt: skip
+    if single is None:
+        return []
+    name = single["feature"]
+    share = float(run_ledger.set_index("feature").loc[name, "null_share"])
+    if not share > 0:
+        return []
+    text = (f"the single-feature baseline {name} was chosen on the train rows where it is "
+            f"known; it is null on {share:.1%} of train rows and nulls score lowest, so the "
+            "baseline may be weaker than it looks")  # fmt: skip
+    return [{"code": "single_feature_baseline_has_nulls", "feature": name,
+             "train_null_share": share, "text": text}]  # fmt: skip
+
+
 def _forms(cfg: UseCaseConfig) -> dict[str, str | float | None]:
     """`decision.baselines` by form (each named once, checked at load), with its argument: a
     column or a number; None for `population_base_rate` and `single_feature`."""
@@ -103,26 +130,26 @@ def _column_forms(cfg: UseCaseConfig) -> dict[str, str]:
     return {form: arg for form, arg in forms if form in COLUMN_FORMS and isinstance(arg, str)}
 
 
-def _source_columns(cfg: UseCaseConfig, run: dict) -> dict[str, str]:
+def _source_columns(cfg: UseCaseConfig, choice: dict) -> dict[str, str]:
     """Each ranking baseline's form → the column its score reads: the chosen single feature
     (none when no feature qualified), then the column baselines."""
     columns = {}
-    if "single_feature" in _forms(cfg) and run["single_feature"] is not None:
-        columns["single_feature"] = run["single_feature"]["feature"]
+    if "single_feature" in _forms(cfg) and choice["single_feature"] is not None:
+        columns["single_feature"] = choice["single_feature"]["feature"]
     return {**columns, **_column_forms(cfg)}
 
 
-def baseline_columns(cfg: UseCaseConfig, run: dict) -> dict[str, str]:
+def baseline_columns(cfg: UseCaseConfig, choice: dict) -> dict[str, str]:
     """The score columns `add_baselines` adds, form → `baseline_<form>`: what `score_parts`
     keeps and each baseline's `score_cells(…, column=…)`."""
-    return {form: f"{BASELINE_PREFIX}{form}" for form in _source_columns(cfg, run)}
+    return {form: f"{BASELINE_PREFIX}{form}" for form in _source_columns(cfg, choice)}
 
 
-def carried_columns(cfg: UseCaseConfig, run: dict) -> list[str]:
-    """What `build_frames(…, "evaluation", carry=…)` must carry for the baselines (A97): each
-    ranking baseline's source column that the bundle's features lack, each once."""
-    columns = dict.fromkeys(_source_columns(cfg, run).values())
-    return [name for name in columns if name not in run["features"]]
+def carried_columns(cfg: UseCaseConfig, choice: dict) -> list[str]:
+    """What `build_frames(…, "evaluation", carry=…)` must carry for the baselines: each ranking
+    baseline's source column that the bundle's features lack, each once."""
+    columns = dict.fromkeys(_source_columns(cfg, choice).values())
+    return [name for name in columns if name not in choice["features"]]
 
 
 def _known(column: Column) -> Column:
@@ -161,14 +188,14 @@ def describe_baseline_columns(rows: DataFrame, cfg: UseCaseConfig) -> dict[str, 
     }
 
 
-def add_baselines(rows: DataFrame, cfg: UseCaseConfig, run: dict) -> DataFrame:
-    """The evaluation rows with one score column per ranking baseline (`baseline_columns`,
-    A97): the single feature as `_single_feature_score` gives it, a column baseline's values as
+def add_baselines(rows: DataFrame, cfg: UseCaseConfig, choice: dict) -> DataFrame:
+    """The evaluation rows with one score column per ranking baseline (`baseline_columns`): the
+    single feature as `_single_feature_score` gives it, a column baseline's values as
     doubles, a null or NaN at `NULL_SCORE`. Rows already holding a column of those names (a
     feature, stratum or carried column) are refused. The carried columns are dropped once read,
     unless a stratum: `score_parts` refuses any column that is no key, stratum, baseline or
     feature of the bundle."""
-    added = baseline_columns(cfg, run)
+    added = baseline_columns(cfg, choice)
     clashing = sorted(set(added.values()) & set(rows.columns))
     if clashing:
         raise ValueError(
@@ -177,13 +204,13 @@ def add_baselines(rows: DataFrame, cfg: UseCaseConfig, run: dict) -> DataFrame:
         )
     scores = {
         added[form]: (
-            _single_feature_score(run["single_feature"])
+            _single_feature_score(choice["single_feature"])
             if form == "single_feature"
             else F.coalesce(_known(F.col(column)), F.lit(NULL_SCORE))
         )
-        for form, column in _source_columns(cfg, run).items()
+        for form, column in _source_columns(cfg, choice).items()
     }
-    dropped = [name for name in carried_columns(cfg, run) if name not in cfg.strata.variables]
+    dropped = [name for name in carried_columns(cfg, choice) if name not in cfg.strata.variables]
     return rows.select("*", *[score.alias(name) for name, score in scores.items()]).drop(*dropped)
 
 
@@ -227,9 +254,9 @@ def baseline_loss(
     form: str, cfg: UseCaseConfig, facts: dict[str, float] | None, objective: str
 ) -> tuple[str | None, dict[str, str]]:
     """The row loss the cells of baseline `form` carry, for `score_cells(…, loss=…)` and
-    `metric_tables(…, loss=loss is not None)`, and each compared metric (`_labels`) it cannot
-    fill with its reason, decided up front from the form and, for a column baseline, its
-    `facts` (`describe_baseline_columns`); `objective` is the run's (`scorer_loss`).
+    `metric_rows(…, loss=…)`, and each compared metric (`_labels`) it cannot fill with its
+    reason, decided up front from the form and, for a column baseline, its `facts`
+    (`describe_baseline_columns`); `objective` is the run's (`scorer_loss`).
 
     A rate fills only `mean_prediction`; the single feature only the order metrics (no loss); a
     column with nulls ranks (a null lowest) but fills no other metric (no loss); a column
@@ -255,7 +282,7 @@ def baseline_loss(
         reason = (f"not available: `{column}` runs from {low:g} to {high:g}, outside "
                   f"[{bounds[0]:g}, {bounds[1]:g}]: no prediction of this task")  # fmt: skip
         return None, dict.fromkeys(level, reason)
-    if loss in POSITIVE_LOSSES and not low > 0:
+    if loss in DEVIANCE_METRICS and not low > 0:  # a deviance needs a prediction > 0
         reason = f"not available: a deviance needs a positive prediction; `{column}` is {low:g}"
         return None, {label: reason for label in labels if label == loss}
     return loss, {}
@@ -271,14 +298,17 @@ def compare_baselines(
     """The model beside each baseline of `decision.baselines`, on test and on validation, from
     each scorer's pooled metric rows; no pass or fail.
 
-    `metrics` holds one `metric_tables(…)["metrics"]` per scorer: `model`, and each ranking
-    baseline by its form (`single_feature`, `previous_model`, `historic_predicted_rate` with a
-    column); `single_feature` is None when `choose_single_feature` found none. `base` is the
+    `metrics` holds each scorer's metric rows (`metric_rows`, as `metric_tables` gives the
+    model's): `model`, and each ranking baseline by its form (`single_feature`,
+    `previous_model`, `historic_predicted_rate` with a column); `single_feature` is None when
+    `choose_single_feature` found none. `base` is the
     unsampled train split's rate, the `population_base_rate`'s; `facts` the column baselines'
     (`describe_baseline_columns`); `objective` the run's. Returns one row per scorer, part and
     metric (`COMPARISON_COLUMNS`): the scorers `model`, the forms in config order and `observed`
     (the part's observed rate or mean, beside the mean predictions); the metrics `_labels`. A
-    cell a form cannot fill is NaN with its reason (`baseline_loss`, or `NOT_CHOSEN`).
+    cell a form cannot fill is NaN with its reason (`baseline_loss`, or `NOT_CHOSEN`); a value
+    that is not finite with no reason declared reads `UNDEFINED`: a cell is available only with
+    no reason and a finite value.
     """
     forms = _forms(cfg)
     _check_scorers(metrics, forms)
@@ -299,7 +329,9 @@ def compare_baselines(
         value, low, high = model.loc[(part, "mean_target")]
         rows.append(dict(zip(COMPARISON_COLUMNS, ["observed", part, MEAN_PREDICTION, value, low,
                                                   high, ""], strict=True)))  # fmt: skip
-    return pd.DataFrame(rows, columns=COMPARISON_COLUMNS)
+    table = pd.DataFrame(rows, columns=COMPARISON_COLUMNS)
+    undefined = table["unavailable"].eq("") & ~np.isfinite(table["value"].to_numpy(dtype=float))
+    return table.assign(unavailable=table["unavailable"].mask(undefined, UNDEFINED))
 
 
 def _check_scorers(metrics: dict[str, pd.DataFrame | None], forms: dict) -> None:

@@ -8,13 +8,14 @@ token that stage also wrote into its `<stage>.json`. A stage saves the ledger be
 its own folder, so `<stage>.json` is the commit marker, and `read_ledger(..., expect=...)` refuses
 a ledger from another run. `read_candidates` gives the rows a step reads. The ledger
 decides nothing and stores no decision: `render_decisions` derives `held`, `kept`, `excluded` and
-`verdict` from the resolved config and the audit log's entries whenever a view is drawn, and
+`verdict` from the resolved config and the audit log's entries whenever a view is drawn,
 `resolve_features` gives Training its feature set (candidates − lineage − unsupported − excluded
-− held). Local paths only in 0.x, through `artifacts.py` (D-136).
+− held) and `missing_stage2` the `STAGES` that have not run on a data definition. Local paths
+only in 0.x, through `artifacts.py` (D-136).
 """
 
 import json
-import os
+import secrets
 
 import numpy as np
 import pandas as pd
@@ -24,6 +25,7 @@ from core_modelling.artifacts import local_path, read_parquet, utc_now, write_js
 from core_modelling.config.identities import short
 from core_modelling.config.replay import Entry, check_resolved, decisions_in_force
 from core_modelling.config.schema import UseCaseConfig
+from core_modelling.environment import EnvironmentConfig, feature_dir
 
 LEDGER_SCHEMA_VERSION = 3  # 2: the identity column `source` (11-06); 3: the sidecar's `runs`
 LEDGER_FILE = "ledger.parquet"
@@ -45,7 +47,20 @@ COLUMNS_BY_STAGE: dict[str, list[str]] = {
         "cluster", "explained_by_others", "partners",
     ],
 }  # fmt: skip
-STAGES = ("eda", "feature_checks")  # the keys `add_columns` takes
+STAGES = ("eda", "feature_checks")  # the keys `add_columns` takes, in run order
+
+
+def missing_stage2(resolved: UseCaseConfig, entity: str, env: EnvironmentConfig) -> list[str]:
+    """The stages of `STAGES`, in run order, without a `<stage>.json` for the resolved config's
+    data definition: the ones that have not run on it (a stale one is not missing), which
+    `run` reads at `autonomous` and Training's gate refuses on."""
+    return [
+        stage
+        for stage in STAGES
+        if not (local_path(feature_dir(env, resolved, entity, stage)) / f"{stage}.json").is_file()
+    ]
+
+
 # Derived when the ledger is read, never stored: a stored decision goes stale with the next entry.
 DERIVED_COLUMNS = ["held", "kept", "excluded", "verdict"]
 KINDS = ("numeric", "categorical")
@@ -158,12 +173,12 @@ def add_columns(ledger: pd.DataFrame, columns: pd.DataFrame, stage: str) -> pd.D
 
 
 def _check_storable(ledger: pd.DataFrame) -> None:
-    """Refuse a derived column (it would go stale with the next entry, V10) or one no stage owns."""
+    """Refuse a derived column (it would go stale with the next entry) or one no stage owns."""
     derived = [c for c in DERIVED_COLUMNS if c in ledger]
     if derived:
         raise ValueError(
             f"the ledger's {derived} are derived when it is read (render_decisions), never "
-            "stored: a stored decision goes stale with the next entry (V10)"
+            "stored: a stored decision goes stale with the next entry"
         )
     stored = {c for columns in COLUMNS_BY_STAGE.values() for c in columns}
     unknown = [c for c in ledger if c not in stored]
@@ -209,8 +224,9 @@ def save_ledger(ledger: pd.DataFrame, folder: str, meta: dict) -> None:
     sidecar = _sidecar(ledger, meta)
     target = local_path(folder)
     target.mkdir(parents=True, exist_ok=True)
-    parquet = target / f"{LEDGER_FILE}.tmp-{os.getpid()}"
-    stamp = target / f"{SIDECAR_FILE}.tmp-{os.getpid()}"
+    token = secrets.token_hex(8)  # unique across hosts and processes, unlike a process id
+    parquet = target / f"{LEDGER_FILE}.tmp-{token}"
+    stamp = target / f"{SIDECAR_FILE}.tmp-{token}"
     try:
         write_parquet(ledger, parquet)
         write_json(sidecar, stamp)

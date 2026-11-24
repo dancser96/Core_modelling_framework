@@ -176,7 +176,7 @@ def test_a_reloaded_booster_scores_and_describes_the_same(
 def test_native_declares_the_unordered_feature_and_codes_declares_none(
     family: str, unordered: str
 ) -> None:
-    """Each library is told in its own way (Q609), and a declaration in the wrong place is
+    """Each library is told in its own way, and a declaration in the wrong place is
     lost or refused, so the booster itself must hold channel as its only categorical under
     `native` and none under `codes`."""
     booster = _fit(family, unordered=unordered)
@@ -228,7 +228,7 @@ def test_contributions_sum_to_the_margin(family: str, task: str, tmp_path: Path)
 def test_fits_of_one_configuration_give_one_file_hash(
     family: str, task: str, tmp_path: Path
 ) -> None:
-    """`model_hash` is taken over the file (Q619), one per model on a laptop and inside the bank:
+    """`model_hash` is taken over the file, one per model on a laptop and inside the bank:
     fits of one configuration, repeated and at another thread count, must write the same bytes
     (CatBoost's run metadata and LightGBM's thread line left out)."""
     hashes = set()
@@ -241,7 +241,7 @@ def test_fits_of_one_configuration_give_one_file_hash(
 
 @pytest.mark.parametrize("family", FAMILIES)
 def test_one_and_two_threads_give_the_same_margins(family: str) -> None:
-    """The thread count is a run setting, not part of the model (Q608)."""
+    """The thread count is a run setting, not part of the model."""
     X, _, _ = _frame()
     one, two = (FAMILIES[family].predict(_fit(family, threads=threads), X) for threads in (1, 2))
     assert np.array_equal(one, two)
@@ -282,7 +282,7 @@ def test_a_constraint_holds_and_a_broken_one_is_caught(family: str) -> None:
 def test_a_constraint_on_an_unordered_or_unknown_feature_is_refused(
     family: str, monotone: dict[str, str], message: str
 ) -> None:
-    """LightGBM aborts the process on a constrained categorical and XGBoost ignores it (Q650);
+    """LightGBM aborts the process on a constrained categorical and XGBoost ignores it;
     a misspelt name would constrain nothing. Both fail before any library is called, naming the
     entry (both XGBoost entries share one module)."""
     named = "xgboost / xgb_limitdepth" if family.startswith("xgb") else family
@@ -319,7 +319,7 @@ def test_a_misspelt_parameter_is_refused(family: str) -> None:
 @pytest.mark.parametrize("family", FAMILIES)
 def test_fit_refuses_every_class_weight_name(family: str) -> None:
     """A class weight changes the class balance without the calibration knowing, and every
-    score comes out skewed (A4): `fit` refuses each name and its aliases, saying why."""
+    score comes out skewed: `fit` refuses each name and its aliases, saying why."""
     X, y, _ = _frame()
     params = {
         **FAMILIES[family].fixed_params("binary", "log_loss", _encoder(), {}, SEED, 1, None),
@@ -449,9 +449,9 @@ def _library_tweedie_power(family: str, booster: object, path: str) -> float:
 @pytest.mark.parametrize("family", FAMILIES)
 @pytest.mark.parametrize("objective", REGRESSION_OBJECTIVES)
 def test_the_margin_is_the_libraries_raw_output(family: str, objective: str) -> None:
-    """Every regression objective of Q639 trains under its library name, and the margin is the
-    library's raw output: its exponential is the library's own prediction under a log link
-    (A42), the prediction itself otherwise."""
+    """Every regression objective the config offers trains under its library name, and the
+    margin is the library's raw output: its exponential is the library's own prediction under a
+    log link, the prediction itself otherwise."""
     X, _, _ = _frame()
     booster = _fit(family, "regression", objective)
     margin = FAMILIES[family].predict(booster, X)
@@ -475,7 +475,7 @@ def _library_prediction(family: str, booster: object, X: pd.DataFrame) -> np.nda
 def test_catboost_writes_no_file_and_needs_no_run_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """CatBoost writes `catboost_info/` into the working directory unless told not to (T5, A7),
+    """CatBoost writes `catboost_info/` into the working directory unless told not to (T5),
     and its saved file lacks the run-specific metadata, which scoring must not need; saving
     leaves the fitted model whole."""
     work = tmp_path / "work"

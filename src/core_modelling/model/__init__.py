@@ -5,26 +5,11 @@ path in pandas and inside Spark). Training fits and writes them, Evaluation and 
 them, so a model scores the same way wherever it runs. The recipe hash and the feature signature
 are identities, in `config/identities.py`.
 
-Public (D-024): `load_bundle` and `score_frame`; the other names are what Training and
-Evaluation import.
+Public (D-024): `load_bundle`, the `Bundle` it returns and `score_frame`, the only names this
+package exports; Training and Evaluation import the rest from the modules.
 """
 
-from core_modelling.model.bundle import Bundle, load_bundle, write_bundle
-from core_modelling.model.calibration import apply_calibration
-from core_modelling.model.encoder import encode_frame, fit_encoder
-from core_modelling.model.families import FAMILIES, check_monotone
-from core_modelling.model.scoring import check_bundle, score_frame, score_spark
+from core_modelling.model.bundle import Bundle, load_bundle
+from core_modelling.model.scoring import score_frame
 
-__all__ = [
-    "FAMILIES",
-    "Bundle",
-    "apply_calibration",
-    "check_bundle",
-    "check_monotone",
-    "encode_frame",
-    "fit_encoder",
-    "load_bundle",
-    "score_frame",
-    "score_spark",
-    "write_bundle",
-]
+__all__ = ["Bundle", "load_bundle", "score_frame"]

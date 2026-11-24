@@ -16,10 +16,11 @@ from conftest import build_entry
 from pydantic import BaseModel, ValidationError
 
 from core_modelling.__main__ import main
-from core_modelling.config import UseCaseConfig, load_config
+from core_modelling.config import UseCaseConfig, audit_log, load_config
 from core_modelling.config.audit_log import (
     LOG_SCHEMA_VERSION,
     LOGGABLE_SETTINGS,
+    RUN_ENTRY_ATTEMPTS,
     Entry,
     _is_period_label,
     _write_entry,
@@ -696,6 +697,44 @@ def test_write_clash_fails_and_leaves_the_log_alone(
     with pytest.raises(RuntimeError, match="entry 1 was written by another writer meanwhile"):
         _write_entry(_entry(cfg, op="exclude", features=["age"]), log_dir)
     assert [e.features for e in read_entries(log_dir)] == [["cc_flag"]]
+
+
+def test_a_run_entry_that_loses_the_race_takes_the_next_seq(
+    cfg: UseCaseConfig, env: EnvironmentConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another session writes entry 1 between Training's read and its write: Training's `run`
+    entry becomes entry 2, the log still runs 1..n. A number that stays taken fails after
+    `RUN_ENTRY_ATTEMPTS`, and Feature Checks' `run` entry, whose periods block a move of the
+    validation period, is never retried."""
+    log_dir = audit_log_dir(env, cfg, ENTITY)
+    real = audit_log.load_entries
+
+    def raced(*args: object, **kwargs: object) -> list[Entry]:
+        """The real read, after which another session appends its entry, once."""
+        entries = real(*args, **kwargs)
+        monkeypatch.setattr(audit_log, "load_entries", real)
+        record_stage_entry(cfg, ENTITY, env, stage="training", op="run", run_id="r009",
+                           reason="the other session")  # fmt: skip
+        return entries
+
+    monkeypatch.setattr(audit_log, "load_entries", raced)
+    entry = record_stage_entry(cfg, ENTITY, env, stage="training", op="run", run_id="r001",
+                               reason="run")  # fmt: skip
+    assert entry.seq == 2
+    assert [(e.seq, e.run_id) for e in read_entries(log_dir)] == [(1, "r009"), (2, "r001")]
+    monkeypatch.setattr(audit_log, "load_entries", lambda *args, **kwargs: [])
+    attempts = f"entry 1 was written by another writer meanwhile, {RUN_ENTRY_ATTEMPTS} times"
+    with pytest.raises(RuntimeError, match=attempts) as refusal:
+        record_stage_entry(cfg, ENTITY, env, stage="evaluation", op="run", run_id="r001",
+                           validation_period="2025-11", reason="evaluated")  # fmt: skip
+    assert "run r001 was not written. The run is complete on disk" in str(refusal.value)
+    assert "Evaluating the run again rewrites evaluation/ and writes the entry" in str(
+        refusal.value
+    )
+    with pytest.raises(RuntimeError, match="entry 1 was written by another writer meanwhile;"):
+        record_stage_entry(cfg, ENTITY, env, stage="feature_checks", op="run", periods=COMPARED,
+                           reason="Feature Checks run")  # fmt: skip
+    assert len(read_entries(log_dir)) == 2
 
 
 def test_entry_operands_belong_to_their_op(cfg: UseCaseConfig) -> None:

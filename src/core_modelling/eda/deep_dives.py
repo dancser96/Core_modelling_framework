@@ -19,8 +19,8 @@ import pandas as pd
 from scipy import stats
 
 from core_modelling.config.schema import Strata
-from core_modelling.dataset.counts import LEVEL_CAP, NULL_BIN
-from core_modelling.eda.population import cap_levels, known_rows, strata_frame, summarise_groups
+from core_modelling.dataset.counts import LEVEL_CAP, NULL_BIN, cap_levels
+from core_modelling.eda.population import known_rows, strata_frame, summarise_groups
 from core_modelling.statistics.cells import group_of_bins
 from core_modelling.statistics.distributions import bin_labels, bin_orders, merge_bins
 from core_modelling.statistics.scope import scope_statistics

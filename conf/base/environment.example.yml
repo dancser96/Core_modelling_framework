@@ -33,4 +33,6 @@ sources:                     # entity → logical name (as the use-case config s
     # A feature_store format arrives with OD-26; until then it is refused at load:
     # retail_features:    {format: feature_store}
 collect_budget_gb: 1.5       # above this estimated size, collecting a frame to pandas prints the callout
+threads: null                # the model libraries' threads in Training; null: every core of the
+                             # machine. On a shared node set the cores the run is given
 theme: null                  # the report theme is not built yet: leave null (a value is refused)

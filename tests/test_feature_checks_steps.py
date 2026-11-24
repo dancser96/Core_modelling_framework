@@ -3,7 +3,7 @@ pandas, no Spark): every finding fires at its threshold and stays silent one ste
 exclusive quality order, a null concordance without null rows not available, the null sets, the
 minority beside a dominant value (Cohen's h on rates, d on means, at its `dominant_share_min`;
 a monotone top bin is no rare value), the support and SE every finding with an SE states and
-"not significant" both ways (Q540: no skip for support), the best-order `too_strong`, the lagged
+"not significant" both ways (no skip for support), the best-order `too_strong`, the lagged
 signal of a shifted column over the window after its first period with a flip named, Cochran's Q
 over EDA's per-period concordance with the range relative to the signal, PSI and new levels on
 named periods, the clusters with a not-compared pair, and `check_inputs` with every step over
@@ -156,7 +156,7 @@ def _guarded(feature: str, null_rows: int) -> pd.DataFrame:
 def test_quality_findings_fire_at_their_thresholds_in_the_exclusive_order() -> None:
     """The four exclusive flags in order, high-cardinality and the two notes at and one step
     below their thresholds; a 1/null column is not constant; a null concordance without a
-    labelled null row is not available, while 20 null rows are read (no support guard, Q540);
+    labelled null row is not available, while 20 null rows are read (no support guard);
     near-constant's detail is its minority's effect."""
     ledger = _ledger(
         {"feature": "all_null", "missing_share_window": 1.0, "dominant_share_window": 1.0,
@@ -556,8 +556,8 @@ def test_time_alignment_on_a_shifted_column_and_client_constant_shares() -> None
 
 def test_cochran_q_flags_a_flipped_period_and_reads_a_thin_one() -> None:
     """A period whose direction flips reads below 0.5 in the window's direction and is flagged;
-    a period below `strata.min_events` support is read too (Q540); a drifting feature fires at
-    its p-value, at its range relative to the signal and at the range floor (Q547), and not
+    a period below `strata.min_events` support is read too; a drifting feature fires at
+    its p-value, at its range relative to the signal and at the range floor, and not
     just past any of them."""
     ledger = _ledger(
         {"feature": "flips"}, {"feature": "sparse"}, {"feature": "steady"},

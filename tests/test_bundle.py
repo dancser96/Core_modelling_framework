@@ -15,17 +15,12 @@ import pandas as pd
 import pytest
 
 from core_modelling.config.identities import HASH_VERSION, feature_signature, recipe_hash
-from core_modelling.model import (
-    FAMILIES,
-    apply_calibration,
-    check_bundle,
-    encode_frame,
-    fit_encoder,
-    load_bundle,
-    score_frame,
-    write_bundle,
-)
-from core_modelling.model.bundle import BUNDLE_FILE, CONTENT_KEYS, MANIFEST_FILE
+from core_modelling.model import load_bundle, score_frame
+from core_modelling.model.bundle import BUNDLE_FILE, CONTENT_KEYS, MANIFEST_FILE, write_bundle
+from core_modelling.model.calibration import apply_calibration
+from core_modelling.model.encoder import encode_frame, fit_encoder
+from core_modelling.model.families import FAMILIES
+from core_modelling.model.scoring import check_bundle
 
 ROWS = 1200
 SEED = 7
@@ -173,7 +168,7 @@ def test_a_written_bundle_loads_and_scores_as_the_model_in_memory(
     frame = scoring_frame()
     expected = scores_in_memory(family, booster, content, frame)
     pd.testing.assert_frame_equal(score_frame(bundle, frame), expected, check_exact=True)
-    check_bundle(folder, frame, expected)
+    check_bundle(bundle, frame, expected, threads=1)
 
 
 def test_model_hash_follows_the_rule_and_repeats(tmp_path: Path) -> None:
@@ -293,18 +288,19 @@ def test_the_self_check_fails_loud_on_a_changed_expectation(tmp_path: Path) -> N
     """Any difference from the model in memory, one unit in the last place included, fails and
     names the first differing column; a non-finite expectation and an empty sample fail too."""
     folder, booster, content = written_bundle(tmp_path)
+    bundle = load_bundle(str(folder))
     frame = scoring_frame()
     expected = scores_in_memory("lgbm", booster, content, frame)
     nudged = expected.copy()
     nudged.iloc[3, 2] = np.nextafter(nudged.iloc[3, 2], 1.0)
     with pytest.raises(ValueError, match="bundle's score differs .* by up to"):
-        check_bundle(str(folder), frame, nudged)
+        check_bundle(bundle, frame, nudged)
     with pytest.raises(ValueError, match="bundle's margin differs"):
-        check_bundle(str(folder), frame, expected.assign(margin=expected["margin"] + 1e-9))
+        check_bundle(bundle, frame, expected.assign(margin=expected["margin"] + 1e-9))
     with pytest.raises(ValueError, match="non-finite score_raw"):
-        check_bundle(str(folder), frame, expected.assign(score_raw=np.nan))
+        check_bundle(bundle, frame, expected.assign(score_raw=np.nan))
     with pytest.raises(ValueError, match="no rows to score"):
-        check_bundle(str(folder), frame.iloc[:0], expected.iloc[:0])
+        check_bundle(bundle, frame.iloc[:0], expected.iloc[:0])
 
 
 def test_bundle_json_holds_no_time_run_or_person(tmp_path: Path) -> None:

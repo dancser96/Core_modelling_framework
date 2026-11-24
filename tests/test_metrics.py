@@ -1,12 +1,14 @@
 """The metrics on score cells (statistics/metrics.py, score_cells.py) against scikit-learn on the
-rows the cells were built from: exact for the sums, within the binning's tolerance for the
-ranks, the average precision and the calibration line."""
+rows the cells were built from (`cells_oracle.cells_from_rows`): exact for the sums, within the
+binning's tolerance for the ranks, the average precision, the slices and the calibration
+line."""
 
 from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
 import pytest
+from cells_oracle import cells_from_rows
 from scipy.special import expit, logit
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
@@ -22,6 +24,7 @@ from sklearn.metrics import (
 )
 
 from core_modelling.config.schema import Slices
+from core_modelling.evaluation.slices import MIN_SLICE_BINS, narrowest_slice
 from core_modelling.statistics.calibration import UNPENALISED
 from core_modelling.statistics.losses import row_concordance
 from core_modelling.statistics.metrics import (
@@ -33,8 +36,11 @@ from core_modelling.statistics.metrics import (
     slice_rates,
     threshold_table,
 )
-from core_modelling.statistics.score_cells import STRATA_STEP, bin_quantiles, cells_from_rows
+from core_modelling.statistics.score_cells import bin_quantiles, narrowest_bin
 from core_modelling.tasks import TARGET_BINS, TASK_SPECS
+
+BINARY_GRID = TASK_SPECS["binary"]["score_grid"]
+REGRESSION_GRID = TASK_SPECS["regression"]["score_grid"]
 
 
 def _binary_rows(slope: float = 1.0, intercept: float = 0.0, n: int = 40_000) -> pd.DataFrame:
@@ -51,7 +57,7 @@ def _binary_rows(slope: float = 1.0, intercept: float = 0.0, n: int = 40_000) ->
 def _binned(rows: pd.DataFrame, task: str, target_bin: np.ndarray | None = None) -> pd.DataFrame:
     """The rows with `score_bin`s cut at the task's `bin_quantiles` (dense at the top, as the
     Spark aggregate cuts them) and a `target_bin` (the target itself by default)."""
-    edges = np.quantile(rows["score"], bin_quantiles(task))
+    edges = np.quantile(rows["score"], bin_quantiles(TASK_SPECS[task]["score_grid"]))
     binned = np.searchsorted(edges, rows["score"], side="right")
     labels = rows["target"].astype(int) if target_bin is None else target_bin
     return rows.assign(score_bin=binned, target_bin=labels)
@@ -64,14 +70,20 @@ def _binary_cells(rows: pd.DataFrame, loss: str | None = "log_loss") -> pd.DataF
 
 def test_the_bins_narrow_towards_the_top_and_coarsen_to_the_strata_grid() -> None:
     """Binary's 380 bins: 100 of 0.9%, 90 of 0.1%, 90 of 0.01% and 100 of 0.001% of the rows,
-    every fourth edge the strata's; regression's 50: 25 of 3.6% and 25 of 0.4%, all of them
-    the strata's."""
-    widths = np.diff([0.0, *bin_quantiles("binary"), 1.0])
+    every fourth edge the strata's (the finest 0.004%); regression's 100: 25 each of 3.6%,
+    0.36%, 0.036% and 0.004%, all of them the strata's."""
+    widths = np.diff([0.0, *bin_quantiles(BINARY_GRID), 1.0])
     for width, bins in ((0.009, 100), (0.001, 90), (1e-4, 90), (1e-5, 100)):
         assert np.isclose(widths, width, rtol=1e-6, atol=0).sum() == bins
-    assert widths.size == 380 and widths.size // STRATA_STEP["binary"] == 95
-    widths = np.diff([0.0, *bin_quantiles("regression"), 1.0])
-    assert widths.size == 50 and np.isclose(widths, 0.004, rtol=1e-6, atol=0).sum() == 25
+    assert widths.size == 380 and widths.size // TASK_SPECS["binary"]["strata_step"] == 95
+    assert narrowest_bin(BINARY_GRID) == 1e-5 and narrowest_bin(BINARY_GRID, 4) == 4e-5
+    widths = np.diff([0.0, *bin_quantiles(REGRESSION_GRID), 1.0])
+    for width in (0.036, 0.0036, 3.6e-4, 4e-5):
+        assert np.isclose(widths, width, rtol=1e-6, atol=0).sum() == 25
+    assert (
+        widths.size == 100
+        and narrowest_bin(REGRESSION_GRID, TASK_SPECS["regression"]["strata_step"]) == 4e-5
+    )
 
 
 def test_binary_metrics_match_scikit_learn_on_the_rows() -> None:
@@ -142,12 +154,12 @@ def test_a_score_of_exactly_0_or_1_keeps_the_log_loss_finite() -> None:
 
 
 def test_a_scorer_without_a_loss_is_declared_up_front() -> None:
-    """A raw feature as the score, declared without loss sums (`loss=False`): AUC and AP exist,
+    """A raw feature as the score, declared without loss sums (`has_loss=False`): AUC and AP exist,
     the probability metrics are NaN. Declared with them, the null sums fail loud; a regression
     scorer without a deviance alike."""
     rows = _binary_rows(n=5_000)
     cells = _binary_cells(rows.assign(score=rows["score"] * 1e4), None)
-    metrics = binary_metrics(cells, 0.06, loss=False)
+    metrics = binary_metrics(cells, 0.06, has_loss=False)
     assert np.isfinite([metrics["roc_auc"], metrics["ap"]]).all()
     for name in ("log_loss", "log_loss_skill", "brier_skill", "observed_to_expected",
                  "calibration_slope", "calibration_intercept"):  # fmt: skip
@@ -155,8 +167,8 @@ def test_a_scorer_without_a_loss_is_declared_up_front() -> None:
     with pytest.raises(ValueError, match="`loss_sum` is null"):
         binary_metrics(cells, 0.06)
     amounts = cells_from_rows(_regression_rows(), [], None)
-    assert np.isnan(regression_metrics(amounts, 0.0, loss=False)["deviance"])
-    with pytest.raises(ValueError, match="loss=False"):
+    assert np.isnan(regression_metrics(amounts, 0.0, has_loss=False)["deviance"])
+    with pytest.raises(ValueError, match="has_loss=False"):
         regression_metrics(amounts, 0.0)
 
 
@@ -208,8 +220,8 @@ def test_slices_add_up_over_periods_and_a_top_n_above_the_population_is_not_avai
     cells = _binary_cells(_binary_rows())
     slices = Slices(top_pct=[0.05], top_n=[2_000, 12_000])
     population = {"0": 11_000, "1": 20_000}
-    per_period = [slice_metrics(cells.loc[cells["period"] == p], slices, population[p])
-                  for p in population]  # fmt: skip
+    per_period = [slice_metrics(cells.loc[cells["period"] == p], slices, population[p],
+                                narrowest_bin(BINARY_GRID)) for p in population]  # fmt: skip
     added = slice_rates(pd.concat(per_period, ignore_index=True)).set_index("slice")
     first, second = (frame.set_index("slice") for frame in per_period)
     assert first.loc["top 12,000", "unavailable"].startswith("not available")
@@ -226,6 +238,56 @@ def test_slices_add_up_over_periods_and_a_top_n_above_the_population_is_not_avai
     assert first.loc["top 2,000", "rows"] == pytest.approx(
         2_000 / 11_000 * part_rows
     )  # n / population
+
+
+def _amount_rows(n: int = 500_000) -> pd.DataFrame:
+    """One period's amounts with a heavy right tail, binned at regression's score bins (one
+    target bin): the mean `exp(1 + x)`, the amount lognormal around it on 30% of the rows, else
+    0, and a score that ranks it with noise."""
+    rng = np.random.default_rng(11)
+    mean = np.exp(1 + rng.normal(size=n))
+    target = np.where(rng.random(n) < 0.3, rng.lognormal(np.log(mean), 1.0), 0.0)
+    score = 0.3 * mean * np.exp(rng.normal(0, 0.3, n))
+    rows = pd.DataFrame({"part": "test", "period": "p", "target": target, "score": score,
+                         "weight": 1})  # fmt: skip
+    return _binned(rows, "regression", np.zeros(n, int))
+
+
+def test_a_regression_slice_reads_the_rows_top_and_a_narrower_one_is_not_available() -> None:
+    """Regression's top bins narrow to 0.004% of the rows, so a slice's amount is within 3% of
+    the rows' own top k below the former grid's 0.4% bins (which read the top 0.1% 27% low
+    here) and above them; a slice narrower than `narrowest_slice`, as a share or as a `top_n`,
+    is not available, its counts null."""
+    rows, narrowest = _amount_rows(), narrowest_slice(REGRESSION_GRID)
+    n, shares = len(rows), [0.0005, 0.001, 0.003, 0.01, 0.05]
+    cells = cells_from_rows(rows, [], None)
+    found = slice_metrics(cells, Slices(top_pct=shares), n, narrowest)
+    ordered = rows["target"].to_numpy()[np.argsort(-rows["score"].to_numpy(), kind="stable")]
+    top_k = np.array([ordered[: round(share * n)].sum() for share in shares])
+    assert found["target"].to_numpy() == pytest.approx(top_k, rel=0.03)
+    narrow = slice_metrics(cells, Slices(top_pct=[0.0004], top_n=[200]), n, narrowest)
+    assert narrow["unavailable"].str.startswith("not available: narrower than 0.048%").all()
+    assert narrow[["rows", "target"]].isna().all().all()
+
+
+@pytest.mark.parametrize(
+    ("task", "step"),
+    [("binary", 1), ("binary", TASK_SPECS["binary"]["strata_step"]),
+     ("regression", TASK_SPECS["regression"]["strata_step"])],
+)  # fmt: skip
+def test_a_slice_of_eleven_finest_bins_is_refused_and_one_of_twelve_read(
+    task: str, step: int
+) -> None:
+    """The guard counts the finest bins of the grid the slice is read on (the pooled one, or
+    the strata's every `step`-th edge): 11 of them are refused, naming the share, 12 are read."""
+    finest = narrowest_bin(TASK_SPECS[task]["score_grid"], step)
+    cells = _binary_cells(_binary_rows()).assign(period="0")
+    shares = [round(11 * finest, 12), round(MIN_SLICE_BINS * finest, 12)]
+    found = slice_metrics(cells, Slices(top_pct=shares), 40_000,
+                          narrowest_slice(TASK_SPECS[task]["score_grid"], step))  # fmt: skip
+    refused = f"not available: narrower than {shares[1] * 100:g}%"
+    assert found["unavailable"].iloc[0].startswith(refused)
+    assert found["unavailable"].iloc[1] == "" and found["rows"].iloc[1] > 0
 
 
 def test_the_chart_tables_agree_with_the_metrics() -> None:

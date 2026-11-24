@@ -1,69 +1,88 @@
 """The model card's facts (reporting.md "The model card"): one versioned dict per evaluated run.
 
 `build_card` reads the run folder (`run.json`, the bundle, `training/`, the per-run ledger, the
-`stage2/` copy) and Evaluation's tables and meta as `read_stage` returns them, so Evaluation
-writes the card with its own folder and a written run folder can rebuild it under the config it
-was evaluated with; `check_card_inputs` refuses a run folder it cannot be built from before
-Evaluation scores anything. Every value is read from those or from the resolved config: the
-card writes no sentence and parses none. A consideration is a code with its values:
+`stage2/` copy, through `run_artifacts.open_run_folder`) and Evaluation's tables and meta as
+`read_stage` returns them, so Evaluation writes the card with its own folder and a written run
+folder can rebuild it under the config it was evaluated with; `check_card_inputs` refuses a run
+folder it cannot be built from before Evaluation scores anything. Every value is read from
+those or from the resolved config: the card writes no sentence and parses none. A
+consideration is a code with its values:
 Evaluation's warnings copied without their text, and the ones Training's and the audit log's
 facts record. Sign-off and lifecycle stay empty until `decide` and `register` fill them
 (M2.4); the registered model key, the parent run of a refit and its metrics are None until
 then. `reporting/card.py` renders the dict.
 """
 
-import json
 import math
 
 import numpy as np
 import pandas as pd
 
-from core_modelling.artifacts import local_path, read_parquet, read_stage_meta, utc_now
+from core_modelling import __version__
+from core_modelling.artifacts import utc_now
 from core_modelling.config.replay import check_resolved
 from core_modelling.config.schema import UseCaseConfig
-from core_modelling.model.bundle import MANIFEST_FILE, Bundle, build_bundle, read_bundle_files
+from core_modelling.evaluation.tables import VALIDATION_TEST_CLIENTS
+from core_modelling.model.bundle import Bundle
 from core_modelling.periods import period_spec
-from core_modelling.runs import RUN_KEYS, RUN_SCHEMA_VERSION
+from core_modelling.reporting.card import CARD_SCHEMA_VERSION, CARD_SECTIONS
+from core_modelling.run_artifacts import (
+    TRAIN_METRIC_KEYS,
+    RunFolder,
+    open_run_folder,
+    read_training_tables,
+)
 from core_modelling.sources import feature_source_names, source_name
-from core_modelling.statistics.score_cells import MEAN
+from core_modelling.statistics.score_cells import MEAN, PARTS, POOLED
 from core_modelling.tasks import TASK_SPECS
-from core_modelling.training.gate import read_stage2_copy
-from core_modelling.training.ledger_run import read_run_ledger
 
-CARD_SCHEMA_VERSION = 1
-# The card's own versioned format: never derived from `tables.METRIC_COLUMNS`, so a table change
-# cannot change the card unannounced
+# The card's own versioned format: never derived from `tables.METRIC_COLUMNS` or Training's
+# records, so a table or a Training change cannot change the card unannounced
 CARD_METRIC_COLUMNS = ["metric", "part", "period", "stratum", "level", "value", "low", "high",
                        "rows", "events", "insufficient"]  # fmt: skip
-CONDITIONAL_ON = "staying_through_target_window"  # what every score is conditional on
+# The keys of each record in `training.json`'s `folds` and `search`, and the calibration table's
+# columns, that the card copies
+CARD_FOLD_KEYS = ("dealing", "fold", "rows", "clients", "converting_clients", "positive_rows",
+                  "target_min", "target_max")  # fmt: skip
+CARD_SEARCH_KEYS = ("family", "trials", "seconds", "seconds_per_trial", "seconds_longest",
+                    "best_fold_metric", "best_trial", "share_seconds")  # fmt: skip
+CARD_CALIBRATION_COLUMNS = ("method", "chosen", "parameters", "oof_loss", "true_rate",
+                            "sampled_rate", "offset", "factor", "factor_low", "factor_high",
+                            "half_total_rows")  # fmt: skip
+# What every score is conditional on: a declared fact of how the eligibility and the target are
+# defined, not read from the run
+CONDITIONAL_ON = "staying_through_target_window"
+# The score's column: a declared fact of the card, like `CARD_METRIC_COLUMNS`, never derived from
+# another module's list
+SCORE_COLUMN = "score"
 EVALUATION_KEYS = ("run_id", "model_hash", "config_hash", "validation_period", "eligible_rows",
                    "choices", "earlier_validations", "warnings")  # fmt: skip
 EVALUATION_TABLES = ("metrics", "baselines", "features")
-TRAINING_KEYS = ("run_id", "settings", "search", "metrics", "final_features", "sampling",
-                 "folds", "reproducible_to")  # fmt: skip
-TRAINING_TABLES = ("signoff", "calibration", "selection")
-TRAIN_METRIC_KEYS = ("metric", "out_of_fold", "out_of_fold_concordance", "in_sample_concordance")
+CARD_TRAINING_TABLES = ("signoff", "calibration", "selection")  # Training's tables the card reads
 
 
 def build_card(
-    run_folder: str, tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseConfig
+    run_folder: str,
+    tables: dict[str, pd.DataFrame],
+    meta: dict,
+    resolved: UseCaseConfig,
+    read: RunFolder | None = None,
 ) -> dict:
-    """The model card of an evaluated run: `schema_version`, then the sections in
-    `reporting/card.py`'s `CARD_SECTIONS` order, as plain JSON-ready data. `tables` and `meta`
+    """The model card of an evaluated run: `schema_version`, then the sections, both as
+    `reporting/card.py` defines them, as plain JSON-ready data. `tables` and `meta`
     are Evaluation's and `resolved` the config it ran with; a missing file, key or table fails
     naming it, and pieces of different runs, models or configs are refused: the run folder's
-    as `check_card_inputs` refuses them (`_read_run_folder`), Evaluation's own after it."""
-    run, bundle, manifest, training = _read_run_folder(run_folder, resolved)
-    tables_folder = local_path(run_folder) / "training" / "tables"
-    trained = {name: read_parquet(tables_folder / f"{name}.parquet") for name in TRAINING_TABLES}
+    as `check_card_inputs` refuses them, Evaluation's own after it. `read` is the run folder
+    `check_card_inputs` already read (Evaluation's); without it the folder is read here."""
+    read = read or check_card_inputs(run_folder, resolved)
+    run, bundle, manifest, training = read.run, read.bundle, read.manifest, read.training
+    trained = read_training_tables(read, CARD_TRAINING_TABLES)
     _require(meta, EVALUATION_KEYS, "Evaluation's meta")
     _require(tables, EVALUATION_TABLES, "Evaluation's tables")
     _check_evaluation(run, meta, bundle, resolved.housekeeping["config_hash"])
-    stage2 = read_stage2_copy(run_folder)["ledger"]
+    stage2, run_ledger = read.stage2["ledger"], read.run_ledger
     kept = list(resolved.features.kept)
-    run_ledger = read_run_ledger(run_folder)
-    card = {
-        "schema_version": CARD_SCHEMA_VERSION,
+    sections = {
         "details": _details(run, bundle, manifest, meta, resolved),
         "intended_use": _intended_use(resolved),
         "data": _data(tables["metrics"], meta, training, resolved),
@@ -79,49 +98,19 @@ def build_card(
         "sign_off": {},
         "lifecycle": {},
     }
-    return _plain(card)
+    if sections.keys() != set(CARD_SECTIONS):
+        raise ValueError(f"the card's sections {sorted(sections)} are not CARD_SECTIONS")
+    ordered = {name: sections[name] for name in CARD_SECTIONS}
+    return _plain({"schema_version": CARD_SCHEMA_VERSION, **ordered})
 
 
-def check_card_inputs(run_folder: str, resolved: UseCaseConfig) -> None:
+def check_card_inputs(run_folder: str, resolved: UseCaseConfig) -> RunFolder:
     """Refuse a run folder the card cannot be built from, before Evaluation scores anything:
-    a config not resolved, `run.json` (its schema version and keys), the bundle (its model hash
-    recomputed over its files), `training.json` (its schema version and `TRAINING_KEYS`),
-    Training's `TRAINING_TABLES`, and pieces of different runs (`_check_run_pieces`).
-    `build_card` checks the same through `_read_run_folder`, then Evaluation's meta and tables."""
-    _read_run_folder(run_folder, resolved)
-
-
-def _read_run_folder(run_folder: str, resolved: UseCaseConfig) -> tuple[dict, Bundle, dict, dict]:
-    """`check_card_inputs`' checks, returning what they read: `run.json`, the bundle, its
-    manifest and `training.json`, so `build_card` reads each once."""
+    Evaluation's side, a config not resolved, then the run folder's contract
+    (`open_run_folder`). Returns what it read, so neither Evaluation nor `build_card` reads a
+    piece twice."""
     check_resolved(resolved, "the model card")
-    root = local_path(run_folder)
-    run = _read_run_json(str(root / "run.json"))
-    files = read_bundle_files(str(root / "bundle"))
-    bundle = build_bundle(files, str(root / "bundle"))
-    manifest = json.loads(files[MANIFEST_FILE])
-    training = read_stage_meta(str(root / "training"), "training")
-    _require(training, TRAINING_KEYS, "training.json")
-    written = {path.stem for path in (root / "training" / "tables").glob("*.parquet")}
-    _require(dict.fromkeys(written), TRAINING_TABLES, "Training's tables")
-    _check_run_pieces(run, manifest, training, bundle)
-    return run, bundle, manifest, training
-
-
-def _read_run_json(path: str) -> dict:
-    """A run folder's `run.json`; a missing one, another `run_schema_version` or a missing key
-    fails naming the file."""
-    file = local_path(path)
-    if not file.is_file():
-        raise FileNotFoundError(f"{path} is missing: the folder is no trained run")
-    run = json.loads(file.read_text())
-    if run.get("run_schema_version") != RUN_SCHEMA_VERSION:
-        raise ValueError(
-            f"{path} has run_schema_version {run.get('run_schema_version')}; this version reads "
-            f"{RUN_SCHEMA_VERSION}: build the card with the framework version that trained it"
-        )
-    _require(run, RUN_KEYS, path)
-    return run
+    return open_run_folder(run_folder)
 
 
 def _require(mapping: dict, keys: tuple[str, ...], where: str) -> None:
@@ -132,14 +121,12 @@ def _require(mapping: dict, keys: tuple[str, ...], where: str) -> None:
                          "version or did not finish; rerun the stage that writes it")  # fmt: skip
 
 
-def _check_run_pieces(run: dict, manifest: dict, training: dict, bundle: Bundle) -> None:
-    """Refuse a run folder of pieces of different runs: one run id across `run.json`, the
-    manifest and `training.json`, and Training's final features the bundle's."""
-    ids = {run["run_id"], manifest["run_id"], training["run_id"]}
-    if len(ids) != 1:
-        raise ValueError(f"the run folder's files name the runs {sorted(ids)}: one card, one run")
-    if training["final_features"] != bundle.features:
-        raise ValueError("training.json's final_features are not the bundle's: train again")
+def _records(records: list[dict], keys: tuple[str, ...], where: str) -> list[dict]:
+    """Each record of `records` with only `keys`, in their order; a record without one of them
+    fails naming it (`_require`)."""
+    for record in records:
+        _require(record, keys, where)
+    return [{key: record[key] for key in keys} for record in records]
 
 
 def _check_evaluation(run: dict, meta: dict, bundle: Bundle, config_hash: str) -> None:
@@ -168,8 +155,8 @@ def _details(
     run: dict, bundle: Bundle, manifest: dict, meta: dict, resolved: UseCaseConfig
 ) -> dict:
     """Who and what the model is: the model key (None until register), the run, the family and
-    library versions, the framework versions (Training's, and the card's: the session that
-    resolved the config), the hashes, the Stage 2 runs and the dates."""
+    library versions, the framework versions (Training's, and the card's: the framework version
+    that writes it), the hashes, the Stage 2 runs and the dates."""
     hashes = ("model_hash", "recipe_hash", "feature_signature", "config_hash",
               "data_definition_hash", "resolved_input_hash", "hash_version")  # fmt: skip
     return {
@@ -183,8 +170,7 @@ def _details(
         "parent_metrics": None,
         "family": bundle.family,
         "library_versions": bundle.content["library_version"],
-        "framework_versions": {"training": run["framework_version"],
-                               "card": resolved.housekeeping["framework_version"]},
+        "framework_versions": {"training": run["framework_version"], "card": __version__},
         "hashes": {**{key: manifest[key] for key in hashes},
                    "evaluation_config_hash": meta["config_hash"]},
         "stage2_runs": run["stage2"],
@@ -205,20 +191,24 @@ def _intended_use(resolved: UseCaseConfig) -> dict:
                        for step in steps],
         "target": {**resolved.data.target.model_dump(mode="json"),
                    "window_periods": time.target_window, "period": time.period},
-        "score": {"column": "score", "estimate": TASK_SPECS[resolved.task]["estimate_noun"],
+        "score": {"column": SCORE_COLUMN, "estimate": TASK_SPECS[resolved.task]["estimate_noun"],
                   "conditional_on": CONDITIONAL_ON},
     }  # fmt: skip
 
 
 def _data(metrics: pd.DataFrame, meta: dict, training: dict, resolved: UseCaseConfig) -> dict:
     """What the model was built and measured on: the logical sources, the window, the validation
-    period, the eligible rows per period, each part's rows and events per period (the metrics'
-    unstratified rows, without the periods' mean), the split, the sampling and the train folds."""
+    period, the eligible rows per period, the rows and events of the metrics' unstratified rows
+    (`rows_per_period`: each part's per period; `rows_pooled`: each part's over its periods;
+    `rows_validation_test_clients`: the validation period's test-split clients, pooled), the
+    split, the sampling and the train folds."""
     entity = resolved.housekeeping["entity"]
     targets = resolved.entities[entity].sources.targets
     spec, window = period_spec(resolved), resolved.time.observation_window
     plain = metrics.loc[metrics["stratum"].isna() & (metrics["period"] != MEAN)]
     counts = plain.drop_duplicates(["part", "period"])[["part", "period", "rows", "events"]]
+    pooled, own = counts["period"] == POOLED, counts["part"].isin(PARTS)
+    clients = counts.loc[pooled & (counts["part"] == VALIDATION_TEST_CLIENTS), ["rows", "events"]]
     return {
         "sources": {"features": feature_source_names(resolved, entity),
                     "target": source_name(targets) if targets else None,
@@ -227,10 +217,12 @@ def _data(metrics: pd.DataFrame, meta: dict, training: dict, resolved: UseCaseCo
         "observation_window": {"first": spec.label(window.first), "last": spec.label(window.last)},
         "validation_period": meta["validation_period"],
         "eligible_rows": [{"period": p, "rows": n} for p, n in meta["eligible_rows"].items()],
-        "rows_per_period": counts.to_dict("records"),
+        "rows_per_period": counts.loc[own & ~pooled].to_dict("records"),
+        "rows_pooled": counts.loc[own & pooled].drop(columns="period").to_dict("records"),
+        "rows_validation_test_clients": clients.to_dict("records"),
         "split": resolved.data.split.model_dump(mode="json"),
         "sampling": {k: v for k, v in training["sampling"].items() if k != "step"},
-        "train_folds": training["folds"],
+        "train_folds": _records(training["folds"], CARD_FOLD_KEYS, "training.json's folds"),
     }  # fmt: skip
 
 
@@ -277,11 +269,13 @@ def _training(training: dict, calibration: pd.DataFrame, content: dict) -> dict:
     recipe = {k: v for k, v in content["recipe"].items() if k not in ("encoder", "features")}
     return {
         "path": training["settings"]["training"]["path"],
-        "families_searched": training["search"],
+        "families_searched": _records(
+            training["search"], CARD_SEARCH_KEYS, "training.json's search"
+        ),
         "train_metrics": {key: training["metrics"][key] for key in TRAIN_METRIC_KEYS},
         "recipe": recipe,
         "calibration": content["calibration"],
-        "calibration_methods": calibration.to_dict("records"),
+        "calibration_methods": calibration[list(CARD_CALIBRATION_COLUMNS)].to_dict("records"),
         "reproducible_to": training["reproducible_to"],
     }
 

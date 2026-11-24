@@ -3,8 +3,8 @@
 
 A list built from one feature alone on the snapshot period's labelled cells (one row per
 client), cut at the slices, shares of those rows (`slice_shares`: `decision.n` first for a
-`top_n` decision, then the resolved `evaluation.slices`, V55; `skipped_slices` names the counts
-above the rows). The list order is the rule a person could apply, the null bin last (V56): a
+`top_n` decision, then the resolved `evaluation.slices`); `skipped_slices` names the counts
+above the rows). The list order is the rule a person could apply, the null bin last: a
 numeric by value in the raw sign of its snapshot concordance (`ordered_numeric_bins`); a
 categorical per client fold by the level encoding fitted on the other folds, the concordance's
 own (`ordered_categorical_bins`), since an order fitted on the same clients' other periods

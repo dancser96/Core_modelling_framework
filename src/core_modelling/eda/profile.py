@@ -3,10 +3,10 @@ after the correlation overview; docs/components/eda.md).
 
 `value_profile` gives a numeric's range over its finite non-null values on the snapshot's
 eligible rows (`min`, `p1`, `median`, `p99`, `max`, one vectorised `quantile` call over every
-numeric, V59) and its ±infinity share over those rows, and a categorical's `TOP_LEVELS` largest
+numeric) and its ±infinity share over those rows, and a categorical's `TOP_LEVELS` largest
 levels on the snapshot period's cells with their shares of the rows; `kind`, `rank` and
 `missing_share` come from the ranking. A sentinel (−1, 999, 9 999 999) shows as a mass point at
-`min` or `max`. It describes values, not a feature's path, so it is no ledger column (V59). Pure
+`min` or `max`. It describes values, not a feature's path, so it is no ledger column. Pure
 pandas.
 """
 

@@ -23,6 +23,7 @@ from core_modelling.reporting.blocks import (
 from core_modelling.reporting.formats import SHARE, format_of, plain_number
 from core_modelling.reporting.html import paragraph, render_report, style_table, table_html
 from core_modelling.reporting.theme import THEME
+from core_modelling.reporting.training_views import search_table
 from core_modelling.tasks import TASK_SPECS
 
 
@@ -433,3 +434,14 @@ def test_style_table_bar_starts_at_bar_min() -> None:
     assert "#T_m_row2_col0 {\n  width: 10em;\n  background: linear-gradient(90deg, " in html
     assert f"{THEME['bar']} 40.0%" in html
     assert f"{THEME['bar']} 80.0%" in table_html(style_table(df, bar="concordance"), "z")
+
+
+def test_the_search_table_formats_seconds_shares_and_the_fold_metric() -> None:
+    """Seconds to a tenth, the share as a percentage, the fold metric in four digits: never the
+    raw `123.456789` or `0.431235`."""
+    trials = pd.DataFrame({"family": ["lgbm"] * 2, "trial": [0, 1], "seconds": [100.456789, 23.0],
+                           "fold_loss": [0.5687650, 0.7]})  # fmt: skip
+    html = search_table(trials, "roc_auc").to_html()
+    assert "123.5" in html and "123.456789" not in html
+    assert "0.4312" in html and "0.431235" not in html
+    assert "100.0%" in html

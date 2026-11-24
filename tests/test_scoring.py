@@ -15,15 +15,10 @@ import pytest
 from pyspark.sql import SparkSession
 from test_bundle import IDENTITY, raw_frame, trained
 
-from core_modelling.model import (
-    apply_calibration,
-    load_bundle,
-    score_frame,
-    score_spark,
-    write_bundle,
-)
-from core_modelling.model.bundle import OUTPUT_COLUMNS
-from core_modelling.model.scoring import _check_library_versions
+from core_modelling.model import load_bundle, score_frame
+from core_modelling.model.bundle import OUTPUT_COLUMNS, write_bundle
+from core_modelling.model.calibration import apply_calibration
+from core_modelling.model.scoring import _check_library_versions, score_spark
 
 MARGINS = np.array([-40.0, -5.0, -1.0, -0.25, 0.0, 0.5, 2.0, 7.0, 40.0])
 MODERATE = MARGINS[1:-1]  # where the hand formulas, which form 1 − p, stay accurate
@@ -188,10 +183,10 @@ def test_score_frame_refuses_a_non_finite_score(tmp_path: Path) -> None:
 def test_score_spark_equals_score_frame_on_the_same_rows(
     spark: SparkSession, tmp_path: Path
 ) -> None:
-    """One scoring path (A28): over several partitions, a binary and a regression bundle score
-    every row inside Spark exactly as `score_frame` does, with the kept columns' own types; a
-    `keep` naming a missing or a score column, or rows without a feature, fail before Spark
-    runs."""
+    """One scoring path for the driver and Spark: over several partitions, a binary and a
+    regression bundle score every row inside Spark exactly as `score_frame` does, with the kept
+    columns' own types; a `keep` naming a missing or a score column, or rows without a feature,
+    fail before Spark runs."""
     period = date(2026, 6, 30)
     frame = raw_frame(600, seed=3).assign(period=period)
     rows = spark.createDataFrame(frame).repartition(3)

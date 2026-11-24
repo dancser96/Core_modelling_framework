@@ -7,25 +7,35 @@ read by the one statistics engine
 EDA and Feature Checks read (`statistics/scope.py`, D-137): a numeric bucketed on
 `quantile_edges` of its own train values, an ordered categorical by its code, an unordered one by
 its code with the row's `cv_fold` as the fold, so its level encoding is cross-fitted on other
-clients. The SE is on effective train clients, as EDA's window rules read it. The frame is used
-as collected: label-dependent sampling leaves a rank statistic unbiased (A9). EDA's all-client
-ranking is never read (D-030), nor is its `non_monotone` mark: both have seen test labels, so
-whether a feature is judged on its best order is decided again here, on the train rows.
+clients. The SE is on effective train clients, as EDA's window rules read it. Beside the
+value's concordance, each feature's null indicator gets its own (`null_concordance`, on every
+train row) with its SE, which the floor also reads: the families take nulls natively, so a
+feature whose being filled predicts the target is used by the model. The frame is used as
+collected: label-dependent sampling leaves a rank statistic unbiased. EDA's all-client ranking
+is never read (D-030), nor is its `non_monotone` mark: both have seen test labels, so whether a
+feature is judged on its best order is decided again here, on the train rows.
 """
+
+import hashlib
 
 import numpy as np
 import pandas as pd
 
 from core_modelling.config import UseCaseConfig
 from core_modelling.dataset.counts import CELL_COLUMNS
-from core_modelling.statistics.concordance import best_order_concordance, is_non_monotone
-from core_modelling.statistics.distributions import bin_labels, quantile_edges
-from core_modelling.statistics.scope import encoding_prior_rows, scope_statistics
+from core_modelling.statistics.concordance import (
+    SE_FLOOR,
+    best_order_concordance,
+    is_non_monotone,
+)
+from core_modelling.statistics.distributions import bin_labels, bin_orders, quantile_edges
+from core_modelling.statistics.scope import encoding_prior_rows, feature_se, scope_statistics
 from core_modelling.tasks import TASK_SPECS
 from core_modelling.training.fold_models import FOLD_COLUMN
 
 STATISTIC_COLUMNS = ["feature", "concordance", "sign", "se", "concordance_best_order",
-                     "non_monotone", "value", "unavailable"]  # fmt: skip
+                     "non_monotone", "value", "unavailable", "null_concordance",
+                     "null_se", "null_pattern"]  # fmt: skip
 CELL_KEYS = ["period", "bin_order", "is_null", "target_bin"]  # a cell, beside the feature and fold
 
 
@@ -40,8 +50,10 @@ def train_statistics(
     (±1, 0 when unavailable); `se` is on effective train clients; `concordance_best_order`
     exists for numerics; `non_monotone` is EDA's rule (`is_non_monotone`) on these three train
     numbers; `value`, what the rules read, is the best-order concordance when `non_monotone`,
-    else the plain one (A10); `unavailable` is the engine's reason, '' when the concordance
-    exists.
+    else the plain one; `unavailable` is the engine's reason, '' when the concordance exists.
+    `null_concordance` is the null indicator's, direction taken out, NaN outside the engine's
+    `NULL_SHARE_RANGE` (a feature with no nulls has none), `null_se` its SE on every train
+    row in effective clients (`_null_se`) and `null_pattern` a digest of the rows it is null on.
     """
     _check_inputs(train, X, encoder)
     rows = pd.DataFrame(
@@ -54,6 +66,7 @@ def train_statistics(
     )
     periods = sorted(rows["period"].unique())
     clients = _train_clients(train)
+    every_row_shares = rows["target_bin"].value_counts(normalize=True).to_numpy()
     exact = cfg.eda.bins is None
     cells = {
         entry["name"]: _feature_cells(entry, X[entry["name"]].to_numpy(), rows, cfg.eda.bins)
@@ -68,8 +81,45 @@ def train_statistics(
             cells[entry["name"]], engine_kind, read=periods, task=cfg.task,
             window_periods=periods, prior_rows=prior_rows, exact=exact, clients=clients,
         )  # fmt: skip
-        records.append(_record(entry, scope, prior_rows))
+        is_null = _null_mask(entry, X[entry["name"]].to_numpy())
+        null_se = _null_se(
+            scope["null_concordance"], float(is_null.mean()), clients, every_row_shares, cfg.task
+        )
+        records.append({**_record(entry, scope, prior_rows), "null_se": null_se,
+                        "null_pattern": _null_pattern(is_null)})  # fmt: skip
     return pd.DataFrame(records, columns=STATISTIC_COLUMNS)
+
+
+def _null_se(
+    null: float,
+    share: float,
+    clients: dict[str, float],
+    target_bin_shares: np.ndarray,
+    task: str,
+) -> float:
+    """The SE of a null indicator's concordance `null` (NaN for none), `share` its null share on
+    the train rows: the task's SE on every train row (events and non-events in effective
+    clients, `_train_clients`; the target bins' shares over every row for Kendall's) times
+    `sqrt(3·p·(1 − p))`, the tie correction `1 − Σt³/N³` of a two-valued indicator, floored at
+    `SE_FLOOR`."""
+    if np.isnan(null):
+        return np.nan
+    events, non_events = clients["event_rows"], clients["non_event_rows"]
+    se = feature_se(null, events, non_events, target_bin_shares, "numeric", task, clients)
+    return max(se * np.sqrt(3 * share * (1 - share)), SE_FLOOR)
+
+
+def _null_mask(entry: dict, codes: np.ndarray) -> np.ndarray:
+    """Each row's null flag from one encoded column: a NaN for a numeric or an ordered
+    categorical, code 0 (the null bin) for an unordered one."""
+    if entry["kind"] == "unordered":
+        return codes.astype(np.int64) == 0
+    return np.isnan(codes.astype(float))
+
+
+def _null_pattern(is_null: np.ndarray) -> str:
+    """A digest of a null mask: two features with the same digest are null on the same rows."""
+    return hashlib.sha256(np.packbits(is_null).tobytes()).hexdigest()[:16]
 
 
 def _train_clients(train: pd.DataFrame) -> dict[str, float]:
@@ -124,21 +174,21 @@ def _target_bins(target: pd.Series, cfg: UseCaseConfig) -> np.ndarray:
 
 def _bin_orders(entry: dict, codes: np.ndarray, bins: int | None) -> tuple[np.ndarray, np.ndarray]:
     """Each row's `bin_order` and null flag from one encoded column: a numeric's bucket on
-    `quantile_edges` of its non-null values (every distinct value a bin when `bins` is None), an
-    ordered categorical's code, an unordered one's code (0, the null bin); a null bin is last.
-    Unlike `counts.bin_edges`, a numeric gets no `= 0` singleton bin: nothing here reads
-    `zero_share`."""
+    `quantile_edges` of its non-null values (every distinct value a bin when `bins` is None) as
+    `distributions.bin_orders` gives it, an ordered categorical's code, an unordered one's code
+    (0, the null bin). A numeric's or ordered categorical's null bin is last, as in the counts
+    table (`bin_orders` gives it -1). Unlike `counts.bin_edges`, a numeric gets no `= 0`
+    singleton bin: nothing here reads `zero_share`."""
+    is_null = _null_mask(entry, codes)
     if entry["kind"] == "unordered":
-        order = codes.astype(np.int64)
-        return order, order == 0
+        return codes.astype(np.int64), is_null
     values = codes.astype(float)
-    is_null = np.isnan(values)
     if entry["kind"] == "ordered":
         order = np.where(is_null, len(entry["levels"]), np.nan_to_num(values))
         return order.astype(np.int64), is_null
     known = values[~is_null]
     edges = quantile_edges(known, max(np.unique(known).size, 1) if bins is None else bins)
-    return np.where(is_null, edges.size + 1, np.digitize(values, edges)), is_null
+    return np.where(is_null, edges.size + 1, bin_orders(pd.Series(values), edges)), is_null
 
 
 def _feature_cells(
@@ -184,5 +234,5 @@ def _record(entry: dict, scope: dict, prior_rows: float) -> dict:
         "feature": entry["name"], "concordance": scope["concordance"], "sign": sign,
         "se": scope["se"], "concordance_best_order": best, "non_monotone": non_monotone,
         "value": best if non_monotone else scope["concordance"],
-        "unavailable": scope["reason"],
+        "unavailable": scope["reason"], "null_concordance": scope["null_concordance"],
     }  # fmt: skip

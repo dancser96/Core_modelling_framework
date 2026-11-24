@@ -3,10 +3,10 @@
 Framework code never checks where it runs; it asks this module, and the environment file decides
 (`conf/local/environment.yml`, gitignored; the example is `conf/base/environment.example.yml`,
 D-130). The file has its own schema, so a modelling setting can't hide in it: the Spark settings,
-the storage roots, the physical source behind every logical name per entity, the collect budget
-and the report theme. From it come the Spark session, source reading and path construction. The
-`hdfs dfs` transport and the registered / production roots arrive with M2.4
-(docs/components/environment.md).
+the storage roots, the physical source behind every logical name per entity, the collect budget,
+the model libraries' thread count and the report theme. From it come the Spark session, source
+reading and path construction. The `hdfs dfs` transport and the registered / production roots
+arrive with M2.4 (docs/components/environment.md).
 
 The adapter keeps its own `extra="forbid"` base instead of importing `config.schema.StrictModel`:
 its schema must not build on the config schema, so an environment fact can never be validated as
@@ -25,6 +25,7 @@ from pydantic import (
     AfterValidator,
     BaseModel,
     ConfigDict,
+    Field,
     ValidationError,
     field_validator,
     model_validator,
@@ -126,6 +127,10 @@ class EnvironmentConfig(BaseModel):
     roots: Roots
     sources: dict[str, dict[str, Source]] = {}  # entity → logical name → physical source
     collect_budget_gb: float = 1.5
+    # The model libraries' threads in Training's search, fits and predicts; None: the machine's
+    # cores, which on a shared node or in a container may be more than the run is given. Strict:
+    # `true` or "4" would otherwise be taken as a count
+    threads: Annotated[int, Field(strict=True, gt=0)] | None = None
     theme: str | None = None
 
     @field_validator("theme")

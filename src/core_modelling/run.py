@@ -20,6 +20,7 @@ from pathlib import Path
 
 from pyspark.sql import SparkSession
 
+from core_modelling import ledger
 from core_modelling.config import UseCaseConfig, load_config
 from core_modelling.config.audit_log import resolve_config
 from core_modelling.dataset import save_model_input
@@ -29,7 +30,6 @@ from core_modelling.evaluation import run_evaluation
 from core_modelling.feature_checks import run_feature_checks
 from core_modelling.target_factory import run_target_factory
 from core_modelling.training import run_training
-from core_modelling.training.gate import STAGE2, missing_stage2
 
 Stage = Callable[[list[UseCaseConfig], str, EnvironmentConfig, SparkSession], dict]
 
@@ -76,8 +76,8 @@ def _run_training_stage(
     for cfg in cfgs:
         resolved = resolve_config(cfg, entity, env)
         if resolved.automation_level == "autonomous":
-            for stage in STAGE2:
-                if stage in missing_stage2(resolved, entity, env):
+            for stage in ledger.STAGES:
+                if stage in ledger.missing_stage2(resolved, entity, env):
                     print(f"run {stage} for {entity} first: training needs it (autonomous)")
                     STAGE2_RUNNERS[stage](cfg, entity, env, spark)
         out[cfg.use_case] = run_training(cfg, entity, env, spark).paths
@@ -103,6 +103,9 @@ STAGES: dict[str, Stage] = {
     "training": _run_training_stage,
     "evaluation": _run_evaluation_stage,
 }  # the run order
+# What `run` runs when no stage is named: the stages built today. Frozen from 1.0, so a stage
+# built later runs only when named and an unchanged `run <config>` keeps doing the same
+DEFAULT_STAGES = ("target_factory", "eda", "feature_checks", "training", "evaluation")
 
 
 def _entities(cfgs: list[UseCaseConfig], entity: str | None) -> list[str]:
@@ -135,8 +138,8 @@ def run(
     entity: str | None = None,
     run: str | None = None,
 ) -> dict:
-    """The stages (default: every built stage, `training` and `evaluation` included since
-    0.4.0) for the entities (the one given, which every config must list; default: the configs'
+    """The stages (default: `DEFAULT_STAGES`, frozen from 1.0; a stage built later runs only
+    when named) for the entities (the one given, which every config must list; default: the configs'
     entities, which must agree) of one config or a list; per entity and stage, what the stage
     returned. `run` names the trained run Evaluation evaluates (`r007`): it is accepted with
     `stages=["evaluation"]` and one config only, and refused before anything runs otherwise.
@@ -144,7 +147,7 @@ def run(
     The asked stages run in `STAGES` order, whatever order they are given in, so
     `stages=["feature_checks", "eda"]` refreshes EDA before Feature Checks reads it.
     """
-    asked = list(stages or STAGES)
+    asked = list(stages or DEFAULT_STAGES)
     unknown = [stage for stage in asked if stage not in STAGES]
     if unknown:
         raise ValueError(f"unknown stages {unknown}; the built stages: {list(STAGES)}")

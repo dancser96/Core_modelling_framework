@@ -27,6 +27,7 @@ from core_modelling.config.schema import KeyFeatures
 from core_modelling.dataset import Frames, build_frames
 from core_modelling.dataset.counts import (
     bin_edges,
+    cap_levels,
     count_cells,
     window_clients,
     window_levels,
@@ -42,7 +43,6 @@ from core_modelling.eda.deep_dives import (
 )
 from core_modelling.eda.explore import pivot_target
 from core_modelling.eda.population import (
-    cap_levels,
     funnel_per_period,
     known_rows,
     reference_groups,

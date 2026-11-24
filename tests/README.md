@@ -52,7 +52,10 @@
 
 Tests import the dev-only `synthetic` package and generate their data from its seed when they run
 (the `unit` preset, 5k clients), so they never read a stored dataset. The package goes into the
-bank with the tests as code, never as data (D-041). The `dev` dataset (20k) is for daily work and
+bank with the tests as code, never as data (D-041). No run folder is stored until 1.0: the
+run folder's contract is tested on the run the suite writes (`test_run_contract.py`), and a
+frozen folder per format version joins it from 1.0
+([test harness](../docs/components/test_harness.md#the-run-folders-contract)). The `dev` dataset (20k) is for daily work and
 the `canonical` one (100k) for the slow tests, notebooks and demos, outside the bank.
 
 A stage runs once per session where several modules read it: `conftest.py` builds EDA's frames

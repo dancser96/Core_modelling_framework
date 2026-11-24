@@ -1,18 +1,21 @@
 """Evaluation's explanation tables (evaluation.md → "The explanation tables").
 
-The driver holds one set of rows here: `collect_explanation_sample`, a seeded sample of test rows
-with their raw feature values and scores, plus the three waterfall rows, one of them at the
-score `explanation_cut` reads off the slices table. Everything else reads
-that sample, or Spark aggregates: the families' own contributions on the encoder's codes
-(`compute_contributions`, in the shape of Training's `explanation_sample`, so the importance view
-puts train out of fold beside test), the encoder's null and unseen shares per part
-(`encoding_shares`), the feature table, permutation importance per redundancy cluster and
-partial dependence with ICE. Nothing is fitted and nothing is chosen on these numbers
-(`CLAUDE.md` §4.4, §4.5); validation appears only in the shares, which are reported. The
-contributions are on the margin's scale (the log scale for Tweedie and Poisson).
+The driver holds one set of rows here, `collect_explanation_sample`'s: up to `PERMUTATION_ROWS`
+test rows chosen by a seeded hash of the keys, with their raw feature values and scores, plus
+the three waterfall rows, one of them at the score `explanation_cut` reads off the slices
+table. The first `EXPLANATION_ROWS` of them in hash order are the explanation sample (marked
+`sampled`); all of them, the permutation sample (`permutation.py`). Everything else reads those
+rows, or Spark aggregates: the families' own contributions on the encoder's codes
+(`compute_contributions`, in the shape of Training's `explanation_sample`, so the importance
+view puts train out of fold beside test), the encoder's null and unseen shares per part
+(`encoding_shares`), the feature table and partial dependence with ICE. Every statistic reads
+the sampled rows only (`sampled_rows`): the waterfall rows are picked by hand, so they are drawn
+but never counted. Nothing is fitted and nothing is chosen on these numbers (`CLAUDE.md` §4.4,
+§4.5); validation appears only in the shares, which are reported. The contributions are on the
+margin's scale (the log scale for Tweedie and Poisson).
 """
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Iterator
 from functools import reduce
 from operator import and_
 
@@ -23,33 +26,33 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import DoubleType, LongType, StringType, StructField, StructType
 
 from core_modelling.config import UseCaseConfig
+from core_modelling.config.schema import Slices
 from core_modelling.dataset.frames import collect_frame
 from core_modelling.environment import EnvironmentConfig
-from core_modelling.evaluation.tables import decision_slice
+from core_modelling.evaluation.permutation import PERMUTATION_ROWS
+from core_modelling.evaluation.slices import decision_slice
 from core_modelling.model.bundle import OUTPUT_COLUMNS, Bundle
 from core_modelling.model.encoder import encode_frame
 from core_modelling.model.families import FAMILIES
 from core_modelling.model.scoring import score_frame
+from core_modelling.run_artifacts import BASE_COLUMN, CONTRIBUTION_SUFFIX, EXPLANATION_ROWS
 from core_modelling.sources import KEYS
 from core_modelling.statistics.distributions import level_text
-from core_modelling.statistics.metrics import slice_labels
+from core_modelling.statistics.metrics import curve_at_depths, slice_labels
 from core_modelling.statistics.score_cells import PARTS, POOLED
-from core_modelling.training.tables import BASE_COLUMN, CONTRIBUTION_SUFFIX, EXPLANATION_ROWS
 
 WATERFALL_COLUMN = "waterfall"  # null for a sampled row, else which waterfall row it is
-WATERFALL_ROWS = ("highest", "cut", "typical")
-FALLBACK_SLICE = "top 10%"  # the cut without a usable decision slice; a capture depth, always cut
+SAMPLED_COLUMN = "sampled"  # true on the explanation sample's hashed rows, which are counted
+ORDER, HASHED = "sample_order", "hashed"  # the collect's own columns, dropped on the driver
+# The cut without a usable decision slice: a capture depth, so always cut, named as the slices
+# table names it
+FALLBACK_SLICE = slice_labels(Slices(top_pct=[0.1]))[0]
 # A float32 library (XGBoost) sums its contributions to the margin within rounding only
 SUM_TOLERANCE = 1e-4
-DISAGREEMENTS = 3  # the clusters whose two ranks differ most, marked for the rank check
-PERMUTATIONS = 5  # seeded permutations per cluster: the loss change is their mean
-PERMUTATION_COLUMNS = ["cluster", "members", "loss_change", "loss_change_sd",
-                       "contribution_share", "importance_rank", "contribution_rank", "rank_gap",
-                       "disagrees", "rank_correlation"]  # fmt: skip
-ONE_TARGET_VALUE = "not available: one target value in the explanation sample"
 GRID_POINTS = 20  # partial dependence: quantiles of a numeric, the most frequent levels
 ICE_ROWS = 50  # ICE lines drawn, evenly spaced through the sample
-TOP_EFFECTS, MAX_EFFECTS = 10, 20  # the effect features (A23)
+PDP_COLUMNS = ["feature", "curve", "row", "point", "value", "level", "score"]
+ALL_NULL = "null on every sample row"  # partial dependence's reason for a feature it leaves out
 SHARE_SCHEMA = StructType(
     [
         StructField("part", StringType()),
@@ -88,40 +91,70 @@ def explanation_cut(slices: pd.DataFrame, curves: pd.DataFrame, cfg: UseCaseConf
             "depth": depth, "score": float(at["threshold"].iloc[0])}  # fmt: skip
 
 
-def curve_at_depths(curve: pd.DataFrame, depths: Sequence[float]) -> pd.DataFrame:
-    """One part's curve rows at `depths`: for each, the first score bin from the top whose
-    cumulative share of rows reaches it (the last bin when none does), each bin once, in depth
-    order. Same columns as `curve` (`statistics.metrics.threshold_table`'s)."""
-    ordered = curve.sort_values("depth", kind="stable")
-    at = ordered["depth"].searchsorted(list(depths)).clip(max=len(ordered) - 1)
-    return ordered.iloc[sorted(set(at))]
-
-
 def collect_explanation_sample(
     rows: DataFrame, scores: DataFrame, cfg: UseCaseConfig, env: EnvironmentConfig, cut: float
-) -> tuple[pd.DataFrame, dict]:
-    """The explanation sample of the test part, collected: `EXPLANATION_ROWS` test rows chosen
-    by a hash of the keys and `training.seed` (so a rerun takes the same rows), plus the three
-    waterfall rows. Receives Evaluation's rows (one per client, period and part, with the
-    features) and the scores table; `cut` is the score at the decision's cut, which only the
-    slices table knows. The rows are picked on the scores alone, and `rows` is read once more
-    only to join the features to those few keys. Returns the sample and the collect's log entry
-    (`collect_frame`'s): one row per sampled row, `rows`' columns, `OUTPUT_COLUMNS` and
-    `waterfall` (`highest`: the top score of the part; `cut`: the score nearest `cut`;
-    `typical`: the sampled row nearest the sample's median score; else null)."""
-    test = scores.where(F.col("part") == "test").select(*KEYS, *OUTPUT_COLUMNS)
-    order = F.xxhash64(*KEYS, F.lit(cfg.training.seed))
-    highest = _pick_row(test, [F.col("score").desc(), order], [])
-    at_cut = _pick_row(test, [F.abs(F.col("score") - F.lit(cut)), order], [highest])
-    mark = F.when(_is_row(highest), "highest").when(_is_row(at_cut), "cut")
-    marked = test.withColumn(WATERFALL_COLUMN, mark)
-    sampled = marked.orderBy(order, *KEYS).limit(EXPLANATION_ROWS)
-    chosen = sampled.unionByName(marked.where(F.col(WATERFALL_COLUMN).isNotNull()))
-    picked = rows.where(F.col("part") == "test").join(
-        F.broadcast(chosen.dropDuplicates(KEYS)), KEYS
+) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """The explanation and permutation samples of the test part, from one collect: the first
+    `PERMUTATION_ROWS` test rows (every one, when fewer) in the order of a hash of the keys and
+    `training.seed` (so a rerun takes the same rows), plus the three waterfall rows.
+
+    Receives Evaluation's rows (one per client, period and part, with the features) and the
+    scores table; `cut` is the score at the decision's cut, which only the slices table knows.
+    The rows are picked on the scores alone (`_chosen_rows`), and `rows` is read only to join
+    the features to those keys. Returns, each one row per client and period:
+
+    - the explanation sample: the first `EXPLANATION_ROWS` hashed rows (`sampled` true) and the
+      waterfall rows, with `rows`' columns, `OUTPUT_COLUMNS`, `waterfall` (`highest`: the top
+      score of the part; `cut`: the score nearest `cut`; `typical`: the sampled row nearest the
+      sampled rows' median score; else null) and `sampled`;
+    - the permutation sample: every hashed row, with `rows`' columns;
+    - the collect's log entry (`collect_frame`'s).
+    """
+    chosen, known = _chosen_rows(scores.where(F.col("part") == "test"), cfg, cut)
+    picked = rows.where(F.col("part") == "test").join(F.broadcast(chosen), KEYS)
+    # a join that lost or doubled a row fails in the collect, against the known count
+    collected, entry = collect_frame(picked, "explanation_sample", env, rows=known)
+    collected = collected.sort_values([ORDER, *KEYS], ignore_index=True)  # the hash order
+    first = collected.index[collected[HASHED].to_numpy()][:EXPLANATION_ROWS]
+    collected[SAMPLED_COLUMN] = collected.index.isin(first)
+    explanation = collected.loc[collected[SAMPLED_COLUMN] | collected[WATERFALL_COLUMN].notna()]
+    explanation = explanation.drop(columns=[ORDER, HASHED]).sort_values(KEYS, ignore_index=True)
+    permutation = collected.loc[collected[HASHED], rows.columns]
+    return _mark_typical(explanation), permutation.sort_values(KEYS, ignore_index=True), entry
+
+
+def _chosen_rows(test: DataFrame, cfg: UseCaseConfig, cut: float) -> tuple[DataFrame, int]:
+    """The test scores to collect, lazy, and how many: the keys, `OUTPUT_COLUMNS`, the hash
+    (`sample_order`), `hashed` (among the first `PERMUTATION_ROWS` by the hash, then the keys)
+    and `waterfall` (`highest` or `cut`, else null), on the hashed and the waterfall rows only.
+    Three small Spark jobs over the scores: the hashed rows' keys (a top-k, no global sort),
+    then each waterfall row; the selection itself is a filter on the last hashed row."""
+    order = F.xxhash64(*KEYS, F.lit(cfg.training.seed)).alias(ORDER)
+    test = test.select(*KEYS, *OUTPUT_COLUMNS, order)
+    hashed = test.select(ORDER, *KEYS).orderBy(ORDER, *KEYS).limit(PERMUTATION_ROWS).collect()
+    if not hashed:
+        raise ValueError("the test part has no scored row to explain")
+    highest = _pick_row(test, [F.col("score").desc(), F.col(ORDER)], [])
+    at_cut = _pick_row(test, [F.abs(F.col("score") - F.lit(cut)), F.col(ORDER)], [highest])
+    keys = {tuple(row[key] for key in KEYS) for row in hashed}
+    extra = sum(tuple(row[key] for key in KEYS) not in keys for row in (highest, at_cut))
+    marked = test.select(
+        "*",
+        _at_or_before(hashed[-1], [ORDER, *KEYS]).alias(HASHED),
+        F.when(_is_row(highest), "highest").when(_is_row(at_cut), "cut").alias(WATERFALL_COLUMN),
     )
-    sample, entry = collect_frame(picked, "explanation_sample", env)
-    return _mark_typical(sample), entry
+    chosen = marked.where(F.col(HASHED) | F.col(WATERFALL_COLUMN).isNotNull())
+    return chosen, len(hashed) + extra
+
+
+def _at_or_before(row: Row, columns: list[str]) -> Column:
+    """True on the rows at or before `row` in the order of `columns`, compared in turn (no
+    value null): the selection a top-k by those columns ends at."""
+    head, *rest = columns
+    value = F.lit(row[head])
+    if not rest:
+        return F.col(head) <= value
+    return (F.col(head) < value) | ((F.col(head) == value) & _at_or_before(row, rest))
 
 
 def _pick_row(test: DataFrame, order: list[Column], taken: list[Row]) -> Row:
@@ -142,13 +175,19 @@ def _is_row(row: Row) -> Column:
 
 
 def _mark_typical(sample: pd.DataFrame) -> pd.DataFrame:
-    """The sample with its typical row marked: of the unmarked rows, the one whose score is
-    nearest their median (the first in key order on a tie)."""
-    free = sample.loc[sample[WATERFALL_COLUMN].isna(), "score"]
+    """The sample with its typical row marked: of the sampled rows not marked yet, the one whose
+    score is nearest their median (the first in key order on a tie)."""
+    free = sample.loc[sample[SAMPLED_COLUMN] & sample[WATERFALL_COLUMN].isna(), "score"]
     if free.empty:
-        raise ValueError("the explanation sample holds no row besides the waterfall rows")
+        raise ValueError("the explanation sample holds no sampled row besides the waterfall rows")
     sample.loc[(free - free.median()).abs().idxmin(), WATERFALL_COLUMN] = "typical"
     return sample
+
+
+def sampled_rows(contributions: pd.DataFrame) -> pd.DataFrame:
+    """The explanation sample's hashed rows (`sampled`), the ones every statistic reads: the
+    waterfall rows outside them are picked by hand, so they are drawn, never counted."""
+    return contributions.loc[contributions[SAMPLED_COLUMN].astype(bool)]
 
 
 def compute_contributions(bundle: Bundle, sample: pd.DataFrame) -> pd.DataFrame:
@@ -201,7 +240,7 @@ def encoding_shares(rows: DataFrame, bundle: Bundle) -> pd.DataFrame:
     return table[["part", "feature", "rows", "null_share", "unseen_share"]].reset_index(drop=True)
 
 
-def _contribution_shares(contributions: pd.DataFrame, features: list[str]) -> pd.Series:
+def contribution_shares(contributions: pd.DataFrame, features: list[str]) -> pd.Series:
     """Each feature's share of the mean absolute contribution, from a frame with
     `<feature>__contribution` columns; a frame of only zero contributions fails loud."""
     columns = [f"{name}{CONTRIBUTION_SUFFIX}" for name in features]
@@ -224,7 +263,7 @@ def feature_table(
     ledger's, the encoder's on the frame the model was fitted on (the Stage 2 copy's is EDA's,
     over every client, test included); a final feature without one fails loud."""
     final = run_ledger.loc[run_ledger["selected"].astype(bool), "feature"].tolist()
-    share = _contribution_shares(contributions, final)
+    share = contribution_shares(contributions, final)
     table = pd.DataFrame({"feature": final, "contribution_share": share.to_numpy()})
     table["contribution_rank"] = table["contribution_share"].rank(ascending=False, method="min")
     train = run_ledger.set_index("feature")["null_share"]
@@ -247,98 +286,11 @@ def feature_table(
     )
 
 
-def permutation_importance(
-    bundle: Bundle,
-    contributions: pd.DataFrame,
-    clusters: pd.DataFrame,
-    metric: Callable[[np.ndarray, np.ndarray], float],
-    seed: int,
-) -> pd.DataFrame:
-    """Per redundancy cluster, the loss change when its members are permuted together, the mean
-    over `PERMUTATIONS` seeded permutations of the sample's rows, and the rank check against the
-    contributions. Run it only when `permutation_unavailable` gives no reason.
-
-    `contributions` is `compute_contributions`' frame, not the bare sample: the rows' raw
-    features, their `<feature>__contribution` columns and `target` are all read from it.
-    `clusters` holds `feature, cluster` (the Stage 2 ledger's; a null cluster is the feature
-    alone), `metric(y, score)` a loss (lower is better). Returns one row per cluster, largest mean
-    loss change first, in `PERMUTATION_COLUMNS`: `loss_change` the mean and `loss_change_sd` the
-    standard deviation (ddof 1) over the permutations, the ranks and `disagrees` (the
-    `DISAGREEMENTS` largest non-zero gaps) on the mean, and `rank_correlation` (Spearman's
-    between the two, the same on every row; null when undefined).
-    """
-    groups = _cluster_members(bundle.features, clusters)
-    y = contributions["target"].to_numpy()
-    frame = contributions[bundle.features]
-    base = metric(y, score_frame(bundle, frame)["score"].to_numpy())
-    shares = _contribution_shares(contributions, bundle.features)
-    rng = np.random.default_rng(seed)
-    rows = []
-    for cluster, members in groups:
-        changes = [_permuted_loss(bundle, frame, members, rng.permutation(len(frame)), y, metric)
-                   - base for _ in range(PERMUTATIONS)]  # fmt: skip
-        rows.append({"cluster": cluster, "members": members,
-                     "loss_change": float(np.mean(changes)),
-                     "loss_change_sd": float(np.std(changes, ddof=1)),
-                     "contribution_share": float(shares[members].sum())})  # fmt: skip
-    table = pd.DataFrame(rows).astype({"cluster": "Int64"})
-    return _rank_check(table)[PERMUTATION_COLUMNS]
-
-
-def permutation_unavailable(contributions: pd.DataFrame) -> str | None:
-    """Why permutation importance cannot be computed on the explanation sample, decided before
-    it runs (D-035): a target of one value (no positive row, or no negative one, or a constant
-    amount under a concordance or R² loss) gives no loss to compare. None when it can."""
-    if contributions["target"].nunique() < 2:
-        return ONE_TARGET_VALUE
-    return None
-
-
-def _permuted_loss(
-    bundle: Bundle,
-    frame: pd.DataFrame,
-    members: list[str],
-    order: np.ndarray,
-    y: np.ndarray,
-    metric: Callable[[np.ndarray, np.ndarray], float],
-) -> float:
-    """The loss with `members`' values reordered by `order`, one order for every member, so
-    their rows move together and the other features stay in place."""
-    permuted = frame.copy()
-    for name in members:
-        permuted[name] = frame[name].to_numpy()[order]
-    return metric(y, score_frame(bundle, permuted)["score"].to_numpy())
-
-
-def _cluster_members(
-    features: list[str], clusters: pd.DataFrame
-) -> list[tuple[int | None, list[str]]]:
-    """The model's features grouped by their cluster, in the features' order: `(cluster,
-    members)`, a feature with a null cluster alone under None; a feature without a row fails."""
-    known = clusters.set_index("feature")["cluster"]
-    missing = [name for name in features if name not in known.index]
-    if missing:
-        raise ValueError(f"the clusters table has no row for the model's features {missing}")
-    groups: dict[int | str, list[str]] = {}
-    for name in features:
-        key = name if pd.isna(known[name]) else int(known[name])  # alone: keyed by its name
-        groups.setdefault(key, []).append(name)
-    return [(None if isinstance(key, str) else key, members) for key, members in groups.items()]
-
-
-def _rank_check(table: pd.DataFrame) -> pd.DataFrame:
-    """The permutation table with both ranks, their gap, the largest gaps marked and Spearman's
-    rank correlation between the loss change and the contribution share."""
-    table["importance_rank"] = table["loss_change"].rank(ascending=False, method="min")
-    table["contribution_rank"] = table["contribution_share"].rank(ascending=False, method="min")
-    table = table.astype({"importance_rank": "int64", "contribution_rank": "int64"})
-    table["rank_gap"] = table["importance_rank"] - table["contribution_rank"]
-    gap = table["rank_gap"].abs()
-    largest = gap[gap > 0].sort_values(ascending=False, kind="stable").index[:DISAGREEMENTS]
-    table["disagrees"] = table.index.isin(largest)
-    correlation = table["loss_change"].corr(table["contribution_share"], method="spearman")
-    table["rank_correlation"] = None if pd.isna(correlation) else float(correlation)
-    return table.sort_values("loss_change", ascending=False, kind="stable").reset_index(drop=True)
+def all_null_features(sample: pd.DataFrame, features: list[str]) -> list[str]:
+    """The `features` null on every row of `sample`, in order: partial dependence has no grid to
+    sweep for them, so it leaves them out with `ALL_NULL` as the reason, decided before it runs
+    (D-035)."""
+    return [name for name in features if sample[name].isna().all()]
 
 
 def partial_dependence(bundle: Bundle, sample: pd.DataFrame, features: list[str]) -> pd.DataFrame:
@@ -347,11 +299,15 @@ def partial_dependence(bundle: Bundle, sample: pd.DataFrame, features: list[str]
     of its sample values; categorical: its `GRID_POINTS` most frequent sample levels). Returns
     long rows `feature, curve, row, point, value, level, score`: `curve` `pdp` (the mean over
     the rows, `row` null) or `ice` (one of `ICE_ROWS` evenly spaced rows, by position);
-    `value` the numeric's grid value, `level` the categorical's level text."""
+    `value` the numeric's grid value, `level` the categorical's level text (`PDP_COLUMNS`; no
+    row for no feature). A feature null on every sample row has no grid and fails: leave out
+    `all_null_features` first."""
     kinds = {entry["name"]: entry["kind"] for entry in bundle.encoder["features"]}
     unknown = [name for name in features if name not in kinds]
     if unknown:
         raise ValueError(f"the bundle has no features {unknown}")
+    if not features:
+        return pd.DataFrame(columns=PDP_COLUMNS)
     frame, rows = sample[bundle.features], len(sample)
     ice = np.unique(np.linspace(0, rows - 1, min(ICE_ROWS, rows)).astype(int))
     tables = []
@@ -396,17 +352,3 @@ def _grid(values: pd.Series, numeric: bool, name: str) -> list:
         return list(np.unique(np.quantile(known.astype(float), points, method="nearest")))
     counts = known.value_counts().sort_index().sort_values(ascending=False, kind="stable")
     return list(counts.index[:GRID_POINTS])
-
-
-def effect_features(run_ledger: pd.DataFrame, key_features: list[str]) -> list[str]:
-    """The features the effect views draw (A23): every key feature the model uses (EDA's key
-    features and a person's `include`, as given) and the model's `TOP_EFFECTS` largest by
-    Training's out-of-fold contribution share, `MAX_EFFECTS` at most, the key features first
-    when they do not all fit; returned largest share first."""
-    used = run_ledger.loc[run_ledger["in_model"].fillna(False).astype(bool)]
-    used = used.sort_values("contribution_share", ascending=False, kind="stable")[
-        "feature"
-    ].tolist()
-    keys = [name for name in used if name in set(key_features)]
-    chosen = set(list(dict.fromkeys([*keys, *used[:TOP_EFFECTS]]))[:MAX_EFFECTS])
-    return [name for name in used if name in chosen]

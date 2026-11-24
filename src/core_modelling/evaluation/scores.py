@@ -1,40 +1,42 @@
 """The scores table: Evaluation's one scoring pass (evaluation.md → "Scoring and the scores
-table", A101).
+table"), committed whole with the stage's other artifacts.
 
 `score_parts` scores the evaluation rows inside Spark through `score_spark` and keeps, beside
 the scores, what the tables read later: the client's split, the target, the strata and the
 baselines' columns, named by the caller and never found by a prefix, so a re-render or
-`compare_runs` reads the stored scores alone. `write_scores` writes them as parquet from Spark
+`compare_runs` reads the stored scores alone. The test part's rows with a null target are
+scored and kept too: the drift reference describes every eligible test row, while every metric
+reads the rows with a known target only. `write_scores` writes them as parquet from Spark
 beside the stage's folder; Evaluation reads them back for every cell (`cells.py`) and never
 scores twice, and `write_stage` moves them into the stage's folder with its other artifacts.
 """
 
-import os
+import secrets
 import shutil
 
 from pyspark.sql import DataFrame
 
 from core_modelling.artifacts import local_path
 from core_modelling.config import UseCaseConfig
-from core_modelling.model.bundle import OUTPUT_COLUMNS, load_bundle
+from core_modelling.model.bundle import OUTPUT_COLUMNS, Bundle
 from core_modelling.model.scoring import score_spark
 from core_modelling.sources import KEYS
 
-BASELINE_PREFIX = "baseline_"  # how `add_baselines` names a ranking baseline's column (A97)
+BASELINE_PREFIX = "baseline_"  # how `add_baselines` names a ranking baseline's column
 SCORES_FOLDER = "scores"  # the scores table's folder in the stage's, and its staging suffix
 
 
 def score_parts(
-    bundle_folder: str, rows: DataFrame, cfg: UseCaseConfig, baselines: list[str]
+    bundle_folder: str, bundle: Bundle, rows: DataFrame, cfg: UseCaseConfig, baselines: list[str]
 ) -> DataFrame:
     """The evaluation rows scored inside Spark, one row per client, period and part, never
-    collected. Receives `build_frames(…, "evaluation")`'s rows with `add_baselines`' columns,
-    named in `baselines`, and returns the scores table's columns: `unit_id, period, part,
+    collected. Receives the bundle (loaded once by the caller) and its folder, which
+    `score_spark` ships, and `build_frames(…, "evaluation")`'s rows with `add_baselines`'
+    columns, named in `baselines`; returns the scores table's columns: `unit_id, period, part,
     split, target`, `OUTPUT_COLUMNS`, the strata, then `baselines`. Rows whose features are not
     the bundle's (a feature it lacks, or a column that is no key, stratum or baseline), a
     baseline named like a feature or a kept column, or a bundle of another task, are refused
     before Spark runs."""
-    bundle = load_bundle(bundle_folder)
     if bundle.task != cfg.task:
         raise ValueError(
             f"the bundle at {bundle_folder} is a {bundle.task} model; the config's task is "
@@ -76,10 +78,11 @@ def _check_features(
 
 def write_scores(scores: DataFrame, stage_folder: str) -> str:
     """The scores table as parquet, written by Spark beside the stage's folder as
-    `<stage_folder>.scores-<pid>`, which it returns; never overwritten. A failed or interrupted
+    `<stage_folder>.scores-<token>` (a random token, as `artifacts.py`'s siblings, so two
+    sessions or hosts never meet), which it returns; never overwritten. A failed or interrupted
     write removes what it staged and re-raises, so only a killed process leaves a `.scores-*`
     folder, which `run_evaluation` refuses before any Spark work (`check_siblings`). The stage
-    commits the table whole with its other artifacts (A101), so `run_evaluation`:
+    commits the table whole with its other artifacts, so `run_evaluation`:
 
     1. writes it: `staged = write_scores(scores, evaluation_folder)`;
     2. reads it back with `spark.read.parquet(staged)` for every `score_edges` and
@@ -88,7 +91,7 @@ def write_scores(scores: DataFrame, stage_folder: str) -> str:
        folders={"scores": staged})`, which moves it in as `scores/` before the swap.
     """
     target = local_path(stage_folder)
-    staged = target.with_name(f"{target.name}.{SCORES_FOLDER}-{os.getpid()}")
+    staged = target.with_name(f"{target.name}.{SCORES_FOLDER}-{secrets.token_hex(6)}")
     if staged.exists():  # the cleanup below must never remove a folder this call did not write
         raise ValueError(
             f"{staged} is left from an earlier Evaluation that did not finish; look at it and "

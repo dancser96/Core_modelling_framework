@@ -111,7 +111,7 @@ NOT_CHECKS = {
     ("extra", None): "off by default",
 }
 NULL_CONCORDANCE_MAX = 0.55
-# the flags no column outside the truth's trap list may raise on the card config (Q545): a
+# the flags no column outside the truth's trap list may raise on the card config: a
 # leakage or time-alignment check firing on genuine signal; a real minority (rare_value_leak) and
 # a static attribute (client_constant) raise theirs by design
 NEVER_ON_LEGITIMATE = {"leakage.too_strong", "leakage.missingness_leak",

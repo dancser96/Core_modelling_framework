@@ -6,8 +6,8 @@ snapshot rows (the one place the framework caps rows, stated in the report): Spe
 numerics, Cramér's V (plain, not bias-corrected) for two categoricals, the correlation ratio η on
 the numeric's ranks for a mixed pair; null is a level for the last two (N8). A pair that cannot
 be measured is "not compared" (NaN). Feature Checks cuts the clusters from that long table
-(`cluster_features`, average linkage, Q472) and scores each numeric member by
-`explained_by_others`, from the table's Spearman pairs alone, with no rows (V4).
+(`cluster_features`, average linkage) and scores each numeric member by
+`explained_by_others`, from the table's Spearman pairs alone, with no rows.
 """
 
 import numpy as np

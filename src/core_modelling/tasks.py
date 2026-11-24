@@ -4,19 +4,21 @@ A stage that does something differently for binary and regression looks the choi
 `TASK_SPECS[cfg.task]` instead of branching on the task; both tasks share one function where the
 formula is the same (the lift test). Target Factory and the dataset read the target rules, the
 target column check, the target summary and occurrences and the contract checks. EDA and Feature
-Checks read most of the rest (A28, A29): the counts table's target bins, the group summary and
-the per-period estimate with their intervals, the rare effect, the concordance from cells and
-its SE, the support in effective clients and its name, the events warning, the headline, the
-level encoding's shrinkage, whether a lift exists, the target class and how an estimate is
-printed and named. Training reads the calibration's fits (every method the task allows, with
-their evidence and warnings) and the loss its table shows per method. Evaluation reads the
-metric function on score cells, the metrics that read the score's order only, the decision
-metric's key among them, the reliability's group count, the range a baseline column must keep
-to be a prediction, the metrics a stratum level cannot have, and whether the threshold table
-carries a false positive rate (the ROC's x), besides the target class. The modelling choices
-(the metrics, objectives and calibration methods each task allows, with their defaults) are the
-config schema's `TASK_CHOICES`, which each task's entry carries too: the schema checks and
-fills them at load and cannot import this module.
+Checks read most of the rest: the counts table's target bins, the group summary and the
+per-period estimate with their intervals, the rare effect, the concordance from cells and its
+SE, the support in effective clients and its name, the events warning, the headline, the level
+encoding's shrinkage, whether a lift exists, the target class and how an estimate is printed
+and named. Training reads the calibration's fits (every method the task allows, with their
+evidence and warnings), the loss its table shows per method and the few-events warning.
+Evaluation reads the metric function on score cells, the metrics that read the score's order
+only, the decision metric's key among them, the reliability's group count, the range a baseline
+column must keep to be a prediction, the metrics a stratum level cannot have, and whether the
+threshold table carries a false positive rate (the ROC's x), besides the target class; the score
+grid, the strata's step and the tail's start, the loss of each objective, and the metrics, the
+sentences and the margin's scale the model results report words per task. The
+modelling choices (the metrics, objectives and calibration methods each task allows, with their
+defaults) are the config schema's `TASK_CHOICES`, which each task's entry carries too: the
+schema checks and fills them at load and cannot import this module.
 
 A target rule compares a unit's value at period t with its values in t+1 … t+w and returns the
 target at t as a Column, from the target column and the forward window that
@@ -29,7 +31,7 @@ or values the task cannot read, before any target is built. A contract check run
 eligible rows of the observation window before any sampling (§4.8), returns its log entry and
 raises with its numbers when the window cannot be modelled. A lift is a ratio to the base, so a
 regression target whose mean is not positive shows "not available: mean not positive", decided
-before anything runs (D-035, V8).
+before anything runs (D-035).
 """
 
 from collections.abc import Callable
@@ -78,6 +80,15 @@ REGRESSION_SUPPORT = "units with a non-zero target"
 SUMMARY_COLUMNS = ["rows", "support", "estimate", "low", "high", "lift", "insufficient"]
 AMOUNT_SUMMARY_COLUMNS = [*SUMMARY_COLUMNS, "median", "nonzero_share", "nonzero_low",
                           "nonzero_high", "nonzero_mean", "nonzero_median"]  # fmt: skip
+# A task's score grid: `(upper, bins)` segments from the lowest score, each `bins` bins of
+# equal rows up to the cumulative share `upper` of the rows. The bins narrow towards the top,
+# where the average precision, the top slices and the calibration intercept are read. Binary:
+# 100 of 0.9% up to 0.9, 90 of 0.1%, 90 of 0.01% and 100 of 0.001% (380 bins). Regression: 25
+# of 3.6%, 25 of 0.36%, 25 of 0.036% and 25 of 0.004% (100 bins), fewer since each meets 20
+# target bins: about 1,000 to 1,600 non-empty cells on a million rows.
+BINARY_SCORE_GRID = [(0.9, 100), (0.99, 90), (0.999, 90), (1.0, 100)]
+REGRESSION_SCORE_GRID = [(0.9, 25), (0.99, 25), (0.999, 25), (1.0, 25)]
+BINARY_STRATA_STEP = 4  # a stratum's bin: this many score bins (a regression's: 1)
 
 
 def _flag_goes_up(value: Column, forward: WindowSpec) -> Column:
@@ -324,7 +335,7 @@ def _known_values(target: pd.Series) -> np.ndarray:
 
 
 def _lift_available(base: float) -> bool:
-    """A lift (a ratio to the base) exists only over a positive base rate or mean (V8)."""
+    """A lift (a ratio to the base) exists only over a positive base rate or mean."""
     return base > 0
 
 
@@ -377,7 +388,7 @@ def _regression_se(
     value: float, events: float, non_events: float, target_shares: np.ndarray
 ) -> float:
     """Kendall's null standard error over every unit, halved and scaled for the ties on the
-    target (A29, D-082)."""
+    target (D-082)."""
     return kendall_null_se(events + non_events, target_shares)
 
 
@@ -408,25 +419,34 @@ def _regression_client_support(
     return units * events / total, units * non_events / total
 
 
+def few_events_warning(clients: int, rows: int, kind: str, where: str) -> str | None:
+    """The warning that the fold metric is noisy, or None: fewer than `FEW_CONVERTING_CLIENTS`
+    distinct `clients` with a `kind` target, or fewer than `FEW_POSITIVE_ROWS` such `rows`,
+    `where` they were counted (the window, the train split). It never advises fewer folds,
+    which bias the estimate down and buy no precision."""
+    if clients >= FEW_CONVERTING_CLIENTS and rows >= FEW_POSITIVE_ROWS:
+        return None
+    return (
+        f"{clients} clients and {rows} rows with a {kind} target {where}, fewer than "
+        f"{FEW_CONVERTING_CLIENTS} clients or {FEW_POSITIVE_ROWS} rows: the fold metric is "
+        "noisy at this size; set training.fold_repeats: 3, keep the trial budget small and "
+        "read differences between runs against their intervals"
+    )
+
+
 def _events_warning(events: int, clients: int, rows: int, support: str, kind: str) -> str | None:
     """The one events warning, or None: `events` (the snapshot's) below `EVENTS_WARNING` make
-    the concordance's third decimal noise; the window's `clients` (distinct, with a `kind`
-    target) below `FEW_CONVERTING_CLIENTS` or its `rows` with one below `FEW_POSITIVE_ROWS` make
-    the fold metric noisy too, which repeated folds, a small trial budget and intervals answer."""
-    few_folds = clients < FEW_CONVERTING_CLIENTS or rows < FEW_POSITIVE_ROWS
+    the concordance's third decimal noise; the window's `clients` and `rows` with a `kind`
+    target add `few_events_warning`."""
     parts = []
     if events < EVENTS_WARNING:
         parts.append(
             f"{events} {support} in the snapshot, fewer than {EVENTS_WARNING}: the concordance's "
             "third decimal is noise"
         )
-    if few_folds:
-        parts.append(
-            f"{clients} clients and {rows} rows with a {kind} target over the window, fewer than "
-            f"{FEW_CONVERTING_CLIENTS} clients or {FEW_POSITIVE_ROWS} rows: the fold metric is "
-            "noisy at this size; set training.fold_repeats: 3, keep the trial budget small and "
-            "read differences between runs against their intervals"
-        )
+    few = few_events_warning(clients, rows, kind, "over the window")
+    if few:
+        parts.append(few)
     return "; ".join(parts) or None
 
 
@@ -450,14 +470,14 @@ def _regression_headline(target: pd.Series) -> dict[str, float]:
 
 
 def _binary_shrinkage_rows(min_events: int, base: float) -> float:
-    """`strata.min_events / base_rate`: the prior weighs `min_events` pseudo-events (A30)."""
+    """`strata.min_events / base_rate`: the prior weighs `min_events` pseudo-events."""
     if base <= 0:
         raise ValueError(f"shrinkage_rows: the base rate must be positive, got {base}")
     return min_events / base
 
 
 def _regression_shrinkage_rows(min_events: int, base: float) -> float:
-    """`strata.min_events` rows (A30)."""
+    """`strata.min_events` rows."""
     return float(min_events)
 
 
@@ -536,8 +556,9 @@ def _regression_calibration_fits(
 ) -> tuple[dict[str, dict], dict, list[str]]:
     """`none` and `mean` (the level factor on `score_raw`, the out-of-fold prediction in the
     target's units), the factor with its interval and `half_total_rows` as the evidence of
-    both, and one warning: the factor is not defined (not positive and finite), or its interval
-    is not within ±5% of it (a NaN bound included). The method never switches itself."""
+    both, and one warning: the factor is not defined (not positive and finite), its interval
+    is not (a bootstrap replicate whose predictions total 0), or the interval is not within ±5%
+    of it. The method never switches itself."""
     level = level_factor(score_raw, y, clients)
     factor, low, high = level["factor"], level["low"], level["high"]
     evidence = {"factor": factor, "factor_low": low, "factor_high": high,
@@ -547,6 +568,12 @@ def _regression_calibration_fits(
         warnings.append(
             "the level factor is not defined for this target: its total, or the predictions' "
             "total, is not positive"
+        )
+    elif level["zero_replicates"]:
+        warnings.append(
+            f"the level factor {factor:.3f} has no interval: {level['zero_replicates']} of the "
+            "bootstrap's replicates drew clients whose predictions total 0, so the factor is "
+            "undefined there; the level of this target rests on very few clients"
         )
     elif not (low >= (1 - LEVEL_WARNING) * factor and high <= (1 + LEVEL_WARNING) * factor):
         warnings.append(
@@ -574,6 +601,8 @@ TASK_SPECS = {
         "concordance_se": _binary_se,
         "client_support": _binary_client_support,
         "events_warning": partial(_events_warning, support=BINARY_SUPPORT, kind="positive"),
+        # (clients, rows, where) -> the fold metric's noise warning, or None
+        "few_events_warning": partial(few_events_warning, kind="positive"),
         "support_name": BINARY_SUPPORT,
         "base_rate_views": _binary_headline,
         "shrinkage_rows": _binary_shrinkage_rows,
@@ -622,6 +651,40 @@ TASK_SPECS = {
         "reliability_groups": 10,  # the reliability table's score groups
         "prediction_range": (0.0, 1.0),  # a baseline column outside it predicts no rate
         "strata_absent_metrics": (),  # what a stratum level's cells cannot give
+        "score_grid": BINARY_SCORE_GRID,
+        "strata_step": BINARY_STRATA_STEP,
+        # Where the tail starts: the rows above it are cut by a quantile pass of their own
+        # (`evaluation/cells.py::score_edges`), since its narrowest bins are below one pass's
+        # rank error
+        "tail_start": 0.99,
+        # the row loss of a run's objective, when the decision's metric names none: always log
+        "objective_losses": {"log_loss": "log_loss"},
+        # the metrics beside the calibration chart, and the events below which a note warns that
+        # the groups are noisy (None: no note)
+        "calibration_metrics": [
+            "observed_to_expected",
+            "calibration_slope",
+            "calibration_intercept",
+        ],
+        "note_below_events": 200,
+        "strata_metrics": ["roc_auc", "observed_to_expected"],  # the error metrics per level
+        "events_noun": "positive rows",  # what the `events` column counts (the greying's support)
+        "strata_clause": " A level's metrics are computed on coarser score bins than the pooled "
+        f"ones (every {BINARY_STRATA_STEP}th edge), so a level's ordering "
+        "metrics read slightly below what the pooled grid would give.",
+        "summary_statement": "Average precision moves with the base rate: it is not comparable "
+        "across use cases.",
+        # Training's calibration table: its columns (any other is null for the task) and caption
+        "calibration_table_columns": ["method", "chosen", "oof_loss", "parameters"],
+        "calibration_table_caption": "Every method considered on the out-of-fold margins inside "
+        "train, the bundle's marked chosen; the log loss is taken before the offset, at the "
+        "sampled rate. Each method's log loss is in sample, not cross-fitted: the method is "
+        "fitted and judged on the same rows, so one with more parameters never looks worse, and "
+        "a gap in the fourth decimal or beyond is no reason to switch",
+        # the margin's scale, as the contributions' note words it; a log-link objective names
+        # its own (a template over `objective`; None: the task has none)
+        "margin_scale": "the log-odds",
+        "log_link_scale": None,
     },
     "regression": {
         **TASK_CHOICES["regression"],
@@ -639,6 +702,7 @@ TASK_SPECS = {
         "concordance_se": _regression_se,
         "client_support": _regression_client_support,
         "events_warning": partial(_events_warning, support=REGRESSION_SUPPORT, kind="non-zero"),
+        "few_events_warning": partial(few_events_warning, kind="non-zero"),
         "support_name": REGRESSION_SUPPORT,
         "base_rate_views": _regression_headline,
         "shrinkage_rows": _regression_shrinkage_rows,
@@ -667,5 +731,28 @@ TASK_SPECS = {
         "prediction_range": None,  # an amount may take any value
         # a stratum's cells carry no target bins, so a level has no concordance
         "strata_absent_metrics": ("concordance",),
+        "score_grid": REGRESSION_SCORE_GRID,
+        "strata_step": 1,
+        "tail_start": 0.99,
+        "objective_losses": {"tweedie": "tweedie_deviance", "poisson": "poisson_deviance"},
+        "calibration_metrics": ["predicted_to_observed"],
+        "note_below_events": None,
+        "strata_metrics": ["rmse", "mae", "predicted_to_observed"],
+        "events_noun": "rows with a non-zero target",
+        "strata_clause": "",  # a regression's levels keep the pooled grid
+        "summary_statement": None,
+        "calibration_table_columns": [
+            "method",
+            "chosen",
+            "factor",
+            "factor_low",
+            "factor_high",
+            "half_total_rows",
+            "parameters",
+        ],
+        "calibration_table_caption": "The level factor: the total observed over the total "
+        "predicted out of fold, its interval from a client bootstrap",
+        "margin_scale": "the prediction's own scale",
+        "log_link_scale": "the log scale of the {objective} objective",
     },
 }

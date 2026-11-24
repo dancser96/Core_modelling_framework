@@ -3,7 +3,8 @@ regression variant, each trained once per session in `conftest.py` (`lgbm`, four
 EDA and Feature Checks. What a run must leave and keep: every artifact of the run folder, a model
 that is the one the search judged, the train split and nothing else, the feature set in force
 without a held feature, the `run` entry without periods, one `model_hash` for a repeated run, an
-incomplete run after a crash, and the `autonomous` rule of `run` (`CLAUDE.md` §4.4, §4.10, §4.13).
+incomplete run after a crash, no run number for a screen that leaves no feature, and the
+`autonomous` rule of `run` (`CLAUDE.md` §4.4, §4.10, §4.13).
 The four families through the search are the slow test on the `dev` preset.
 """
 
@@ -14,11 +15,16 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import yaml
-from conftest import ENTITY, QUICK_SEARCH, write_environment_file
+from conftest import ENTITY, QUICK_SEARCH, with_training, write_environment_file
 from pyspark.sql import SparkSession
 
 import core_modelling.training.run as training_run
-from core_modelling.artifacts import STAGE_SCHEMA_VERSIONS, StageResult, read_stage
+from core_modelling.artifacts import (
+    STAGE_SCHEMA_VERSIONS,
+    StageResult,
+    read_stage,
+    read_stage_meta,
+)
 from core_modelling.config import UseCaseConfig, load_config
 from core_modelling.config.audit_log import read_entries
 from core_modelling.dataset import Frames
@@ -32,23 +38,26 @@ from core_modelling.environment import (
 from core_modelling.ledger import LEDGER_SCHEMA_VERSION, read_ledger
 from core_modelling.model.bundle import load_bundle
 from core_modelling.run import run
+from core_modelling.run_artifacts import (
+    STAGE2_COLUMNS,
+    STAGE2_COPY_SCHEMA_VERSION,
+    STAGE2_FILE,
+    STAGE2_TABLES,
+    open_run_folder,
+    read_run_ledger,
+    read_stage2_copy,
+)
 from core_modelling.runs import list_runs, show_run
 from core_modelling.statistics.losses import mean_fold_loss
 from core_modelling.training import run_training
-from core_modelling.training.gate import (
-    STAGE2_FILE,
-    STAGE2_TABLES,
-    Stage2,
-    read_stage2_copy,
-    save_stage2,
-)
-from core_modelling.training.ledger_run import read_run_ledger
+from core_modelling.training.gate import Stage2, save_stage2
 
 ROOT = Path(__file__).resolve().parents[1]
 TABLES = {"trials", "selection", "oof", "explanation_sample", "calibration", "signoff"}
 META_KEYS = {"run_id", "stage2", "summary", "best", "search", "search_space", "metrics",
              "final_features", "sampling", "folds", "reproducible_to", "warnings",
-             "timings"}  # fmt: skip
+             "timings", "judged_model", "threads", "library_versions"}  # fmt: skip
+LIBRARIES = {"flaml", "lightgbm", "xgboost", "catboost", "numpy", "scikit-learn"}
 VIEWS = {"opening", "warnings", "search", "selection", "calibration", "signoff", "explanation"}
 A_FEW_CANDIDATES = ["age", "income", "segment", "onboarding_channel", "tenure_months"]
 
@@ -99,9 +108,12 @@ def test_the_run_folder_holds_every_artifact(
     assert meta["summary"]["family"] == meta["best"]["family"] == "lgbm"
     assert meta["summary"]["trials"] == len(tables["trials"]) == QUICK_SEARCH["max_iter"]
     assert meta["reproducible_to"] == "model" and "n_jobs" not in meta["best"]["parameters"]
-    listed = list_runs(trained_env, cfg, ENTITY).set_index("run").loc[run_id]
+    assert meta["judged_model"]["agrees"] and meta["judged_model"]["dealings"] == 1
+    assert meta["threads"] >= 1 and set(meta["library_versions"]) == LIBRARIES
+    assert tables["oof"]["score_in_sample"].notna().all()
+    listed = list_runs(cfg, ENTITY, trained_env).set_index("run").loc[run_id]
     assert listed["trained"] and listed["family"] == "lgbm" and not listed["signed_off"]
-    assert meta["summary"]["model_hash"] in show_run(trained_env, cfg, ENTITY, run_id)
+    assert meta["summary"]["model_hash"] in show_run(cfg, ENTITY, trained_env, run_id)
 
 
 def test_the_run_keeps_its_stage2_versions_and_the_report_blocks(
@@ -113,6 +125,7 @@ def test_the_run_keeps_its_stage2_versions_and_the_report_blocks(
     folder = Path(models_dir(trained_env, trained.config, trained.meta["run_id"]))
     versions = json.loads((folder / "stage2" / STAGE2_FILE).read_text())
     assert versions == {
+        "stage2_copy_schema_version": STAGE2_COPY_SCHEMA_VERSION,
         "eda_schema_version": STAGE_SCHEMA_VERSIONS["eda"],
         "ledger_schema_version": LEDGER_SCHEMA_VERSION,
         "runs": trained.meta["stage2"],
@@ -124,33 +137,67 @@ def test_the_run_keeps_its_stage2_versions_and_the_report_blocks(
     assert "metrics" in trained.views["calibration"]
 
 
+def test_a_trained_folder_meets_the_run_contract_and_a_missing_key_is_named(
+    trained: StageResult, trained_env: EnvironmentConfig, tmp_path: Path
+) -> None:
+    """`open_run_folder` accepts the folder Training wrote; a copy whose `training.json` lacks a
+    nested key the readers use (`timings/seconds`) is refused naming that key."""
+    folder = Path(models_dir(trained_env, trained.config, trained.meta["run_id"]))
+    read = open_run_folder(str(folder))
+    assert read.run["run_id"] == read.training["run_id"] == trained.meta["run_id"]
+    copy = tmp_path / folder.name
+    shutil.copytree(folder, copy)
+    training_file = copy / "training" / "training.json"
+    meta = json.loads(training_file.read_text())
+    del meta["timings"]["seconds"]
+    training_file.write_text(json.dumps(meta))
+    with pytest.raises(ValueError, match="lacks the keys.*timings/seconds"):
+        open_run_folder(str(copy))
+
+
+def _frozen(features: list[str], name: str) -> pd.DataFrame:
+    """A table with `STAGE2_COLUMNS[name]` and one row per feature, plus a column the copy drops."""
+    columns = {column: [0] * len(features) for column in STAGE2_COLUMNS[name]}
+    return pd.DataFrame({**columns, "feature": features, "dropped": 1})
+
+
 def test_the_stage2_copy_reads_back_and_refuses_a_version_it_cannot_read(
     tmp_path: Path,
 ) -> None:
-    """No Spark: a copy `save_stage2` wrote reads back table by table (the final features'
-    rows, every candidate's ledger row); a missing `_stage2.json` and an EDA or ledger version
-    other than this framework's are refused, the message naming both versions."""
-    tables = {name: pd.DataFrame({"feature": ["age", "income"], "n": [1, 2]})
-              for name in STAGE2_TABLES}  # fmt: skip
-    ledger = pd.DataFrame({"feature": ["age", "income", "segment"]})
+    """No Spark: a copy `save_stage2` wrote reads back table by table with its frozen columns
+    (the final features' rows, every candidate's ledger row); a copy of another
+    `stage2_copy_schema_version` or of none, a missing column and a missing `_stage2.json` are
+    refused, and so is a Stage 2 table lacking a frozen column before anything is written."""
+    tables = {name: _frozen(["age", "income"], name) for name in STAGE2_TABLES}
+    ledger = _frozen(["age", "income", "segment"], "ledger")
     stage2 = Stage2({"schema_version": STAGE_SCHEMA_VERSIONS["eda"]}, tables, {}, ledger,
                     {"eda": "aa", "feature_checks": "bb"})  # fmt: skip
     run_folder = tmp_path / "r001"
     run_folder.mkdir()
     save_stage2(str(run_folder / "stage2"), stage2, final=["income"])
     copy = read_stage2_copy(str(run_folder))
-    pd.testing.assert_frame_equal(copy["ledger"], ledger)
+    pd.testing.assert_frame_equal(copy["ledger"], ledger[list(STAGE2_COLUMNS["ledger"])])
     assert all(copy[name]["feature"].tolist() == ["income"] for name in STAGE2_TABLES)
     versions_file = run_folder / "stage2" / STAGE2_FILE
     versions = json.loads(versions_file.read_text())
-    for key, older in (("eda_schema_version", 4), ("ledger_schema_version", 2)):
-        versions_file.write_text(json.dumps({**versions, key: older}))
-        current = versions[key]
-        with pytest.raises(ValueError, match=rf"has {key} {older}, this framework reads {current}"):
-            read_stage2_copy(str(run_folder))
+    versions_file.write_text(json.dumps({**versions, "stage2_copy_schema_version": 0}))
+    with pytest.raises(ValueError, match="stage2_copy_schema_version 0, this framework reads"):
+        read_stage2_copy(str(run_folder))
+    versions.pop("stage2_copy_schema_version")
+    versions_file.write_text(json.dumps(versions))
+    with pytest.raises(ValueError, match="stage2_copy_schema_version None.*train the run again"):
+        read_stage2_copy(str(run_folder))
+    versions_file.write_text(json.dumps({**versions, "stage2_copy_schema_version": 1}))
+    cells = run_folder / "stage2" / "cells.parquet"
+    pd.read_parquet(cells).drop(columns="sum_y2").to_parquet(cells)
+    with pytest.raises(ValueError, match=r"lacks the columns \['sum_y2'\]"):
+        read_stage2_copy(str(run_folder))
     versions_file.unlink()
     with pytest.raises(FileNotFoundError, match=rf"holds no {STAGE2_FILE}"):
         read_stage2_copy(str(run_folder))
+    stage2.eda_tables["edges"] = tables["edges"].drop(columns="edge")
+    with pytest.raises(ValueError, match=r"Stage 2's edges table lacks the columns \['edge'\]"):
+        save_stage2(str(tmp_path / "r002" / "stage2"), stage2, final=["income"])
 
 
 def test_the_kept_model_is_the_one_the_search_judged(trained: StageResult) -> None:
@@ -229,6 +276,17 @@ def test_a_second_run_repeats_the_model_and_reads_train_only(
     assert len(frames.train) == len(again.tables["oof"])
 
 
+def test_the_judged_model_check_runs_at_two_dealings(
+    spark: SparkSession, env: EnvironmentConfig, card_quick: UseCaseConfig
+) -> None:
+    """With `fold_repeats: 2` FLAML averages each trial over both dealings, and the run fits
+    the second dealing's fold models too, so `training.json` records the check over both."""
+    trained = run_training(with_training(card_quick, fold_repeats=2), ENTITY, env, spark)
+    judged = trained.meta["judged_model"]
+    assert judged["dealings"] == 2 and judged["agrees"]
+    assert judged["fold_models_loss"] == pytest.approx(judged["search_loss"], abs=1e-9)
+
+
 def test_a_crash_after_the_number_is_reserved_leaves_an_incomplete_run(
     spark: SparkSession,
     env: EnvironmentConfig,
@@ -238,30 +296,48 @@ def test_a_crash_after_the_number_is_reserved_leaves_an_incomplete_run(
     """A run that fails after `create_run` keeps its folder and number, is listed as not
     trained and writes no `run` entry: `training/` is the commit marker (D-136)."""
     before = read_entries(audit_log_dir(env, card_quick, ENTITY))
+    known = list_runs(card_quick, ENTITY, env)["run"].tolist()
 
     def failing(*arguments: object) -> None:
         """A step that crashes."""
         raise RuntimeError("the machine went away")
 
-    monkeypatch.setattr(training_run, "encode_and_select", failing)
+    monkeypatch.setattr(training_run, "finish_selection", failing)
     with pytest.raises(RuntimeError, match="the machine went away"):
         run_training(card_quick, ENTITY, env, spark)
-    newest = list_runs(env, card_quick, ENTITY).iloc[0]
-    folder = Path(models_dir(env, card_quick, newest["run"]))
-    assert not newest["trained"] and (folder / "run.json").is_file()
+    listed = list_runs(card_quick, ENTITY, env).set_index("run")
+    (crashed,) = listed.index.difference(known)  # the one run this test's call reserved
+    folder = Path(models_dir(env, card_quick, crashed))
+    assert not listed.loc[crashed, "trained"] and (folder / "run.json").is_file()
     assert not (folder / "training").exists()
     assert read_entries(audit_log_dir(env, card_quick, ENTITY)) == before
 
 
-def _config_file(folder: Path, level: str) -> Path:
+def test_a_screen_that_leaves_no_feature_takes_no_run_number(
+    spark: SparkSession, env: EnvironmentConfig, card_quick: UseCaseConfig
+) -> None:
+    """The cluster rule and the floor fit no model, so they run before `create_run`: a floor
+    that leaves no feature refuses, naming itself, and leaves no run folder and no `run`
+    entry behind."""
+    cfg = with_training(card_quick, selection={"floor_z": 50.0})
+    folders = sorted(Path(models_dir(env, cfg)).iterdir())
+    before = read_entries(audit_log_dir(env, cfg, ENTITY))
+    with pytest.raises(ValueError, match="the floor rule left no feature"):
+        run_training(cfg, ENTITY, env, spark)
+    assert sorted(Path(models_dir(env, cfg)).iterdir()) == folders
+    assert read_entries(audit_log_dir(env, cfg, ENTITY)) == before
+
+
+def _config_file(folder: Path, level: str, **training: object) -> Path:
     """The card config as a file at an automation level, built in memory from a few candidates
-    with `QUICK_SEARCH` and no selection rule (five features need none)."""
+    with `QUICK_SEARCH` and no selection rule (five features need none); `training` changes
+    fields of its training section."""
     raw = yaml.safe_load((ROOT / "tests/conf/cc_acquisition.yml").read_text())
     raw["automation_level"] = level
     raw["data"]["model_input"] = None
     raw["features"]["candidates"]["include"] = A_FEW_CANDIDATES
     unselected = {"cluster": False, "floor_z": None, "prune": False}
-    raw["training"].update({**QUICK_SEARCH, "selection": unselected})
+    raw["training"].update({**QUICK_SEARCH, "selection": unselected, **training})
     path = folder / f"{level}.yml"
     path.write_text(yaml.safe_dump(raw))
     return path
@@ -285,6 +361,33 @@ def test_run_adds_the_missing_stages_at_autonomous_and_training_alone_refuses(
     meta = json.loads(Path(paths["training.json"]).read_text())
     assert meta["run_id"] == "r001" and sorted(meta["stage2"]) == ["eda", "feature_checks"]
     assert 0 < len(meta["final_features"]) <= len(A_FEW_CANDIDATES)
+
+
+@pytest.fixture(scope="module")
+def unit_env_file(unit_output: tuple[str, dict], tmp_path_factory: pytest.TempPathFactory) -> str:
+    """An environment file on the unit preset with a data root of its own, shared by the
+    family runs below: the first of them runs EDA and Feature Checks (`autonomous`), the others
+    find them."""
+    return str(write_environment_file(unit_output[0], tmp_path_factory.mktemp("unit_family_env")))
+
+
+@pytest.mark.parametrize("family", ["xgboost", "xgb_limitdepth", "catboost"])
+def test_xgboost_and_catboost_complete_the_stage_on_the_unit_preset(
+    family: str, spark: SparkSession, unit_env_file: str, tmp_path: Path
+) -> None:
+    """The five-feature run (no selection rule) with two trials and two folds of each family the
+    default suite otherwise leaves to the slow test: the run completes, so the bundle round trip
+    inside it passed; its bundle loads with the family and the final features, and the model
+    the search judged is the one kept."""
+    path = _config_file(tmp_path, "autonomous", estimator_list=[family], max_iter=2, folds=2)
+    out = run(path, env_path=unit_env_file, stages=["training"], entity=ENTITY)
+    folder = Path(out[ENTITY]["training"]["cc_acquisition"]["folder"])
+    meta = read_stage_meta(str(folder), "training")
+    bundle = load_bundle(str(folder.parent / "bundle"))
+    assert meta["best"]["family"] == bundle.family == family
+    assert bundle.features == meta["final_features"] and meta["final_features"]
+    assert set(bundle.features) <= set(A_FEW_CANDIDATES)
+    assert meta["judged_model"]["agrees"] and len(meta["search"]) == 1
 
 
 @pytest.fixture(scope="module")

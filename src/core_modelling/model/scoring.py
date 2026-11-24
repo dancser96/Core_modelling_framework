@@ -3,8 +3,8 @@
 `score_frame` encodes a pandas frame with the bundle's encoder, predicts the margin through the
 family and applies the calibration; Training's self-check (`check_bundle`), Evaluation and
 Inference all score through it, and `score_spark` runs the same function inside Spark with
-`mapInPandas`. The driver ships the bundle's bytes in the function's closure, never a path
-(A28), so an executor needs no access to the folder; each partition refuses a model library
+`mapInPandas`. The driver ships the bundle's bytes in the function's closure, never a path,
+so an executor needs no access to the folder; each partition refuses a model library
 version other than the driver's, builds the bundle once from those bytes, verifying
 `model_hash` again, and writes nothing to disk. Arrow stays on and nothing is collected. A
 partition predicts on its task's CPUs (`spark.task.cpus`): LightGBM and XGBoost default to
@@ -22,13 +22,7 @@ from pyspark.sql import DataFrame
 from pyspark.sql.types import DoubleType, StructField, StructType
 
 from core_modelling.config.identities import short
-from core_modelling.model.bundle import (
-    OUTPUT_COLUMNS,
-    Bundle,
-    build_bundle,
-    load_bundle,
-    read_bundle_files,
-)
+from core_modelling.model.bundle import OUTPUT_COLUMNS, Bundle, build_bundle, read_bundle_files
 from core_modelling.model.calibration import apply_calibration
 from core_modelling.model.encoder import encode_frame
 from core_modelling.model.families import FAMILIES
@@ -54,32 +48,36 @@ def score_frame(bundle: Bundle, frame: pd.DataFrame, threads: int | None = None)
     return pd.DataFrame(columns, index=frame.index, columns=OUTPUT_COLUMNS)
 
 
-def check_bundle(folder: str, sample: pd.DataFrame, expected: pd.DataFrame) -> None:
-    """The self-check at save: the bundle reloaded from `folder` must score `sample` (raw
+def check_bundle(
+    bundle: Bundle, sample: pd.DataFrame, expected: pd.DataFrame, threads: int | None = None
+) -> None:
+    """The self-check at save: the bundle as reloaded from its folder must score `sample` (raw
     feature values, about 1,000 train rows) exactly as `expected` (the model in memory's
-    `OUTPUT_COLUMNS` on the sample's index). An empty sample, a difference or a non-finite
-    expectation fails loud, naming the first such column and the largest difference."""
+    `OUTPUT_COLUMNS` on the sample's index), predicted on `threads`. An empty sample, a
+    difference or a non-finite expectation fails loud, naming the first such column and the
+    largest difference."""
+    name = f"the bundle {short(bundle.model_hash)}"
     if sample.empty:
-        raise ValueError(f"{folder}: the self-check got no rows to score; it compares nothing")
-    scores = score_frame(load_bundle(folder), sample)
+        raise ValueError(f"{name}: the self-check got no rows to score; it compares nothing")
+    scores = score_frame(bundle, sample, threads)
     missing = [column for column in OUTPUT_COLUMNS if column not in expected.columns]
     if missing:
-        raise ValueError(f"{folder}: the expected scores lack the columns {missing}")
+        raise ValueError(f"{name}: the expected scores lack the columns {missing}")
     if not expected.index.equals(scores.index):
         raise ValueError(
-            f"{folder}: the expected scores are not on the sample's index; score the same rows "
+            f"{name}: the expected scores are not on the sample's index; score the same rows "
             "in the same order"
         )
     for column in OUTPUT_COLUMNS:
         found, wanted = scores[column].to_numpy(), expected[column].to_numpy(dtype=np.float64)
         if not np.isfinite(wanted).all():  # `score_frame` refused any in `found`
             raise ValueError(
-                f"{folder}: the expected scores hold a non-finite {column}; a score is always "
+                f"{name}: the expected scores hold a non-finite {column}; a score is always "
                 "a finite number"
             )
         if not np.array_equal(found, wanted):
             raise ValueError(
-                f"{folder}: the reloaded bundle's {column} differs from the model in memory by "
+                f"{name}: the reloaded bundle's {column} differs from the model in memory by "
                 f"up to {np.abs(found - wanted).max():.3g}; the bundle does not score as the "
                 "trained model did, so it must not be used"
             )

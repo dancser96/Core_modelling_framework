@@ -159,7 +159,7 @@ feature_checks:
 training:
   path: automl                           # FLAML, the only path in Phase 2 (D-020)
   estimator_list: [lgbm, xgboost, xgb_limitdepth, catboost]   # the families searched, FLAML's names; one entry fixes the family
-  max_iter: null                         # the run's trial budget, split over the families: 60 autonomous, 200 assisted (D-132)
+  max_iter: null                         # the run's trial budget, split over the families (at least 2 each): 60 autonomous, 200 assisted (D-132)
   trials: null                           # {<family>: trials}: names every listed family and replaces max_iter
   time_budget_s: null                    # a cap per family; with it a run is reproducible to the recipe, not the model (D-094)
   seed: 42                               # every seeded step of Training; never set through the audit log
@@ -228,8 +228,8 @@ resolved config always states the value in force and a `set` on `training.object
 |---|---|---|---|
 | `path` | `automl` | FLAML, the only path in Phase 2 (D-020) | no |
 | `estimator_list` | `[lgbm, xgboost, xgb_limitdepth, catboost]` | The families searched, by FLAML's names; one entry fixes the family | yes (Training) |
-| `max_iter` | by level: 60 at `autonomous`, 200 at `assisted` | The trial budget of the run, split equally over the listed families, the remainder to the first ones | yes (Training) |
-| `trials` | `null` | `{family: trials}`: a budget per family. When set it names every listed family and replaces `max_iter` | yes (Training) |
+| `max_iter` | by level: 60 at `autonomous`, 200 at `assisted` | The trial budget of the run, split equally over the listed families, the remainder to the first ones; every family needs at least 2 trials, else Training refuses before the run number ([training](training.md#the-search), item 2) | yes (Training) |
+| `trials` | `null` | `{family: trials}`: a budget per family, at least 2 each. When set it names every listed family and replaces `max_iter` | yes (Training) |
 | `time_budget_s` | `null` | A cap in seconds per family. With it a run is reproducible to the recipe, not the model (D-094) | yes (Training) |
 | `seed` | `42` | Every seeded step of Training | never (a test score must not pick its seed) |
 | `folds` | `5` | The client folds of the train split (`cv_fold`) | yes (Training) |
@@ -764,7 +764,20 @@ saves its resolved config with its artifacts.
   off in the bank: unverified). Two simultaneous writers can't interleave: each write is
   create-if-absent, and on a clash the write fails and the person re-runs the decision, since
   its checks were made against the log before the other writer's entry (that `hdfs dfs -put`
-  without `-f` refuses an existing file is to be verified in the bank). Until the M2.4 transport,
+  without `-f` refuses an existing file is to be verified in the bank). Training's and
+  Evaluation's `run` entries are the exception: written after the stage's artifacts, they take
+  the next free `seq` when another writer took theirs, up to 5 times (`RUN_ENTRY_ATTEMPTS`), so
+  a session that loses the race does not fail after its stage is committed. That is safe
+  because no check reads their place in the log: their `replayed_to` and resolved-input hash
+  name the input the run read. When every attempt loses, the error says the run is complete on
+  disk and `list_runs` lists it, only the audit log lacks the entry, and what that affects
+  (`RUN_ENTRY_EFFECT`): for Training, the run's number is then kept only by its folder, so
+  deleting the folder gives the number again; for Evaluation, later Evaluation runs and their
+  model cards do not list this run's validation period among the periods already scored. For
+  Training it asks not to train again, which would make a new run; for Evaluation it says that
+  evaluating the run again rewrites `evaluation/` and writes the entry. A `flag` entry and Feature Checks' `run` entry are never
+  retried on purpose: a flag is decided against the log as it was, and Feature Checks' periods block a
+  move of the validation period that may land meanwhile (D-088). Until the M2.4 transport,
   an `hdfs://` data root is refused where the log is read or written. A missing log folder reads
   as an empty log: a reader (`resolve_config`, `show_decisions`, Feature Checks' replay) logs a
   warning, since a wrong root looks like an empty log; a writer, which starts the log there,
@@ -1115,7 +1128,8 @@ evaluation leaves, the stage digests and `models_dir`. Package:
   D-136; `audit_log_dir(env, cfg, entity)` in [environment](environment.md); the run folders sit
   under `<roots.data>/<use_case>/06_models/`, from `models_dir(env, cfg, *parts) -> str`, Stage 3,
   [model bundle](model_bundle.md)), `seq` zero-padded to
-  four digits, written create-if-absent, a clash failing so the person re-runs the decision; the
+  four digits, written create-if-absent, a clash failing so the person re-runs the decision
+  (Training's and Evaluation's `run` entries retry, [storage](#storage)); the
   writer of entry 1 prints `starting a new audit log at <folder>`, so a wrong root or a log left
   at an old path shows itself. A corrupt file, an entry under another data definition, a gap in
   the numbering, an unknown operation or another `log_schema_version` fails loud, naming the

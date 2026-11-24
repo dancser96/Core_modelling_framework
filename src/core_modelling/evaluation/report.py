@@ -1,12 +1,14 @@
 """The model results report: Evaluation's compatibility table and the page its views render to
 (evaluation.md → "The compatibility table"; the page shell is `reporting/`'s).
 
-`VIEWS` maps each view's name, in the report's order, to the function that builds its blocks
-from the stage's tables, its meta (`evaluation.json`) and the resolved config, or, per task, to
-the reason the task cannot produce it, decided up front and never by catching an error (D-035).
+`VIEWS` holds one row per view, keyed by its name (the names `evaluation.skip_views` takes) in
+the report's order: its title, its section and the function that builds its blocks from the
+stage's tables, its meta (`evaluation.json`) and the resolved config, or, per task, the reason
+the task cannot produce it, decided up front and never by catching an error (D-035). A new view
+is one row.
 `report_views` builds the views a config does not skip (`evaluation.skip_views`, checked by
-`check_skip_views`; the summary always renders), `render_views` renders built views as one page
-(summary, core, extended, appendix) and `build_report` does both. A view reads the stored
+`check_skip_views`; the summary always renders) and `render_views` renders built views as one
+page (summary, core, extended, appendix). A view reads the stored
 tables and the meta only, so a page can be rendered again from `evaluation/` without Spark; the
 appendix adds the stage's log (`log.json`) and the audit log's entries. The views are
 `views_summary.py`'s, `views.py`'s and `views_explain.py`'s.
@@ -16,7 +18,6 @@ import pandas as pd
 
 from core_modelling.config import UseCaseConfig
 from core_modelling.evaluation.views import (
-    View,
     capture_view,
     curves_view,
     distribution_view,
@@ -43,47 +44,34 @@ from core_modelling.reporting.html import render_report, style_table
 
 ALWAYS = "summary"  # the view `evaluation.skip_views` cannot leave out
 NO_CLASSES = "the target is an amount, without classes"
-# A view's entry: its function for every task, or per task its function or why it is not
+# One row per view, in the report's order: its `title`, its `section` (summary, core or extended)
+# and its `view`: the function for every task, or per task its function or why it is not
 # available.
-VIEWS: dict[str, View | dict[str, View | str]] = {
-    "summary": summary_view,
-    "metrics": metrics_view,
-    "curves": {"binary": curves_view, "regression": NO_CLASSES},
-    "capture": capture_view,
-    "reliability": reliability_view,
-    "score_distribution": {"binary": distribution_view, "regression": NO_CLASSES},
-    "strata": strata_view,
-    "importance": importance_view,
-    "beeswarm": beeswarm_view,
-    "effects": effects_view,
-    "waterfalls": waterfalls_view,
-    "sign_off": sign_off_view,
-    "search": search_view,
-    "thresholds": {"binary": thresholds_view, "regression": NO_CLASSES},
-    "permutation_importance": permutation_importance_view,
-    "pdp_ice": pdp_ice_view,
-    "validation_test_clients": validation_clients_view,
-}
-EXTENDED = ("thresholds", "permutation_importance", "pdp_ice", "validation_test_clients")
-TITLES = {
-    "summary": "Summary",
-    "metrics": "Metrics per period",
-    "curves": "ROC and precision-recall",
-    "capture": "Capture",
-    "reliability": "Reliability",
-    "score_distribution": "Score distribution",
-    "strata": "Strata",
-    "importance": "Importance",
-    "beeswarm": "Beeswarm",
-    "effects": "Effects",
-    "waterfalls": "Waterfalls",
-    "sign_off": "Sign-off (train only)",
-    "search": "Search",
-    "thresholds": "Thresholds",
-    "permutation_importance": "Permutation importance per cluster",
-    "pdp_ice": "Partial dependence and ICE",
-    "validation_test_clients": "Validation on test clients only",
-}
+VIEWS: dict[str, dict] = {
+    "summary": {"title": "Summary", "section": "summary", "view": summary_view},
+    "metrics": {"title": "Metrics per period", "section": "core", "view": metrics_view},
+    "curves": {"title": "ROC and precision-recall", "section": "core",
+               "view": {"binary": curves_view, "regression": NO_CLASSES}},
+    "capture": {"title": "Capture", "section": "core", "view": capture_view},
+    "reliability": {"title": "Reliability", "section": "core", "view": reliability_view},
+    "score_distribution": {"title": "Score distribution", "section": "core",
+                           "view": {"binary": distribution_view, "regression": NO_CLASSES}},
+    "strata": {"title": "Strata", "section": "core", "view": strata_view},
+    "importance": {"title": "Importance", "section": "core", "view": importance_view},
+    "beeswarm": {"title": "Beeswarm", "section": "core", "view": beeswarm_view},
+    "effects": {"title": "Effects", "section": "core", "view": effects_view},
+    "waterfalls": {"title": "Waterfalls", "section": "core", "view": waterfalls_view},
+    "sign_off": {"title": "Sign-off (train only)", "section": "core", "view": sign_off_view},
+    "search": {"title": "Search", "section": "core", "view": search_view},
+    "thresholds": {"title": "Thresholds", "section": "extended",
+                   "view": {"binary": thresholds_view, "regression": NO_CLASSES}},
+    "permutation_importance": {"title": "Permutation importance per cluster",
+                               "section": "extended", "view": permutation_importance_view},
+    "pdp_ice": {"title": "Partial dependence and ICE", "section": "extended",
+                "view": pdp_ice_view},
+    "validation_test_clients": {"title": "Validation on test clients only",
+                                "section": "extended", "view": validation_clients_view},
+}  # fmt: skip
 
 
 def check_skip_views(cfg: UseCaseConfig) -> None:
@@ -99,14 +87,14 @@ def check_skip_views(cfg: UseCaseConfig) -> None:
 
 
 def report_views(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseConfig) -> dict:
-    """Each view's blocks by name, in `VIEWS` order, after `check_skip_views`: a view named in
-    `evaluation.skip_views` is left out, one the task cannot produce is its reason as one
-    line."""
-    check_skip_views(resolved)
+    """Each view's blocks by name, in `VIEWS` order: a view named in `evaluation.skip_views` is
+    left out, one the task cannot produce is its reason as one line. The skipped names are
+    checked once, when Evaluation opens the run (`check_skip_views`)."""
     views = {}
-    for name, entry in VIEWS.items():
+    for name, row in VIEWS.items():
         if name in resolved.evaluation.skip_views:
             continue
+        entry = row["view"]
         view = entry[resolved.task] if isinstance(entry, dict) else entry
         views[name] = (
             [not_available(view)] if isinstance(view, str) else view(tables, meta, resolved)
@@ -132,6 +120,13 @@ def _appendix(
     ]
 
 
+def _titled(views: dict[str, list], section: str) -> list[tuple[str, list]]:
+    """The built views of `section` (core or extended), each as a subsection under its title,
+    in `VIEWS` order."""
+    return [(VIEWS[name]["title"], blocks) for name, blocks in views.items()
+            if VIEWS[name]["section"] == section]  # fmt: skip
+
+
 def render_views(
     views: dict[str, list],
     meta: dict,
@@ -142,22 +137,8 @@ def render_views(
     """Views already built (`report_views`) as one self-contained HTML page: the summary, the
     core and the extended views, each a subsection under its title, then the appendix from the
     stage's `log` and the audit log's entries (`decisions`)."""
-    core = [(TITLES[name], blocks) for name, blocks in views.items()
-            if name != ALWAYS and name not in EXTENDED]  # fmt: skip
-    extended = [(TITLES[name], blocks) for name, blocks in views.items() if name in EXTENDED]
-    sections = [(TITLES[ALWAYS], views[ALWAYS]), ("Core", core), ("Extended", extended),
+    sections = [(VIEWS[ALWAYS]["title"], views[ALWAYS]), ("Core", _titled(views, "core")),
+                ("Extended", _titled(views, "extended")),
                 ("Appendix", _appendix(meta, resolved, log, decisions))]  # fmt: skip
     title = f"Evaluation: {resolved.use_case} run {meta['run_id']} ({meta['entity']})"
     return render_report(title, [(heading, blocks) for heading, blocks in sections if blocks])
-
-
-def build_report(
-    tables: dict[str, pd.DataFrame],
-    meta: dict,
-    resolved: UseCaseConfig,
-    log: list[dict],
-    decisions: pd.DataFrame,
-) -> str:
-    """The model results report as one self-contained HTML page (`report_views`, then
-    `render_views`)."""
-    return render_views(report_views(tables, meta, resolved), meta, resolved, log, decisions)

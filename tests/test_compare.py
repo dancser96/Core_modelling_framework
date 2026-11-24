@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from cells_oracle import cells_from_rows
 from conftest import ENTITY, with_evaluation, with_training
 from pyspark.sql import SparkSession
 from scipy.special import expit
@@ -38,7 +39,7 @@ from core_modelling.evaluation.compare import (
 from core_modelling.evaluation.run import run_evaluation
 from core_modelling.evaluation.scores import SCORES_FOLDER
 from core_modelling.evaluation.tables import part_cells
-from core_modelling.statistics.score_cells import cells_from_rows, pool_cells
+from core_modelling.statistics.score_cells import pool_cells
 from core_modelling.tasks import TASK_SPECS
 from core_modelling.training import run_training
 
@@ -101,8 +102,9 @@ def _parts(
 def _metrics(task: str) -> dict[str, Callable[[pd.DataFrame], dict[str, float]]]:
     """Each role's metric: the task's `cell_metrics` at its base, with the loss sums when the
     task's cells carry them."""
-    metric = partial(TASK_SPECS[task]["cell_metrics"], base=BASES[task],
-                     loss=LOSSES[task] is not None)  # fmt: skip
+    metric = partial(
+        TASK_SPECS[task]["cell_metrics"], base=BASES[task], has_loss=LOSSES[task] is not None
+    )
     return {"a": metric, "b": metric}
 
 
@@ -290,12 +292,14 @@ def test_a_run_against_itself_differs_by_zero_on_all_its_rows(
     card_quick: UseCaseConfig,
     evaluated_card: StageResult,
 ) -> None:
-    """The evaluated card run against itself: every row shared and scored alike, every
-    difference 0 with a zero-width interval, no feature moved."""
+    """The evaluated card run against itself: every row with a known target shared and scored
+    alike (the scores table's null-target rows are no part of a comparison), every difference 0
+    with a zero-width interval, no feature moved."""
     run = evaluated_card.meta["run_id"]
     result = compare_runs(card_quick, ENTITY, trained_env, spark, run, run)
     scores = models_dir(trained_env, card_quick, run, "evaluation", SCORES_FOLDER)
-    counted = spark.read.parquet(scores).groupBy("part").count().toPandas()
+    known = spark.read.parquet(scores).where("target IS NOT NULL")
+    counted = known.groupBy("part").count().toPandas()
     rows = result["rows"].set_index("part").join(counted.set_index("part"))
     assert (rows["shared"] == rows["count"]).all() and (rows["rows_a"] == rows["count"]).all()
     assert (rows["rows_b"] == rows["count"]).all() and (rows["scored_differently"] == 0).all()

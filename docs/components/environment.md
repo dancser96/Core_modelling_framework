@@ -12,14 +12,14 @@ checks where it is running; it calls this module, and the **environment file** d
 ## The environment file (D-130)
 `conf/local/environment.yml` (gitignored) holds the environment facts only, under its own schema:
 Spark settings, roots (data; registered and production from M2.4), the physical sources per entity
-by logical name, the collect budget and the theme. An unknown key fails loud, so a modelling
+by logical name, the collect budget, the model libraries' threads and the theme. An unknown key fails loud, so a modelling
 field can't hide there. The use-case config never holds a physical name, and there is **no merge**
 of the environment file over the config: it is loaded beside the config, by a path argument or
 the `CORE_MODELLING_ENVIRONMENT` variable, never from the working directory (T5). The hashes
 exclude it (D-088); the resolved config's housekeeping block records the values a run used. Each
 stage's json records the entries of the sources the config reads (`sources`, `sources_digest`),
 so a later stage refuses one read from a source that has since moved: another path or table is
-other data, though the data definition is the same (Q577, D-137). The
+other data, though the data definition is the same (D-137). The
 laptop's file points at the synthetic `dev` dataset; the bank fills its own. The example, with
 placeholders, is `conf/base/environment.example.yml`:
 
@@ -41,6 +41,7 @@ sources:                                 # logical name → physical, per entity
     retail_holdings:          {format: parquet, path: /ABSOLUTE/PATH/data/01_raw/synthetic_dev/holdings}
     retail_acquisition_input: {format: parquet, path: /ABSOLUTE/PATH/data/05_model_input/retail_acquisition/entity_a}
 collect_budget_gb: 1.5                   # the collect printout's budget (D-133)
+threads: null                            # the model libraries' threads in Training; null: every core of the machine
 theme: null
 ```
 
@@ -94,7 +95,16 @@ is refused (T5). Credentials references, if any, also live here and never in the
    other-sources setting runs, on synthetic data, and the two feature-store settings ship
    commented out. In Phase 2 the feature store integration is limited to Stage 1, where a use
    case's data comes in; no later stage knows about it (D-021).
-6. The report theme: `theme` in the environment file, kept for the corporate look that comes
+6. The model libraries' threads: `threads`, optional, a strict positive integer (`4`, not
+   `"4"` or `4.0`) or null. Training runs its search, every fit and every predict on that many
+   threads; null means every core of the machine, which on a shared node or in a container may
+   be more than the run is given, so there it is set to the cores the run has. It is an
+   environment fact and enters no hash and no config; Training records it and the libraries'
+   versions in `training.json` ([training](training.md#the-search), item 12). The key is new
+   in 0.5.0, and the environment schema refuses unknown keys, so a use case pinned to an
+   earlier framework version refuses an environment file that sets it: set it only once every
+   use case sharing the file runs 0.5.0 or later.
+7. The report theme: `theme` in the environment file, kept for the corporate look that comes
    after internalisation. Nothing reads it yet, so it must stay null: a value is refused at load
    (the theme is not built yet; reports use the neutral theme).
 
@@ -116,8 +126,8 @@ Built in `core_modelling/environment.py`:
 - `EnvironmentConfig` (Pydantic, `extra="forbid"`): `spark: SparkSettings` (master,
   driver_memory, shuffle_partitions, time_zone, extra), `roots: Roots` (data, registered,
   production), `sources: dict[str, dict[str, Source]]` (entity → logical name → `{format, path |
-  table}`), `collect_budget_gb: float`, `theme: str | None` (null only until the theme is built;
-  a value is refused, req. 6).
+  table}`), `collect_budget_gb: float`, `threads: int | None` (strict, above 0; null: every core, req. 6),
+  `theme: str | None` (null only until the theme is built; a value is refused, req. 7).
 - `load_environment(path: str | None = None) -> EnvironmentConfig` (public, D-024: the
   notebooks' setup cell calls it): the argument, else `CORE_MODELLING_ENVIRONMENT`, else fail
   loud naming both.

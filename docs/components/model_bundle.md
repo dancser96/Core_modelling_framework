@@ -5,7 +5,7 @@ ported: the crunch pickled the whole `AutoML` object and named runs by a long ma
 [config](config.md) (the identities, the audit log's `run` and `sign_off` entries) ·
 [feature ledger](feature_ledger.md) (the per-run part) · [inference](inference.md) and
 [lifecycle](lifecycle.md) (the bundle's later readers) · [monitoring](monitoring.md) (the drift
-reference) · D-037, D-051, D-052, D-088, D-094, D-136, D-139
+reference) · [test harness](test_harness.md#the-run-folders-contract) (the run folder's contract tests) · D-037, D-051, D-052, D-088, D-094, D-136, D-139
 
 Read it in three levels: Level 1 gives the essentials, Level 2 how the parts connect, Level 3
 every detail.
@@ -30,6 +30,10 @@ the model library's native file, `bundle.json` (the encoder, the calibration, th
 - **Who writes and reads.** Training writes the run folder and the bundle; Evaluation,
   `list_runs`, `show_run`, `compare_runs` and the sign-off read them; `register` (M2.4) will
   copy the bundle unchanged.
+- **One contract for a run folder.** `open_run_folder` reads `run.json`, the bundle,
+  `training.json`, the per-run ledger and the `stage2/` copy once and checks them against
+  plain data before any Spark work, so a run a reader cannot use is refused at the start,
+  naming the file, what it lacks and what to do.
 
 ## Level 2: How it fits together
 
@@ -53,12 +57,40 @@ the model library's native file, `bundle.json` (the encoder, the calibration, th
 - `ledger_run.parquet` with its sidecar: the per-run feature ledger ([feature ledger](feature_ledger.md));
 - `stage2/`: the run's own copy of what it needs from Stage 2: every candidate's ledger rows
   (without the ledger's sidecar), EDA's `cells`, `edges`, `bins` and `levels` tables of the
-  final features, and `_stage2.json`, which versions and runs it copied ([training](training.md#what-training-writes));
+  final features, and `_stage2.json`, the copy's own `stage2_copy_schema_version` and which
+  versions and runs it copied ([training](training.md#what-training-writes));
 - `training/`: written last, the commit marker of a trained run ([training](training.md));
 - `evaluation/`: written whole by each Evaluation ([evaluation](evaluation.md)).
 
 A folder without `training/` is a crashed run: it is listed as incomplete, and its number
-stays taken while the folder exists.
+stays taken while the folder exists. `training/` and `evaluation/` are each written into a
+temporary sibling and swapped in (`write_stage`); the siblings are named `.tmp-<token>` and
+`.old-<token>` with a random token, so two sessions or hosts never share one. A write that
+stopped between the two moves leaves an `.old-<token>` sibling and no target: the stage's
+next write refuses (`check_siblings`), saying that folder is the last committed one and must be renamed back. Once the new
+folder is in, the stage is committed: an aside folder that cannot be removed is a printed note,
+and the stage goes on to write its `run` entry.
+
+### The run folder's contract
+Every later reader opens a run folder through `open_run_folder` in `run_artifacts.py`, which
+needs neither FLAML nor Training's code (two tests in `tests/test_code_rules.py` enforce it).
+1. It reads `run.json` (its version, `RUN_KEYS`), builds the bundle from its files with
+   `model_hash` recomputed, and reads `training.json`, the per-run ledger and the `stage2/`
+   copy, each once; `training/resolved_config.yml`, which `compare_runs` reads, must exist.
+   Every JSON it opens is checked as it is parsed: `run.json` by `_readable_record`, the stage
+   json, the per-run ledger's sidecar and `_stage2.json` by `artifacts.read_json(path, fix)`.
+   A truncated file, or one that holds no JSON object, is refused naming the path and what to
+   do.
+2. It checks them against the contract: the keys and nested keys a later stage reads, and
+   Training's tables with their columns, read from the parquet footers without a row.
+3. It refuses pieces of different runs: one run id across `run.json`, the manifest and
+   `training.json`, and `training.json`'s final features equal to the bundle's.
+4. It returns a `RunFolder`; `read_training_tables` then reads the tables a reader needs from
+   it, and `train_level` takes it too.
+
+Evaluation's opening (through `check_card_inputs`, before any Spark work) and `compare_runs` go
+through it; register, Inference and Monitoring will from M2.4. The contract's names are in
+[Level 3](#the-contract-in-detail).
 
 ### How one bundle is written, loaded and scored
 1. `create_run` takes the next number, creates the folder exclusively and writes `run.json`.
@@ -66,8 +98,9 @@ stays taken while the folder exists.
 3. `write_bundle` checks the encoder, the calibration and the recipe before anything is on
    disk, saves the model through the family's `save`, writes `bundle.json`, computes
    `model_hash` over the two files and writes `manifest.json`.
-4. `check_bundle` reloads the bundle from disk and scores a fixed sample of 1,000 train rows; any
-   difference from the scores of the model in memory fails loud (the self-check at save).
+4. Training reloads the bundle from disk (`load_bundle`) and `check_bundle` scores a fixed
+   sample of 1,000 train rows with it; any difference from the scores of the model in memory
+   fails loud (the self-check at save).
 5. `load_bundle` reads the files as bytes, recomputes `model_hash`, refuses a difference from
    the manifest, and returns a `Bundle` built from those bytes: the booster, the encoder, the
    calibration and the feature list.
@@ -77,7 +110,9 @@ stays taken while the folder exists.
    the model once, in memory, verifying the hash again; an executor writes no file, and one
    whose model library differs in version from the driver's fails loud. A partition predicts on
    its Spark task's CPUs (`spark.task.cpus`), since LightGBM and XGBoost otherwise take every
-   core of the host, which the executor's other tasks share.
+   core of the host, which the executor's other tasks share. `score_spark` takes the bundle's
+   folder and reads and verifies its bytes itself, so Evaluation reads the bundle twice: once
+   to open the run, once to ship the bytes.
 
 ### The functions in brief
 - `model/encoder.py`: `fit_encoder`, `encode_frame`, `select_encoder`.
@@ -85,12 +120,19 @@ stays taken while the folder exists.
   `save`, `load`, `contributions`, `fixed_params`, `file_name`, `allowed_params`),
   `check_params`, `check_monotone`; `model/family_inputs.py`: the checks the families share,
   `check_order` among them.
-- `model/calibration.py`: `LINK_BY_OBJECTIVE`, `uncalibrated`, `apply_calibration`.
-- `model/bundle.py`: `write_bundle`, `read_bundle_files`, `load_bundle`.
+- `model/calibration.py`: `LINK_BY_OBJECTIVE`, `uncalibrated`, `apply_calibration`,
+  `check_order_kept`.
+- `model/bundle.py`: `write_bundle`, `read_bundle_files`, `build_bundle` (the `Bundle` from the
+  files' bytes, `model_hash` verified), `load_bundle`.
 - `model/scoring.py`: `score_frame`, `check_bundle`, `score_spark`.
 - `config/identities.py`: `feature_signature` and `recipe_hash`, beside the config's hashes,
   so the audit log and the runs read them without loading a model library.
-- `runs.py`: `create_run`, `read_run`, `find_run`, `list_runs`, `show_run`, `sign_off`.
+- `runs.py`: `create_run`, `read_run`, `read_run_record` (`RECORD_FIX`), `find_run`,
+  `list_runs`, `show_run`, `sign_off`.
+- `model/__init__.py` exports only the public `Bundle`, `load_bundle` and `score_frame`; the
+  rest is imported from its module.
+- `run_artifacts.py`: `open_run_folder` (`RunFolder`), `read_training_tables`, and the
+  contract as plain data ([Level 3](#the-contract-in-detail)).
 
 ### How it is checked
 - Per family and task: save, load, identical margins; a shuffled frame scores the same; two
@@ -98,8 +140,15 @@ stays taken while the folder exists.
 - The bundle: `model_hash` repeats over two writes and moves with one changed byte; a tampered
   file is refused at load; the self-check fails loud; no time, run or person in `bundle.json`.
 - Scoring: `score_spark` equals `score_frame` on the same rows; a missing feature fails loud.
-- Runs: the next number when the folder exists and after a deletion; `run.json` cannot be
-  written twice; a folder without `training/` lists as incomplete.
+- Runs: the next number when the folder exists and after a deletion, and when a newer entry
+  names a run; `run.json` cannot be written twice; a folder without `training/` lists as
+  incomplete; an unreadable `run.json` is listed and passed over; an older run taken names the
+  newer runs passed over.
+- The contract: a folder Training wrote is accepted, a missing nested key is refused by name;
+  the `stage2/` copy reads back and a copy of another version is refused.
+- The run folder's contract (`tests/test_run_contract.py`): the run folder the suite writes is
+  accepted, its per-run ledger and `stage2/` copy read, and damaged copies are refused by name
+  ([test harness](test_harness.md#the-run-folders-contract)).
 
 ## Level 3: Details
 
@@ -127,10 +176,15 @@ stays taken while the folder exists.
    and the runs any audit log of the use case names, so a number that an entry names is never
    given again, also after its folder is deleted. A crashed run that wrote no entry and whose
    folder was deleted by hand leaves no trace, so its number may be given again. Inside the
-   bank one data root is one entity, so the numbers run per use case and entity.
+   bank one data root is one entity, so the numbers run per use case and entity. The audit
+   logs are read leniently for this (`audit_log.read_run_ids`: only each entry's `run_id`), so
+   an entry a newer framework version wrote stops no Training; a file that is not JSON, or a
+   `run_id` that is no run number, still fails, since a number must never be given twice.
 7. **Versioned** (`CLAUDE.md` §2): `bundle_schema_version`, `manifest_schema_version`,
    `run_schema_version` and the encoder's `schema_version`, each 1. A reader refuses another
-   version and names the fix.
+   version and names the fix. Until 1.0 the tests open the run folder this version writes; from
+   1.0 a frozen run folder per format version is stored with the tests and every later version
+   must read it ([test harness](test_harness.md#the-run-folders-contract)).
 8. **Task-agnostic shapes:** the output columns are `margin`, `score_raw` and `score` for both
    tasks; the calibration has one shape for both.
 9. **Local paths only in M2.3;** the HDFS transport arrives in M2.4 for every artifact at once
@@ -153,6 +207,38 @@ What the run produced is not here, because the file is written before anything i
 feature signature, `recipe_hash`, `model_hash`, the family, the counts and the seconds are in
 `training.json`'s `summary` and in the manifest. Whether a run is evaluated or signed off is
 read from its folder and the audit log when runs are listed.
+
+`runs._readable_record` is the one parse-and-check of `run.json`: none (a crash), not valid
+JSON (a truncated write), no JSON object, another `run_schema_version`, or a key of `RUN_KEYS`
+missing each gives a reason; `read_run_record` raises on it with the fix (`RECORD_FIX`).
+
+`list_runs` lists one row per run folder: the fixed columns, every key of Training's and
+Evaluation's `summary`, the states (`trained`, `evaluated`, `signed_off`), then `unreadable`,
+why this version cannot read the folder's `run.json`, or a trained run's bundle or manifest,
+empty when it can. Such a folder is listed for every entity and never breaks the listing. A
+truncated stage json does fail the listing, naming the file: the stage folder is swapped in
+whole, so that means damage from outside. `find_run` passes over an unreadable folder. It
+returns the run it takes and the newer runs it passed over, with why; it prints them, and
+Evaluation stores them as the warning `newer_runs_passed_over`
+([evaluation](evaluation.md#finding-the-run)).
+
+### The contract in detail
+The contract is plain data in `run_artifacts.py`; a key path is a tuple of keys, since a
+settings key may hold a dot (`features.order`).
+
+| Name | What it requires |
+|---|---|
+| `RUN_KEYS` (`runs.py`), `RUN_PATHS` | every key of `run.json`, and `training_settings/training/objective` and `training_settings/features.order` |
+| `TRAINING_PATHS` | the keys of `training.json` a later stage reads, nested ones included (`best/family`, `timings/seconds`, the train metrics) |
+| `SAMPLED_PATH` | `sampling/true_rate`, when `sampling.method` is not null |
+| `SEARCH_KEYS` | `family`, `trials` and `seconds` in each family's record of `search` |
+| `TRAINING_TABLE_COLUMNS` | each of Training's tables with the columns a later stage reads; the explanation sample also each final feature's value and contribution |
+| `STAGE2_COPY_SCHEMA_VERSION`, `STAGE2_COLUMNS` | the `stage2/` copy's version and its frozen columns per table (`read_stage2_copy`; [training](training.md#what-training-writes)) |
+| `LEDGER_RUN_SCHEMA_VERSION` | the per-run ledger's version (`read_run_ledger`; [feature ledger](feature_ledger.md)) |
+
+A table is checked from its parquet footer, so no row is read. `CARRIED_TABLES` names the
+three tables Evaluation stores again under `evaluation/tables/` (`training_signoff`,
+`training_trials`, `training_explanation_sample`).
 
 ### `bundle.json`
 | Key | Holds |
@@ -232,9 +318,10 @@ Fitted on the train frame only (`CLAUDE.md` §4.4), plain data, `schema_version`
 - `parameters` holds `{a, b}` for `platt`, `{a, b, c}` for `beta`, `{factor}` for `mean`, and
   nothing for `none` (the factor is then 1).
 - A calibration that would reverse or flatten the model's order is refused, at save and at
-  load: Platt needs `a > 0`, beta `a ≥ 0` and `b ≥ 0` with one of them positive, the factor
-  `> 0`. Every calibration map is then increasing, so rank metrics are the same on `score` and
-  on `score_raw`.
+  load (`check_order_kept`): Platt needs `a > 0`, beta `a ≥ 0` and `b ≥ 0` with one of them
+  positive, the factor `> 0`. Training applies the same check to every method it fits, whatever
+  the method chosen. Every calibration map is then increasing, so rank metrics are the same on
+  `score` and on `score_raw`.
 - `score_raw` leaves out both the calibration and the offset. Under `negative_downsampling` it
   is a probability at the sampled rate: its order is usable, its level is not.
 - `uncalibrated(objective)` is the calibration that changes nothing, `{link, method: "none",
@@ -264,6 +351,8 @@ a code never changes meaning under a live model.
   `model/catboost_family.py`, `model/calibration.py`, `model/bundle.py`, `model/scoring.py`:
   what every user of a trained model shares.
 - `runs.py`: the run folder, `run.json`, listing and showing runs, the sign-off.
+- `run_artifacts.py`: the run folder's contract and its readers, and the names Training's
+  writers and every reader share ([training](training.md#code-map) lists them).
 - `environment.py`: `models_dir(env, cfg, *parts)`, the path of `06_models/` and what is under it.
 
 ### Interface
@@ -280,12 +369,13 @@ FAMILIES[name].load(data) -> object                              # the model fil
 FAMILIES[name].contributions(booster, X) -> np.ndarray           # n × (features + 1)
 FAMILIES[name].fixed_params(task, objective, encoder, monotone, seed, threads,
                             tweedie_variance_power) -> dict
-check_monotone(family, booster, X, monotone, rows=200) -> None
+check_monotone(family, booster, X, monotone, rows=200, threads=None) -> None
 
 write_bundle(folder, family, booster, content, identity) -> str  # the model_hash
-load_bundle(folder) -> Bundle                                    # public
+load_bundle(folder) -> Bundle                                    # public, as is Bundle
 read_bundle_files(folder) -> dict[str, bytes]
-check_bundle(folder, sample, expected) -> None                   # model/scoring.py
+build_bundle(files, folder) -> Bundle                            # model_hash verified first
+check_bundle(bundle, sample, expected, threads=None) -> None     # model/scoring.py; a loaded Bundle
 recipe_hash(recipe) -> str                                       # config/identities.py
 feature_signature(features) -> str                               # config/identities.py
 check_order(X, encoder) -> None                                  # model/family_inputs.py; before every fit
@@ -299,10 +389,14 @@ score_spark(folder, rows, keep) -> DataFrame
 models_dir(env, cfg, *parts) -> str
 create_run(env, resolved, entity, stage2) -> str                 # stage2: the EDA and Feature Checks run tokens
 read_run(env, cfg, run) -> dict
-find_run(env, resolved, entity, run=None) -> str
-list_runs(env, cfg, entity) -> pd.DataFrame                      # public
-show_run(env, cfg, entity, run) -> str                           # public
+read_run_record(folder) -> dict                                  # fails with why and RECORD_FIX
+find_run(env, resolved, entity, run=None) -> tuple[str, list[str]]  # the run, the runs passed over
+list_runs(cfg, entity, env) -> pd.DataFrame                      # public; last column `unreadable`
+show_run(cfg, entity, env, run) -> str                           # public
 sign_off(cfg, entity, env, run, reason) -> Entry                 # public
+
+open_run_folder(run_folder) -> RunFolder                         # run_artifacts.py: the contract
+read_training_tables(read, names) -> dict[str, pd.DataFrame]     # read: the RunFolder
 ```
 
 ### Open questions

@@ -2,6 +2,103 @@
 Verbose trail behind `worknotes/sync.md`, newest first. Updates on the same topic from the same or
 neighbouring days share one entry, each keeping its date. Template and rules: `worknotes/README.md`.
 
+### 2026-11-24 — No stored run folder until 1.0
+- The EDS asked whether the golden run folder (item 25) is needed before release, since 0.x has
+  no backward-compatibility promise. It isn't: it was regenerated at every format bump. Deleted
+  on the EDS's word: `tests/data/golden_run/`, `tests/data/make_golden_run.py`,
+  `tests/test_golden_run.py`. The contract and its 18 damage cases moved to
+  `tests/test_run_contract.py`, on the session's `evaluated_card` run (Spark). D-041, D-139 (f),
+  `test_harness.md`, `model_bundle.md`, `tests/README.md`, UPDATES and both review guides
+  updated; the roadmap backlog holds the frozen folder per format version from 1.0, to be
+  decided earlier if pre-release runs in the bank must survive an upgrade.
+- Also the context lesson: the compact gate blocks auto-compaction until a checkpoint, and
+  none was written after about 195k on 11-23, so the main thread reached 588k. Proposed to the
+  EDS: a 400k ceiling and a context-size hook (no go yet).
+
+### 2026-11-22→11-23 — Independent audit of Stage 3 major steps 2 and 3 (Training, Evaluation)
+- 2026-11-22, the EDS asked for an independent audit of both steps' code with lower-model
+  subagents. Thirteen read-only agents, one lens each (two ML audits, three code reviews,
+  silent failures, formats and API, docs against code, tests, a scripted inventory, bank
+  parity, Spark and memory, notebooks): one on Fable, five on Opus, six on Sonnet, one on
+  Haiku. None read `worknotes/`. The main thread read or reran every serious finding.
+- Found: no leak, no split or time violation, binary's numbers equal to scikit-learn's. Four
+  items first, all reproduced:
+  - regression list slices narrower than 0.4% of a period's rows read 9 to 44% low (the top
+    score bins are 0.4% wide; T50 fixed for binary only);
+  - a stratum level named `mean` or `pooled` gets another row's numbers;
+  - pruning drops every feature the start-size model did not split when no noise column was
+    split either (65 of 123 real features on a simulated wide frame);
+  - the floor judges a feature on its non-null rows, so one whose signal is its null pattern is
+    dropped.
+- Also: ten should-fix items, six report and card defects, a list for the 1.0 freeze (a run's
+  `stage2/` copy checked against the live EDA version, the scattered Training-to-Evaluation
+  contract), bank and scale notes, and refactors (the run folder's readers out of `training/`,
+  which today makes Evaluation import FLAML).
+- 2026-11-22, second pass on the EDS's word: §1 to §3 of the file rewritten with what happens,
+  why, when it bites, the evidence and the fix per item, and eight checks run on local Spark
+  (written by a Sonnet agent that ran none, run once by the main thread, 152 s):
+  - items 1 and 2 hold on the real Spark path (slices 30%, 28%, 13% and 9% low at 0.05% to
+    0.3%; the level `mean` reports 20,000 rows for 5,000);
+  - item 6 holds (a `fold_repeats: 2` run records nothing about the judged-model check) and
+    item 13 too (no null target among the scored rows, about 3% of eligible rows dropped);
+  - one claim withdrawn: an empty feature set is refused before the run number;
+  - new, item 83: the score edges change with the partition layout (`approxQuantile`), the
+    headline metrics agree to four digits;
+  - measured: 74 to 106 Spark jobs for one Training run and 83 to 114 for one Evaluation run
+    on the tests' quick config.
+- 2026-11-23, the EDS answered the items by number; recorded verbatim in
+  `worknotes/m2_3_modelling/audit_answers.md`. Settled: fix 1, 5, 6, 8 to 10, 13, 15 to 23, 25,
+  27 to 29 and 31 as proposed; every refactor (40 to 58), every test gap (59 to 68) and, after
+  the refactors, every doc item (69 to 82); item 14 skipped; item 83's promise changed; the
+  small things' duplicates and edge cases fixed, artifact shapes free to change in the
+  pre-release. Open, each with a default: Q676 to Q686 (items 2, 3, 4, 7, 11, 12, 24, 26, 30,
+  32 to 39, 82). Nothing is built: the EDS's word is not to start yet.
+- 2026-11-23, the EDS answered Q676 to Q686 at their defaults, asked for two reports (how
+  often pruning meets a noise share of zero; every hash and how compatibility is handled) and
+  gave the word to build. Built in waves of builders with disjoint files, the main thread
+  running every Spark batch:
+  - structure moves and foundations, then Training's selection and run, Evaluation's metrics
+    and explanations, the views and the card, the run folder's contract, the per-task specs,
+    the tests, the docs;
+  - five reviews on the merged state (two code reviews, silent failures, compatibility on
+    Opus; the ML audit on Fable), none with a blocking finding, and one fix round per side.
+- 2026-11-23, what the build found beyond the audit:
+  - the undo check of pruning, as first rebuilt, compared two fits that drew different columns
+    per tree: a real-data test showed a pure-noise candidate "undone". Corrected (every column
+    offered, at most 300 trees) and measured again: no noise kept by an undo (199 before), the
+    undo fired in none of 31 simulated cases, and the drops that stood did not hurt a model of
+    realistic size. On `dev` and on the canonical data it undoes every pruning, on the
+    canonical one for a rise in the fifth decimal of the log loss (Q692);
+  - the floor on nulls, built as proposed, let one shared null pattern clear ten rollups, and
+    its standard error ignored ties (the ML audit): one pattern now clears one feature, and
+    the standard error is tie-corrected. On `dev` 4 features pass on nulls, not 12;
+  - both stage formats had changed under an unchanged `schema_version` (the compatibility
+    check): both are 2, and a fingerprint test against the golden folder now catches that;
+  - a family budget of one trial failed late, since FLAML runs no search on one: refused
+    before the run number (a new test found it);
+  - the slice guard moved from one to twelve score bins, where the binning's error is under
+    half the sampling error.
+- 2026-11-23, verified: the full suite with the slow tests, 1343 passed in 32 min 36 s; the
+  canonical data end to end (Training 586 s, Evaluation 125 s by their own laps; the machine
+  slept during Evaluation, so the wall-clock is no measurement); the golden folder regenerated
+  at the new versions, with no login or home path in any file.
+- Why: a fresh view before the EDS's joint review of steps 2 and 3 closes, and every approved
+  item applied before that review.
+- Files: `worknotes/m2_3_modelling/` (`audit_steps_2_3.md`, `audit_answers.md`,
+  `pruning_noise_share.md`, `hashes_and_compatibility.md`, both review guides reworked);
+  `src/core_modelling/` (new: `run_artifacts.py`, `training/automl.py`, `signoff.py`,
+  `run_bundle.py`, `evaluation/slices.py`, `permutation.py`, `meta.py`,
+  `reporting/training_views.py`); `tests/` (new: the golden run folder and its test, the cells
+  oracle, the permutation tests); the component docs, the glossary, the FAQ, notebooks 04, 05
+  and the helper.
+- Decisions / open decisions: D-139 (with (f), the run folder's contract), D-140 and D-141
+  extended; D-041's one exception (the golden folder); OD-29 opened (identities across
+  releases); the version is 0.5.0. Open with the EDS, each with a default: Q687 to Q693, and
+  the defaults A136 to A164 of the two guides.
+- Still open: the floor's false-pass rate after its two corrections; pruning on more than one
+  seed; thread identity with categoricals and on the bank's hardware; binary capture near the
+  slice guard. Nothing is committed.
+
 ### 2026-11-20 — The Chief DS joins the repo; his status page; entry points; the memory audit
 - 2026-11-20, the CDS asked to be a collaborator: he reads everything and may raise pull
   requests. The EDS: the repo docs keep saying that development happens outside the bank.

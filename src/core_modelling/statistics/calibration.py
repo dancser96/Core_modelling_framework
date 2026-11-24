@@ -115,7 +115,9 @@ def level_factor(
     Receives one entry per row, aligned: the prediction in the target's units, the target and
     the client, never null. Returns `factor`, `low` and `high` (the 2.5% and 97.5% quantiles of
     the factor over `replicates` replicates, each client's rows weighted together by
-    `_client_weights`) and `half_total_rows` (`_half_total_rows`).
+    `_client_weights`), `half_total_rows` (`_half_total_rows`) and `zero_replicates`, the
+    replicates whose weighted predictions total 0: with any, the factor is undefined there and
+    `low` and `high` are NaN.
     """
     rows = pd.DataFrame(
         {
@@ -133,16 +135,20 @@ def level_factor(
     totals = rows.groupby("client", sort=True)[["y", "predicted"]].sum()
     text = pd.Series(totals.index).astype(str)  # once: a replicate only appends its number
     y_totals, predicted_totals = totals["y"].to_numpy(), totals["predicted"].to_numpy()
-    factors = np.empty(replicates)
+    observed, predicted = np.empty(replicates), np.empty(replicates)
     for replicate in range(replicates):
         weights = _client_weights(text, replicate)
-        factors[replicate] = (weights @ y_totals) / (weights @ predicted_totals)
-    low, high = np.quantile(factors, [0.025, 0.975])
+        observed[replicate], predicted[replicate] = weights @ y_totals, weights @ predicted_totals
+    zero = int((predicted == 0).sum())
+    low = high = np.nan
+    if not zero:
+        low, high = np.quantile(observed / predicted, [0.025, 0.975])
     return {
         "factor": float(rows["y"].sum() / rows["predicted"].sum()),
         "low": float(low),
         "high": float(high),
         "half_total_rows": _half_total_rows(rows["y"].to_numpy()),
+        "zero_replicates": zero,
     }
 
 

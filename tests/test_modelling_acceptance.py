@@ -1,11 +1,11 @@
 """The modelling chain's acceptance tests on the `dev` preset (evaluation.md "How it is checked",
-D-100 (e); marker `acceptance`, A59).
+D-100 (e); marker `acceptance`).
 
 The card config runs through Training and Evaluation three times, each on its own copy of the
 data-definition folder `dev_stage2` left (EDA, Feature Checks, the ledger and the audit log), so
 a person's decision in one run never reaches another and the shared folder stays as it was:
 
-1. the plain run (`lgbm`, 15 trials, A59): the model beats the single-feature baseline on
+1. the plain run (`lgbm`, 15 trials): the model beats the single-feature baseline on
    validation, its validation AUC is not above the oracle's by more than two standard errors,
    and its observed to expected is within 10%;
 2. the leak run: a person keeps the card's strongest leak trap (a `keep` entry in the audit
@@ -44,7 +44,7 @@ pytestmark = pytest.mark.acceptance
 
 CARD = DEV_CONFIGS[0]  # the card config, `cc_config`'s file
 TARGET = "cc_acquire"  # the truth's target the card config models
-SEARCH = {"estimator_list": ["lgbm"], "max_iter": 15}  # the autonomous share of one family (A59)
+SEARCH = {"estimator_list": ["lgbm"], "max_iter": 15}  # the autonomous share of one family
 # 100 replicates put each end of the 95% percentile interval between the 2nd and 3rd draw from
 # the edge: the standard error read from its width is then within about 10% (one standard
 # deviation), so the two-error bound moves by about 0.2 of an error; 20, the schema's least,

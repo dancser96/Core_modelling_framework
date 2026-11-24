@@ -1,6 +1,6 @@
 """The encoder: the framework's own coding of the feature frame before any model library sees it.
 
-FLAML's own transform is off (it median-imputes, Q603), so this is the only step between the
+FLAML's own transform is off (it median-imputes), so this is the only step between the
 raw feature values and the boosters, at training and at every later scoring. `fit_encoder`
 reads the train frame only (§4.4) and returns plain, JSON-serialisable data that the families,
 the bundle and the recipe hash read; `encode_frame` applies it to any frame and returns, beside
@@ -9,14 +9,14 @@ is ever imputed, and the levels are the only fitted statistic.
 
 The code rule of `schema_version` 1:
 - **numeric**: float64, clipped to ±1e30 so ±inf sorts beyond every real value in each family
-  (Q601); a null stays null. A `Decimal` column is cast; any other non-numeric column fails.
+  (measured); a null stays null. A `Decimal` column is cast; any other non-numeric column fails.
 - **ordered** (a categorical named in `features.order`): the level's position in the declared
   list (0 … K−1) as float64; a null stays null, a level not in the list is null and counted as
-  unseen. A train level missing from the list fails: the list is a contract (Q609, Q657).
+  unseen. A train level missing from the list fails: the list is a contract.
 - **unordered** (every other categorical): 0 for a null, 1 … K for the kept levels by train
   rows (most first, ties by name), K + 1 for `__other__`: a train level held by fewer than
-  `min_level_client_count` distinct train clients (`pooled`, Q610) and any level unseen in
-  train (A35). Integers under `unordered: native`, the same values as float64 under `codes`.
+  `min_level_client_count` distinct train clients (`pooled`) and any level unseen in
+  train. Integers under `unordered: native`, the same values as float64 under `codes`.
   A categorical with no level at the client count (K = 0), or with only nulls, is allowed: it
   then codes only null against `__other__`; the shares show it, Training warns and selection
   judges it.
@@ -33,7 +33,7 @@ from core_modelling.statistics.distributions import level_text
 
 ENCODER_SCHEMA_VERSION = 1
 ENCODER_KEYS = ("schema_version", "unordered", "features")  # what `check_encoder` reads
-CLIP = 1e30  # every family keeps it apart from null and beyond every real value (Q601)
+CLIP = 1e30  # every family keeps it apart from null and beyond every real value (measured)
 OTHER = "__other__"
 UNORDERED_MODES = ("native", "codes")
 NUMERIC_OBJECTS = ("decimal", "empty")  # infer_dtype of `Decimal` objects or an all-null column
@@ -264,7 +264,7 @@ ENCODE_BY_KIND = {
 
 def _check_numeric(values: pd.Series, name: str) -> None:
     """Fail loud unless a numeric feature holds numbers: a numeric dtype other than boolean, or
-    `Decimal` objects (how a Spark decimal arrives, A1); text is never parsed into numbers."""
+    `Decimal` objects (how a Spark decimal arrives); text is never parsed into numbers."""
     is_number = pd.api.types.is_numeric_dtype(values) and not pd.api.types.is_bool_dtype(values)
     held = pd.api.types.infer_dtype(values, skipna=True)
     if not (is_number or (values.dtype == object and held in NUMERIC_OBJECTS)):

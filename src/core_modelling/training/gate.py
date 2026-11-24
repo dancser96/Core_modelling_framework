@@ -6,39 +6,43 @@ data definition, with the settings and sources the resolved config has now, and 
 the one those two runs wrote. `feature_set` gives the feature set in force and what Training
 opens its log with: the held, excluded and kept features with the entries that set them.
 `check_counts` and `check_kinds` compare the panel Training reads with what EDA saw (D-088): the
-per-period counts on every client of the window, and each feature's type. `save_stage2` writes
-the run's own copy of what it read, and `read_stage2_copy` (Evaluation's) reads it back after
-checking the versions it records. Nothing here runs an upstream stage: at `autonomous` that is
-`run`'s job (D-132), so the refusals name `run`.
+per-period counts on every client of the window, and each feature's type; `check_target_range`
+refuses a target the objective cannot fit. `save_stage2` writes the run's own copy of what it
+read, exactly the copy's frozen columns (`run_artifacts.STAGE2_COLUMNS`, which `read_stage2`
+checks are there before the run number), and `run_artifacts.read_stage2_copy` reads it back
+after checking the copy's own version. Nothing here runs an upstream stage: at `autonomous`
+that is `run`'s job (D-132), so the refusals name `run`.
 """
 
-import json
 from dataclasses import dataclass
 
 import pandas as pd
 
-from core_modelling.artifacts import (
-    STAGE_SCHEMA_VERSIONS,
-    local_path,
-    read_parquet,
-    read_upstream,
-    write_json,
-    write_parquet,
-)
+from core_modelling.artifacts import local_path, read_upstream, write_json, write_parquet
 from core_modelling.config import UseCaseConfig
 from core_modelling.config.replay import Entry
 from core_modelling.environment import EnvironmentConfig, feature_dir
 from core_modelling.ledger import (
     LEDGER_SCHEMA_VERSION,
+    STAGES,
+    missing_stage2,
     read_ledger,
     render_decisions,
     resolve_features,
 )
+from core_modelling.run_artifacts import (
+    BASE_COLUMN,
+    CONTRIBUTION_SUFFIX,
+    STAGE2_COLUMNS,
+    STAGE2_COPY_SCHEMA_VERSION,
+    STAGE2_FILE,
+    STAGE2_TABLES,
+)
+from core_modelling.training.selection import NOISE_COLUMNS
 
-STAGE2 = ("eda", "feature_checks")  # the stages Training needs, in their run order
 COUNT_COLUMNS = ["eligible_rows", "known_target", "positive_rows"]  # D-088's, per window period
-STAGE2_TABLES = ("cells", "edges", "bins", "levels")  # EDA's tables a run keeps its own copy of
-STAGE2_FILE = "_stage2.json"  # which versions and runs the copies in `stage2/` are of
+# The objectives whose deviance is defined on targets of 0 and above only (a log link)
+NON_NEGATIVE_OBJECTIVES = ("tweedie", "poisson")
 
 
 @dataclass
@@ -53,27 +57,17 @@ class Stage2:
     tokens: dict[str, str]
 
 
-def missing_stage2(resolved: UseCaseConfig, entity: str, env: EnvironmentConfig) -> list[str]:
-    """The stages of `STAGE2`, in run order, without a `<stage>.json` for the resolved config's
-    data definition: the ones that have not run on it (a stale one is not missing)."""
-    return [
-        stage
-        for stage in STAGE2
-        if not (local_path(feature_dir(env, resolved, entity, stage)) / f"{stage}.json").is_file()
-    ]
-
-
 def read_stage2(resolved: UseCaseConfig, entity: str, env: EnvironmentConfig) -> Stage2:
     """EDA's and Feature Checks' artifacts of the resolved config's data definition. A stage
     that has not run is refused naming `run`; a stale one (other settings, other sources, another
     data definition) by `read_upstream`; a ledger from other runs than the two folders by
-    `read_ledger`."""
+    `read_ledger`; a table without the columns the run's copy keeps by `check_stage2_columns`."""
     missing = missing_stage2(resolved, entity, env)
     if missing:
         raise FileNotFoundError(
             f"Training needs the artifacts of {' and '.join(missing)} for this data definition "
             f"and {feature_dir(env, resolved, entity)} holds none (no model without data "
-            f"knowledge): run the stages in order with `run --stages {' '.join(STAGE2)} "
+            f"knowledge): run the stages in order with `run --stages {' '.join(STAGES)} "
             "training`, or notebooks 02 and 03 first"
         )
     eda_meta, eda_tables = read_upstream(env, resolved, entity, "eda")
@@ -81,7 +75,28 @@ def read_stage2(resolved: UseCaseConfig, entity: str, env: EnvironmentConfig) ->
     tokens = {"eda": eda_meta["run_token"], "feature_checks": feature_checks_meta["run_token"]}
     ddh = resolved.housekeeping["data_definition_hash"]
     ledger = read_ledger(feature_dir(env, resolved, entity), ddh, tokens)
-    return Stage2(eda_meta, eda_tables, feature_checks_meta, ledger, tokens)
+    stage2 = Stage2(eda_meta, eda_tables, feature_checks_meta, ledger, tokens)
+    check_stage2_columns(stage2)
+    return stage2
+
+
+def _copied_tables(stage2: Stage2) -> dict[str, pd.DataFrame]:
+    """The tables the run's copy is taken from, by `STAGE2_COLUMNS`' names: the ledger and EDA's
+    `STAGE2_TABLES`, whole."""
+    return {"ledger": stage2.ledger, **{name: stage2.eda_tables[name] for name in STAGE2_TABLES}}
+
+
+def check_stage2_columns(stage2: Stage2) -> None:
+    """Fail loud, naming the table and the columns, when the ledger or one of EDA's tables lacks
+    a column of `STAGE2_COLUMNS`, the run's copy's frozen columns."""
+    for name, table in _copied_tables(stage2).items():
+        missing = [column for column in STAGE2_COLUMNS[name] if column not in table]
+        if missing:
+            raise ValueError(
+                f"Stage 2's {name} table lacks the columns {missing} the run's stage2/ copy "
+                f"keeps (stage2_copy_schema_version {STAGE2_COPY_SCHEMA_VERSION}): rerun eda, "
+                "then feature_checks, with this framework version"
+            )
 
 
 def feature_set(
@@ -93,10 +108,14 @@ def feature_set(
     The entry names the held, excluded and kept features with the numbers of the audit-log
     entries that set them, beside the count Feature Checks' run held. A feature that run held
     and that now has no decision at all was released by a `revert`: a warning, never a refusal.
-    A constraint or a level order on a name that is no candidate fails loud.
+    A constraint or a level order on a name that is no candidate fails loud, and so does a
+    feature named like a pruning noise column (`check_noise_names`) or like a column Training
+    derives from the feature names (`check_derived_names`).
     """
     ledger = stage2.ledger
     features = resolve_features(ledger, resolved)
+    check_noise_names(features, resolved.training.selection.prune)
+    check_derived_names(features)
     named = {**resolved.training.monotone, **resolved.features.order}
     unknown = sorted(set(named) - set(ledger["feature"]))
     if unknown:
@@ -130,52 +149,67 @@ def feature_set(
     return features, entry, warnings
 
 
+def check_noise_names(features: list[str], prune: bool) -> None:
+    """Fail loud when importance pruning is on (`prune`) and a feature in force carries one of
+    the noise columns' reserved names (`selection.NOISE_COLUMNS`), before the run number."""
+    clash = sorted(set(NOISE_COLUMNS) & set(features))
+    if prune and clash:
+        raise ValueError(
+            f"the features {clash} carry the reserved names of importance pruning's noise "
+            "columns: rename the source columns, or switch training.selection.prune off"
+        )
+
+
+def check_derived_names(features: list[str]) -> None:
+    """Fail loud on a feature in force named like a column Training derives from the feature
+    names: the contributions' base value (`BASE_COLUMN`), or any name ending in
+    `CONTRIBUTION_SUFFIX`, which would collide in the explanation sample at the end of the run."""
+    clash = sorted(
+        name for name in features if name == BASE_COLUMN or name.endswith(CONTRIBUTION_SUFFIX)
+    )
+    if clash:
+        raise ValueError(
+            f"the features {clash} are named like the columns Training derives from feature "
+            f"names ({BASE_COLUMN!r}, or a name ending in {CONTRIBUTION_SUFFIX!r}): rename the "
+            "source columns"
+        )
+
+
+def check_target_range(train: pd.DataFrame, objective: str) -> None:
+    """Fail loud on a negative train `target` under an objective in `NON_NEGATIVE_OBJECTIVES`:
+    its deviance is not defined there and every library's first fit would fail. A `forward_sum`
+    of net amounts can be negative; such a target needs another objective."""
+    lowest = float(train["target"].min())
+    if objective in NON_NEGATIVE_OBJECTIVES and lowest < 0:
+        raise ValueError(
+            f"training.objective is {objective}, which needs a target of 0 or above, and the "
+            f"train target's minimum is {lowest:g}: choose squared_error, absolute_error or "
+            "huber, or build a non-negative target"
+        )
+
+
 def save_stage2(folder: str, stage2: Stage2, final: list[str]) -> None:
     """Write a run's own copy of what it needs from Stage 2 into `folder` (its `stage2/`, which
     must not exist), so an EDA rerun never changes the run (D-139 (b)): the ledger rows of every
     candidate (the sign-off table lists the held and the excluded ones too) and, for the `final`
     features, EDA's cells (the shares per period), its numeric bin edges and its lift tables
-    (`bins`, `levels`). `STAGE2_FILE` records which versions the copies are of (EDA's stage
-    version and the ledger's, as read) and the two runs' tokens: a copy carries no sidecar of
-    its own, and a later reader must refuse one it cannot read."""
+    (`bins`, `levels`), each with exactly its `STAGE2_COLUMNS` (`check_stage2_columns` names a
+    missing one). `STAGE2_FILE` records the copy's own `stage2_copy_schema_version`, which a
+    later reader checks, and as provenance the versions it is a copy of (EDA's stage version
+    and the ledger's, as read) and the two runs' tokens."""
+    check_stage2_columns(stage2)
     target = local_path(folder)
     target.mkdir()
-    write_parquet(stage2.ledger, target / "ledger.parquet")
-    for name in STAGE2_TABLES:
-        table = stage2.eda_tables[name]
-        write_parquet(table.loc[table["feature"].isin(final)], target / f"{name}.parquet")
-    versions = {
+    for name, table in _copied_tables(stage2).items():
+        rows = table if name == "ledger" else table.loc[table["feature"].isin(final)]
+        write_parquet(rows[list(STAGE2_COLUMNS[name])], target / f"{name}.parquet")
+    stamp = {
+        "stage2_copy_schema_version": STAGE2_COPY_SCHEMA_VERSION,
         "eda_schema_version": stage2.eda_meta["schema_version"],
         "ledger_schema_version": LEDGER_SCHEMA_VERSION,
         "runs": stage2.tokens,
     }
-    write_json(versions, target / STAGE2_FILE)
-
-
-def read_stage2_copy(run_folder: str) -> dict[str, pd.DataFrame]:
-    """The run's own copy of Stage 2 (`<run_folder>/stage2/`, `save_stage2`'s) by table name:
-    `ledger` and `STAGE2_TABLES`. `STAGE2_FILE` is read first, and a copy of an EDA stage
-    version or a ledger schema version this framework does not read is refused, naming both
-    versions: the copies carry no sidecar of their own. The only reader of `stage2/`."""
-    folder = local_path(run_folder) / "stage2"
-    versions_file = folder / STAGE2_FILE
-    if not versions_file.is_file():
-        raise FileNotFoundError(
-            f"{folder} holds no {STAGE2_FILE}: the run's copy of Stage 2 is missing or "
-            "unfinished; train the run again"
-        )
-    versions = json.loads(versions_file.read_text())
-    readable = {"eda_schema_version": STAGE_SCHEMA_VERSIONS["eda"],
-                "ledger_schema_version": LEDGER_SCHEMA_VERSION}  # fmt: skip
-    for key, current in readable.items():
-        if versions.get(key) != current:
-            raise ValueError(
-                f"{folder}: the copy has {key} {versions.get(key)}, this framework reads "
-                f"{current}; evaluate the run with the framework version that trained it, or "
-                "train it again"
-            )
-    names = ["ledger", *STAGE2_TABLES]
-    return {name: read_parquet(folder / f"{name}.parquet") for name in names}
+    write_json(stamp, target / STAGE2_FILE)
 
 
 def check_counts(population: pd.DataFrame, eda_population: list[dict]) -> None:

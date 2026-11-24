@@ -56,7 +56,7 @@ class JoinedSource:
 
 
 def target_column(use_case: str) -> str:
-    """The panel's target column of a use case, `target_<use_case>` lower-cased (Q405): Spark
+    """The panel's target column of a use case, `target_<use_case>` lower-cased: Spark
     compares column names ignoring case."""
     return f"target_{use_case.lower()}"
 

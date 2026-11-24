@@ -2,7 +2,7 @@
 (`families.py`).
 
 `fit` mirrors FLAML 2.7's `CatBoostEstimator` (`flaml/automl/model.py`) under the settled tree
-rule (Q607): the tree count is a searched parameter, `use_best_model` is off and no rows are
+rule: the tree count is a searched parameter, `use_best_model` is off and no rows are
 held out, so the scikit-learn estimator trains exactly the given count on every row; FLAML's
 `n_jobs` becomes `thread_count`, logging is silent and no file is written (T5). The model it
 returns, like the one `load` reads, is CatBoost's own; `predict` gives its raw formula value.
@@ -11,7 +11,7 @@ CatBoost reads columns by position, never by name, and refuses float codes or nu
 declared categorical, so scoring reorders the frame to the booster's feature names and passes
 those columns as int64. Its `.cbm` bytes differ on every fit through run-specific metadata,
 deleted before saving (`RUN_METADATA_KEYS`), after which one model has one file hash across
-runs and thread counts (Q619).
+runs and thread counts (measured).
 """
 
 import inspect
@@ -35,7 +35,8 @@ from core_modelling.model.family_inputs import (
 FAMILY = "catboost"
 FILE_NAME = "model.cbm"
 MODEL_CLASSES = {"binary": CatBoostClassifier, "regression": CatBoostRegressor}
-OBJECTIVES = {  # Q639's names in CatBoost's words; Tweedie's power is added in `fixed_params`
+# The config's objective names in CatBoost's words; Tweedie's power is added in `fixed_params`
+OBJECTIVES = {
     "binary": {"log_loss": {"loss_function": "Logloss"}},
     "regression": {
         "squared_error": {"loss_function": "RMSE"},
@@ -45,7 +46,7 @@ OBJECTIVES = {  # Q639's names in CatBoost's words; Tweedie's power is added in 
         "huber": {"loss_function": "Huber:delta=1.0"},
     },
 }
-# Deleted before saving (Q619). Measured on two fits of one model: the id differs on every fit,
+# Deleted before saving. Measured on two fits of one model: the id differs on every fit,
 # the finish time with the clock, `params` with the thread count, `output_options` with the
 # training folder (FLAML names it after the clock); `training`, the learn-metric history, is a
 # log of the fit, not part of the model. Scoring needs none of them.
@@ -65,8 +66,8 @@ OWNED_PARAMS = {
     "loss_function": "training.objective and training.tweedie_variance_power",
     "random_seed": "training.seed",
     "n_jobs": "the run's thread count",
-    "allow_writing_files": "the framework (A7: CatBoost writes no file)",
-    "use_best_model": "the framework (Q607: the tree count is searched)",
+    "allow_writing_files": "the framework (CatBoost writes no file)",
+    "use_best_model": "the framework (the tree count is searched)",
     "monotone_constraints": "training.monotone",
     "cat_features": "the encoder's declared categoricals",
 }
@@ -81,9 +82,9 @@ def fixed_params(
     threads: int,
     tweedie_variance_power: float | None,
 ) -> dict:
-    """The constants every CatBoost fit of a run shares, trials and final fit alike (A55): the
+    """The constants every CatBoost fit of a run shares, trials and final fit alike: the
     loss (with the variance power under Tweedie; Huber's delta is fixed at 1.0), the seed, the
-    threads, no files written (A7), no best-model shrinking (Q607), the declared categoricals,
+    threads, no files written, no best-model shrinking, the declared categoricals,
     and the monotone constraints as a bracketed string (a tuple is refused)."""
     check_encoder(encoder)
     params = {
@@ -121,18 +122,20 @@ def fit(X: pd.DataFrame, y: np.ndarray, params: dict, task: str) -> CatBoost:
 
 def predict(booster: CatBoost, X: pd.DataFrame, threads: int | None = None) -> np.ndarray:
     """The margin from every tree, CatBoost's raw formula value: log-odds for binary, the raw
-    output for regression (the log scale under Tweedie and Poisson, A42). `threads` caps
+    output for regression (the log scale under Tweedie and Poisson). `threads` caps
     CatBoost's threads (None: its default, -1, every core); the margins are the same at any
     count."""
     count = -1 if threads is None else threads
     return booster.predict(_frame(booster, X), prediction_type="RawFormulaVal", thread_count=count)
 
 
-def contributions(booster: CatBoost, X: pd.DataFrame) -> np.ndarray:
+def contributions(booster: CatBoost, X: pd.DataFrame, threads: int | None = None) -> np.ndarray:
     """CatBoost's own per-feature contributions to the margin (SHAP's tree values), one column
-    per feature in the booster's order and the base value last; a row sums to its margin."""
+    per feature in the booster's order and the base value last; a row sums to its margin.
+    `threads` as in `predict`."""
     pool = Pool(_frame(booster, X), cat_features=booster.get_cat_feature_indices())
-    return booster.get_feature_importance(pool, type="ShapValues")
+    count = -1 if threads is None else threads
+    return booster.get_feature_importance(pool, type="ShapValues", thread_count=count)
 
 
 def describe(booster: CatBoost) -> dict:

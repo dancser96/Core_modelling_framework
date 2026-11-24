@@ -13,14 +13,13 @@ sources physically are, which no hash covers) and carries the run's `new_run_tok
 ledger's sidecar records too, so `read_ledger` pairs the two exactly. The next stage reads it
 with `read_upstream`, which refuses it when its data definition, settings (named by path) or
 sources (named by source) no longer match. `local_path`, `utc_now`, `write_parquet`,
-`write_json` and `read_parquet` are shared with the ledger, the audit log and the model input.
-Local paths only in 0.x, so `pathlib` is used and a URI is refused (T2); the HDFS transport
-comes for every artifact at once in M2.4 (D-136).
+`write_json`, `read_json` and `read_parquet` are shared with the ledger, the audit log, the runs
+and the model input. Local paths only in 0.x, so `pathlib` is used and a URI is refused (T2);
+the HDFS transport comes for every artifact at once in M2.4 (D-136).
 """
 
 import hashlib
 import json
-import os
 import secrets
 import shutil
 import time
@@ -43,8 +42,9 @@ from core_modelling.sources import feature_source_names, source_name
 # Each stage json's format version, read back by `read_stage`. EDA and Feature Checks: 2 the
 # run's `run_token` (11-10), 3 the sources' digest (11-11), 4 EDA's digest narrowed to the
 # decision fields it reads (11-13), 5 EDA's `edges` table, the numeric bin edges at full
-# precision (11-16), so a json stored before reruns EDA, then Feature Checks.
-STAGE_SCHEMA_VERSIONS = {"eda": 5, "feature_checks": 4, "training": 1, "evaluation": 1}
+# precision (11-16), so a json stored before reruns EDA, then Feature Checks. Training and
+# Evaluation: 2 the audit-fix build's tables and keys (11-23).
+STAGE_SCHEMA_VERSIONS = {"eda": 5, "feature_checks": 4, "training": 2, "evaluation": 2}
 STAMP_KEYS = ("schema_version", "stage", "framework_version", "written_at", "tables")
 HOUSEKEEPING_KEYS = ("entity", "config_hash", "data_definition_hash", "resolved_input_hash",
                      "hash_version", "replayed_to")  # fmt: skip
@@ -145,6 +145,18 @@ def write_json(data: dict | list, path: Path, exclusive: bool = False) -> None:
         file.write(text)
 
 
+def read_json(path: Path, fix: str) -> dict:
+    """A JSON file that holds an object; one that is not valid JSON or holds no object (a
+    truncated write, say) fails naming `path` and what to do (`fix`)."""
+    try:
+        data = json.loads(path.read_text())
+    except ValueError as err:  # JSONDecodeError and UnicodeDecodeError both are
+        raise ValueError(f"{path} is not valid JSON ({err}): {fix}") from err
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} holds a {type(data).__name__}, not a JSON object: {fix}")
+    return data
+
+
 def write_parquet(frame: pd.DataFrame, path: Path) -> None:
     """One table as parquet; timestamps as microseconds, which Spark 3.4 reads (T18), and a
     nanosecond part fails loud instead of being truncated."""
@@ -197,10 +209,18 @@ def _write_texts(texts: dict[str, str], temporary: Path) -> list[str]:
     return list(texts)
 
 
+def _sibling(target: Path, kind: str) -> Path:
+    """A temporary sibling of `target`, `<folder>.<kind>-<token>`: the random token keeps two
+    sessions or hosts apart, where a process id is unique per host only."""
+    return target.with_name(f"{target.name}.{kind}-{secrets.token_hex(6)}")
+
+
 def _swap_in(temporary: Path, target: Path) -> None:
     """Move the written folder onto `target`; an older `target` is moved aside first, moved back
-    when the swap fails and removed only after it succeeds, so no failure leaves half of it."""
-    aside = target.with_name(f"{target.name}.old-{os.getpid()}")
+    when the swap fails and removed only after it succeeds, so no failure leaves half of it.
+    Once the new folder is in, the stage is committed: an aside folder that cannot be removed
+    is a printed note, never an error, so the caller still records the run."""
+    aside = _sibling(target, "old")
     if target.exists():
         target.rename(aside)
     try:
@@ -211,7 +231,13 @@ def _swap_in(temporary: Path, target: Path) -> None:
         shutil.rmtree(temporary)
         raise
     if aside.exists():
-        shutil.rmtree(aside)
+        try:
+            shutil.rmtree(aside)
+        except OSError as err:
+            print(
+                f"note: {target} is written and committed; the folder it replaced, {aside}, "
+                f"could not be removed ({err}): remove it before the stage's next run"
+            )
 
 
 def _move_folders(staged: dict[str, Path], temporary: Path) -> list[str]:
@@ -231,7 +257,7 @@ def _move_folders(staged: dict[str, Path], temporary: Path) -> list[str]:
 def check_siblings(
     target: Path, name: str, staged: dict[str, Path], keys: tuple[str, ...] = ()
 ) -> None:
-    """Fail loud on a folder to move in that is not the sibling `<folder>.<key>-<pid>`, and on
+    """Fail loud on a folder to move in that is not the sibling `<folder>.<key>-<token>`, and on
     siblings an unfinished earlier write left: `.tmp-*`, `.old-*`, and `.<key>-*` for each
     folder moved in (`staged`) or to be staged later (`keys`), other than the one handed in now.
     `write_stage` runs it; a stage that computes for long runs it first, with no `staged` and
@@ -241,7 +267,7 @@ def check_siblings(
         if not (beside and path.is_dir()):
             raise ValueError(
                 f"stage {name}: the folder {key!r} must be a written folder named "
-                f"{target.name}.{key}-<pid> beside the stage's; got {path}"
+                f"{target.name}.{key}-<token> beside the stage's; got {path}"
             )
     stale = sorted(
         str(path)
@@ -249,6 +275,13 @@ def check_siblings(
         for path in target.parent.glob(f"{target.name}.{kind}-*")
         if path not in staged.values()
     )
+    aside = sorted(str(path) for path in target.parent.glob(f"{target.name}.old-*"))
+    if aside and not target.exists():
+        raise ValueError(
+            f"stage {name}: {target} is missing and {aside} is beside it: a write stopped after "
+            "moving the committed folder aside and before moving the new one in, so that folder "
+            f"is the last committed {name}; rename it back to {target.name}, then rerun"
+        )
     if stale:
         raise ValueError(
             f"stage {name}: {stale} are left from an earlier write that did not finish; look at "
@@ -265,7 +298,7 @@ def write_stage(
 ) -> dict[str, str]:
     """Write a stage's artifacts into `folder` whole, replacing an older run's folder, through a
     temporary sibling that is removed when any write fails; `texts` adds text files by name (the
-    rendered `report.html`), `folders` moves in folders already written as `<folder>.<key>-<pid>`
+    rendered `report.html`), `folders` moves in folders already written as `<folder>.<key>-<token>`
     (Evaluation's scores table, which Spark writes) under their key, after the stage's own files
     and before the swap. Returns each file's full path, and each moved folder's, by its path
     relative to the folder, plus `folder`. A meta that sets a stamp key, or leftovers of an
@@ -277,7 +310,7 @@ def write_stage(
     target = local_path(folder)
     staged = {key: local_path(path) for key, path in (folders or {}).items()}
     check_siblings(target, name, staged)
-    temporary = target.with_name(f"{target.name}.tmp-{os.getpid()}")
+    temporary = _sibling(target, "tmp")
     temporary.mkdir(parents=True)
     try:
         written = _write_files(result, temporary, name) + _write_texts(texts or {}, temporary)
@@ -307,13 +340,14 @@ def read_stage(folder: str, name: str) -> tuple[dict, dict[str, pd.DataFrame]]:
 
 
 def read_stage_meta(folder: str, name: str) -> dict:
-    """A stage's json alone, for a reader that needs few of its tables; a stage not run yet, or
-    written under another `schema_version` than `STAGE_SCHEMA_VERSIONS` gives it, fails saying
-    what to do."""
+    """A stage's json alone, for a reader that needs few of its tables; a stage not run yet, a
+    json that is not a JSON object (`read_json`), or one written under another `schema_version`
+    than `STAGE_SCHEMA_VERSIONS` gives it, fails saying what to do."""
     path = local_path(folder) / f"{name}.json"
     if not path.is_file():
         raise FileNotFoundError(f"no {name} artifacts at {folder}: run the {name} stage first")
-    meta = json.loads(path.read_text())
+    fix = f"rerun the {name} stage (in a run folder: train the run again)"
+    meta = read_json(path, fix)
     version, current = meta.get("schema_version"), STAGE_SCHEMA_VERSIONS[name]
     if version != current:
         raise ValueError(
@@ -355,7 +389,7 @@ def settings_meta(resolved: UseCaseConfig, paths: list[str]) -> dict:
 def _sources(env: EnvironmentConfig, resolved: UseCaseConfig) -> dict[str, dict]:
     """Every logical source the config names for its entity (the feature sources, the target
     source, the model input) with its environment entry (format, path or table): where the data
-    physically is, which the data-definition hash, on logical names, does not cover (Q577). The
+    physically is, which the data-definition hash, on logical names, does not cover. The
     feature and target sources count also when a stage reads the model input only: the model
     input is built from them, so a moved one means it should be rebuilt."""
     entity = resolved.housekeeping["entity"]

@@ -212,22 +212,42 @@ Whether this glossary is also published to the wider unit is part of the open do
   the candidate list is reviewed only where flagged. It covers every run of the same data
   definition with the same feature signature. Required before any model is registered, at every
   automation level (D-031, D-125).
+- **Sign-off table:** one row per feature in four sections (the model's final list, held,
+  excluded, and declared but not in the model): Training's train-only evidence for the feature
+  sign-off, shown in notebook 04 and in the model results report (`docs/components/training.md`,
+  "The sign-off view").
 - **Promotion sign-off:** the approved PR that lets `promote` pick a registered version for
   production (D-033). Separate from the feature sign-off, and from the CR process that runs
   `deploy`. Phase 2 builds no log of who signs off or approves a model: approvals stay in the PR
   and the change request, outside the framework; which source of people logs to build in is a
   later question (D-033). The feature sign-off is an audit-log entry that `register`
   checks (D-031, D-125).
-- **Automated selection:** the rules inside Training, on the train split only: the cluster rule,
-  a floor on the train concordance and importance pruning (`docs/components/training.md`).
+- **Automated selection:** the rules inside Training, on the train split only, in two parts: the
+  screen, which fits no model and runs before the run number is taken (the cluster rule and a
+  floor on the train concordance of the value or of the null indicator), and importance pruning
+  after it (`docs/components/training.md`, "Selection").
 - **Importance pruning:** Training's third selection rule: five random noise columns are added,
-  the fold models are fitted, and the features that do no better than the best noise column are
-  dropped, unless the out-of-fold loss rises, when the drops are undone. It uses the dataset's
-  client folds (D-106).
+  the fold models are fitted at the pruning's own size (sized to the frame, about ten offers per
+  column), and the features that do no better than the best noise column are candidates to drop.
+  The drops are undone when the out-of-fold loss rises, judged on two fits that offer every
+  column to every tree, on at most 300 trees; they judge the candidates as a set, so one needed
+  feature keeps them all. A best noise share of 0 compared nothing, so nothing is dropped. It
+  uses the dataset's client folds (D-106).
+- **Null pattern:** the train rows a feature is null on (`null_pattern`, a digest of its null
+  mask). Features with the same pattern share one null indicator, so the pattern clears
+  Training's floor for at most one of them; a member the floor drops names the member that
+  carries the pattern in `represented_by` (`docs/components/training.md`, "Selection").
+- **Protected:** a selection outcome: a feature the rule would have dropped but that a person's
+  `keep` holds. It is measured by every rule and dropped by none, and the per-run ledger shows
+  the outcome `protected` (`docs/components/training.md`, "Selection").
 - **Feature ledger:** one wide row per candidate per data definition, recording its path through
   EDA, checks, decisions, selection and use in the model. It stores the statistics and the flags;
   `held / kept / excluded / verdict` are derived from the audit log at render time
   (`docs/components/feature_ledger.md`, D-134).
+- **Per-run ledger:** Training's own ledger of one run, `ledger_run.parquet` in the run folder:
+  one row per feature that entered selection, with each rule's outcome, its use in the model,
+  its importance and the declared constraint. It is the one record of automated drops
+  (`docs/components/feature_ledger.md`, "The per-run part").
 - **Key features:** the top N = 10 by the ranking value (the concordance, or the best-order
   concordance for a `non_monotone` feature) at both levels, skipping a
   candidate correlated above `max_correlation` with one already chosen, plus the person's
@@ -392,6 +412,10 @@ Whether this glossary is also published to the wider unit is part of the open do
   `docs/components/model_bundle.md`).
 - **`run.json`:** the run's identity record, written first and never rewritten
   (`docs/components/model_bundle.md`).
+- **`stage2/` copy:** the run's own copy of what Training read from Stage 2 (the ledger rows and
+  EDA's tables for the final features), so an EDA rerun never changes what the run shows. It
+  has its own schema version and frozen columns, so a later EDA version leaves it readable
+  (`docs/components/training.md`, "What Training writes").
 - **Run comparison:** `compare_runs`: two runs' metrics side by side on the rows both scored, with
   each difference and its interval on the test split only; validation is shown, never compared
   (`docs/components/evaluation.md`).
@@ -446,8 +470,8 @@ Whether this glossary is also published to the wider unit is part of the open do
   and Monitoring write one each, plus the model card; the other stages write artifacts only (D-036).
 - **Core / extended views:** views every model family must render / views rendered where compatible.
 - **View slot:** a place in a report filled by the first compatible method (e.g. feature effects).
-- **Compatibility table:** maps view × model family → method or "not available: reason", decided
-  before anything runs.
+- **Compatibility table:** maps view × task → the view function or "Not available: reason", decided
+  before anything runs (`VIEWS` in `evaluation/report.py`, `docs/components/evaluation.md`).
 - **Stratified metrics:** every metric overall and per level of the configured variables.
 - **Slice:** a top share or a list size of a ranking at which metrics are read
   (`evaluation.slices`: `top 1%`, `n = 10,000`; a `top_n` decision's `decision n = …` too). EDA
@@ -460,10 +484,17 @@ Whether this glossary is also published to the wider unit is part of the open do
   model's score column and a historic predicted rate (a number or a column;
   `docs/components/config.md`).
 - **Explanation sample:** the seeded sample of test rows, with their raw feature values and
-  scores, that Evaluation collects for the contribution, importance and effect views; the only
-  rows its driver holds (`docs/components/evaluation.md`). Training writes its own of train
-  rows, with their out-of-fold contributions, for the sign-off view
-  (`docs/components/training.md`).
+  scores, that Evaluation collects for the contribution, importance and effect views; with the
+  permutation sample, the only test rows its driver holds (`docs/components/evaluation.md`).
+  Training writes its own of train rows, with their out-of-fold contributions, for the sign-off
+  view (`docs/components/training.md`).
+- **Permutation sample:** the seeded sample of up to 50,000 test rows that permutation importance
+  runs on, of which the first 5,000 are the explanation sample; it is larger because the
+  explanation sample holds too few events at a rare rate
+  (`docs/components/evaluation.md`, "The explanation tables").
+- **Headline:** the pooled metric a part (test, validation) is read by first: `decision.metric`
+  with the AUC (regression: the concordance) beside it, each with its interval. Validation's
+  pools both client splits (`docs/components/evaluation.md`, "Metrics").
 - **Score cells:** the one aggregate of a scorer's scores that every Evaluation metric reads: sums
   per part, period, score bin and target bin (and per stratum level), summed in Spark from the
   scores table, with one set per client-bootstrap replicate; only they reach the driver
@@ -479,8 +510,9 @@ Whether this glossary is also published to the wider unit is part of the open do
 - **Effects table:** per feature and EDA group, the model's mean contribution on the explanation
   sample beside EDA's lift for the same group; it draws the model results report's effects view
   (`docs/components/evaluation.md`).
-- **Model results report:** `evaluation/report.html`, Evaluation's report: seventeen views, all on
-  by default, with no pass or fail line (`docs/components/reporting.md`).
+- **Model results report:** `evaluation/report.html`, Evaluation's report, with no pass or fail
+  line; its views are `docs/components/reporting.md`'s and counted in
+  `docs/components/evaluation.md`.
 - **Lift:** a group's rate (or mean) divided by the base, the snapshot's base rate or mean; 1 is
   the base, 2 twice it. Not available when the base is not positive (`docs/components/eda.md`).
 - **Concordance:** the one ranking statistic on one scale for both tasks: Somers' D of the feature

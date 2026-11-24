@@ -2,13 +2,14 @@
 stored scores and run folders alone (evaluation.md → "`compare_runs`", D-141 (h)).
 
 1. Both runs are found, and refused before anything else is read when they are of two data
-   definitions, of another than the config's, or not evaluated.
+   definitions, of another than the config's, or not evaluated; then each run folder is opened
+   against its contract (`run_artifacts.open_run_folder`), before any Spark work.
 2. Their stored scores are joined on their rows, refused unless both scored the same rows, so
    both are measured on identical rows, and each run's score cells are summed on those rows as
    Evaluation sums them: its own bins (`score_edges`), then the `split` cells (`score_cells`).
    A client's bootstrap weights come from a hash of its id and the fixed `WEIGHT_SALT`, so
    replicate k weights it alike in both runs and each replicate's `b − a` is one draw of the
-   difference (A47).
+   difference.
 3. On the test part both runs' metrics sit side by side, and each metric with a direction
    (the task's `metric_directions`) gets its difference, the percentile interval of the
    replicates' differences (`bootstrap_intervals`) and the word `better`, `worse` or `no clear
@@ -24,42 +25,41 @@ sketches of one column can differ by their merge order. Nothing is written.
 """
 
 import math
-from collections.abc import Callable
 from functools import partial
 
 import pandas as pd
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-from core_modelling.artifacts import STAGE_SCHEMA_VERSIONS, local_path, stage_json
+from core_modelling.artifacts import local_path, read_stage_meta
 from core_modelling.config import UseCaseConfig
 from core_modelling.config.audit_log import read_resolved_config
 from core_modelling.config.identities import data_definition_hash, short
+from core_modelling.config.schema import split_budget
 from core_modelling.environment import EnvironmentConfig, models_dir
 from core_modelling.evaluation.cells import score_cells, score_edges, scorer_loss
 from core_modelling.evaluation.scores import SCORES_FOLDER
 from core_modelling.evaluation.tables import (
     SUPPORT,
     VALIDATION_TEST_CLIENTS,
+    Metric,
     headline_names,
     metric_key,
     part_cells,
 )
+from core_modelling.run_artifacts import RunFolder, open_run_folder, train_level
 from core_modelling.runs import read_run
 from core_modelling.sources import KEYS
 from core_modelling.statistics.bootstrap import replicate_values
 from core_modelling.statistics.score_cells import PARTS, pool_cells
 from core_modelling.tasks import TASK_SPECS
-from core_modelling.training.search import split_budget
-from core_modelling.training.tables import train_level
 
-Metric = Callable[[pd.DataFrame], dict[str, float]]
 RUNS = ("a", "b")  # the roles of `run_a` and `run_b`; a difference is b − a
 REPORTED_PARTS = ("validation", VALIDATION_TEST_CLIENTS)  # side by side, never differenced
 REPORTED_ONLY = "reported, never chosen on"  # the `use` of every validation row (D-083)
 UNCLEAR = "no clear difference"  # the difference's interval holds zero
 NOT_AVAILABLE = "not available"  # the difference's verdict when `reason` says why there is none
-UNDEFINED = "undefined on the shared rows or in a replicate"  # e.g. no row loss in one run
+NO_DIFFERENCE = "undefined on the shared rows or in a replicate"  # e.g. no row loss in one run
 IMPORTANCE_ROWS = 10  # the largest moves in importance rank shown
 COMPARED = ("split", "target", "score")  # the scores' columns each run's side keeps
 ROWS_COLUMNS = ["part", "rows_a", "rows_b", "shared", "scored_differently"]
@@ -92,9 +92,11 @@ def compare_runs(
     records = _check_runs(cfg, entity, env, run_a, run_b)
     runs = {role: record["run_id"] for role, record in records.items()}
     folders = {role: models_dir(env, cfg, run) for role, run in runs.items()}
+    opened = {role: open_run_folder(folder) for role, folder in folders.items()}
+    trained = {role: _training_config(read) for role, read in opened.items()}
     losses = {
-        role: scorer_loss(cfg, record["training_settings"]["training"]["objective"])
-        for role, record in records.items()
+        role: scorer_loss(cfg, read.run["training_settings"]["training"]["objective"])
+        for role, read in opened.items()
     }
     features = {role: _features(folder) for role, folder in folders.items()}
     scores = {role: f"{folder}/evaluation/{SCORES_FOLDER}" for role, folder in folders.items()}
@@ -103,12 +105,12 @@ def compare_runs(
     cells = _run_cells(shared, cfg, losses, same=alike)
     cell_metrics = TASK_SPECS[cfg.task]["cell_metrics"]
     metrics = {
-        role: partial(cell_metrics, base=train_level(folders[role]), loss=losses[role] is not None)
-        for role in RUNS
+        role: partial(cell_metrics, base=train_level(opened[role]), has_loss=loss is not None)
+        for role, loss in losses.items()
     }
     tables = _compare_cells(cells, metrics, cfg, _incomparable(losses, cfg))
     changes, importance = _feature_changes(features["a"], features["b"])
-    budgets = _budgets(folders, runs, tables["metrics"], cfg)
+    budgets = _budgets(opened, trained, tables["metrics"], cfg)
     return {
         "rows": rows,
         **tables,
@@ -159,7 +161,8 @@ def _check_runs(
 def _shared_scores(spark: SparkSession, paths: dict[str, str]) -> tuple[DataFrame, pd.DataFrame]:
     """The rows both runs scored, lazy, and the `rows` table.
 
-    Receives each role's scores folder (one row per client, period and part). Returns their
+    Receives each role's scores folder (one row per client, period and part); the rows with a
+    null target, which the scores keep for the drift reference only, are left out. Returns their
     inner join on the keys and `part`, pruned to the keys, `part`, `split`, `target`, `score_a`
     and `score_b`; and, from one aggregate over their outer join, per part of `PARTS`:
     `rows_a`, `rows_b`, `shared` and `scored_differently` (the shared rows the two runs score
@@ -168,9 +171,9 @@ def _shared_scores(spark: SparkSession, paths: dict[str, str]) -> tuple[DataFram
     """
     on = [*KEYS, "part"]
     a, b = (
-        spark.read.parquet(paths[role]).select(
-            *on, *[F.col(name).alias(f"{name}_{role}") for name in COMPARED]
-        )
+        spark.read.parquet(paths[role])
+        .where(F.col("target").isNotNull())
+        .select(*on, *[F.col(name).alias(f"{name}_{role}") for name in COMPARED])
         for role in RUNS
     )
     marked = a.withColumn("in_a", F.lit(1)).join(b.withColumn("in_b", F.lit(1)), on=on, how="full")
@@ -297,17 +300,12 @@ def _stacked(cells: dict[str, dict], part: str) -> pd.DataFrame:
     return pd.concat([cells[role][part].assign(run=role) for role in RUNS], ignore_index=True)
 
 
-def _key(role: str, name: str) -> str:
-    """The flat key of a role's (or the difference's) metric; no metric name holds `|`."""
-    return f"{role}|{name}"
-
-
-def _both_runs(cells: pd.DataFrame, metrics: dict[str, Metric]) -> dict[str, float]:
-    """One replicate's metrics of both runs on one part, flat (`_key`): each role's metric on
-    the cells whose `run` is that role."""
+def _both_runs(cells: pd.DataFrame, metrics: dict[str, Metric]) -> dict[tuple[str, str], float]:
+    """One replicate's metrics of both runs on one part, keyed `(role, name)`: each role's
+    metric on the cells whose `run` is that role."""
     run = cells["run"].to_numpy()
     return {
-        _key(role, name): value
+        (role, name): value
         for role in RUNS
         for name, value in metrics[role](cells.loc[run == role]).items()
     }
@@ -315,9 +313,9 @@ def _both_runs(cells: pd.DataFrame, metrics: dict[str, Metric]) -> dict[str, flo
 
 def _with_differences(
     cells: pd.DataFrame, metrics: dict[str, Metric], directions: dict[str, int]
-) -> dict[str, float]:
+) -> dict[tuple[str, str], float]:
     """`_both_runs` and, for each metric of `directions` (the task's `metric_directions`), its
-    difference b − a under `_key("difference", name)`. The test part only: validation is
+    difference b − a under `("difference", name)`. The test part only: validation is
     reported, never chosen on (D-083), so cells of any other part are refused here, whatever
     passes them."""
     parts = sorted(set(cells["part"]))
@@ -328,40 +326,41 @@ def _with_differences(
         )
     values = _both_runs(cells, metrics)
     differences = {
-        _key("difference", name): values[_key("b", name)] - values[_key("a", name)]
-        for name in directions
+        ("difference", name): values[("b", name)] - values[("a", name)] for name in directions
     }
     return {**values, **differences}
 
 
 def _side_by_side(
-    values: dict[str, float], bounds: dict[str, tuple[float, float]], part: str
+    values: dict[tuple[str, str], float],
+    bounds: dict[tuple[str, str], tuple[float, float]],
+    part: str,
 ) -> pd.DataFrame:
     """One part's metrics of both runs side by side (`SIDE_COLUMNS`), in the task's metric
     order: each run's value and its own interval, and the shared rows' support (`rows`,
     `events`), which is both runs'."""
-    names = [key.split("|", 1)[1] for key in values if key.startswith("a|")]
+    names = [name for role, name in values if role == "a" and name not in SUPPORT]
     records = []
-    for name in [name for name in names if name not in SUPPORT]:
+    for name in names:
         record = {"part": part, "metric": name}
         for role in RUNS:
-            key = _key(role, name)
-            low, high = bounds[key]
-            record |= {f"value_{role}": values[key], f"low_{role}": low, f"high_{role}": high}
-        records.append({**record, "rows": values["a|rows"], "events": values["a|events"]})
+            low, high = bounds[(role, name)]
+            record |= {f"value_{role}": values[(role, name)], f"low_{role}": low,
+                       f"high_{role}": high}  # fmt: skip
+        records.append({**record, "rows": values[("a", "rows")], "events": values[("a", "events")]})
     return pd.DataFrame(records, columns=SIDE_COLUMNS)
 
 
 def _difference_table(
-    values: dict[str, float],
-    bounds: dict[str, tuple[float, float]],
+    values: dict[tuple[str, str], float],
+    bounds: dict[tuple[str, str], tuple[float, float]],
     directions: dict[str, int],
     incomparable: dict[str, str],
 ) -> pd.DataFrame:
     """The test part's differences (`DIFFERENCE_COLUMNS`), one row per metric of `directions`:
     b − a on replicate 0, the percentile interval of the replicates' differences and the
     verdict; an `incomparable` metric's row is `NOT_AVAILABLE` with no number and its reason,
-    an undefined one's `UNDEFINED`."""
+    an undefined one's `NO_DIFFERENCE`."""
     records = []
     for name, sign in directions.items():
         record = {"part": "test", "metric": name, "better_when": "higher" if sign > 0 else "lower"}
@@ -371,10 +370,10 @@ def _difference_table(
                 {**record, **gap, "verdict": NOT_AVAILABLE, "reason": incomparable[name]}
             )
             continue
-        key = _key("difference", name)
+        key = ("difference", name)
         low, high = bounds[key]
         verdict = _verdict(low, high, sign)
-        reason = UNDEFINED if verdict == NOT_AVAILABLE else None
+        reason = NO_DIFFERENCE if verdict == NOT_AVAILABLE else None
         records.append({**record, "difference": values[key], "low": low, "high": high,
                         "verdict": verdict, "reason": reason})  # fmt: skip
     return pd.DataFrame(records, columns=DIFFERENCE_COLUMNS)
@@ -435,29 +434,27 @@ def _feature_changes(
 def _features(folder: str) -> pd.DataFrame:
     """A run's `features` table (`explain.feature_table`) read alone, once its
     `evaluation.json` passed the version check and records the table."""
-    if "features" not in _stage_meta(folder, "evaluation")["tables"]:
+    meta = read_stage_meta(str(local_path(folder) / "evaluation"), "evaluation")
+    if "features" not in meta["tables"]:
         raise ValueError(f"{folder}/evaluation holds no features table: rerun Evaluation on it")
     path = local_path(folder) / "evaluation" / "tables" / "features.parquet"
     return pd.read_parquet(path, columns=FEATURE_COLUMNS)
 
 
-def _stage_meta(folder: str, stage: str) -> dict:
-    """A run folder's `<stage>/<stage>.json` alone; another `schema_version` than this version
-    reads (or none, the stage not run) fails loud."""
-    meta = stage_json(local_path(folder), stage)
-    version, current = meta.get("schema_version"), STAGE_SCHEMA_VERSIONS[stage]
-    if version != current:
-        raise ValueError(
-            f"{folder}/{stage}/{stage}.json has schema_version {version}; this version reads "
-            f"{current}: compare runs trained and evaluated by one framework version"
-        )
-    return meta
+def _training_config(read: RunFolder) -> UseCaseConfig:
+    """The config a run was trained with (`training/resolved_config.yml`), read before any Spark
+    work so a missing or unreadable one fails first."""
+    return read_resolved_config(local_path(read.folder) / "training" / "resolved_config.yml")
 
 
 def _budgets(
-    folders: dict[str, str], runs: dict[str, str], metrics: pd.DataFrame, cfg: UseCaseConfig
+    opened: dict[str, RunFolder],
+    trained: dict[str, UseCaseConfig],
+    metrics: pd.DataFrame,
+    cfg: UseCaseConfig,
 ) -> pd.DataFrame:
-    """Each run's search per family beside its headline on the shared test rows.
+    """Each run's search per family beside its headline on the shared test rows, from each run
+    folder as `open_run_folder` read it and the config it was trained with (`trained`).
 
     One row per run and family, in the run's order: `run`, `family`, `chosen` (the family the
     run kept), `budget_trials` (`split_budget` of the run's resolved config), `budget_seconds`
@@ -469,13 +466,12 @@ def _budgets(
     values = metrics.set_index("metric")
     headline = [metric_key(cfg, name) for name in headline_names(cfg)]
     frames = []
-    for role, folder in folders.items():
-        meta = _stage_meta(folder, "training")
-        resolved = read_resolved_config(local_path(folder) / "training" / "resolved_config.yml")
-        search = pd.DataFrame(meta["search"])
+    for role, read in opened.items():
+        training, resolved = read.training, trained[role]
+        search = pd.DataFrame(training["search"])
         frames.append(pd.DataFrame({
-            "run": runs[role], "family": search["family"],
-            "chosen": search["family"] == meta["best"]["family"],
+            "run": read.run["run_id"], "family": search["family"],
+            "chosen": search["family"] == training["best"]["family"],
             "budget_trials": search["family"].map(split_budget(resolved)),
             "budget_seconds": resolved.training.time_budget_s,
             "trials": search["trials"], "seconds": search["seconds"],

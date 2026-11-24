@@ -17,26 +17,17 @@ import numpy as np
 import pandas as pd
 
 from core_modelling.config import UseCaseConfig
-from core_modelling.model.calibration import LINK_BY_OBJECTIVE, apply_calibration, uncalibrated
+from core_modelling.model.calibration import (
+    LINK_BY_OBJECTIVE,
+    apply_calibration,
+    check_order_kept,
+    uncalibrated,
+)
+from core_modelling.run_artifacts import CALIBRATION_COLUMNS
 from core_modelling.statistics.calibration import prior_shift_offset
 from core_modelling.statistics.losses import metric_loss
 from core_modelling.tasks import TASK_SPECS
 
-# Training's `calibration` table: one row per method the task fits, one schema for both tasks,
-# null where a column does not apply; `parameters` is JSON text, so the table writes to parquet.
-CALIBRATION_COLUMNS = {
-    "method": "object",
-    "chosen": "bool",
-    "parameters": "object",
-    "oof_log_loss": "float64",
-    "true_rate": "float64",
-    "sampled_rate": "float64",
-    "offset": "float64",
-    "factor": "float64",
-    "factor_low": "float64",
-    "factor_high": "float64",
-    "half_total_rows": "Int64",
-}
 SAMPLING_METHODS = (None, "negative_downsampling", "client_sample")
 
 
@@ -79,18 +70,14 @@ def calibrate(
 
 
 def _check_order(fits: dict[str, dict], chosen: str) -> None:
-    """Fail loud on a fit that would reverse or flatten the model's order: a Platt slope at or
-    below zero, or a beta fit with neither coefficient positive, means the model is
-    anti-predictive out of fold, whatever the method; a level factor must be positive and
-    finite when `mean` is `chosen`, so the bundle would hold it (under `none` the regression
-    fits warn instead)."""
-    platt, beta, mean = fits.get("platt"), fits.get("beta"), fits.get("mean")
-    if (platt and platt["a"] <= 0) or (beta and beta["a"] <= 0 and beta["b"] <= 0):
-        raise ValueError(
-            f"the model is anti-predictive out of fold: Platt {platt} and beta {beta}, fitted on "
-            "its out-of-fold margins, reverse or flatten its order; look at the features and the "
-            "target before training again"
-        )
+    """Fail loud on a fit that would reverse or flatten the model's order: Platt and beta by
+    the bundle's rule (`check_order_kept`), whatever the method chosen, since either means the
+    model is anti-predictive out of fold; a level factor must be positive and finite when `mean`
+    is `chosen`, so the bundle would hold it (under `none` the regression fits warn instead)."""
+    for method in ("platt", "beta"):
+        if method in fits:
+            check_order_kept(method, fits[method])
+    mean = fits.get("mean")
     if chosen == "mean" and not (math.isfinite(mean["factor"]) and mean["factor"] > 0):
         raise ValueError(
             f"the level factor (the target's total over the predictions' total, out of fold) is "
@@ -135,7 +122,7 @@ def _calibration_table(
             "method": method,
             "chosen": method == chosen,
             "parameters": _parameters_json(calibration["parameters"]),
-            "oof_log_loss": losses[method],
+            "oof_loss": losses[method],
             "true_rate": sampling.get("true_rate"),
             "sampled_rate": sampling.get("sampled_rate"),
             "offset": calibration["offset"],

@@ -16,6 +16,7 @@ import copy
 import getpass
 import json
 import logging
+import re
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
@@ -39,6 +40,7 @@ from core_modelling.config.levels import level_filled
 from core_modelling.config.migrations import CURRENT_SCHEMA_VERSION, MIGRATIONS, migrate
 from core_modelling.config.replay import (
     LOGGABLE_SETTINGS,
+    RUN_NUMBER,
     By,
     Entry,
     check_candidates,
@@ -67,6 +69,16 @@ __all__ = [
 ]
 
 LOG_SCHEMA_VERSION = 1
+RUN_ENTRY_ATTEMPTS = 5  # a Training or Evaluation `run` entry that loses its seq takes the next
+# What a missing `run` entry changes (the run numbers `create_run` counts, the validation
+# periods a later Evaluation lists as already scored), and what to do about it
+RUN_ENTRY_EFFECT = {
+    "training": "Its number is then kept only by its folder: delete the folder and the next run "
+    "takes the number again. Do not train again for it, which would make a new run.",
+    "evaluation": "Later Evaluation runs and their model cards will not list this run's "
+    "validation period among the periods already scored. Evaluating the run again rewrites "
+    "evaluation/ and writes the entry.",
+}
 COLUMNS = ["seq", "time", "by", "stage", "op", "what", "reason", "evidence"]
 
 logger = logging.getLogger(__name__)
@@ -104,6 +116,29 @@ def read_entries(log_dir: str) -> list[Entry]:
     if seqs != list(range(1, len(seqs) + 1)):
         raise ValueError(f"audit log {log_dir}: entries must run 1..n without gaps; found {seqs}")
     return entries
+
+
+def read_run_ids(log_dir: str) -> list[str]:
+    """The run numbers a log folder's entries name (`run_id`), read leniently: only that field,
+    so an entry a newer framework version wrote does not stop `create_run`. A file that is not
+    JSON, or a `run_id` that is not a run number, fails naming the file, since a number must
+    never be given twice."""
+    folder = local_path(log_dir)
+    run_ids = []
+    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        try:
+            data = json.loads(path.read_text())
+        except ValueError as exc:  # JSONDecodeError and UnicodeDecodeError both are
+            raise ValueError(f"audit log entry {path} is not valid JSON: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError(f"audit log entry {path} is not a JSON object")
+        run_id = data.get("run_id")
+        if run_id is None:
+            continue
+        if not isinstance(run_id, str) or not re.fullmatch(RUN_NUMBER, run_id):
+            raise ValueError(f"audit log entry {path}: run_id {run_id!r} is not a run number")
+        run_ids.append(run_id)
+    return run_ids
 
 
 def load_entries(
@@ -368,21 +403,28 @@ def _revert_fields(cfg: UseCaseConfig, current: dict, entries: list[Entry], to_s
     return {"to_seq": to_seq, "stage": entries[to_seq].stage}
 
 
-def _write_entry(entry: Entry, log_dir: str) -> Entry:
-    """Create `<seq>.json`, never overwriting: a number another writer took meanwhile fails, and
-    the decision is re-run against the log as it is then."""
+def _try_write(entry: Entry, log_dir: str) -> bool:
+    """Create `<seq>.json`, never overwriting; False when another writer took the number."""
     folder = local_path(log_dir)
     folder.mkdir(parents=True, exist_ok=True)
     data = entry.model_dump(mode="json", by_alias=True, exclude_unset=True)
     try:
         write_json(data, folder / f"{entry.seq:04d}.json", exclusive=True)
     except FileExistsError:
+        return False
+    if entry.seq == 1:  # a wrong root, or a log left at an old path, shows itself here
+        print(f"starting a new audit log at {log_dir}")
+    return True
+
+
+def _write_entry(entry: Entry, log_dir: str) -> Entry:
+    """Create `<seq>.json`, never overwriting: a number another writer took meanwhile fails, and
+    the decision is re-run against the log as it is then."""
+    if not _try_write(entry, log_dir):
         raise RuntimeError(
             f"audit log {log_dir}: entry {entry.seq} was written by another writer meanwhile; "
             "re-run the decision"
-        ) from None
-    if entry.seq == 1:  # a wrong root, or a log left at an old path, shows itself here
-        print(f"starting a new audit log at {log_dir}")
+        )
     return entry
 
 
@@ -488,7 +530,9 @@ def record_stage_entry(
     periods it compared, Training's with its run number (`run_id`), Evaluation's with the run
     number and the label of the validation period it scored (labels as `periods.PERIODS` writes
     them). Whether a flag entry is due, its finding's feature set having changed, is the stage's
-    call."""
+    call. Training's and Evaluation's `run` entry, written after the stage's artifacts, moves to
+    the next seq when another writer takes its own (`_append_run_entry`); any other entry
+    fails then."""
     if op not in ("flag", "run"):
         raise ValueError(f"a stage writes `flag` or `run` entries, not {op!r}")
     if op == "run" and stage == "feature_checks" and not periods:
@@ -504,7 +548,6 @@ def record_stage_entry(
         raise ValueError("a stage entry needs a non-empty reason")
     if features:
         check_candidates(cfg, features, f"{op} {finding} refused")
-    entries = load_entries(cfg, entity, env, warn_if_missing=False)
     operands = {
         "features": features,
         "finding": finding,
@@ -514,9 +557,7 @@ def record_stage_entry(
         "replayed_to": replayed_to,
         "resolved_input_hash": resolved_input_hash,
     }
-    entry = Entry(
-        seq=len(entries) + 1,
-        time=utc_now(),
+    fields = dict(
         by=By(kind="stage", id=stage),
         stage=stage,
         op=op,
@@ -527,7 +568,33 @@ def record_stage_entry(
         log_schema_version=LOG_SCHEMA_VERSION,
         **{name: value for name, value in operands.items() if value is not None},
     )
-    return _write_entry(entry, audit_log_dir(env, cfg, entity))
+    log_dir = audit_log_dir(env, cfg, entity)
+    if op == "run" and stage != "feature_checks":
+        return _append_run_entry(cfg, entity, env, fields, log_dir)
+    entries = load_entries(cfg, entity, env, warn_if_missing=False)
+    return _write_entry(Entry(seq=len(entries) + 1, time=utc_now(), **fields), log_dir)
+
+
+def _append_run_entry(
+    cfg: UseCaseConfig, entity: str, env: EnvironmentConfig, fields: dict, log_dir: str
+) -> Entry:
+    """Append Training's or Evaluation's `run` entry (`fields` all but `seq` and `time`) at the
+    end of the log; when another writer takes that seq meanwhile, at the new end, up to
+    `RUN_ENTRY_ATTEMPTS` times. Safe because no check reads these entries' place in the log:
+    their `replayed_to` and resolved-input hash name the input the run read, whatever their
+    seq. A `flag` is decided against the log, and Feature Checks' periods block a move of the
+    validation period that may land meanwhile (D-088), so neither is retried."""
+    for _ in range(RUN_ENTRY_ATTEMPTS):
+        entries = load_entries(cfg, entity, env, warn_if_missing=False)
+        entry = Entry(seq=len(entries) + 1, time=utc_now(), **fields)
+        if _try_write(entry, log_dir):
+            return entry
+    raise RuntimeError(
+        f"audit log {log_dir}: entry {entry.seq} was written by another writer meanwhile, "
+        f"{RUN_ENTRY_ATTEMPTS} times in a row, so the {fields['stage']} `run` entry of run "
+        f"{fields['run_id']} was not written. The run is complete on disk and list_runs lists "
+        f"it; only the audit log lacks the entry. {RUN_ENTRY_EFFECT[fields['stage']]}"
+    )
 
 
 def record_sign_off(

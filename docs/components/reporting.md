@@ -22,8 +22,9 @@ artifacts (D-136). Every figure is
 pre-aggregated except four capped explanation charts, there is no cap on figures, and a report
 regenerates from the resolved config.
 Notebooks display the same objects (`StageResult.views`) and never assemble a report. M2.3 adds
-the **model results report** (`evaluation/report.html`: seventeen views, all on by default), its
-seven model charts and the SHAP-style charts in plotly, and the generated **model card**
+the **model results report** (`evaluation/report.html`; its views are listed under "The model
+results report" and counted in [evaluation](evaluation.md)), its seven model charts and the
+SHAP-style charts in plotly, and the generated **model card**
 (`model_card.json`, versioned, and a tables-only `model_card.html` without plotly.js).
 
 ## Level 2: How it fits together
@@ -41,7 +42,7 @@ seven model charts and the SHAP-style charts in plotly, and the generated **mode
    the same Stylers and figures the report embeds, so the notebook shows what the report shows.
 
 ### The two Stage 2 reports
-Each stage is standalone and writes its own file (Q457); the Feature Checks summary repeats EDA's
+Each stage is standalone and writes its own file; the Feature Checks summary repeats EDA's
 headline numbers from `eda.json` so its reader knows the population.
 - **EDA:** summary (choices, how to read, headline numbers, numbered warnings, one events
   warning) → core (funnel, sources per period, target per period, target by stratum, univariate
@@ -61,12 +62,15 @@ explain, not the report's (D-032).
   period, curves, capture, reliability, score distribution, strata, the importance bar, the
   beeswarm, effects, waterfalls, Training's sign-off and search views) → extended (thresholds,
   permutation importance per cluster, PDP and ICE, validation on test clients only) → appendix.
-  Each view is one entry of Evaluation's `VIEWS` (`evaluation/report.py`), whose names are the
-  ones `evaluation.skip_views` takes; a view a task cannot produce reads "not available: reason"
-  (D-035); every view but the summary can be skipped.
+  Each view is one row of Evaluation's `VIEWS` table (`evaluation/report.py`: its title, its
+  section and the view function, or per task the function or the reason the task cannot produce
+  it); the names are the ones `evaluation.skip_views` takes. A view a task cannot produce reads
+  "Not available: reason." (D-035); every view but the summary can be skipped. Training's warnings
+  show in the summary's warnings under "From Training"; the card's considerations do not carry
+  them (Open questions).
 - A run builds the views once (`report_views`, kept in `StageResult.views`) and renders them
-  with `render_views`; `build_report` does both from the stored tables, so the page renders
-  again from `evaluation/` without Spark.
+  with `render_views`; a page renders again from the stored tables, so from `evaluation/`
+  without Spark.
 - **The model card** is built by `evaluation/card.py` from the run folder, Evaluation's tables
   and meta and the resolved config, and rendered by `reporting/card.py`: generated facts, no
   free text.
@@ -97,7 +101,8 @@ explain, not the report's (D-032).
 - `explain_charts.py`: `importance_bar`, `beeswarm`, `waterfall`, `dependence`, `effect_chart`,
   `pdp_ice_chart`, and `group_means` (the mean contribution per group, which Evaluation's
   effects table also uses);
-- `card.py`: `render_card(card) -> str` and `CARD_SECTIONS`; the card's content is
+- `card.py`: `render_card(card) -> str`, which refuses a card of another version, and the two
+  constants it owns, `CARD_SCHEMA_VERSION` and `CARD_SECTIONS`; the card's content is
   `evaluation/card.py::build_card`;
 - `theme.py`: `THEME`, the neutral palette, fonts, the colour sequence and the heatmap scales as a
   dict.
@@ -128,7 +133,7 @@ of it.
       among variants made on test metrics, D-083). EDA has one events warning, with two
       thresholds: below 100 converting clients or 200 events ([EDA](eda.md)).
    2. **Core** views.
-   3. **Extended** views, or "not available: reason" where a view is declared incompatible up
+   3. **Extended** views, or "Not available: reason." where a view is declared incompatible up
       front (`CLAUDE.md` §1 rule 8).
    4. **Appendix:** the resolved config, the audit log and the run's housekeeping (collect log,
       entries written, timings). The origin of every entry-written value is the header
@@ -153,7 +158,7 @@ of it.
 
    Any other row-level chart would be a new named exception, drawn on a seeded sample of at most
    10,000 rows that its caption states.
-6. **No cap on figures**; the size and the open time are measured instead (Q455).
+6. **No cap on figures**; the size and the open time are measured instead.
 7. **Reports regenerate from the resolved config** and the stage's artifacts, never from a
    notebook (D-039). Decisions are read from the audit log when the report is written, never
    stored ([feature ledger](feature_ledger.md)).
@@ -208,8 +213,8 @@ of it.
 
 Its choices block adds eight `CHOICES` rows to the shared ones: the support rule
 (`strata.min_events`), the five steps' thresholds (each step's mapping, "not run" when skipped),
-the skipped steps and the compared periods. The report never suggests a verb for a flag (Q449);
-for near-duplicates it names the trade-off and leaves the choice to a person (Q472). Each view's
+the skipped steps and the compared periods. The report never suggests a verb for a flag;
+for near-duplicates it names the trade-off and leaves the choice to a person. Each view's
 columns and wording: [feature checks](feature_checks.md) "The report".
 
 ### The model results report
@@ -218,25 +223,26 @@ alone: Training's tables the report draws are stored among them (`training_signo
 `training_trials` and `training_explanation_sample`), so the page renders again from
 `evaluation/` without Spark. Every view renders by default; `evaluation.skip_views` leaves any
 of them out by its `VIEWS` name, except the summary, and a name that is no view is refused
-before anything is scored (`check_skip_views`). View 1 is the summary, views 2–13 are core,
-views 14–17 extended, then the appendix. Every metric shows test and validation, each cell as
+before anything is scored (`check_skip_views`). The table's order is the page's: the summary,
+the core views, the extended views, then the appendix. Every metric shows test and validation, each cell as
 "value (low to high)" with its client-bootstrap interval (`views.py::interval_text`): a value
 the data leave undefined reads `undefined`, and a value whose metric was undefined in at least
 one bootstrap replicate reads "value (no interval)" (D-083: validation is shown everywhere,
 never chosen on). A regression's `deviance` is named by the run's row loss (`meta["row_loss"]`,
 e.g. `tweedie_deviance`) and left out when the run has none (`labelled_metrics`), in views 1, 2
-and 17. A view the task cannot produce reads "not available: reason" (D-035). The views are in `evaluation/views_summary.py` (1), `evaluation/views.py` (2–7, 12–14,
+and 17. A view the task cannot produce reads "Not available: reason." (D-035); the table stores the
+reason bare and `not_available` adds the prefix and the full stop. The views are in `evaluation/views_summary.py` (1), `evaluation/views.py` (2–7, 12–14,
 17) and `evaluation/views_explain.py` (8–11, 15, 16).
 
 | # | Name | What it shows | Regression |
 |---|---|---|---|
-| 1 | `summary` | the run, its model and what it was scored on; the headline (the run, its training date and, per part, `decision.metric` and AUC with their intervals); the choices block and the settings it has no row for (the baselines, the single feature chosen, the intervals, the explanation cut); the model beside each baseline per part and metric, a reason where a baseline cannot fill a cell, no "passed" or "failed"; how to read; what these numbers cannot say; the warnings | the concordance for AUC |
+| 1 | `summary` | the run, its model and what it was scored on; the headline (the run, its training date and, per part, `decision.metric` and AUC with their intervals); the choices block and the settings it has no row for (the baselines, the single feature chosen, the intervals, the explanation cut); the model beside each baseline per part and metric, a reason where a baseline cannot fill a cell, no "passed" or "failed"; how to read; what these numbers cannot say; the warnings, Evaluation's first, then Training's under "From Training" | the concordance for AUC |
 | 2 | `metrics` | every metric per part and period with its interval: test's periods, the validation period, test pooled, the periods' mean last; `metric_lines` of `decision.metric` per period; a period below `strata.min_events` greyed | the regression metrics |
 | 3 | `curves` | ROC and precision–recall, one line per part, on all of the part's rows | not available: no classes |
 | 4 | `capture` | the capture curve per part; the slice table: the declared slices, then the depths 1, 2, 5, 10, 20, 30 and 50%, each cut inside each period and added up over the part's periods, with capture, rate and lift each with its interval; an unavailable slice leaves them empty beside its reason | the capture of the amount, the mean for the rate |
 | 5 | `reliability` | `score` against the observed rate in 10 quantile groups of the score (T16); observed to expected, the calibration slope and intercept pooled per part beside it; a note on a part under 200 events | predicted against observed in 20 groups of the prediction (`predicted_vs_observed`), predicted to observed beside it |
 | 6 | `score_distribution` | per class, its share in a score bin over the bin's share of all rows (1 is chance) against the score's percentile, one panel per part | not available: no classes |
-| 7 | `strata` | per stratum variable, part and level: support, AUC and observed to expected, then at the decision's slice the level's share of the population, its share of the list and the capture inside it; greyed below `strata.min_events` positive rows (`VIEWS_BY_TASK[task]["events"]`); a note that no test runs across levels and that a level's metrics use coarser score bins than the pooled ones (binary: every fourth edge, `STRATA_STEP`), so its ordering metrics read slightly lower | RMSE, MAE and predicted to observed per level, greyed below `strata.min_events` rows with a non-zero target; the levels keep the full score grid |
+| 7 | `strata` | per stratum variable, part and level: support, AUC and observed to expected, then at the decision's slice the level's share of the population, its share of the list and the capture inside it; greyed below `strata.min_events` positive rows (`TASK_SPECS[task]["events_noun"]`); a note that no test runs across levels and that a level's metrics use coarser score bins than the pooled ones (binary: every fourth edge, `STRATA_STEP`), so its ordering metrics read slightly lower | RMSE, MAE and predicted to observed per level, greyed below `strata.min_events` rows with a non-zero target; the levels keep the full score grid |
 | 8 | `importance` | `importance_bar`: contribution shares, test beside train out of fold | the same |
 | 9 | `beeswarm` | the top 15 features, at most 1,500 seeded test rows, the same for every feature | the same |
 | 10 | `effects` | per effect feature (the model's ten largest by Training's out-of-fold contribution share plus EDA's key features it uses, twenty at most): `effect_chart` from the effects table, the mean contribution per EDA group beside EDA's lift, a count of the sample rows no group covers, and a level table for a categorical; the `dependence` scatter with the reason from the feature's `unavailable` cell in the effects table (not one of EDA's key features, or EDA's base is not positive) | the same |
@@ -244,12 +250,14 @@ and 17. A view the task cannot produce reads "not available: reason" (D-035). Th
 | 12 | `sign_off` | Training's sign-off view, train-only: the final list by out-of-fold contribution, the held and the excluded features with their reasons, the wrong-sign warnings | the same |
 | 13 | `search` | `search_table` per family and the best fold metric so far against cumulative seconds, one line per family ([training](training.md)); Training's seconds per step | the same |
 | 14 | `thresholds` | per part, at the score threshold where the list first reaches each capture depth: the threshold, depth, rows, target captured, capture, rate, lift and false positive rate | not available: no classes |
-| 15 | `permutation_importance` | per redundancy cluster, the loss change when its members are permuted together on the explanation sample (the mean of five seeded permutations) with its standard deviation (`loss_change_sd`; a change within it is noise), beside its contribution share and rank; Spearman's rank correlation of the two orders; the three largest rank gaps marked; "not available: reason" when `meta["unavailable"]` names it (an explanation sample whose target has one value) | the same |
+| 15 | `permutation_importance` | per redundancy cluster, the loss change when its members are permuted together on the permutation sample, up to 50,000 seeded test rows, of which the first 5,000 are the explanation sample (the mean of five seeded permutations) with its standard deviation (`loss_change_sd`; a change within it is noise), beside its contribution share and rank; Spearman's rank correlation of the two orders; the three largest rank gaps marked; "Not available: reason." when `meta["unavailable"]` names it: fewer than `strata.min_events` events in the sample (the count is shown), a target of one value, or a deviance metric under an objective without a log link ([evaluation](evaluation.md#the-explanation-tables)) | the same |
 | 16 | `pdp_ice` | `pdp_ice_chart` for view 10's features | the same |
 | 17 | `validation_test_clients` | the validation period's metrics on all of its clients beside its test-split clients only: unseen clients and an unseen period | the same |
 
 Views 8–11 open with a line on the margin's scale the contributions are on: the log-odds, the
-log scale of a Tweedie or Poisson objective, or the prediction's own scale.
+log scale of a Tweedie or Poisson objective, or the prediction's own scale. The objective is
+the run's own (`meta["choices"]["objective"]`), since a named run may have been trained under
+another config.
 
 **How to read** (the summary's five notes, requirement 8):
 - concordance: how well the score orders clients by the target, 0.5 no better than chance and 1
@@ -281,16 +289,26 @@ under the config Evaluation ran with.
 - `model_card.json`: generated facts, never typed by hand: every value is read from the run
   folder (`run.json`, the bundle, `training/`, the per-run ledger, the `stage2/` copy),
   Evaluation's tables and meta, or the resolved config, and the card writes no sentence and
-  parses none. It opens with `schema_version` (`CARD_SCHEMA_VERSION = 1`, `CLAUDE.md` §2), then
-  the sections in `CARD_SECTIONS` order. A missing value (None, NaN) is JSON `null`; an
-  infinite one fails.
+  parses none. It opens with `schema_version` (`CARD_SCHEMA_VERSION`, owned by
+  `reporting/card.py` with `CARD_SECTIONS`, `CLAUDE.md` §2), then the sections in `CARD_SECTIONS`
+  order; `render_card` refuses a card of another version. A missing value (None, NaN) is JSON `null`; an
+  infinite one fails. The version is 2: `data.rows_per_period` holds the per-period rows only, with
+  `rows_pooled` and `rows_validation_test_clients` beside it, and `framework_versions.card` is the
+  framework version that wrote the card ([evaluation](evaluation.md)). What the card copies is
+  declared in `evaluation/card.py`, never derived from another module's list: the metric rows'
+  columns (`CARD_METRIC_COLUMNS`), the keys of each `folds` and `search` record and the
+  calibration table's columns (`CARD_FOLD_KEYS`, `CARD_SEARCH_KEYS`,
+  `CARD_CALIBRATION_COLUMNS`), and the score's column (`SCORE_COLUMN`, the literal `"score"`).
+  A new Training column therefore cannot enter the card unannounced.
 - `model_card.html`: the same facts as tables only, through `render_report(..., plotly=False)`,
   a small page without a script: per section a table of its single facts (a nested key
   dotted) and one table per list of records, a missing value blank; the schema version opens
-  the details.
+  the details. An integer prints as it is (a seed is no quantity), a float through
+  `plain_number`.
 - **The card refuses** pieces that do not belong together, naming the fix. The run folder's
-  part is `check_card_inputs(run_folder, resolved)` (public), which Evaluation calls before
-  anything is scored and `build_card` again before it checks Evaluation's meta and tables:
+  part is `check_card_inputs(run_folder, resolved)`, which returns what it read as a
+  `RunFolder`; Evaluation calls it before anything is scored and hands the result to
+  `build_card`, which otherwise reads it itself, before it checks Evaluation's meta and tables:
   another run id
   across `run.json`, the manifest, `training.json` and Evaluation's meta; Evaluation's
   `model_hash` not the bundle's; Training's final features not the bundle's; a resolved config
@@ -459,7 +477,8 @@ column fails naming the chart.
 - `predicted_vs_observed`: regression, mean observed against mean predicted in 20 groups of the
   prediction, the same frame as the reliability chart.
 - `score_distribution`: per class its ratio to chance against the score's percentile, a dashed
-  line at 1, one panel per part (rule 8); the bin's mean score in the hover.
+  line at 1, one panel per part (rule 8); the bin's mean score in the hover. The panels share
+  one y axis, so only the first carries its title.
 - `metric_lines(metrics, from_zero=False, y_format=None, reference=None)`: one metric by period
   with its interval, one line per part, the validation period a period of its own part; the
   pooled row left out, an insufficient period greyed; a table of two metrics is refused.
@@ -470,22 +489,27 @@ column fails naming the chart.
 libraries' own contributions (D-141 (f)), one implementation for the notebook and the report;
 the package imports no `shap`. They take `shap`'s colours, so a DS recognises them at once (red
 raises, blue lowers; blue to red for a low to high feature value), and the house fonts, titles
-and margins. A missing value is `null` and grey in every one of them.
+and margins. A missing value is `null` and grey in every one of them. Every axis is titled, a
+feature value in a label or a hover never reads in scientific notation (labels through
+`plain_number`, hovers in d3's `,.4~r`: four significant digits, thousands separators, no
+trailing zeros; 123,456 reads 123,500 there), and a waterfall step keeps its size
+(`+0.0001234`, never `+0.00`).
 - `importance_bar`: each feature's share of the mean absolute contribution, the `top` (15)
-  largest and the rest summed in one bar. With `compare` (train out of fold beside test) each
-  feature gets a second bar, its shares from its own frame. A frame of only zero contributions
-  fails loud.
+  largest and the rest summed in one bar; the y axis is titled "Feature". With `compare` (train
+  out of fold beside test) each feature gets a second bar, its shares from its own frame, in the
+  part colours of the model charts (`part_colour`: test the first sequence colour, validation's place
+  kept, train out of fold the third), so no bar takes the red that means "raises the score". A
+  frame of only zero contributions fails loud.
 - `beeswarm`: one point per sampled row and feature, coloured by the feature's value; at most
-  1,500 seeded rows (`ROW_CAP`), the same rows for every feature. A `clients` outside 1…1,500 is
-  refused.
+  1,500 seeded rows (`ROW_CAP`), the same rows for every feature; the y axis is titled
+  "Feature". A `clients` outside 1…1,500 is refused.
 - `waterfall`: one row from the base value to its margin, on the margin's scale for both tasks:
-  the `shown` (9) largest contributions and the rest as one bar, labelled `feature = value`.
-- `dependence` has two forms:
-  - without `lift`: a scatter of the contribution against the raw value for at most 1,500 seeded
-    rows, coloured by a second feature when `colour` is given; a missing value sits in its own
-    `null` strip, drawn only when a sampled value is missing. There is no background histogram.
-  - with `lift` (EDA's group table for the feature): `values` holds each row's EDA group label,
-    and the figure is `effect_chart`'s. `colour` is refused there.
+  the `shown` (9) largest contributions and the rest as one bar, labelled `feature = value`; the
+  y axis is titled "Feature = value".
+- `dependence`: a scatter of the contribution against the raw value for at most 1,500 seeded
+  rows, coloured by a second feature when `colour` is given; a missing value sits in its own
+  `null` strip, drawn only when a sampled value is missing. There is no background histogram and
+  no lift mode: a feature with EDA groups is `effect_chart`'s.
 - `effect_chart(table)`: one feature's mean contribution per group with its 95% interval (a
   group under 20 sample rows greyed) beside EDA's lift by the same groups, two panels
   (`side_by_side`). It takes one feature's rows of Evaluation's effects table
@@ -532,20 +556,22 @@ cannot follow the page's text colour, and the report page is white. The path
 - `reporting/model_charts.py`: the seven model charts, each one function from a table.
 - `reporting/explain_charts.py`: the four SHAP-style charts, `effect_chart`, `pdp_ice_chart`
   and `group_means`.
-- `reporting/card.py`: `render_card`, `CARD_SECTIONS`.
+- `reporting/card.py`: `render_card`, `CARD_SCHEMA_VERSION`, `CARD_SECTIONS`.
+- `reporting/training_views.py`: `search_table(trials, metric)` and the sign-off view, shared by
+  the Training and the model results reports.
 - Each stage builds its own sections from its tables ([EDA](eda.md),
   [feature checks](feature_checks.md), [evaluation](evaluation.md)). The model results report:
-  - `evaluation/report.py`: `VIEWS` (the compatibility table: per view its function, or per
-    task the reason it is not available), `TITLES`, `EXTENDED`, `check_skip_views`,
-    `report_views`, `render_views` (the four parts and the appendix), `build_report`;
+  - `evaluation/report.py`: `VIEWS` (one row per view: its title, its section and its function,
+    or per task the function or the reason it is not available), `check_skip_views`,
+    `report_views`, `render_views` (the four parts and the appendix);
   - `evaluation/views_summary.py`: `summary_view`, `baseline_table`;
-  - `evaluation/views.py`: the core and extended views of the metrics, `VIEWS_BY_TASK` (per
-    task the calibration chart and metrics, the events note's floor, the strata metrics and the
-    summary's task statement), `interval_text`, `wide_metrics`;
+  - `evaluation/views.py`: the core and extended views of the metrics, `CALIBRATION_CHARTS` (per
+    task the calibration chart; the calibration metrics, the events note's floor, the strata
+    metrics and the summary's task statement are `TASK_SPECS` entries), `interval_text`,
+    `wide_metrics`;
   - `evaluation/views_explain.py`: the six explanation views;
-  - `evaluation/card.py`: `check_card_inputs`, `build_card`, `CARD_SCHEMA_VERSION`;
-  - `training/views.py`: `search_table(trials, metric)` and the sign-off view, shared by the
-    Training and the model results reports.
+  - `evaluation/card.py`: `check_card_inputs`, `build_card`; the `RunFolder` they pass is
+    `run_artifacts.py`'s.
 - Reading order for review: `render_report`, then one chart primitive against the chart rules, then
   `choices_block`; for M2.3, `report_views` and `render_views`, then `summary_view`, then
   `build_card` with its refusals.
@@ -575,8 +601,10 @@ def column_formats(df: pd.DataFrame, task: str) -> dict[str, str | Callable[[flo
 def plain_number(x: float) -> str: ...
 def p_value(x: float) -> str: ...
 
-# model_charts.py: roc_chart, pr_chart, capture_chart, score_distribution,
-# predicted_vs_observed, each (pd.DataFrame) -> go.Figure
+# model_charts.py: roc_chart, pr_chart, capture_chart, score_distribution, each
+# (pd.DataFrame) -> go.Figure
+def predicted_vs_observed(reliability: pd.DataFrame, *, groups: int) -> go.Figure: ...
+# groups: the task's reliability_groups, named on the x axis
 def reliability_chart(reliability: pd.DataFrame, axis_format: str | None = ".1%") -> go.Figure: ...
 def metric_lines(metrics: pd.DataFrame, from_zero: bool = False, y_format: str | None = None,
                  reference: float | None = None) -> go.Figure: ...
@@ -586,8 +614,8 @@ def beeswarm(contributions: pd.DataFrame, values: pd.DataFrame, top: int = 15,
              clients: int = 1500, seed: int = 0) -> go.Figure: ...
 def waterfall(contributions: pd.Series, base: float, values: pd.Series,
               shown: int = 9) -> go.Figure: ...
-def dependence(contributions: pd.Series, values: pd.Series, colour: pd.Series | None = None,
-               lift: pd.DataFrame | None = None) -> go.Figure: ...
+def dependence(contributions: pd.Series, values: pd.Series,
+               colour: pd.Series | None = None) -> go.Figure: ...
 def effect_chart(table: pd.DataFrame) -> go.Figure: ...
 def group_means(contributions: pd.Series, groups: pd.Series, order: list[str]) -> pd.DataFrame: ...
 def pdp_ice_chart(table: pd.DataFrame, y_format: str | None = None) -> go.Figure: ...
@@ -598,11 +626,9 @@ def check_skip_views(cfg: UseCaseConfig) -> None: ...
 def report_views(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseConfig) -> dict: ...
 def render_views(views: dict[str, list], meta: dict, resolved: UseCaseConfig, log: list[dict],
                  decisions: pd.DataFrame) -> str: ...
-def build_report(tables: dict[str, pd.DataFrame], meta: dict, resolved: UseCaseConfig,
-                 log: list[dict], decisions: pd.DataFrame) -> str: ...
-def check_card_inputs(run_folder: str, resolved: UseCaseConfig) -> None: ...
+def check_card_inputs(run_folder: str, resolved: UseCaseConfig) -> RunFolder: ...
 def build_card(run_folder: str, tables: dict[str, pd.DataFrame], meta: dict,
-               resolved: UseCaseConfig) -> dict: ...
+               resolved: UseCaseConfig, read: RunFolder | None = None) -> dict: ...
 ```
 
 `render_report` returns the page; the stage writes it with `artifacts.write_stage(result,
@@ -620,8 +646,9 @@ folder, name, texts={"report.html": page})`. Evaluation's texts are `report.html
 - Unverified: the explanation charts' hover text, and how they look in the bank's JupyterLab
   (spike 5). The waterfall's bars are rectangles with a small arrow head, not `shap`'s arrows.
 - The card's considerations carry Evaluation's warnings and the facts above, not Training's
-  warnings, which `training.json` stores as sentences; storing them as codes with values is a
-  Training artifact change for the EDS's review.
+  warnings, which `training.json` stores as sentences (the report shows them under "From
+  Training"); storing them as codes with values is a Training artifact change for the EDS's
+  review.
 - The effects table finds a numeric's EDA group by parsing the group label's opening bound;
   EDA storing each group's first bin and the lift's interval in `bins` and `levels` (an EDA
   schema change) would retire the parsing. For the EDS's review.

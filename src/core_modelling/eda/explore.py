@@ -23,7 +23,7 @@ import plotly.graph_objects as go
 from pandas.io.formats.style import Styler
 
 from core_modelling.artifacts import StageResult
-from core_modelling.dataset.counts import LEVEL_CAP, NEW, NULL_BIN, OTHER, bin_edges
+from core_modelling.dataset.counts import LEVEL_CAP, NEW, NULL_BIN, OTHER, bin_edges, cap_levels
 from core_modelling.eda.deep_dives import (
     MIN_BIN_SUPPORT,
     box_table,
@@ -33,7 +33,6 @@ from core_modelling.eda.deep_dives import (
     value_labels,
 )
 from core_modelling.eda.population import (
-    cap_levels,
     is_numeric,
     known_rows,
     reference_sides,

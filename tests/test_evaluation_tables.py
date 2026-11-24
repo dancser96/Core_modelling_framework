@@ -2,12 +2,13 @@
 the bootstrap weights' inverse CDF, the edges' rules, the strata's levels, the pooled cells,
 the scorer's loss and the families' thread counts without Spark; then, in real local Spark (run
 by the main thread), `score_parts` and `write_scores` on a bundle from `test_bundle.py`'s
-helpers, the client weights, and the cells against `cells_from_rows`, their pandas mirror, on a
-small scores table built here.
+helpers, the client weights, the cells against `cells_from_rows`, the tests' pandas oracle
+(`cells_oracle.py`), on a small scores table built here, and the null-target rows the scores
+keep for the drift reference, which change no cell.
 """
 
 import json
-import os
+import re
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -15,6 +16,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from cells_oracle import cells_from_rows
 from conftest import REGRESSION, with_training
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -22,39 +24,37 @@ from scipy.stats import poisson
 from test_bundle import IDENTITY, raw_frame, trained
 
 from core_modelling.config import UseCaseConfig
-from core_modelling.dataset.counts import OTHER
-from core_modelling.eda.population import cap_levels
+from core_modelling.dataset.counts import OTHER, cap_levels
 from core_modelling.evaluation.cells import (
     POISSON_CDF,
     POISSON_MAX,
     UNIFORM_BITS,
     WEIGHT_SALT,
     _check_other,
+    _check_quantiles,
     _distinct_edges,
     _poisson_weight,
     _uniform,
     client_weights,
+    reference_score_counts,
     score_cells,
     score_edges,
     scorer_loss,
     stratum_labels,
 )
 from core_modelling.evaluation.scores import score_parts, write_scores
-from core_modelling.model import FAMILIES, encode_frame, load_bundle, score_frame, write_bundle
-from core_modelling.model.bundle import OUTPUT_COLUMNS
+from core_modelling.model import load_bundle, score_frame
+from core_modelling.model.bundle import OUTPUT_COLUMNS, write_bundle
+from core_modelling.model.encoder import encode_frame
+from core_modelling.model.families import FAMILIES
 from core_modelling.model.scoring import _task_threads
 from core_modelling.periods import period_spec
-from core_modelling.statistics.score_cells import (
-    STRATA_STEP,
-    bin_quantiles,
-    cells_from_rows,
-    pool_cells,
-    quantile_passes,
-)
+from core_modelling.statistics.score_cells import bin_quantiles, pool_cells, quantile_passes
+from core_modelling.tasks import TASK_SPECS
 
 WINDOW = [date(2025, 6, 1), date(2025, 7, 1)]  # two months of the test part
 VALIDATION = date(2025, 11, 1)  # the test config's validation period
-# Each row loss once and none (a squared-error model): the Spark losses against the mirror's
+# Each row loss once and none (a squared-error model): the Spark losses against the oracle's
 LOSS_CASES = [("binary", "log_loss"), ("regression", "tweedie_deviance"),
               ("regression", "poisson_deviance"), ("regression", None)]  # fmt: skip
 TOP_UNIFORM = 1 - 2.0**-UNIFORM_BITS  # the largest uniform `_uniform` gives
@@ -227,18 +227,19 @@ def test_stratum_labels_are_the_levels_cap_levels_gives_the_rows() -> None:
 
 
 def test_the_two_quantile_passes_are_the_grid_and_the_strata_whole_score_bins() -> None:
-    """Spark's two passes give back each task's grid: binary's body ends at the tail's start and
-    its tail's shares of the top 1% land on the grid's 189 top cuts; regression takes one pass.
-    Every `STRATA_STEP`-th edge leaves the strata whole score bins: binary 95, regression 50."""
-    for task, strata_bins in (("binary", 95), ("regression", 50)):
-        cuts = bin_quantiles(task)
-        body, tail = quantile_passes(task)
-        start = body[-1] if tail.size else 1.0
+    """Spark's two passes give back each task's grid: the body ends at the tail's start, 0.99 for
+    both tasks, and the tail's shares of the top 1% land on the grid's top cuts, binary's 189 and
+    regression's 49. Every `strata_step`-th edge leaves the strata whole score bins: binary 95,
+    regression 100."""
+    for task, strata_bins, tail_cuts in (("binary", 95, 189), ("regression", 100, 49)):
+        spec = TASK_SPECS[task]
+        cuts = bin_quantiles(spec["score_grid"])
+        body, tail = quantile_passes(spec["score_grid"], spec["tail_start"])
+        start = body[-1]
         np.testing.assert_allclose(np.concatenate([body, start + tail * (1 - start)]), cuts)
-        assert (cuts.size + 1) % STRATA_STEP[task] == 0
-        assert (cuts.size + 1) // STRATA_STEP[task] == strata_bins
-    assert quantile_passes("binary")[0][-1] == 0.99 and quantile_passes("binary")[1].size == 189
-    assert quantile_passes("regression")[1].size == 0
+        assert start == 0.99 and tail.size == tail_cuts
+        assert (cuts.size + 1) % spec["strata_step"] == 0
+        assert (cuts.size + 1) // spec["strata_step"] == strata_bins
 
 
 def test_a_kept_level_that_matched_no_row_in_spark_is_refused() -> None:
@@ -249,6 +250,16 @@ def test_a_kept_level_that_matched_no_row_in_spark_is_refused() -> None:
     _check_other(cells, {"channel": 7})
     with pytest.raises(ValueError, match="puts 7 rows in __other__, but its levels"):
         _check_other(cells, {"channel": 2})
+
+
+def test_a_column_with_no_quantile_to_cut_bins_on_is_refused() -> None:
+    """A score or target column Spark found no value of (all null, so no quantile) or whose
+    quantiles hold a NaN is refused, naming the column; clean quantiles pass."""
+    _check_quantiles({"score": np.array([0.1, 0.5]), "target": np.array([0.0, 1.0])})
+    with pytest.raises(ValueError, match="`score` has no value to cut into bins, or holds NaN"):
+        _check_quantiles({"score": np.array([])})
+    with pytest.raises(ValueError, match="`target` has no value to cut into bins, or holds NaN"):
+        _check_quantiles({"score": np.array([0.1]), "target": np.array([0.0, np.nan])})
 
 
 def test_the_split_cells_pooled_over_split_are_the_unsplit_cells() -> None:
@@ -310,7 +321,8 @@ def test_score_parts_scores_every_row_and_refuses_other_features(
     scores `score_frame` gives; rows with a feature fewer or a column more than the bundle's (a
     baseline column not named is one), a baseline named like a feature, or a bundle of another
     task, are refused before Spark runs. `write_scores` stages the table beside the stage's
-    folder and refuses to run while an earlier staging folder is left."""
+    folder under a random token, so a second staging never meets the first (a leftover is
+    `check_siblings`' to refuse)."""
     folder, other = str(tmp_path / "binary"), str(tmp_path / "regression")
     write_bundle(folder, "lgbm", *trained("lgbm", "binary"), IDENTITY)
     write_bundle(other, "lgbm", *trained("lgbm", "regression"), IDENTITY)
@@ -323,7 +335,8 @@ def test_score_parts_scores_every_row_and_refuses_other_features(
     table["onboarding_channel"] = "online"
     rows = spark.createDataFrame(table).repartition(3)
     baselines = ["baseline_rate"]
-    scores = score_parts(folder, rows, in_memory, baselines)
+    bundle = load_bundle(folder)
+    scores = score_parts(folder, bundle, rows, in_memory, baselines)
     strata = ["segment", "onboarding_channel"]
     assert scores.columns == ["unit_id", "period", "part", "split", "target", *OUTPUT_COLUMNS,
                               *strata, "baseline_rate"]  # fmt: skip
@@ -334,22 +347,21 @@ def test_score_parts_scores_every_row_and_refuses_other_features(
     pd.testing.assert_frame_equal(found[OUTPUT_COLUMNS], scored, check_exact=True)
     assert found[keys].equals(expected[keys])
     with pytest.raises(ValueError, match=r"the rows lack \['age'\] and hold \[\]"):
-        score_parts(folder, rows.drop("age"), in_memory, baselines)
+        score_parts(folder, bundle, rows.drop("age"), in_memory, baselines)
     with pytest.raises(ValueError, match=r"the rows lack \[\] and hold \['cc_flag'\]"):
-        score_parts(folder, rows.withColumn("cc_flag", F.lit(1)), in_memory, baselines)
+        score_parts(folder, bundle, rows.withColumn("cc_flag", F.lit(1)), in_memory, baselines)
     unnamed = rows.withColumn("baseline_score", F.lit(0.5))
     with pytest.raises(ValueError, match=r"the rows lack \[\] and hold \['baseline_score'\]"):
-        score_parts(folder, unnamed, in_memory, baselines)
+        score_parts(folder, bundle, unnamed, in_memory, baselines)
     with pytest.raises(ValueError, match=r"the baselines \['age'\] are named like a feature"):
-        score_parts(folder, rows, in_memory, ["age"])
+        score_parts(folder, bundle, rows, in_memory, ["age"])
     with pytest.raises(ValueError, match="is a regression model; the config's task is binary"):
-        score_parts(other, rows, in_memory, baselines)
+        score_parts(other, load_bundle(other), rows, in_memory, baselines)
     staged = write_scores(scores, str(tmp_path / "evaluation"))
-    assert Path(staged).name == f"evaluation.scores-{os.getpid()}"
+    assert re.fullmatch(r"evaluation\.scores-[0-9a-f]{12}", Path(staged).name)
     back = spark.read.parquet(staged).toPandas().sort_values(keys, ignore_index=True)
     pd.testing.assert_frame_equal(back[found.columns], found, check_exact=True)
-    with pytest.raises(ValueError, match="left from an earlier Evaluation that did not finish"):
-        write_scores(scores, str(tmp_path / "evaluation"))
+    assert write_scores(scores, str(tmp_path / "evaluation")) != staged
 
 
 def test_client_weights_are_the_clients_repeat_and_are_poisson_one(spark: SparkSession) -> None:
@@ -385,7 +397,7 @@ def test_the_poisson_weight_inverts_the_cdf_on_literal_uniforms(spark: SparkSess
 
 
 @pytest.mark.parametrize(("task", "loss"), LOSS_CASES)
-def test_score_cells_equal_their_pandas_mirror_at_replicates_0_and_1(
+def test_score_cells_equal_their_pandas_oracle_at_replicates_0_and_1(
     spark: SparkSession,
     in_memory: UseCaseConfig,
     regression_cfg: UseCaseConfig,
@@ -397,7 +409,7 @@ def test_score_cells_equal_their_pandas_mirror_at_replicates_0_and_1(
     and by a stratum (the strata's edges, its 14 levels capped as EDA caps them before the
     aggregate, a regression target in EDA's zero bin or above it, so a level's events count
     right), once per row loss and without one, so the
-    Spark losses and the pandas mirror's cannot drift apart; the split cells pooled over split
+    Spark losses and the pandas oracle's cannot drift apart; the split cells pooled over split
     are the unsplit ones. The body's edges cut the rows at `quantile_passes`' body, the tail's
     are the top rows' scores, and the strata's are a subset of them, with regression's mass
     point its own bin."""
@@ -406,7 +418,7 @@ def test_score_cells_equal_their_pandas_mirror_at_replicates_0_and_1(
     scores = spark.createDataFrame(table).repartition(4)
     edges = score_edges(scores, cfg)
     assert set(edges["strata"]) <= set(edges["score"]) and (np.diff(edges["score"]) > 0).all()
-    body, _ = quantile_passes(task)
+    body, _ = quantile_passes(TASK_SPECS[task]["score_grid"], TASK_SPECS[task]["tail_start"])
     if task == "binary":  # distinct scores: each body edge cuts its share of the rows
         found = edges["score"][: body.size]
         below = (table["score"].to_numpy()[:, None] < found).mean(axis=0)
@@ -467,3 +479,37 @@ def test_score_cells_refuse_a_part_without_rows_and_a_bad_request(
         score_cells(scores, cfg, ["period"], edges, loss="log_loss")
     with pytest.raises(ValueError, match="unknown loss 'rmse'"):
         score_cells(scores, cfg, [], edges, loss="rmse")
+
+
+def test_spark_null_target_rows_change_no_cell_and_count_in_the_reference(
+    spark: SparkSession, in_memory: UseCaseConfig
+) -> None:
+    """Forty test rows of new clients with a null target, as the scores keep them: the cells of
+    the rows with a known target are identical with and without them (every metric, slice,
+    calibration, baseline and replicate reads the cells), the cells refuse them unfiltered, and
+    the drift reference's score counts hold them; a NaN score among them, which the cells never
+    see, the counts refuse."""
+    cfg = with_replicates(in_memory, 20)
+    table = scores_table("binary")
+    known = spark.createDataFrame(table)
+    extra = table.loc[table["part"] == "test"].iloc[:40]
+    extra = extra.assign(unit_id=extra["unit_id"] + "n")
+    unlabelled = spark.createDataFrame(extra).withColumn(
+        "target", F.lit(None).cast(known.schema["target"].dataType)
+    )
+    with_nulls = known.unionByName(unlabelled.select(*known.columns))
+    labelled = with_nulls.where(F.col("target").isNotNull())
+    edges = score_edges(known, cfg)
+    for name, values in score_edges(labelled, cfg).items():
+        np.testing.assert_array_equal(values, edges[name], err_msg=name)
+    expected = score_cells(known, cfg, ["split"], edges, loss="log_loss")
+    found = score_cells(labelled, cfg, ["split"], edges, loss="log_loss")
+    pd.testing.assert_frame_equal(found, expected, check_exact=True)
+    with pytest.raises(ValueError, match="40 rows have a null target"):
+        score_cells(with_nulls, cfg, ["split"], edges, loss="log_loss")
+    counts = reference_score_counts(with_nulls, cfg, edges)
+    assert counts["rows"].sum() == (table["part"] == "test").sum() + 40
+    assert list(counts.columns) == ["period", "score_bin", "rows", "score_min", "score_max"]
+    unscored = unlabelled.withColumn("score", F.lit(float("nan")))
+    with pytest.raises(ValueError, match="`score` is null or NaN on 40 scored rows"):
+        reference_score_counts(known.unionByName(unscored.select(*known.columns)), cfg, edges)

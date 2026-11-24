@@ -1,17 +1,20 @@
 """The client bootstrap's intervals on replicate cells (statistics/bootstrap.py): the interval
-covers the value, is wider than a row bootstrap when a client's rows move together, and an
-undefined replicate gives no interval instead of a narrower one."""
+covers the value, is wider than a row bootstrap when a client's rows move together, is numpy's
+quantiles of the replicates' values, and an undefined replicate gives no interval instead of a
+narrower one."""
 
 from functools import partial
 
 import numpy as np
 import pandas as pd
 import pytest
+from cells_oracle import cells_from_rows
 from scipy.special import expit
 
 from core_modelling.statistics.bootstrap import bootstrap_intervals, replicate_values
 from core_modelling.statistics.metrics import binary_metrics
-from core_modelling.statistics.score_cells import bin_quantiles, cells_from_rows
+from core_modelling.statistics.score_cells import bin_quantiles
+from core_modelling.tasks import TASK_SPECS
 
 REPLICATES = 200
 
@@ -26,7 +29,7 @@ def _clustered_rows(clients: int = 2_000, periods: int = 6) -> pd.DataFrame:
     flipped = rng.random(client.size) < 0.05
     y = np.where(flipped, 1 - label[client], label[client])
     score = expit(margin[client] + rng.normal(0, 0.3, client.size))
-    edges = np.quantile(score, bin_quantiles("binary"))
+    edges = np.quantile(score, bin_quantiles(TASK_SPECS["binary"]["score_grid"]))
     period = np.tile(np.arange(periods), clients).astype(str)
     return pd.DataFrame({
         "part": "test", "period": period, "client": client,
@@ -63,6 +66,23 @@ def test_the_client_interval_covers_the_value_and_is_wider_than_a_row_bootstrap(
     for name, ratio in (("base_rate", 1.8), ("roc_auc", 1.2)):
         client_width, row_width = (np.subtract(*reversed(by[name])) for by in (by_client, by_row))
         assert client_width > ratio * row_width, name
+
+
+@pytest.mark.parametrize("level", [0.95, 0.8])
+def test_the_interval_is_numpys_quantiles_of_the_replicates_values(level: float) -> None:
+    """Each metric's interval is `np.quantile` at `(1 − level) / 2` and `(1 + level) / 2` of its
+    values, each computed on one replicate's cells alone, whatever order the cells come in."""
+    rows = _clustered_rows(clients=300)
+    replicate_cells = _replicates(rows, rows["client"]).sample(frac=1.0, random_state=0)
+    metric = partial(binary_metrics, base=0.1)
+    intervals = bootstrap_intervals(replicate_cells, metric, level, REPLICATES)
+    values = pd.DataFrame(
+        [metric(cells) for _, cells in replicate_cells.groupby("replicate", sort=True)]
+    )
+    assert len(values) == REPLICATES
+    for name in ("base_rate", "roc_auc", "ap", "log_loss_skill", "calibration_slope"):
+        expected = np.quantile(values[name], [(1 - level) / 2, (1 + level) / 2])
+        assert intervals[name] == pytest.approx(tuple(expected), rel=1e-12), name
 
 
 def _three_cells() -> pd.DataFrame:

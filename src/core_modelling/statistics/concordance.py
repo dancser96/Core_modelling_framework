@@ -1,7 +1,7 @@
 """The concordance, its standard errors, the level encoding and the best order, from cells
 (D-082, D-135).
 
-The concordance is the one ranking statistic of both tasks (Q427): Somers' D of the feature with
+The concordance is the one ranking statistic of both tasks: Somers' D of the feature with
 respect to the target, rescaled to [0.5, 1] after the direction is taken out; for a 0/1 target
 it is the AUC of the binned feature. `concordance_from_table` reads it from a two-way table
 (`cells.two_way_table`): exact on the binned data, within 0.0001 of the raw AUC at 100 bins and

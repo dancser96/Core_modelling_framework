@@ -1,20 +1,22 @@
-"""Training's row tables, train-side metrics and the gate's two panel checks, on constructed
-frames (training/tables.py, training/gate.py)."""
+"""Training's row tables, train-side metrics and the gate's panel checks and reserved names,
+on constructed frames (training/tables.py, training/gate.py)."""
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from core_modelling.model.calibration import apply_calibration
+from core_modelling.run_artifacts import EXPLANATION_ROWS, sample_contributions
 from core_modelling.statistics.losses import metric_loss
-from core_modelling.training.gate import check_counts, check_kinds
-from core_modelling.training.tables import (
-    EXPLANATION_ROWS,
-    explanation_sample,
-    oof_table,
-    sample_contributions,
-    train_metrics,
+from core_modelling.training.gate import (
+    check_counts,
+    check_derived_names,
+    check_kinds,
+    check_noise_names,
+    check_target_range,
 )
+from core_modelling.training.selection import NOISE_COLUMNS
+from core_modelling.training.tables import explanation_sample, oof_table, train_metrics
 
 PLATT = {"link": "logit", "method": "platt", "parameters": {"a": 1.2, "b": -0.1}, "offset": -2.0}
 
@@ -40,16 +42,21 @@ def _train(rows: int = 600) -> tuple[pd.DataFrame, np.ndarray]:
 
 def test_the_oof_table_holds_every_train_row_with_its_three_scores() -> None:
     """One row per train row with the keys, the fold, the target and `margin`, `score_raw`,
-    `score` as `apply_calibration` gives them; a non-finite margin fails loud."""
+    `score` as `apply_calibration` gives them, and the final model's in-sample `score` beside
+    them under the same calibration; a non-finite margin fails loud."""
     train, margins = _train()
-    table = oof_table(train, margins, PLATT, "binary")
-    columns = ["unit_id", "period", "cv_fold", "target", "margin", "score_raw", "score"]
+    in_sample = 1.1 * margins
+    table = oof_table(train, margins, PLATT, "binary", in_sample)
+    columns = ["unit_id", "period", "cv_fold", "target", "margin", "score_raw", "score",
+               "score_in_sample"]  # fmt: skip
     assert list(table.columns) == columns and len(table) == len(train)
     score_raw, score = apply_calibration(margins, PLATT, "binary")
     assert np.array_equal(table["score_raw"], score_raw) and np.array_equal(table["score"], score)
+    _, in_sample_score = apply_calibration(in_sample, PLATT, "binary")
+    assert np.array_equal(table["score_in_sample"], in_sample_score)
     margins[3] = np.inf
     with pytest.raises(ValueError, match="1 of 600 out-of-fold rows have a non-finite margin"):
-        oof_table(train, margins, PLATT, "binary")
+        oof_table(train, margins, PLATT, "binary", in_sample)
 
 
 def test_the_explanation_sample_is_seeded_and_never_larger_than_its_cap() -> None:
@@ -121,3 +128,33 @@ def test_the_gate_refuses_a_panel_that_changed_under_the_data_definition() -> No
     check_kinds(ledger, {"age": "numeric", "segment": "categorical"})
     with pytest.raises(ValueError, match="age: numeric in the ledger, categorical now"):
         check_kinds(ledger, {"age": "categorical"})
+
+
+def test_the_gate_refuses_a_feature_named_like_a_noise_column() -> None:
+    """A feature in force named like one of pruning's noise columns is refused at the gate,
+    before the run number, when pruning is on; with pruning off the name is harmless."""
+    features = ["age", NOISE_COLUMNS[2]]
+    with pytest.raises(ValueError, match=r"\['__noise_2'\] carry the reserved names"):
+        check_noise_names(features, prune=True)
+    check_noise_names(features, prune=False)
+
+
+def test_the_gate_refuses_a_feature_named_like_a_derived_column() -> None:
+    """The explanation sample names a column `base_value` and one `<feature>__contribution`
+    per feature, so a feature carrying either name would collide in the last write of the run:
+    it is refused at the gate, naming each."""
+    check_derived_names(["age", "base", "contribution"])
+    with pytest.raises(ValueError, match=r"\['age__contribution', 'base_value'\] are named like"):
+        check_derived_names(["age", "base_value", "age__contribution"])
+
+
+@pytest.mark.parametrize("objective", ["tweedie", "poisson"])
+def test_a_negative_target_under_a_log_link_deviance_is_refused(objective: str) -> None:
+    """Tweedie's and Poisson's deviances are defined on targets of 0 and above: a negative train
+    target is refused from its minimum, naming the objective, before any fit; zeros pass, and
+    so does a negative target under squared_error."""
+    amounts = pd.DataFrame({"target": [0.0, 2.5, -1.25, 4.0]})
+    with pytest.raises(ValueError, match=rf"objective is {objective}.*minimum is -1.25"):
+        check_target_range(amounts, objective)
+    check_target_range(amounts.clip(lower=0), objective)
+    check_target_range(amounts, "squared_error")

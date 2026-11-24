@@ -8,16 +8,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-from scipy import stats
 
 from core_modelling.reporting import explain_charts
 from core_modelling.reporting.explain_charts import (
+    HOVER_FORMAT,
     ROW_CAP,
     beeswarm,
     dependence,
     importance_bar,
     waterfall,
 )
+from core_modelling.reporting.model_charts import part_colour
 from core_modelling.reporting.theme import THEME
 
 GREY = THEME["contribution"]["missing"]
@@ -157,35 +158,6 @@ def test_dependence_scatter_numeric_and_categorical() -> None:
     assert _points(levels) == _points(dependence(contributions["region"], values["region"]))
 
 
-def test_dependence_beside_lift() -> None:
-    """With EDA's lift table: two panels, the mean contribution per group in the lift's group
-    order (null last); a value that is not a group, or colour with lift, fails."""
-    contributions = pd.Series([1.0, 3.0, -1.0, -3.0, 0.5, 0.5], name="age")
-    groups = pd.Series(["< 30", "< 30", "≥ 30", "≥ 30", None, None], name="age")
-    lift = pd.DataFrame({
-        "group": ["< 30", "≥ 30", None], "lift": [1.4, 0.8, 1.0], "lift_low": [1.2, 0.6, 0.7],
-        "lift_high": [1.6, 1.0, 1.3], "support": [40, 50, 25], "insufficient": False,
-    })  # fmt: skip
-    fig = dependence(contributions, groups, lift=lift)
-    assert len(list(fig.select_xaxes())) == 2
-    means = fig.data[0]
-    assert list(means.x) == ["< 30", "≥ 30", "null"]
-    assert list(means.y) == pytest.approx([2.0, -2.0, 0.5])
-    # rows 1 and 3: mean 2, sd √2, n 2, so 2 ± t(0.975, 1) · √2 / √2
-    assert means.error_y.array[0] == pytest.approx(stats.t.ppf(0.975, 1))
-    assert means.error_y.arrayminus[0] == pytest.approx(stats.t.ppf(0.975, 1))
-    assert means.marker.color[0] == THEME["insufficient"]  # 2 rows, under MIN_GROUP_ROWS
-    with pytest.raises(ValueError, match="both the text 'null' and a missing value"):
-        dependence(contributions, groups, lift=lift.assign(group=["< 30", "null", None]))
-    with pytest.raises(ValueError, match="both the text 'null' and a missing value"):
-        dependence(contributions, groups.where(groups.notna() | (groups.index == 4), "null"),
-                   lift=lift)  # fmt: skip
-    with pytest.raises(ValueError, match="not groups of the lift table"):
-        dependence(contributions, groups.fillna("30"), lift=lift)
-    with pytest.raises(ValueError, match="colour applies"):
-        dependence(contributions, groups, colour=contributions, lift=lift)
-
-
 def test_contributions_are_checked() -> None:
     """A null contribution, or values on other rows, fail loud."""
     contributions, values = _frames(50)
@@ -212,3 +184,48 @@ def test_package_never_imports_shap() -> None:
             if any(name.split(".")[0] == "shap" for name in names):
                 offenders.append(str(path))
     assert not offenders, f"modules importing shap: {offenders}"
+
+
+def test_the_importance_bar_takes_the_part_colours_not_the_explanation_colours() -> None:
+    """Test is the first sequence colour as in every model chart, train out of fold the next;
+    the red that means "raises the score" is not an importance's. A lone bar takes test's."""
+    contributions, _ = _frames(50)
+    colours = [t.marker.color for t in importance_bar(contributions, compare=contributions).data]
+    assert colours == [
+        part_colour("test"),
+        part_colour("train, out of fold", explain_charts.PART_ORDER),
+    ]
+    assert colours[0] == THEME["sequence"][0]
+    assert importance_bar(contributions).data[0].marker.color == THEME["sequence"][0]
+
+
+def test_the_waterfall_reads_amounts_and_small_steps_in_plain_digits() -> None:
+    """A label shows 250,000 and 0.00001234, never `2.5e+05`; a step of 0.004 reads `+0.004`,
+    not `+0.00`; the margin's axes are titled."""
+    contributions = pd.Series({"income": 0.5, "ratio": 0.004, "other": -0.3})
+    values = pd.Series({"income": 250000.0, "ratio": 1.234e-05, "other": 7})
+    fig = waterfall(contributions, base=0.0, values=values, shown=3)
+    assert list(fig.layout.yaxis.ticktext) == [
+        "ratio = 0.00001234",
+        "other = 7",
+        "income = 250,000",
+    ]
+    assert list(fig.data[1].text) == ["+0.004", "-0.3", "+0.5"]
+    assert fig.layout.yaxis.title.text == "Feature = value"
+
+
+def test_hovers_format_numbers_in_the_template_and_carry_no_text_per_point() -> None:
+    """The beeswarm's and the dependence scatter's hovers keep numeric data and format it in the
+    template with d3's decimal notation (no exponent); the row charts title their y axes."""
+    contributions, values = _frames(60)
+    values = values.assign(age=np.arange(60) * 5000.0)
+    swarm = beeswarm(contributions, values)
+    age = [t for t in swarm.data if "<br>age = " in t.hovertemplate][-1]
+    assert f"%{{customdata:{HOVER_FORMAT}}}" in age.hovertemplate
+    assert age.customdata.dtype == np.float32 and age.text is None
+    assert all(trace.text is None for trace in swarm.data)
+    scatter = dependence(contributions["age"], values["age"])
+    assert f"age = %{{x:{HOVER_FORMAT}}}" in scatter.data[-1].hovertemplate
+    assert all(trace.text is None for trace in scatter.data)
+    assert swarm.layout.yaxis.title.text == "Feature"
+    assert importance_bar(contributions).layout.yaxis.title.text == "Feature"

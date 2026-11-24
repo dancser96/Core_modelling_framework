@@ -15,7 +15,7 @@ from core_modelling.config import load_config
 from core_modelling.config.audit_log import record_decision
 from core_modelling.config.identities import short
 from core_modelling.environment import load_environment, models_dir
-from core_modelling.run import STAGES, run
+from core_modelling.run import DEFAULT_STAGES, STAGES, run
 from core_modelling.runs import list_runs, show_run, sign_off
 
 ENV_HELP = "the environment file (else $CORE_MODELLING_ENVIRONMENT)"
@@ -60,7 +60,9 @@ def _build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     runner = commands.add_parser("run", help="run the stages of a use case")
     runner.add_argument("config", nargs="+", help="the use-case config file(s)")
-    runner.add_argument("--stages", nargs="+", choices=list(STAGES), help="default: all built")
+    runner.add_argument(
+        "--stages", nargs="+", choices=list(STAGES), help=f"default: {' '.join(DEFAULT_STAGES)}"
+    )
     runner.add_argument("--entity", help="default: every entity the config lists")
     runner.add_argument(
         "--run", metavar="RUN", help="with --stages evaluation: e.g. r007 (default: the latest)"
@@ -135,9 +137,9 @@ def main(argv: list[str] | None = None) -> None:
     else:
         cfg, env = load_config(args.config), load_environment(args.env)
         if args.command == "show-run":
-            print(show_run(env, cfg, args.entity, args.run))
+            print(show_run(cfg, args.entity, env, args.run))
             return
-        table = list_runs(env, cfg, args.entity)
+        table = list_runs(cfg, args.entity, env)
         print(table.to_string(index=False) if len(table) else f"no runs at {models_dir(env, cfg)}")
 
 

@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-from conftest import build_entry
 
 from core_modelling import runs
 from core_modelling.__main__ import main
@@ -16,7 +15,8 @@ from core_modelling.artifacts import write_json
 from core_modelling.config import UseCaseConfig, load_config
 from core_modelling.config.audit_log import record_stage_entry, resolve_config
 from core_modelling.config.identities import HASH_VERSION, feature_signature
-from core_modelling.environment import EnvironmentConfig, models_dir
+from core_modelling.environment import EnvironmentConfig, audit_log_dir, models_dir
+from core_modelling.evaluation.compare import _check_runs
 from core_modelling.runs import (
     _canonical_run,
     create_run,
@@ -117,16 +117,31 @@ def test_run_numbers_are_normalised() -> None:
 
 
 def test_next_number_counts_the_folders_and_the_log(tmp_path: Path) -> None:
-    """`r001` on nothing; else one above the highest folder, in any case, or run the entries
-    name."""
+    """`r001` on nothing; else one above the highest folder, in any case, or run the log names."""
     assert next_run_id(str(tmp_path / "missing"), []) == "r001"
     (tmp_path / "r002").mkdir()
     (tmp_path / "notes").mkdir()
-    named = build_entry(1, "run", stage="training", run_id="r005")
     assert next_run_id(str(tmp_path), []) == "r003"
-    assert next_run_id(str(tmp_path), [named]) == "r006"
+    assert next_run_id(str(tmp_path), ["r005"]) == "r006"
     (tmp_path / "R009").mkdir()
-    assert next_run_id(str(tmp_path), [named]) == "r010"
+    assert next_run_id(str(tmp_path), ["r005"]) == "r010"
+
+
+def test_create_run_counts_the_run_numbers_a_newer_entry_names(
+    env: EnvironmentConfig, cfg: UseCaseConfig, resolved: UseCaseConfig
+) -> None:
+    """An entry a newer framework version wrote (another `log_schema_version`, an unknown field)
+    does not stop `create_run`, and the run number it names is never given again; an entry file
+    that is not JSON still fails, naming it."""
+    record_stage_entry(cfg, ENTITY, env, stage="training", op="run", run_id="r001", reason="t")
+    log = Path(audit_log_dir(env, cfg, ENTITY))
+    newer = {**json.loads((log / "0001.json").read_text()), "seq": 2, "run_id": "r005",
+             "log_schema_version": 2, "field_of_a_newer_version": 1}  # fmt: skip
+    (log / "0002.json").write_text(json.dumps(newer))
+    assert _new_run(env, resolved) == "r006"
+    (log / "0003.json").write_text('{"seq": 3, "run_')
+    with pytest.raises(ValueError, match=r"0003.json is not valid JSON"):
+        _new_run(env, resolved)
 
 
 def test_a_number_taken_between_the_count_and_the_create_moves_on(
@@ -136,9 +151,9 @@ def test_a_number_taken_between_the_count_and_the_create_moves_on(
     writes nothing into the other's folder; a number that stays taken fails after a few tries."""
     count = runs.next_run_id
 
-    def clash(folder: str, entries: list) -> str:
+    def clash(folder: str, run_ids: list[str]) -> str:
         """The real count, whose folder another writer then takes, once."""
-        run = count(folder, entries)
+        run = count(folder, run_ids)
         monkeypatch.setattr(runs, "next_run_id", count)
         Path(folder, run).mkdir()
         return run
@@ -146,7 +161,7 @@ def test_a_number_taken_between_the_count_and_the_create_moves_on(
     monkeypatch.setattr(runs, "next_run_id", clash)
     assert _new_run(env, resolved) == "r002"
     assert not any(Path(models_dir(env, resolved, "r001")).iterdir())
-    monkeypatch.setattr(runs, "next_run_id", lambda folder, entries: "r001")
+    monkeypatch.setattr(runs, "next_run_id", lambda folder, run_ids: "r001")
     with pytest.raises(RuntimeError, match="5 run numbers in a row were taken"):
         _new_run(env, resolved)
 
@@ -185,26 +200,26 @@ def test_incomplete_crashed_and_truncated_runs(
     env: EnvironmentConfig, cfg: UseCaseConfig, resolved: UseCaseConfig
 ) -> None:
     """No runs give the fixed columns; a run without `training/` lists with its states false; a
-    folder without `run.json` is described as a crash; a truncated json fails naming its file."""
-    assert list(list_runs(env, cfg, ENTITY).columns) == runs.FIXED_COLUMNS + runs.STATE_COLUMNS
+    folder without `run.json` is described as a crash; a truncated stage json fails naming its
+    file."""
+    columns = runs.FIXED_COLUMNS + runs.STATE_COLUMNS + [runs.UNREADABLE]
+    assert list(list_runs(cfg, ENTITY, env).columns) == columns
     _new_run(env, resolved)
-    (row,) = list_runs(env, cfg, ENTITY).to_dict("records")
+    (row,) = list_runs(cfg, ENTITY, env).to_dict("records")
     assert row["run"] == "r001" and not (row["trained"] or row["evaluated"] or row["signed_off"])
-    assert "not trained (incomplete)" in show_run(env, cfg, ENTITY, "r1")
+    assert "not trained (incomplete)" in show_run(cfg, ENTITY, env, "r1")
     Path(models_dir(env, cfg, "r002")).mkdir()
-    assert list_runs(env, cfg, ENTITY)["run"].tolist() == ["r002", "r001"]
+    listed = list_runs(cfg, ENTITY, env).set_index("run")[runs.UNREADABLE]
+    assert listed.to_dict() == {"r002": runs.CRASHED, "r001": ""}
     with pytest.raises(FileNotFoundError, match="the run crashed before it was written"):
-        show_run(env, cfg, ENTITY, "r2")
+        show_run(cfg, ENTITY, env, "r2")
     with pytest.raises(ValueError, match="r002: no run.json: the run crashed"):
         find_run(env, resolved, ENTITY)
-    Path(models_dir(env, cfg, "r002", "run.json")).write_text('{"run_id": "r0')
-    with pytest.raises(ValueError, match=r"r002/run.json is not valid JSON"):
-        list_runs(env, cfg, ENTITY)
     shutil.rmtree(models_dir(env, cfg, "r002"))
     _train(env, cfg, "r001")
     Path(models_dir(env, cfg, "r001", "training", "training.json")).write_text('{"summ')
     with pytest.raises(ValueError, match=r"training/training.json is not valid JSON"):
-        list_runs(env, cfg, ENTITY)
+        list_runs(cfg, ENTITY, env)
 
 
 def test_find_run_takes_the_latest_matching_trained_run(
@@ -221,8 +236,8 @@ def test_find_run_takes_the_latest_matching_trained_run(
     _hand_run(env, cfg, "r003")
     _hand_run(env, cfg, "r004", data_definition_hash="e" * 64)
     _train(env, cfg, "r004")
-    assert find_run(env, resolved, ENTITY) == "r001"
-    assert find_run(env, resolved, ENTITY, run="2") == "r002"
+    assert find_run(env, resolved, ENTITY)[0] == "r001"
+    assert find_run(env, resolved, ENTITY, run="2")[0] == "r002"
     with pytest.raises(ValueError, match="r004 was trained for data definition eeeeeeeeeeee"):
         find_run(env, resolved, ENTITY, run="r4")
     with pytest.raises(ValueError, match="r003 is incomplete"):
@@ -232,6 +247,62 @@ def test_find_run_takes_the_latest_matching_trained_run(
         find_run(env, resolved, ENTITY)
     assert "r003: not trained" in str(refusal.value)
     assert "other training settings" in str(refusal.value)
+
+
+def test_an_older_run_taken_names_the_newer_runs_passed_over(
+    env: EnvironmentConfig,
+    cfg: UseCaseConfig,
+    resolved: UseCaseConfig,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """The newest run matching prints nothing; an older one taken returns and prints the newer
+    runs passed over, each with why; a named run passes over none."""
+    _train(env, cfg, _new_run(env, resolved))
+    capsys.readouterr()
+    assert find_run(env, resolved, ENTITY)[0] == "r001"
+    assert capsys.readouterr().out == ""
+    _hand_run(env, cfg, "r002", training_settings_digest="other")
+    _train(env, cfg, "r002")
+    _hand_run(env, cfg, "r003")
+    run, passed = find_run(env, resolved, ENTITY)
+    assert run == "r001"
+    assert passed == ["r003: not trained (no training/)", "r002: other training settings"]
+    assert find_run(env, resolved, ENTITY, run="r2")[1] == []
+    printed = capsys.readouterr().out
+    assert printed.startswith("find_run: took r001, not the newest run; passed over ")
+    assert "r003: not trained (no training/); r002: other training settings" in printed
+
+
+def test_an_unreadable_run_json_is_listed_and_passed_over(
+    env: EnvironmentConfig,
+    cfg: UseCaseConfig,
+    resolved: UseCaseConfig,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A truncated `run.json` and one of another `run_schema_version` stop neither `list_runs`,
+    which marks each unreadable with why, nor `find_run`, which passes over each with why;
+    opening either still fails."""
+    _train(env, cfg, _new_run(env, resolved))
+    later = runs.RUN_SCHEMA_VERSION + 1
+    _hand_run(env, cfg, "r002", run_schema_version=later)
+    Path(models_dir(env, cfg, "r003")).mkdir()
+    Path(models_dir(env, cfg, "r003", "run.json")).write_text('{"run_id": "r0')
+    listed = list_runs(cfg, ENTITY, env).set_index("run")[runs.UNREADABLE]
+    assert listed.index.tolist() == ["r003", "r002", "r001"]
+    assert listed["r003"].startswith("run.json is not valid JSON")
+    assert (listed["r002"], listed["r001"]) == (f"run_schema_version {later}", "")
+    capsys.readouterr()
+    assert find_run(env, resolved, ENTITY)[0] == "r001"
+    printed = capsys.readouterr().out
+    assert "r003: run.json is not valid JSON" in printed
+    assert f"r002: run_schema_version {later}" in printed
+    with pytest.raises(ValueError, match=r"r003: run.json is not valid JSON"):
+        show_run(cfg, ENTITY, env, "r3")
+    with pytest.raises(ValueError, match=f"r002: run_schema_version {later}; this version"):
+        find_run(env, resolved, ENTITY, run="r2")
+    shutil.rmtree(models_dir(env, cfg, "r001"))
+    with pytest.raises(ValueError, match="r003: run.json is not valid JSON"):
+        find_run(env, resolved, ENTITY)
 
 
 def test_a_named_run_of_another_split_or_other_sources_is_refused(
@@ -257,7 +328,7 @@ def test_a_named_run_of_another_split_or_other_sources_is_refused(
         find_run(env, resolved, ENTITY, run="r2")
     with pytest.raises(ValueError, match="r003 was trained from sources the environment now"):
         find_run(env, resolved, ENTITY, run="r3")
-    assert find_run(env, resolved, ENTITY) == "r001"
+    assert find_run(env, resolved, ENTITY)[0] == "r001"
     shutil.rmtree(models_dir(env, cfg, "r001"))
     with pytest.raises(ValueError, match="r003: trained from sources the environment now maps"):
         find_run(env, resolved, ENTITY)
@@ -277,19 +348,20 @@ def test_a_sign_off_covers_the_runs_of_its_feature_list(
     assert (entry.op, entry.by.kind, entry.stage) == ("sign_off", "person", "sign_off")
     assert (entry.run_id, entry.features) == ("r001", FEATURES)
     assert entry.signature == feature_signature(FEATURES)
-    table = list_runs(env, cfg, ENTITY)
+    table = list_runs(cfg, ENTITY, env)
     signed = dict(zip(table["run"], table["signed_off"], strict=True))
     assert signed == {"r004": False, "r003": False, "r002": True, "r001": True}
     assert table.columns[4:6].tolist() == ["family", "features"]
-    assert "signed off: yes, entry 1" in show_run(env, cfg, ENTITY, "r2")
+    assert "signed off: yes, entry 1" in show_run(cfg, ENTITY, env, "r2")
 
 
 def test_a_sign_off_refuses_a_manifest_that_does_not_name_its_list(
     env: EnvironmentConfig, cfg: UseCaseConfig, resolved: UseCaseConfig
 ) -> None:
-    """A manifest whose signature is not the list's is refused; one without a signature too,
-    by `sign_off` and by `list_runs`, never shown as not signed off; one of another hash
-    version is refused naming the version, not as a changed bundle."""
+    """A manifest whose signature is not the list's is refused; one without a signature too, by
+    `sign_off`, and `list_runs` lists that run as not signed off with why, without stopping the
+    listing; one of another hash version is refused naming the version, not as a changed
+    bundle."""
     _train(
         env,
         cfg,
@@ -302,8 +374,9 @@ def test_a_sign_off_refuses_a_manifest_that_does_not_name_its_list(
     _train(env, cfg, _new_run(env, resolved), FEATURES, {})
     with pytest.raises(ValueError, match="lacks bundle.json's features or the manifest's"):
         sign_off(cfg, ENTITY, env, "r2", "looks fine")
-    with pytest.raises(ValueError, match="lacks bundle.json's features or the manifest's"):
-        list_runs(env, cfg, ENTITY)
+    listed = list_runs(cfg, ENTITY, env).set_index("run")
+    assert not listed.loc["r002", "signed_off"] and listed.loc["r002", "trained"]
+    assert "lacks bundle.json's features or the manifest's" in listed.loc["r002", runs.UNREADABLE]
     later = {"feature_signature": feature_signature(FEATURES), "hash_version": HASH_VERSION + 1}
     _train(env, cfg, _new_run(env, resolved), FEATURES, later)
     with pytest.raises(ValueError, match=f"computed under hash_version {HASH_VERSION + 1}"):
@@ -318,7 +391,7 @@ def test_summary_keys_both_stages_hold_are_prefixed(
     (folder / "evaluation").mkdir()
     summary = {"features": 2, "roc_auc": 0.81}
     (folder / "evaluation" / "evaluation.json").write_text(json.dumps({"summary": summary}))
-    (row,) = list_runs(env, cfg, ENTITY).to_dict("records")
+    (row,) = list_runs(cfg, ENTITY, env).to_dict("records")
     assert row["training_features"] == row["evaluation_features"] == 2
     assert row["family"] == "lgbm" and row["roc_auc"] == 0.81 and row["evaluated"]
 
@@ -351,3 +424,22 @@ def test_cli_lists_shows_and_signs_off(
             main(["decide", *common, "--sign-off", "--reason", "r", *extra])
     with pytest.raises(SystemExit):
         main(["decide", *common, "--run", "r1", "--reason", "r", "--keep", "age"])
+
+
+def test_compare_runs_reads_run_json_first_and_refuses_runs_that_are_not_comparable(
+    env: EnvironmentConfig, cfg: UseCaseConfig, resolved: UseCaseConfig
+) -> None:
+    """From `run.json` alone, before any scores are read (the comparison's own checks, built here
+    on hand-made runs): a run of another entity, two runs of two data definitions and two runs of
+    another data definition than the config's are each refused, naming what differs."""
+    _new_run(env, resolved)
+    other = "f" * 64
+    _hand_run(env, cfg, "r002", entity="entity_b")
+    _hand_run(env, cfg, "r003", data_definition_hash=other)
+    _hand_run(env, cfg, "r004", data_definition_hash=other)
+    with pytest.raises(ValueError, match=r"the runs \['r002'\] were trained on another entity"):
+        _check_runs(cfg, ENTITY, env, "r001", "r2")
+    with pytest.raises(ValueError, match="run r001 is of data definition .* of .*never compared"):
+        _check_runs(cfg, ENTITY, env, "r1", "r003")
+    with pytest.raises(ValueError, match="pass the config the runs were trained with"):
+        _check_runs(cfg, ENTITY, env, "r003", "r004")

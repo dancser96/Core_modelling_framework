@@ -1,30 +1,34 @@
-"""The client bootstrap's intervals, read from the replicates' score cells (D-141 (c), A95).
+"""The client bootstrap's intervals, read from the replicates' score cells (D-141 (c)).
 
 Rows are not independent: a client sits in up to six test periods and is positive in up to `w`
 of them, so a formula that counts rows gives too narrow an interval, and none exists for lift,
 average precision or the skill scores. Each client carries one Poisson(1) weight per replicate,
-drawn in Spark from a hash of its id (`client_weights`, A94), so its rows move together; the
-score cells sum them per replicate (`score_cells.py`). `bootstrap_intervals` runs one metric
-function of `metrics.py` on each replicate's cells and keeps the middle `level` share of each
-metric's values (the percentile interval). Pure pandas and numpy.
+drawn in Spark from a hash of its id (`client_weights`), so its rows move together; the score
+cells sum them per replicate (`score_cells.py`). `bootstrap_intervals` runs one metric function
+of `metrics.py` on each replicate's cells and keeps the middle `level` share of each metric's
+values (the percentile interval). A metric's values are keyed by any hashable: its name, or a
+tuple such as `(period, name)` when one call returns several groups' values. Pure pandas and
+numpy.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 
 import numpy as np
 import pandas as pd
 
 from core_modelling.statistics.metrics import NAN
 
+Values = dict[Hashable, float]  # one replicate's metric values, by name or by a tuple key
+
 
 def _metric_values(
     replicate_cells: pd.DataFrame,
-    metric: Callable[[pd.DataFrame], dict[str, float]],
+    metric: Callable[[pd.DataFrame], Values],
     replicates: int,
-) -> pd.DataFrame:
-    """One row per replicate 1 … `replicates` and one column per metric: `metric` on that
-    replicate's cells, sorted once and sliced, or NaN throughout for a replicate without cells
-    (none of the group's clients drawn)."""
+) -> tuple[list[Hashable], np.ndarray]:
+    """The metric's keys, and one row per replicate 1 … `replicates` with one column per key:
+    `metric` on that replicate's cells, sorted once and sliced, or NaN throughout for a
+    replicate without cells (none of the group's clients drawn)."""
     numbers = replicate_cells["replicate"].to_numpy()
     if ((numbers < 1) | (numbers > replicates)).any():
         raise ValueError(
@@ -44,21 +48,22 @@ def _metric_values(
         raise ValueError("bootstrap_intervals: no replicate holds any cells")
     if any(value and list(value) != names for value in values):
         raise ValueError("bootstrap_intervals: the metric returned different names by replicate")
-    return pd.DataFrame([value or dict.fromkeys(names, NAN) for value in values], columns=names)
+    table = [[value[name] for name in names] if value else [NAN] * len(names) for value in values]
+    return names, np.array(table, dtype=float)
 
 
 def bootstrap_intervals(
     replicate_cells: pd.DataFrame,
-    metric: Callable[[pd.DataFrame], dict[str, float]],
+    metric: Callable[[pd.DataFrame], Values],
     level: float,
     replicates: int,
-) -> dict[str, tuple[float, float]]:
+) -> dict[Hashable, tuple[float, float]]:
     """Each metric's percentile interval over the client bootstrap's replicates.
 
     `replicate_cells` is the long frame of one group's cells (one part; pooled periods, one
     period or one stratum level) for the replicates 1 … `replicates`, with `replicate`; `metric`
-    returns `dict[str, float]` from one replicate's cells (`binary_metrics` with its base bound,
-    say). Returns, per metric, the `(1 − level) / 2` and `(1 + level) / 2` quantiles of its
+    returns one replicate's values by key from its cells (`binary_metrics` with its base bound,
+    say). Returns, per key, the `(1 − level) / 2` and `(1 + level) / 2` quantiles of its
     values.
 
     An undefined replicate never narrows an interval: a metric that is NaN in any replicate (no
@@ -68,27 +73,27 @@ def bootstrap_intervals(
     """
     if not 0 < level < 1:
         raise ValueError(f"bootstrap_intervals: level must lie in (0, 1), got {level}")
-    table = _metric_values(replicate_cells, metric, replicates)
-    values = table.to_numpy(dtype=float)
+    names, values = _metric_values(replicate_cells, metric, replicates)
     low, high = np.quantile(values, [(1 - level) / 2, (1 + level) / 2], axis=0)
     defined = np.isfinite(values).all(axis=0)
     return {
         name: (float(low[i]), float(high[i])) if defined[i] else (NAN, NAN)
-        for i, name in enumerate(table.columns)
+        for i, name in enumerate(names)
     }
 
 
 def replicate_values(
     cells: pd.DataFrame,
-    metric: Callable[[pd.DataFrame], dict[str, float]],
+    metric: Callable[[pd.DataFrame], Values],
     level: float,
     replicates: int,
-) -> tuple[dict[str, float], dict[str, tuple[float, float]]]:
+) -> tuple[Values, dict[Hashable, tuple[float, float]]]:
     """Each metric's value and its interval from one group's cells over every replicate.
 
     `cells` holds replicate 0 (the rows as they are) and the replicates 1 … `replicates`, with
     `replicate`. Returns `metric` on replicate 0's cells, and the percentile intervals of
-    `bootstrap_intervals` over the others, both by metric name. No replicate-0 cells fails loud.
+    `bootstrap_intervals` over the others, both by the metric's keys. No replicate-0 cells fails
+    loud.
     """
     replicate = cells["replicate"].to_numpy()
     if not (replicate == 0).any():

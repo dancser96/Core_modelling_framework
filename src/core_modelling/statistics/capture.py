@@ -2,7 +2,7 @@
 
 An ordered list is one frame of bins in list order with `fold` and `SUMMED`; each fold is cut on
 its own, since each fold's list has its own order (a categorical ordered per client fold,
-D-135), linearly inside the boundary bin (V57), and the cuts are summed over the folds. The
+D-135), linearly inside the boundary bin, and the cuts are summed over the folds. The
 capture is the share of `sum_y` (the positives, or the amount). EDA's decision view cuts one
 feature's list (`eda/slices.py`); Evaluation cuts a model's at the same `evaluation.slices`.
 Whether a capture can exist is the caller's to decide up front and hand in as a reason (D-035).

@@ -1,4 +1,5 @@
-"""Tests of the effects table on constructed EDA groups, no Spark: a sample row joins the EDA
+"""Tests of the effect features' rule and the effects table on constructed EDA groups, no
+Spark: a sample row joins the EDA
 group its value falls in (singletons, a by-level numeric, a value below the first group or
 between two groups, a null with and without EDA's null group), a feature without a lift gets
 one row saying why, and a group table that does not fit EDA's edges fails loud."""
@@ -12,6 +13,7 @@ from core_modelling.evaluation.effects import (
     NO_BASE,
     NOT_KEY,
     _bucket_groups,
+    effect_features,
     effect_table,
 )
 from core_modelling.statistics.distributions import bin_labels, quantile_edges, range_label
@@ -30,14 +32,16 @@ def _groups(feature: str, groups: list[str]) -> pd.DataFrame:
 def _effects(values: list, groups: list[str], edges: np.ndarray | None, by_level: bool = False
              ) -> pd.DataFrame:  # fmt: skip
     """The effects table of one feature `f` with `values` against EDA's `groups`, listed in
-    `levels` when `by_level` (as EDA lists a numeric with few values) or with no `edges`."""
+    `levels` when `by_level` (as EDA lists a numeric with few values) or with no `edges`; `f`
+    is numeric when it has `edges`."""
     sample = pd.DataFrame({"f": values, "f__contribution": np.arange(len(values), dtype=float)})
     table = _groups("f", groups)
     empty = table.iloc[:0]
     bins, levels = (empty, table) if by_level or edges is None else (table, empty)
     edge_rows = pd.DataFrame({"feature": "f", "position": range(0 if edges is None else len(edges)),
                               "edge": [] if edges is None else edges})  # fmt: skip
-    return effect_table(sample, bins, levels, edge_rows, ["f"])
+    kinds = pd.Series({"f": "categorical" if edges is None else "numeric"})
+    return effect_table(sample, bins, levels, edge_rows, kinds, ["f"])
 
 
 def test_singleton_groups_hold_their_value_only() -> None:
@@ -95,6 +99,26 @@ def test_groups_that_do_not_fit_the_edges_fail_loud() -> None:
         _bucket_groups(values, ["[2, 3)", "[1, 2)"], EDGES)
 
 
+def test_a_feature_in_both_of_edas_group_tables_is_refused() -> None:
+    """A feature EDA lists in both its bins and its levels has two group tables, so the stage2
+    copy is not of one EDA run: refused, naming the feature."""
+    sample = pd.DataFrame({"f": ["x"], "f__contribution": [0.1]})
+    groups = _groups("f", ["x"])
+    no_edges = pd.DataFrame({"feature": [], "position": [], "edge": []})
+    with pytest.raises(ValueError, match="f has rows in both EDA's bins and levels"):
+        effect_table(sample, groups, groups, no_edges, pd.Series({"f": "categorical"}), ["f"])
+
+
+def test_a_numeric_without_edges_fails_loud() -> None:
+    """The kind comes from the ledger, not from the edges: a numeric the `stage2/` copy holds
+    no edges for is refused, never read as a categorical whose every row is a left-out level."""
+    sample = pd.DataFrame({"f": [0.5, 2.5], "f__contribution": [0.1, -0.1]})
+    no_edges = pd.DataFrame({"feature": [], "position": [], "edge": []})
+    with pytest.raises(ValueError, match="the numeric f has no EDA edges"):
+        effect_table(sample, _groups("f", ["< 1", "≥ 1"]), _groups("f", [])[:0], no_edges,
+                     pd.Series({"f": "numeric"}), ["f"])  # fmt: skip
+
+
 def test_a_feature_without_a_lift_has_one_row_saying_why() -> None:
     """A feature EDA has no groups for reads `NOT_KEY`, one whose groups have no positive lift
     (EDA's base is 0) `NO_BASE`, each as one row with nothing else filled."""
@@ -102,7 +126,34 @@ def test_a_feature_without_a_lift_has_one_row_saying_why() -> None:
                            "g": [1.0, 2.0], "g__contribution": [0.2, 0.3]})  # fmt: skip
     flat = _groups("f", ["x", "y"]).assign(lift=0.0)
     no_edges = pd.DataFrame({"feature": [], "position": [], "edge": []})
-    table = effect_table(sample, flat.iloc[:0], flat, no_edges, ["f", "g"])
+    kinds = pd.Series({"f": "categorical", "g": "numeric"})
+    table = effect_table(sample, flat.iloc[:0], flat, no_edges, kinds, ["f", "g"])
     assert table["feature"].tolist() == ["f", "g"]
     assert table["unavailable"].tolist() == [NO_BASE, NOT_KEY]
     assert table["group"].isna().all()
+
+
+def _eda_ledger(keys: list[str]) -> pd.DataFrame:
+    """A `stage2/` ledger in which `keys` are EDA's key features and one more feature is not."""
+    flags = [*["top_n"] * len(keys), None]
+    return pd.DataFrame({"feature": [*keys, "other"], "key_feature": flags})
+
+
+def _run_ledger(shares: list[float]) -> pd.DataFrame:
+    """A per-run ledger of features `f00`, `f01`, … with these out-of-fold shares, all used."""
+    names = [f"f{i:02d}" for i in range(len(shares))]
+    used = pd.array([True] * len(shares), dtype="boolean")
+    return pd.DataFrame({"feature": names, "in_model": used, "contribution_share": shares})
+
+
+def test_the_effect_features_are_twenty_at_most_with_every_used_key_feature() -> None:
+    """The ten largest plus every key feature the model uses; a key feature the model does not
+    use stays out; key features beyond twenty keep the twenty largest of them."""
+    ledger = _run_ledger(list(np.linspace(1, 0.01, 30)))
+    ledger.loc[ledger["feature"] == "f29", "in_model"] = False
+    keys = ["f25", "f12", "f29", "absent"]
+    chosen = effect_features(ledger, _eda_ledger(keys))
+    assert chosen == [*[f"f{i:02d}" for i in range(10)], "f12", "f25"]
+    many = [f"f{i:02d}" for i in range(5, 29)]
+    chosen = effect_features(ledger, _eda_ledger(many))
+    assert len(chosen) == 20 and chosen == many[:20]

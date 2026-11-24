@@ -1,6 +1,8 @@
 """Tests of the model results report's explanation views on small constructed tables, no Spark:
 each view builds for both tasks, the partial dependence chart draws a numeric and a categorical,
-the beeswarm's rows are seeded and capped and the waterfall labels read `feature = value`."""
+the beeswarm's rows are seeded and capped, the waterfall labels read `feature = value`, the
+statistics read the sampled rows only, and a table not computed, or not whole, shows its
+reason."""
 
 from collections.abc import Callable
 
@@ -12,6 +14,7 @@ import pytest
 from core_modelling.config import UseCaseConfig
 from core_modelling.evaluation import views_explain as views
 from core_modelling.evaluation.effects import EFFECTS, effect_table
+from core_modelling.evaluation.permutation import permutation_unavailable
 from core_modelling.reporting.blocks import not_available
 from core_modelling.reporting.explain_charts import ROW_CAP, pdp_ice_chart
 from core_modelling.statistics.distributions import range_label
@@ -23,7 +26,8 @@ VIEWS = [views.importance_view, views.beeswarm_view, views.effects_view, views.w
 
 def _sample(rows: int, seed: int) -> pd.DataFrame:
     """A sample in Evaluation's `contributions` shape for numeric `a` (every ninth null) and
-    categorical `b`, with `base_value`, `score` and the three waterfall rows marked."""
+    categorical `b`, with `base_value`, `score`, the three waterfall rows marked and every row
+    `sampled` but the highest, a waterfall row outside the hashed rows."""
     rng = np.random.default_rng(seed)
     a = pd.Series(rng.uniform(0, 4, rows)).mask(np.arange(rows) % 9 == 0)
     b = pd.Series(rng.choice(["x", "y", "z"], rows)).mask(np.arange(rows) % 11 == 0)
@@ -33,6 +37,7 @@ def _sample(rows: int, seed: int) -> pd.DataFrame:
     frame["score"] = rng.uniform(0, 1, rows)
     frame["waterfall"] = None
     frame.loc[:2, "waterfall"] = ["highest", "cut", "typical"]
+    frame["sampled"] = frame["waterfall"].ne("highest")
     return frame
 
 
@@ -74,18 +79,20 @@ def _tables(rows: int = 60, seed: int = 0) -> tuple[dict[str, pd.DataFrame], dic
     sample = _sample(rows, seed)
     effects = effect_table(
         sample, _group_rows("a", numeric), _group_rows("b", ["x", "__other__", "null"]),
-        pd.DataFrame({"feature": "a", "position": [0, 1, 2], "edge": EDGES}), ["a", "b"],
+        pd.DataFrame({"feature": "a", "position": [0, 1, 2], "edge": EDGES}),
+        pd.Series({"a": "numeric", "b": "categorical"}), ["a", "b"],
     )  # fmt: skip
     tables = {
         "contributions": sample,
-        views.TRAIN_SAMPLE: _sample(rows, seed + 1).drop(columns=["score", "waterfall"]),
+        views.TRAIN_SAMPLE: _sample(rows, seed + 1).drop(columns=["score", "waterfall", "sampled"]),
         "features": pd.DataFrame({"feature": ["a", "b"], "contribution_share": [0.6, 0.4]}),
         "permutation_importance": permutation,
         "partial_dependence": pd.concat([_pdp("a", None), _pdp("b", ["x", "y", "z"])]),
         EFFECTS: effects,
     }
     meta = {"choices": {"effect_features": ["a", "b"],
-                        "explanation_cut": {"slice": "top 1%", "score": 0.9}},
+                        "explanation_cut": {"slice": "top 1%", "score": 0.9},
+                        "permutation_rows": 400, "objective": "poisson"},
             "unavailable": {}, "row_loss": None}  # fmt: skip
     return tables, meta
 
@@ -111,6 +118,17 @@ def test_each_view_builds_for_both_tasks(
         blocks = view(tables, meta, resolved)
         assert blocks
         assert all(figure.data for figure in _figures(blocks))
+
+
+def test_the_scale_note_reads_the_runs_objective_not_the_configs(
+    regression_cfg: UseCaseConfig,
+) -> None:
+    """A run trained under Poisson reads the Poisson log scale, and one trained under squared
+    error the prediction's own, whatever objective the evaluating config names."""
+    _, meta = _tables()
+    assert "log scale of the poisson objective" in views._scale_note(meta, regression_cfg)
+    meta["choices"]["objective"] = "squared_error"
+    assert "the prediction&#x27;s own scale" in views._scale_note(meta, regression_cfg)
 
 
 def test_pdp_ice_chart_draws_numeric_and_categorical() -> None:
@@ -154,8 +172,46 @@ def test_permutation_importance_shows_its_reason_when_not_available(
     """With `meta["unavailable"]` naming the table, the view is the reason alone; otherwise the
     table shows the loss change's standard deviation beside it."""
     tables, meta = _tables()
-    html = views.permutation_importance_view(tables, meta, cc_config)[1].to_html()
-    assert "loss_change_sd" in html
+    text, table = views.permutation_importance_view(tables, meta, cc_config)
+    html = table.to_html()
+    assert "loss_change_sd" in html and "permutation sample of 400 seeded test rows" in html
+    assert "not the draw of the rows" in text
     meta["unavailable"] = {"permutation_importance": "the sample holds one cluster"}
     blocks = views.permutation_importance_view(tables, meta, cc_config)
     assert blocks == [not_available("the sample holds one cluster")]
+
+
+def test_the_reason_a_target_of_one_value_gives_reads_not_available_once(
+    cc_config: UseCaseConfig,
+) -> None:
+    """Evaluation stores the bare reason and the view adds "Not available: " once."""
+    tables, meta = _tables()
+    reason = permutation_unavailable(pd.DataFrame({"target": [0, 0, 0]}), cc_config, "binary")
+    meta["unavailable"] = {"permutation_importance": reason}
+    (block,) = views.permutation_importance_view(tables, meta, cc_config)
+    assert reason.startswith("0 positive rows in the permutation sample")
+    assert block == f"<p>Not available: {reason}.</p>"
+
+
+def test_the_partial_dependence_shows_the_features_it_left_out(cc_config: UseCaseConfig) -> None:
+    """An effect feature null on every sample row is absent from the table: the view says so in
+    one line and draws the others."""
+    tables, meta = _tables()
+    pdp = tables["partial_dependence"]
+    tables["partial_dependence"] = pdp.loc[pdp["feature"] != "a"]
+    meta["unavailable"] = {"partial_dependence": "null on every sample row: a"}
+    blocks = views.pdp_ice_view(tables, meta, cc_config)
+    assert not_available("null on every sample row: a") in blocks
+    assert len(_figures(blocks)) == 1
+
+
+def test_the_statistics_read_the_sampled_rows_only(cc_config: UseCaseConfig) -> None:
+    """The importance and the beeswarm count the 59 sampled rows, never the highest-score row
+    picked by hand; the waterfalls still draw it."""
+    tables, meta = _tables()
+    importance = views.importance_view(tables, meta, cc_config)
+    assert any("Test: the 59 rows" in block for block in importance if isinstance(block, str))
+    beeswarm = views.beeswarm_view(tables, meta, cc_config)
+    assert any("of the explanation sample&#x27;s 59 test rows" in block for block in beeswarm
+               if isinstance(block, str))  # fmt: skip
+    assert len(_figures(views.waterfalls_view(tables, meta, cc_config))) == 3

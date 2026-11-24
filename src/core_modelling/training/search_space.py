@@ -8,7 +8,8 @@ of FLAML's `fit` the framework fixes, each because, left free, it would break a 
 a family's defaults, leaf by leaf, and gives every ranged leaf a start: FLAML drops its own
 start for a parameter the space overrides, and a space without starts searches nothing (T39).
 The result is plain data, stored in `training.json` as the space the family searched;
-`search.py` turns it into FLAML's domains.
+`automl.py` turns it into FLAML's domains. `fit_parameters` is the one rule that gives a
+configuration's parameters, to FLAML's trials and to every framework fit alike.
 """
 
 from core_modelling.config.schema import SearchRange, SearchValue
@@ -58,7 +59,7 @@ CONSTANTS: dict[str, dict[str, object]] = {
     "xgb_limitdepth": _XGB_CONSTANTS,
     # FLAML searches CatBoost's `early_stopping_rounds`; a None constant takes that range out
     # (FLAML skips a None), so no trial is spent on a parameter without effect: the fixed
-    # `use_best_model: False` already trains the searched tree count on every row (Q607)
+    # `use_best_model: False` already trains the searched tree count on every row
     "catboost": {"early_stopping_rounds": None},
 }
 FLAML_SWITCHES = {  # training.md → "The search", item 5
@@ -102,5 +103,13 @@ def _default_start(family: str, name: str, default: dict | None, leaf: dict) -> 
 
 def start_configuration(space: dict[str, dict]) -> dict:
     """The first trial's configuration of a `family_space`: every ranged leaf at its start and
-    every constant at its value. Importance pruning fits LightGBM at this configuration (A43)."""
+    every constant at its value."""
     return {name: leaf.get("start", leaf.get("value")) for name, leaf in space.items()}
+
+
+def fit_parameters(fixed: dict, space: dict[str, dict], searched: dict | None = None) -> dict:
+    """One configuration's parameters as every fit takes them, the search's trials and the
+    framework's own alike: the fixed parameters, the space's values over them (a constant, or a
+    ranged leaf's start), then the `searched` values. The space wins over a fixed parameter: it
+    may name LightGBM's constraint method, the one fixed name a config may set."""
+    return {**fixed, **start_configuration(space), **(searched or {})}

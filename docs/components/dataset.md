@@ -113,8 +113,9 @@ checks](feature_checks.md)):
   out by `resolve_features` alone. `train` is sampled when the config declares sampling (req. 6),
   after the contract checks and the split, on the same rows whatever the features passed; the
   folds are dealt after the sampling, on the rows as trained.
-- `rows` (`evaluation`): one Spark frame, collected nowhere, of the test split's window rows and
-  every eligible row of the validation period `v`, with `part` (`test` | `validation`) beside the
+- `rows` (`evaluation`): one Spark frame, collected nowhere, of the test split's window rows
+  (null targets included) and the eligible rows of the validation period `v` with a known target,
+  with `part` (`test` | `validation`) beside the
   client's `split`: validation rows hold clients of both splits, so Evaluation can also show
   validation on test clients only. It carries the keys, `part`, the `features` passed (the run's
   final list), the `strata.variables` and then `carry` not already among them, `target` and
@@ -124,8 +125,12 @@ checks](feature_checks.md)):
   refuses a tag as a stratum for the same reason). Evaluation scores it inside Spark
   (`score_spark`, [model bundle](model_bundle.md)) and aggregates its metrics there (D-141); it
   needs no train row.
-- In both modelling frames rows with a null target are dropped, with the share logged per period.
-  Evaluation's `meta["eligible_rows"]` is `{period label: eligible rows}` for the window's periods
+- Null targets: the share of eligible rows is logged per period, and `NULL_TARGETS`
+  (`dataset/frames.py`) says per stage what happens to them. Training drops them from the train
+  frame, and so does Evaluation at the validation period. Evaluation's test part keeps them: they
+  are scored and count only in the drift reference's score side ([monitoring](monitoring.md)),
+  never in a metric, slice, baseline or sample. Evaluation's `meta["eligible_rows"]` is
+  `{period label: eligible rows}` for the window's periods
   and `v`, over both splits and from the same pass, null targets counted: a `top_n` list is cut
   from every eligible client before any target is known, so the slice is a share of this count,
   not of the rows scored ([evaluation](evaluation.md)).
@@ -289,7 +294,7 @@ from them are [EDA](eda.md)'s (its statistics section). The functions:
   `eda.bins: null`, from `approx_count_distinct` per candidate and for the target (a numeric's
   distinct values, a categorical's capped at `LEVEL_CAP` plus the pooled bins, each plus the
   null bin, times the target's distinct values, times the periods of pass 1 plus the window
-  periods of pass 2, a categorical's window periods once per `ENCODING_FOLDS` fold); above `MAX_CELLS = 50_000_000` it fails loud naming `eda.bins` (V3), so
+  periods of pass 2, a categorical's window periods once per `ENCODING_FOLDS` fold); above `MAX_CELLS = 50_000_000` it fails loud naming `eda.bins`, so
   the template's "refused above 50 million cells" is about the cells written. EDA calls it
   with `eda.bins: null` only: with bins set the cells are bounded, and it is one more full
   scan of `rows`.
@@ -317,7 +322,7 @@ and that `eda.bins: null` gives the exact values.
 - **Key names.** The spine's key columns are named by `data.keys`. Another source (a joined
   feature source or the target source) whose keys are named otherwise is listed as
   `{source: <name>, keys: {unit_id: <column>, period: <column>}}`; a key left out falls back to
-  `data.keys`. The spine is always a plain name, since its names are `data.keys` (EDS, Q415).
+  `data.keys`. The spine is always a plain name, since its names are `data.keys`.
   A target source that is also a feature source is keyed exactly as its feature entry: the same
   rows under another period column would shift the target against the features (§4.1). In a
   source with its own key names, a column named like the spine's key columns (`client_id`,
@@ -511,9 +516,8 @@ Its path is local until the M2.4 transport.
    common targets and regression) or raise the budget and the Spark settings
    (`spark.driver.maxResultSize`, which caps the Arrow collect, and the driver memory). For the
    snapshot: raise the budget and the Spark settings, or pick a smaller `eda.snapshot` population
-   through eligibility (which changes the data-definition hash and reruns EDA); the framework never samples the analysis population (the EDS, Q482;
-   D-135), since a sample defeats some of EDA's views. The collect
-   proceeds; there is no fail-loud on the budget, since inside the bank one simply raises the
+   through eligibility (which changes the data-definition hash and reruns EDA); the framework never samples the analysis population (D-135), since a sample defeats some of
+   EDA's views. The collect proceeds; there is no fail-loud on the budget, since inside the bank one simply raises the
    Spark settings. The estimate and the measured size both go into `meta`, so every run checks the
    estimate. The adapter does not derive `maxResultSize` from the budget.
 6. Sampling happens only when the config declares it (`training.sampling`): a person's choice,
@@ -693,18 +697,19 @@ is one entity's area and the data-definition hash carries the entity (D-136; [ED
   it. The snapshot is every row of the `eda.snapshot` period after the analysis filters, the lineage
   and unsupported columns (`detect_kinds` over the Spark schema) dropped before the collect; `rows`
   is the eligible rows of `counts.compared_periods` with the keys, the supported candidates and
-  `target`, null outside the window. The modelling frames are the eligible rows with a known target
-  (in the window, plus the validation period for `evaluation`), the null-target share per period
-  logged and printed. For `training` (Stage 3): the window's train-split rows pruned to the keys,
+  `target`, null outside the window. `train` is the eligible window rows with a known target and
+  Evaluation's `rows` its test part's eligible rows, null targets included, plus the validation
+  period's with a known target (`NULL_TARGETS`), the null-target share per period logged and
+  printed. For `training` (Stage 3): the window's train-split rows pruned to the keys,
   `features`, `target` and `split`, sampled when declared (`sample_train`), then the fold columns
   of `assign_folds` on the rows as sampled; `fold_counts` goes into `meta["folds"]` and
   `check_folds` runs on it before the frame leaves Spark through `collect_frame`. For
-  `evaluation` (Stage 3): the window's test-split rows with `part = "test"`, then every eligible
-  row of the validation period, both splits, with `part = "validation"`, selected as `unit_id,
+  `evaluation` (Stage 3): the window's test-split rows, null targets included, with `part =
+  "test"`, then every eligible row of the validation period with a known target, both splits,
+  with `part = "validation"`, selected as `unit_id,
   period, part`, `features`, the strata variables and then the `carry` columns not among them
   (each once), `target`, `split`, returned as `rows`, uncollected; no modelling tag (every row
-  is eligible). The same eligibility and null-target drop as Training's frame; `meta` gains
-  `eligible_rows`.
+  is eligible). The same eligibility as Training's frame; `meta` gains `eligible_rows`.
 - `@dataclass Frames(snapshot, rows, train, log, meta)`, in that order (Stage 3: no `test` or
   `validation` field): `snapshot` and `train` are pandas frames and `rows` a Spark `DataFrame`
   (EDA's compared periods for `eda`, test and validation for `evaluation`), each `None` when the
@@ -846,9 +851,11 @@ is one entity's area and the data-definition hash carries the entity (D-136; [ED
   `categorical` for a string or a boolean, `unsupported` for the rest, then the `features.kinds`
   overrides: a key naming no candidate, an override to `numeric` on a non-numeric column (nothing is
   cast) and an override on an unsupported column fail loud naming the column; never a pandas dtype,
-  N13); `estimate_collect(frame, name) -> dict` (the exact rows, bytes per row from a 10,000-row
-  sample's `memory_usage(deep=True)`, the estimate at twice the product; an empty frame fails loud
-  naming it); `collect_frame(frame, name, env) -> tuple[pd.DataFrame, dict]` (every collected frame
+  N13); `estimate_collect(frame, name, rows=None) -> dict` (the exact rows, counted unless the caller
+  passes them, bytes per row from a 10,000-row sample's `memory_usage(deep=True)`, the estimate at
+  twice the product; an empty frame fails loud naming it); `collect_frame(frame, name, env,
+  rows=None) -> tuple[pd.DataFrame, dict]` (a `rows` the caller already knows saves the count, and
+  a collect of another size fails loud; every collected frame
   is sorted in Spark, `orderBy("unit_id", "period")` before `toPandas()`, so pandas holds no second
   copy at the peak; `toPandas()` after joins and shuffles has no set row order and a seeded cap or a
   rerun must pick the same rows, T34; the printout, above the budget the callout of `CALLOUTS[name]`

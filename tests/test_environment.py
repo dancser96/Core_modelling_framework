@@ -55,7 +55,7 @@ def test_example_file_loads_once_its_placeholders_are_filled(
     assert (
         env.sources["entity_a"]["retail_mart"].path == f"{tmp_path}/data/01_raw/synthetic_dev/mart"
     )
-    assert (env.collect_budget_gb, env.theme) == (1.5, None)
+    assert (env.collect_budget_gb, env.theme, env.threads) == (1.5, None, None)
     monkeypatch.setenv(ENVIRONMENT_VARIABLE, path)
     assert load_environment() == env
 
@@ -102,6 +102,19 @@ def test_a_theme_is_refused_until_it_is_built() -> None:
     ):
         EnvironmentConfig(schema_version=1, roots=Roots(data="/data"), theme="corporate.yml")
     assert EnvironmentConfig(schema_version=1, roots=Roots(data="/data")).theme is None
+
+
+def test_threads_is_an_optional_positive_count(tmp_path: Path) -> None:
+    """The file may set the model libraries' thread count; absent it is None (the machine's
+    cores), and a count below one is refused, as are a boolean and a quoted number."""
+    head = f"schema_version: 1\nroots: {{data: {tmp_path}}}\n"
+    assert load_environment(_write_environment(tmp_path, head + "threads: 4\n")).threads == 4
+    assert load_environment(_write_environment(tmp_path, head)).threads is None
+    with pytest.raises(ValueError, match="threads\n  Input should be greater than 0"):
+        load_environment(_write_environment(tmp_path, head + "threads: 0\n"))
+    for value in ("true", '"4"', "2.0"):
+        with pytest.raises(ValueError, match="threads\n  Input should be a valid integer"):
+            load_environment(_write_environment(tmp_path, head + f"threads: {value}\n"))
 
 
 def test_spark_extra_refuses_named_and_fixed_keys() -> None:

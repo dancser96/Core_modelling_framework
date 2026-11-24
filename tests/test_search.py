@@ -1,7 +1,8 @@
 """The search on a small constructed frame (no Spark; `lgbm`): the budget's split, the space
 FLAML receives, our client folds as its splitter, the constraint and the categoricals in every
 trial fit, the search's best loss against the framework's own fold fits, and the refusals of a
-search that did not run as declared (D-140; `docs/context/lessons.md` T39, T42).
+search that did not run as declared (D-140; `docs/context/lessons.md` T39, T42). A zero-heavy
+amount is searched too, by FLAML's own metric and by a custom deviance.
 """
 
 import json
@@ -16,20 +17,23 @@ from scipy.special import expit
 from sklearn.metrics import log_loss, mean_tweedie_deviance
 
 from core_modelling.config import UseCaseConfig
+from core_modelling.config.schema import split_budget
 from core_modelling.model.encoder import encode_frame, fit_encoder
 from core_modelling.model.families import FAMILIES
-from core_modelling.training.search import (
+from core_modelling.training.automl import (
     NOT_CONSTANTS,
     TRIAL_COLUMNS,
-    Search,
     build_search_space,
+    fold_splitter,
+    read_trials,
+)
+from core_modelling.training.fold_models import every_dealing_loss, fit_fold_models
+from core_modelling.training.search import (
+    Search,
     check_judged_model,
     check_search,
     check_spaces,
-    fold_splitter,
-    read_trials,
     search_families,
-    split_budget,
 )
 from core_modelling.training.search_space import RANGES, family_space
 
@@ -85,16 +89,18 @@ def cfg(variant: Callable[..., UseCaseConfig]) -> UseCaseConfig:
 
 
 def _recorded_search(data: tuple, cfg: UseCaseConfig) -> tuple[Search, list[dict]]:
-    """One search of the panel under `cfg`, with every LightGBM fit FLAML made recorded: the
-    rows it received in their order, its constraints with their method, and its declared
-    categoricals."""
+    """One search of the panel under `cfg`, on the binary target or, for regression, the amount,
+    with every LightGBM fit FLAML made recorded: the rows it received in their order, its
+    constraints with their method, and its declared categoricals."""
     train, X, encoder = data
     fits: list[dict] = []
-    library_fit = lgb.LGBMClassifier.fit
+    model = lgb.LGBMRegressor if cfg.task == "regression" else lgb.LGBMClassifier
+    target = "amount" if cfg.task == "regression" else "target"
+    library_fit = model.fit
 
     def recording_fit(
-        self: lgb.LGBMClassifier, X_fit: pd.DataFrame, y_fit: np.ndarray, **arguments: object
-    ) -> lgb.LGBMClassifier:
+        self: lgb.LGBMModel, X_fit: pd.DataFrame, y_fit: np.ndarray, **arguments: object
+    ) -> lgb.LGBMModel:
         """LightGBM's fit, recording what it received."""
         fits.append({
             "rows": X_fit.index.to_numpy(),
@@ -106,8 +112,8 @@ def _recorded_search(data: tuple, cfg: UseCaseConfig) -> tuple[Search, list[dict
 
     folds = train[FOLD_COLUMNS[: cfg.training.fold_repeats]]
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(lgb.LGBMClassifier, "fit", recording_fit)
-        search = search_families(X, train["target"].to_numpy(), folds, encoder, MONOTONE, cfg, 1)
+        patch.setattr(model, "fit", recording_fit)
+        search = search_families(X, train[target].to_numpy(), folds, encoder, MONOTONE, cfg, 1)
     return search, fits
 
 
@@ -119,15 +125,18 @@ def searched(data: tuple, cfg: UseCaseConfig) -> tuple[Search, list[dict]]:
 
 def test_the_budget_is_split_in_the_lists_order(variant: Callable[..., UseCaseConfig]) -> None:
     """62 trials over four families are 16, 16, 15, 15; `training.trials` replaces the split;
-    a budget that leaves a family without a trial fails loud."""
+    a budget that leaves a family with fewer than two trials fails loud, since FLAML runs no
+    search on one."""
     families = ["lgbm", "xgboost", "xgb_limitdepth", "catboost"]
     assert split_budget(variant(training={"max_iter": 62})) == dict(
         zip(families, [16, 16, 15, 15], strict=True)
     )
-    counts = {"lgbm": 3, "xgboost": 1, "xgb_limitdepth": 7, "catboost": 2}
+    counts = {"lgbm": 3, "xgboost": 2, "xgb_limitdepth": 7, "catboost": 2}
     assert split_budget(variant(training={"max_iter": 62, "trials": counts})) == counts
-    with pytest.raises(ValueError, match="training.max_iter 3 leaves some of the 4 listed"):
-        split_budget(variant(training={"max_iter": 3}))
+    with pytest.raises(ValueError, match=r"leaves \['xgb_limitdepth', 'catboost'\] with fewer"):
+        split_budget(variant(training={"max_iter": 6}))
+    with pytest.raises(ValueError, match=r"leaves \['xgboost'\] with fewer than two trials"):
+        split_budget(variant(training={"max_iter": 62, "trials": {**counts, "xgboost": 1}}))
 
 
 def test_a_bad_space_or_budget_is_refused_before_any_work(
@@ -137,7 +146,7 @@ def test_a_bad_space_or_budget_is_refused_before_any_work(
     below the number of families, and a misspelt parameter in a family's space, which LightGBM
     would ignore without a word."""
     check_spaces(variant(training={"max_iter": 8}))
-    with pytest.raises(ValueError, match="leaves some of the 4 listed families without a trial"):
+    with pytest.raises(ValueError, match="with fewer than two trials"):
         check_spaces(variant(training={"max_iter": 3}))
     misspelt = {"lgbm": {"num_leafs": {"value": 8}}}
     with pytest.raises(ValueError, match=r"lgbm: the parameters \['num_leafs'\] are not taken"):
@@ -270,18 +279,68 @@ def test_a_deviance_is_searched_through_a_custom_metric(
     assert np.mean(losses) == pytest.approx(search.trials["fold_loss"].min(), abs=1e-12)
 
 
+@pytest.mark.parametrize(("metric", "objective"), [("rmse", None), ("poisson_deviance", "poisson")])
+def test_an_amount_is_searched_on_our_folds_and_judged_as_the_framework_fits(
+    data: tuple, variant: Callable[..., UseCaseConfig], metric: str, objective: str | None
+) -> None:
+    """A zero-heavy amount under regression's default objective, judged by FLAML's own RMSE,
+    and under Poisson, judged by the custom deviance: every trial fit gets our folds unshuffled
+    with the constraints and the categoricals, and the framework's fold models of both dealings
+    give the loss FLAML reported for the best trial, so the judged-model check agrees."""
+    training = {"estimator_list": ["lgbm"], "max_iter": 3, "fold_repeats": 2, "folds": FOLDS,
+                "seed": SEED, "monotone": MONOTONE, "objective": objective}  # fmt: skip
+    cfg = variant(**REGRESSION, decision={"metric": metric}, training=training)
+    search, fits = _recorded_search(data, cfg)
+    train, X, _ = data
+    y, folds = train["amount"].to_numpy(), train[FOLD_COLUMNS]
+    splits = list(fold_splitter(folds).split())
+    assert len(search.trials) == 3 and len(fits) == 3 * len(splits) + 1
+    for position, fit in enumerate(fits[:-1]):
+        assert np.array_equal(fit["rows"], splits[position % len(splits)][0])
+    assert {fit["constraints"] for fit in fits} == {"1,0,0,1,0"}
+    assert all(fit["categoricals"] == ["region"] for fit in fits)
+    margins, _ = fit_fold_models(X, y, folds, "lgbm", search.parameters, "regression", 1)
+    own = every_dealing_loss(X, y, folds, margins, "lgbm", search.parameters, cfg, 1)
+    record, warnings = check_judged_model(search, own, False, 2)
+    assert warnings == [] and record["agrees"]
+    assert own == pytest.approx(search.trials["fold_loss"].min(), abs=1e-12)
+
+
+def test_the_judged_model_check_runs_over_every_dealing(
+    searched: tuple[Search, list[dict]], data: tuple, cfg: UseCaseConfig
+) -> None:
+    """At two dealings the framework's fold models of both dealings give the loss FLAML
+    averaged for the best trial, so the check runs at every `fold_repeats` and its record says
+    what it compared."""
+    search, _ = searched
+    train, X, _ = data
+    y, folds = train["target"].to_numpy(), train[FOLD_COLUMNS]
+    margins, _ = fit_fold_models(X, y, folds, "lgbm", search.parameters, "binary", 1)
+    own = every_dealing_loss(X, y, folds, margins, "lgbm", search.parameters, cfg, 1)
+    record, warnings = check_judged_model(search, own, False, 2)
+    assert warnings == [] and record["agrees"] and record["dealings"] == 2
+    assert record["fold_models_loss"] == pytest.approx(record["search_loss"], abs=1e-12)
+
+
 def test_a_kept_model_the_search_did_not_judge_is_refused(
     searched: tuple[Search, list[dict]],
 ) -> None:
     """The framework's fold models must give the best trial's loss. Another loss stops a run on
     a trial budget; under a time budget, where FLAML may cut a trial's trees at its deadline, it
-    is the run's warning with both numbers."""
+    is the run's warning with both numbers; the record says whether they agreed."""
     search = searched[0]
     judged = search.trials["fold_loss"].min()
-    assert check_judged_model(search, judged + 1e-10, timed=False) == []
+    record, warnings = check_judged_model(search, judged + 1e-10, False, 2)
+    assert warnings == [] and record == {
+        "dealings": 2,
+        "search_loss": judged,
+        "fold_models_loss": judged + 1e-10,
+        "agrees": True,
+    }
     with pytest.raises(ValueError, match="judged another model than the one that would be kept"):
-        check_judged_model(search, judged + 1e-3, timed=False)
-    (warning,) = check_judged_model(search, judged + 1e-3, timed=True)
+        check_judged_model(search, judged + 1e-3, False, 2)
+    record, (warning,) = check_judged_model(search, judged + 1e-3, True, 2)
+    assert not record["agrees"]
     assert f"{judged:.6f}" in warning and "training.time_budget_s" in warning
 
 
@@ -324,6 +383,15 @@ def test_a_fold_the_metric_is_not_defined_on_stops_the_search(
         fold_splitter(train[["cv_fold"]].where(train["x2"] > -2))
     with pytest.raises(ValueError, match="must hold the same rows in the same order"):
         search_families(X, y, folds.iloc[::-1], encoder, {}, cfg, 1)
+
+
+def test_a_dealing_with_one_fold_is_refused() -> None:
+    """A dealing whose clients all got one fold leaves no validation side: refused, naming the
+    dealing's column, while a dealing of two folds passes."""
+    folds = pd.DataFrame({"cv_fold": [0, 1, 0, 1], "cv_fold_2": [0, 0, 0, 0]})
+    with pytest.raises(ValueError, match=r"the dealings \['cv_fold_2'\] hold one fold"):
+        fold_splitter(folds)
+    assert len(list(fold_splitter(folds[["cv_fold"]]).split())) == 2
 
 
 def test_check_search_refuses_a_search_that_did_not_run_as_declared(

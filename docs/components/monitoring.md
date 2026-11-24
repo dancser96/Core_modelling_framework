@@ -36,10 +36,11 @@ flags, and where they are written. The content is a few health and drift measure
 ## The drift reference (written by Evaluation, D-054)
 The only part of Monitoring that exists. Layer 2's
 yardstick, one per run: Evaluation writes it into the run's `evaluation/` folder
-(`evaluation/drift_reference.py::build_drift_reference(run_folder, cells, features)`, called by
+(`evaluation/drift_reference.py::build_drift_reference(stage2, counts, features)`, called by
 [evaluation](evaluation.md)), and it belongs to the bundle's `model_hash`, which
-`evaluation.json` records ([model bundle](model_bundle.md)). No extra Spark pass: EDA already
-counted every feature on every eligible row, and the score side reuses Evaluation's score cells.
+`evaluation.json` records ([model bundle](model_bundle.md)). One Spark aggregate of its own:
+EDA already counted every feature on every eligible row, and the score side
+(`reference_score_counts`) counts the scored test rows.
 1. **The final features' distributions over the observation window** (the bundle's features,
    in its order), per test period and pooled over them, from the run's own `stage2/` copy of
    EDA's counts (D-139 (b)), so an EDA rerun never changes it:
@@ -49,15 +50,16 @@ counted every feature on every eligible row, and the score side reuses Evaluatio
      `null` at EDA's bin orders;
    - per bin or level: its rows (the copy's current cells, folds and target bins added up) and
      its share of the period's rows. Every bin has a row in every period, an empty one at 0.
-2. **The distribution of the test scores** (`score`), from the test part's score cells at
-   replicate 0 (the actual rows, no bootstrap weight): the score bins pooled over the test
-   periods and merged into 10 quantile groups of about equal rows (`merge_bins`, a mass point
-   its own group), each with its lowest and highest score; per test period and pooled, each
+2. **The distribution of the test scores** (`score`), from every eligible test row Evaluation
+   scored, the rows with a null target included (they are scored and count here only, never in a
+   metric): their counts in the score bins, pooled over the test periods and merged into 10
+   quantile groups of about equal rows (`merge_bins`, a mass point its own group), each with its
+   lowest and highest score; per test period and pooled, each
    group's rows and share. It holds test clients only, while production also scores the train
    clients the model was fitted on, so an overfitted model starts Monitoring with a score PSI
    above zero.
-3. **On the true eligible population:** EDA's counts are every eligible row regardless of label,
-   and test is never sampled; the training sample's skew never enters.
+3. **On the true eligible population:** EDA's counts and the score counts are every eligible row
+   regardless of label, and test is never sampled; the training sample's skew never enters.
 4. **A valid input of `psi`:** each period's shares, empty bins at 0, sum to 1 over a bin list
    fixed per feature: they are the `expected_shares` of `statistics/distributions.psi` in the
    bins Monitoring will count production rows into; a test checks it.
@@ -66,10 +68,16 @@ counted every feature on every eligible row, and the score side reuses Evaluatio
    first group taking every lower score. **EDA's levels, not the encoder's:** Monitoring maps a
    level through the encoder (its pooled levels and `__other__`) when it is built.
 6. **Fails loud** when a final feature has no cells in the copy or in a test period, when a
-   level falls outside its bins, or when the cells hold no test row at replicate 0.
-7. **Versioned** (`CLAUDE.md` §2): `DRIFT_REFERENCE_SCHEMA_VERSION = 1`, stamped as
-   `drift_reference_schema_version` in `evaluation.json`. Nothing reads it yet: Monitoring
-   checks it when it is built. An Evaluation rerun rewrites the reference with `evaluation/`.
+   level falls outside its bins, when the score counts hold no test row, or when a scored test
+   row has a null or NaN score (`reference_score_counts`).
+7. **Versioned** (`CLAUDE.md` §2): `DRIFT_REFERENCE_SCHEMA_VERSION = 2` (the score side
+   counts every scored test row, a null target included, and the sidecar exists), stamped as
+   `drift_reference_schema_version` in `evaluation.json` and in the reference's own sidecar,
+   `evaluation/_drift_reference.json`, which also names the `model_hash`, the run, the
+   framework version and the time, so the reference says which model it belongs to without
+   the stage json. Nothing reads it yet: Monitoring checks it when it is built. An Evaluation
+   rerun rewrites the reference with `evaluation/`; register takes its own snapshot of it, so
+   a production model's yardstick cannot move (M2.4, not built).
 
 **Stored tables** (`evaluation/tables/`, named with the prefix `drift_` because `features` is
 already the feature table's name):

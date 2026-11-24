@@ -61,7 +61,7 @@ This spec settles OD-11 (the ledger's shape).
    commit marker: a crash in between leaves a new ledger beside the old `eda.json`, which
    `read_ledger` refuses by its run token, never an old ledger beside a new `eda.json`. An EDA
    run starts from a fresh ledger, so **an EDA rerun removes Feature Checks' columns** (and EDA
-   removes the `feature_checks/` folder, A22).
+   removes the `feature_checks/` folder).
 3. Feature Checks reads `eda/` with `read_upstream` (refused when EDA's settings digest differs from
    the current resolved config's, or a source moved in the environment file) and the ledger with `read_ledger(folder, data_definition_hash,
    expect={"eda": <eda.json's run_token>})` (another data definition, or a ledger from another EDA
@@ -83,8 +83,10 @@ This spec settles OD-11 (the ledger's shape).
 - `render_decisions`: the derived columns, for a view;
 - `resolve_features`: Training's feature set.
 
-`src/core_modelling/training/ledger_run.py` holds the per-run part: `build_run_ledger`,
-`save_run_ledger`, `read_run_ledger`, and `signoff_table`, which reads it.
+The per-run part: `training/ledger_run.py` holds `build_run_ledger`, `save_run_ledger` and
+`ledger_warnings`; `training/signoff.py` holds `signoff_table`, which reads it;
+`run_artifacts.py` holds `read_run_ledger` and the constants Training and the readers share
+(`LEDGER_RUN_SCHEMA_VERSION`, `LEDGER_RUN_FILE`, `SIDECAR_FILE`, `RULES`, `OUTCOMES`).
 
 ### How it is checked
 Light tests (`CLAUDE.md` §7). The open-flag cases (an empty `flag` entry closes a finding; a
@@ -97,7 +99,8 @@ a stage's rerun leaves none of its earlier columns; `save_ledger` refuses a deri
 incomplete meta, and a failed save keeps the previous ledger; another `ledger_schema_version`,
 data definition or stage run token is refused; the list, nullable-int and bool columns survive
 the parquet round trip unchanged. The per-run part: its columns and sidecar; a declared
-constraint against EDA's direction marks the row and raises the warning.
+constraint against EDA's direction marks the row and raises the warning, and so does a final
+feature the final model never split on.
 
 ## Level 3: Details
 
@@ -117,7 +120,7 @@ constraint against EDA's direction marks the row and raises the warning.
 4. **Stages append, never rewrite.** `add_columns` refuses a column that belongs to another
    stage; a stage's rerun replaces only its own columns; an EDA rerun starts a new ledger.
 5. **Derived columns are never stored.** `held`, `kept`, `excluded` and `verdict` exist only in
-   `render_decisions`' output; `save_ledger` refuses a frame that holds them (A21).
+   `render_decisions`' output; `save_ledger` refuses a frame that holds them.
 6. **The per-run part is separate:** Training never writes to the Stage 2 file, and nothing
    rewrites the per-run file once Training has written it ([below](#the-per-run-part)).
 7. **Task-agnostic column names.** One column set for every task: `concordance`, never AUC (for a
@@ -177,7 +180,7 @@ meanings below are one line each.
 | Derived | `verdict` | str | `render_decisions` | `pass`, `held`, `kept`, `excluded` or `auto_excluded` |
 
 The columns Training needs are written now: `kind` and `levels` (the encoder), `cluster`
-(grouped importance and a top-per-cluster rule, M2.3), `lineage` and `unsupported` (A35).
+(grouped importance and a top-per-cluster rule, M2.3), `lineage` and `unsupported`.
 Feature Checks writes every one of its columns on every run: a skipped step's are null (floats
 NaN, `cluster` a null Int64, `partners` None), so readers always find the column set.
 
@@ -237,7 +240,7 @@ The hold-out rule is [feature checks](feature_checks.md)'s (D-134); in short:
   Each token (`artifacts.new_run_token`, 12 hex characters) is the one the stage wrote as
   `run_token` into its `<stage>.json`.
 - Both files are written to temporary names (removed when a write fails) and renamed, the
-  sidecar first, so a crash never leaves half a ledger (A22) and one between the two renames
+  sidecar first, so a crash never leaves half a ledger and one between the two renames
   leaves the new run's tokens beside the old table, which a reader refuses. The stage folder is written after the ledger, so the stage's
   json is the commit marker, and a reader passing the tokens of the stage jsons it read
   (`expect`) refuses a ledger from another run: Feature Checks passes EDA's, Training (M2.3) both.
@@ -262,7 +265,7 @@ bundle](model_bundle.md#the-run-folder)).
 4. **Evaluation never rewrites it.** Its per-feature numbers (the test contribution shares, the
    unseen and null shares on test and validation) are a table of its own under `evaluation/`,
    joined when the report is drawn ([evaluation](evaluation.md)).
-5. **The sidecar**, `_ledger_run.json`, holds `ledger_run_schema_version` (1),
+5. **The sidecar**, `_ledger_run.json`, holds `ledger_run_schema_version` (2),
    `framework_version`, `written_at`, `run_id`, `data_definition_hash` and `stage2` (the run
    tokens of the EDA and Feature Checks runs the run paired with); `read_run_ledger` refuses
    another version, as for the Stage 2 file.
@@ -273,11 +276,12 @@ bundle](model_bundle.md#the-run-folder)).
 | Selection | `selected` | bool | in the final list: no rule dropped it |
 | Selection | `dropped_by` | str | `cluster`, `floor` or `prune`; null when selected |
 | Selection | `cluster_value`, `cluster_threshold`, `cluster_outcome` | float, float, str | the cluster rule: the train concordance it ranked on, the representative's, the outcome |
-| Selection | `floor_value`, `floor_threshold`, `floor_outcome` | float, float, str | the floor: the train concordance (best order for a numeric the train split shows as non-monotone, by EDA's rule), 0.5 + z · SE, the outcome |
+| Selection | `floor_value`, `floor_threshold`, `floor_outcome` | float, float, str | the floor: the train concordance (best order for a numeric the train split shows as non-monotone, by EDA's rule), 0.5 + z · SE, the outcome; a feature that passed on its null indicator's concordance shows that one and its own 0.5 + z · SE |
+| Selection | `floor_cleared_by` | str | the statistic that cleared the floor: `concordance`, `concordance_best_order` or `null_concordance` (the null indicator's); null when the floor dropped the feature or did not run |
 | Selection | `prune_value`, `prune_threshold`, `prune_outcome` | float, float, str | pruning: the out-of-fold contribution share, the best noise column's, the outcome |
-| Selection | `represents` | list[str] | the cluster members dropped in its favour |
+| Selection | `represents` | list[str] | the cluster members dropped in its favour; clusters only, never a floor drop |
 | Selection | `protected` | bool | a person's `keep` in force: measured by every rule, dropped by none |
-| Model | `in_model` | bool | used by the final model: at least one split, or gain above zero when `splits` is null |
+| Model | `in_model` | bool | used by the final model: at least one split, or gain above zero when `splits` is null; a final feature with false stays in the bundle's list and changes no score, and Training warns |
 | Model | `splits`, `gain_share` | int, float | the split count and the share of the gain, from the family's `describe`; `splits` is null for CatBoost, whose `describe` gives no split counts |
 | Model | `contribution_share`, `contribution_rank` | float, int | the share of the mean absolute out-of-fold contribution on train clients, and its rank |
 | Model | `direction_model` | str | `+` or `-`: the sign of the rank correlation between the feature's values and its out-of-fold contributions; null for an unordered categorical or a constant |
@@ -290,10 +294,13 @@ bundle](model_bundle.md#the-run-folder)).
 | Train | `train_sign` | int | the raw sign of its direction there: 1, −1, or 0 when unavailable |
 
 - The selection columns come from Training's long `selection` table (`training/tables/`; `feature,
-  rule, value, threshold, outcome, represented_by`, one row per feature and rule;
+  rule, value, threshold, outcome, represented_by, cleared_by`, one row per feature and rule;
   [training](training.md#what-training-writes)): per rule its value, threshold and outcome,
-  `dropped_by` (the rule with a `dropped` row) and `represents` (the features whose `cluster` row
-  is `dropped` with this one as `represented_by`). A `protected` or `undone` row is not a drop.
+  `floor_cleared_by` (the floor row's `cleared_by`), `dropped_by` (the rule with a `dropped`
+  row) and `represents` (the features whose `cluster` row is `dropped` with this one as
+  `represented_by`). A `floor` row's `represented_by`, the member that carries a shared null
+  pattern ([training](training.md#selection)), stays in the `selection` table and is not
+  carried into `represents`. A `protected` or `undone` row is not a drop.
 - An outcome is `passed`, `dropped`, `protected` (the rule would drop it; a `keep` holds it) or
   `undone` (pruning only: the decision's metric as a loss, out of fold and averaged over the
   folds, rose without the candidates, so nothing was pruned). A rule switched off,
@@ -311,14 +318,17 @@ bundle](model_bundle.md#the-run-folder)).
 
 ### Code map
 - `src/core_modelling/ledger.py`: the column lists as plain data (`COLUMNS_BY_STAGE`: `identity`,
-  `eda`, `feature_checks`; `DERIVED_COLUMNS` apart) and the seven functions below; the files go
-  through `artifacts.py` (`write_parquet`, `read_parquet`, `write_json`). The callers:
+  `eda`, `feature_checks`; `DERIVED_COLUMNS` apart), the seven functions below and
+  `missing_stage2` (EDA and Feature Checks when they have not run on a data definition, which
+  `run` reads at `autonomous` and Training's gate refuses on); the files go through
+  `artifacts.py` (`write_parquet`, `read_parquet`, `write_json`). The callers:
   - EDA's stage function: `create_ledger`, `add_columns(..., "eda")`, `save_ledger`;
   - Feature Checks' stage function: `read_ledger(..., expect={"eda": …})`,
     `add_columns(..., "feature_checks")`, `save_ledger`, and `render_decisions` for its report and
     review view; its steps' `read_candidates`;
   - Training: `read_ledger(..., expect={"eda": …, "feature_checks": …})`, `resolve_features`;
-    `training/ledger_run.py` for the per-run part.
+    `training/ledger_run.py` for the per-run part (`read_run_ledger` and the constants it shares
+    with the readers are `run_artifacts.py`'s).
 - Reading order for review: `resolve_features` and `render_decisions` first (the hold-out lives
   there), then `add_columns`.
 
@@ -352,9 +362,6 @@ def render_decisions(
 def resolve_features(ledger: pd.DataFrame, resolved: UseCaseConfig) -> list[str]: ...
 
 # training/ledger_run.py, the per-run part (private)
-LEDGER_RUN_SCHEMA_VERSION = 1
-
-
 def build_run_ledger(
     selection: pd.DataFrame,
     statistics: pd.DataFrame,
@@ -367,7 +374,11 @@ def build_run_ledger(
     stage2: pd.DataFrame,
     kept: list[str],
 ) -> pd.DataFrame: ...
+def ledger_warnings(run_ledger: pd.DataFrame) -> list[str]: ...
 def save_run_ledger(ledger: pd.DataFrame, run_folder: str, meta: dict) -> None: ...
+
+# run_artifacts.py, shared with every reader of a run (private)
+LEDGER_RUN_SCHEMA_VERSION = 2
 def read_run_ledger(run_folder: str) -> pd.DataFrame: ...
 ```
 
@@ -379,6 +390,9 @@ def read_run_ledger(run_folder: str) -> pd.DataFrame: ...
   features (an unknown feature, rule, outcome or representative, a repeated feature and rule, two
   drops), model inputs that are not exactly the final list, and a feature the encoder or the
   train statistics lack.
+- `ledger_warnings` gives the two warnings the ledger shows: a constraint against EDA's direction
+  or its `non_monotone` mark (the constraint holds), and a final feature the final model never
+  split on (it stays in the bundle's feature list and changes no score).
 - `save_run_ledger` refuses columns other than `LEDGER_RUN_COLUMNS` in order, and a `meta` other
   than `run_id`, `data_definition_hash` and `stage2`. `read_run_ledger` refuses a missing sidecar
   and another `ledger_run_schema_version` before it reads the parquet.
@@ -417,4 +431,4 @@ None specific: the crunch had include and exclude lists only, which is why it co
 feature was in or out.
 
 ## Open questions
-- Readable labels per feature: not in Stage 2 (Q452; D-046).
+- Readable labels per feature: not in Stage 2 (D-046).

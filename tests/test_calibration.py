@@ -5,7 +5,9 @@ simulation planted or against an independent maximum-likelihood fit: Platt recov
 pair and leaves a calibrated margin alone, beta drops a negative term and refits, the offset
 follows the method of sampling, the level factor's interval is a client bootstrap that a rerun
 draws again and that warns when a few rows decide the level, every allowed method of each task
-gives a calibration the bundle accepts, and an anti-predictive model stops Training.
+gives a calibration the bundle accepts, and an anti-predictive model stops Training. Training's
+own step that fits the fold models and calibrates is run on a small frame too: its calibration
+is the fit on the fold models' out-of-fold margins of the train rows, never on in-sample ones.
 """
 
 import json
@@ -20,7 +22,10 @@ from scipy.special import expit, log_expit, logit
 
 from core_modelling.config import UseCaseConfig
 from core_modelling.config.schema import TASK_CHOICES
-from core_modelling.model.calibration import check_calibration
+from core_modelling.dataset import Frames
+from core_modelling.model.calibration import check_calibration, check_order_kept
+from core_modelling.model.families import FAMILIES
+from core_modelling.run_artifacts import CALIBRATION_COLUMNS
 from core_modelling.statistics.calibration import (
     UNPENALISED,
     _client_weights,
@@ -31,11 +36,22 @@ from core_modelling.statistics.calibration import (
     prior_shift_offset,
 )
 from core_modelling.statistics.losses import metric_loss
-from core_modelling.training.calibrate import CALIBRATION_COLUMNS, calibrate
+from core_modelling.training.calibrate import calibrate
+from core_modelling.training.fold_models import (
+    FOLD_COLUMN,
+    every_dealing_loss,
+    fit_final_model,
+    fit_fold_models,
+)
+from core_modelling.training.run import Opened, _fit_out_of_fold
+from core_modelling.training.search import Search
+from core_modelling.training.train_data import TrainData
 
 ROWS = 20_000
 ROWS_PER_CLIENT = 4
 NO_SAMPLING = {"method": None}
+# A LightGBM that overfits 1,200 rows: deep trees on few rows each, at a high rate
+OVERFIT = {"n_estimators": 60, "num_leaves": 16, "learning_rate": 0.2, "min_child_samples": 5}
 
 
 def _binary_rows(a: float, b: float, seed: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -154,7 +170,7 @@ def test_the_offset_follows_the_method_of_sampling(cc_config: UseCaseConfig) -> 
     table = results["negative"][1]
     assert table["offset"].tolist() == [results["negative"][0]["offset"]] * 3
     assert table["sampled_rate"].tolist() == [sampled_rate] * 3
-    none_loss = table.loc[table["method"] == "none", "oof_log_loss"].item()
+    none_loss = table.loc[table["method"] == "none", "oof_loss"].item()
     assert none_loss == metric_loss("log_loss", y, expit(margin))
     assert results["none"][1]["true_rate"].isna().all()
     with pytest.raises(ValueError, match="strictly between 0 and 1"):
@@ -184,7 +200,7 @@ def test_a_level_factor_on_a_spread_target_is_tight_and_quiet(
     calibration, table, warnings = calibrate(predicted, y, clients, cfg, NO_SAMPLING)
     assert warnings == [] and calibration["parameters"] == {}
     assert table["factor"].tolist() == [level["factor"]] * 2
-    assert table["oof_log_loss"].isna().all()
+    assert table["oof_loss"].isna().all()
 
 
 def test_a_level_decided_by_a_few_rows_warns(variant: Callable[..., UseCaseConfig]) -> None:
@@ -252,7 +268,7 @@ def test_every_allowed_method_gives_a_calibration_the_bundle_accepts(
     assert table.loc[table["chosen"], "method"].tolist() == [method]
     stored = table.loc[table["chosen"], "parameters"].item()
     assert json.loads(stored) == calibration["parameters"]
-    assert table["oof_log_loss"].notna().all() == (task == "binary")
+    assert table["oof_loss"].notna().all() == (task == "binary")
 
 
 def test_an_anti_predictive_model_stops_training(
@@ -284,3 +300,116 @@ def test_an_anti_predictive_model_stops_training(
         _, table, _ = calibrate(cancelling, y, clients, cfg, NO_SAMPLING)
     mean_row = table.set_index("method").loc["mean"]
     assert not np.isfinite(mean_row["factor"]) and mean_row["parameters"] == '{"factor": null}'
+
+
+def test_training_refuses_a_fit_by_the_bundles_rule(
+    cc_config: UseCaseConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Training checks every fitted method with the rule the bundle applies when it loads one,
+    so a beta fit with one negative term is refused at Training, not only at the bundle's load,
+    even when another method is chosen."""
+    margin, y, clients = _binary_rows(1.0, 0.0)
+
+    def negative_beta(margin: np.ndarray, y: np.ndarray) -> dict[str, float]:
+        """A beta fit whose `a` is negative while `b` is positive."""
+        return {"a": -0.1, "b": 0.5, "c": 0.0}
+
+    monkeypatch.setattr("core_modelling.tasks.fit_beta", negative_beta)
+    with pytest.raises(ValueError, match=r"the fitted beta calibration .* reverses or flattens"):
+        calibrate(margin, y, clients, cc_config, NO_SAMPLING)
+
+
+@pytest.mark.parametrize(
+    ("method", "parameters"),
+    [("platt", {"a": np.nan, "b": 0.0}), ("beta", {"a": np.inf, "b": 0.5, "c": 0.0}),
+     ("beta", {"a": 0.5, "b": np.nan, "c": 0.0})],
+)  # fmt: skip
+def test_a_non_finite_parameter_never_passes_the_order_check(method: str, parameters: dict) -> None:
+    """A NaN compares False, so `a <= 0` alone would let a NaN slope through: a non-finite
+    parameter is refused before the order is judged."""
+    with pytest.raises(ValueError, match="it must be a finite number"):
+        check_order_kept(method, parameters)
+
+
+def _small_train(task: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """1,200 train rows of 400 clients, three rows each, in four client folds: three numerics
+    and a target driven by two of them, 0/1 for binary, else that times a lognormal amount.
+    Returns the train frame (`unit_id`, `target`, `cv_fold`) and the encoded frame."""
+    rng = np.random.default_rng(0)
+    X = pd.DataFrame(rng.normal(size=(1200, 3)), columns=["x1", "x2", "x3"])
+    signal = (X["x1"] - 0.5 * X["x2"]).to_numpy()
+    y = (rng.random(1200) < expit(signal - 1.0)).astype(np.int64)
+    if task == "regression":
+        y = y * np.exp(1.0 + 0.4 * signal)
+    clients = np.arange(1200) // 3
+    return X.assign(unit_id=clients, target=y, cv_fold=clients % 4), X
+
+
+def _opened_step(
+    cfg: UseCaseConfig,
+    train: pd.DataFrame,
+    X: pd.DataFrame,
+    params: dict,
+    judged_loss: float,
+    collected: pd.DataFrame | None = None,
+) -> tuple[Opened, TrainData, Search]:
+    """What Training's fold-model step reads, with only the fields it uses filled: the run's
+    config and its collected frame (`collected`, else `train`) without sampling, the encoded
+    train rows with their target and folds, and a search whose best `lgbm` trial reported
+    `judged_loss` at `params`."""
+    collected = train if collected is None else collected
+    meta = {"sampling": NO_SAMPLING}
+    frames = Frames(snapshot=None, rows=None, train=collected, log=[], meta=meta)
+    opened = Opened(
+        resolved=cfg, entries=[], stage2=None, opening={},
+        frames=frames, encoder={}, screened=None, run="run_001", log=[], warnings=[],
+    )  # fmt: skip
+    data = TrainData(
+        X=X, y=train["target"].to_numpy(), folds=train[[FOLD_COLUMN]], encoder={}, monotone={},
+        entered_encoder={}, shares=None, selection=None, statistics=None,
+    )  # fmt: skip
+    trials = pd.DataFrame({"family": ["lgbm"], "fold_loss": [judged_loss]})
+    return opened, data, Search("lgbm", params, trials, {}, {})
+
+
+@pytest.mark.parametrize(
+    ("task", "objective", "method"),
+    [("binary", "log_loss", "platt"), ("regression", "tweedie", "mean")],
+)
+def test_training_calibrates_on_its_own_out_of_fold_margins(
+    variant: Callable[..., UseCaseConfig], task: str, objective: str, method: str
+) -> None:
+    """Training's step 6 fits the fold models and calibrates on their margins. On an
+    overfitting model the in-sample margins call for a very different calibration (a Platt
+    slope several times the out-of-fold one; a level factor far from it), so the step's
+    calibration being the fit on the out-of-fold margins, to the last digits, shows it never
+    read in-sample margins. The step reads the train rows alone: a train frame holding rows
+    without a margin, test rows say, fails loud instead of entering the fit."""
+    cfg = _config(variant, task, objective, method)
+    train, X = _small_train(task)
+    y, clients, folds = train["target"].to_numpy(), train["unit_id"].to_numpy(), train[["cv_fold"]]
+    encoder = {"schema_version": 1, "unordered": "native", "min_level_client_count": 50,
+               "features": [{"name": name, "kind": "numeric"} for name in X.columns]}  # fmt: skip
+    power = cfg.training.tweedie_variance_power
+    fixed = FAMILIES["lgbm"].fixed_params(task, objective, encoder, {}, 7, 1, power)
+    params = {**fixed, **OVERFIT}
+    margins, _ = fit_fold_models(X, y, folds, "lgbm", params, task, 1)
+    judged = every_dealing_loss(X, y, folds, margins, "lgbm", params, cfg, 1)
+    out = _fit_out_of_fold(*_opened_step(cfg, train, X, params, judged), threads=1)
+    in_sample = fit_final_model(X, y, "lgbm", params, task, 1).margins
+    np.testing.assert_array_equal(out.margins, margins)
+    assert out.calibration["method"] == method
+    if task == "binary":
+        out_of_fold, in_fit = fit_platt(margins, y), fit_platt(in_sample, y)
+        assert out.calibration["parameters"] == pytest.approx(out_of_fold, rel=1e-12)
+        assert in_fit["a"] > 3 * out_of_fold["a"]
+    else:
+        out_of_fold = level_factor(np.exp(margins), y, clients)["factor"]
+        in_fit = level_factor(np.exp(in_sample), y, clients)["factor"]
+        assert out.calibration["parameters"]["factor"] == pytest.approx(out_of_fold, rel=1e-12)
+        assert abs(in_fit - out_of_fold) > 0.2
+    test_rows = train.assign(unit_id=train["unit_id"] + 10_000)  # other clients, no margins
+    collected = pd.concat([train, test_rows])
+    opened, data, search = _opened_step(cfg, train, X, params, judged, collected)
+    with pytest.raises(ValueError, match="the margins, the target and the clients differ in rows"):
+        _fit_out_of_fold(opened, data, search, 1)

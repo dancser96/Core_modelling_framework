@@ -5,9 +5,10 @@ target per period and by stratum, and the reference groups (docs/components/eda.
 The window tables read the frames' log, the D-088 population counts and the cells; the snapshot
 tables read the collected snapshot. Every label statistic uses the snapshot's eligible rows with
 a known target (`known_rows`, §4.4); the reference groups are label-free and use every snapshot
-row. `cap_levels` and `summarise_groups` are shared by every group table, here and in
-`deep_dives.py`. `is_numeric` and `reference_sides` are public because `run.py` and
-`explore.py` judge a column and cut a tag's sides the same way.
+row. `summarise_groups` is shared by every group table, here and in `deep_dives.py`, with
+`dataset.counts.cap_levels`, which caps a column's levels as the counts table names them.
+`is_numeric` and `reference_sides` are public because `run.py` and `explore.py` judge a column
+and cut a tag's sides the same way.
 
 `reference_groups` returns one long table, per modelling tag, with three sections, each side
 being the rows the tag excludes (`tag = 0`) against the modelling population (`eligible = 1`):
@@ -26,10 +27,10 @@ import numpy as np
 import pandas as pd
 
 from core_modelling.config.schema import Strata
-from core_modelling.dataset.counts import BLANK_LEVEL, NULL_BIN, OTHER, RESERVED_BINS
+from core_modelling.dataset.counts import cap_levels
 from core_modelling.reporting.formats import COUNT, SHARE, plain_number
 from core_modelling.statistics.cells import level_share_difference, population_cells
-from core_modelling.statistics.distributions import level_text, standardised_difference
+from core_modelling.statistics.distributions import standardised_difference
 from core_modelling.tasks import TASK_SPECS
 
 STRATA_KEYS = ["variable", "level", "feature", "feature_group"]
@@ -53,23 +54,6 @@ def is_numeric(values: pd.Series, kind: str | None) -> bool:
     if kind is not None:
         return kind == "numeric"
     return pd.api.types.is_numeric_dtype(values) and not pd.api.types.is_bool_dtype(values)
-
-
-def cap_levels(values: pd.Series, max_levels: int) -> pd.Series:
-    """Each value as a level label, an ordered categorical on the same index: the `max_levels`
-    levels with the most rows (ties by label) as their text (`level_text`, so a snapshot table
-    names a level as the counts table's cells do), a real level named
-    like a reserved bin or blank quoted (`'null'`, `''`, `' '`), the rest `__other__`, null (a
-    NaN too) its own level `null` (N16); ordered by rows, then `__other__`, then `null`."""
-    text = values.dropna().map(level_text).astype(str)  # str: an empty map keeps a float dtype
-    quoted = text.isin(RESERVED_BINS) | text.str.match(BLANK_LEVEL)
-    text = text.where(~quoted, "'" + text + "'")
-    counts = text.value_counts().sort_index().sort_values(ascending=False, kind="stable")
-    kept = list(counts.index[:max_levels])
-    order = kept + ([OTHER] if len(counts) > max_levels else [])
-    order += [NULL_BIN] if values.isna().any() else []
-    labels = text.where(text.isin(kept), OTHER).reindex(values.index).fillna(NULL_BIN)
-    return pd.Series(pd.Categorical(labels, categories=order, ordered=True), index=values.index)
 
 
 def summarise_groups(

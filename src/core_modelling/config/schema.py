@@ -10,7 +10,8 @@ analysis, `time.period`) is held as its last day, the framework's one convention
 write it as any day the period spec accepts (a month: its first or its last day, D-129). The
 Stage 2 and Stage 3 fields changed in place, with no schema bump and no migration (D-136). The
 modelling choices a task decides (`TASK_CHOICES`) are checked against the task and, left null,
-filled at every validation, so the config states the value in force.
+filled at every validation, so the config states the value in force. Two rules derive values
+from a section on read: `snapshot_period` and `split_budget`, each family's trial budget.
 """
 
 import re
@@ -467,7 +468,7 @@ class Stability(StrictModel):
     range must reach it × |`concordance_window` − 0.5| (0.5: the periods differ by half the
     signal; 2: from the full signal to its mirror image), so a wobble that matters for a weak
     feature does not flag a strong one. `concordance_range_floor` is the absolute range it never
-    goes below, so a feature with no signal needs a real swing (the EDS's Q547).
+    goes below, so a feature with no signal needs a real swing (the EDS's decision).
     """
 
     psi_note_min: float = Field(default=0.10, gt=0)
@@ -967,3 +968,27 @@ def snapshot_period(cfg: UseCaseConfig) -> date:
     if cfg.eda.snapshot == "last":
         return cfg.time.observation_window.last
     return cfg.eda.snapshot
+
+
+def split_budget(cfg: UseCaseConfig) -> dict[str, int]:
+    """Each listed family's trial budget, in the list's order: `training.trials` when given,
+    else `training.max_iter` in equal shares with the remainder, one trial each, to the first
+    families (62 over four is 16, 16, 15, 15). A family left with fewer than two trials fails
+    loud: on one trial FLAML 2.7 runs no search, it fits the start configuration and judges
+    nothing, so there would be no trial to keep."""
+    training = cfg.training
+    families = training.estimator_list
+    if training.trials is not None:
+        budgets = {family: training.trials[family] for family in families}
+    else:
+        share, remainder = divmod(training.max_iter, len(families))
+        budgets = {f: share + (position < remainder) for position, f in enumerate(families)}
+    short = [family for family, trials in budgets.items() if trials < 2]
+    if short:
+        raise ValueError(
+            f"the trial budget (training.max_iter {training.max_iter} over {len(families)} "
+            f"families, or training.trials) leaves {short} with fewer than two trials, and FLAML "
+            "runs no search on one: raise training.max_iter, list fewer families in "
+            "training.estimator_list, or give each family at least 2 in training.trials"
+        )
+    return budgets

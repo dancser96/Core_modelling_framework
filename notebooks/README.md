@@ -27,8 +27,11 @@ package functions and a way to learn how things work under the hood (D-039,
      to the framework, not its maintainer. After writing, one re-read for conciseness (cut what a
      first-time user does not need, one or two sentences per bullet) before the notebook is done.
      Text lives in the markdown cells: a code cell displays tables, charts and at most a Markdown
-     heading per item, never a paragraph rendered as an HTML output, and no machine-specific
-     numbers (budgets, run times).
+     heading per item, never a paragraph of guide text rendered as an HTML output, and no
+     machine-specific numbers (budgets, run times). A line of run facts the package builds (a
+     run's opening, its summary, its warnings) may be shown as a cell's HTML output, since it is
+     the run's output, not guidance. An optional cell may call a pinned library the package does
+     not import (notebook 05's `shap` plots from the stored contributions).
   2. **Setup cell:** environment adapter (compat shim + Spark) and config load.
   3. **One call per step:** `run_<stage>(cfg)` or another Public API function, each preceded by a
      short markdown cell saying what to check in its output.

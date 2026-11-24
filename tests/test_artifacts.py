@@ -18,6 +18,7 @@ from core_modelling.artifacts import (
     SETTINGS_PATHS_BY_STAGE,
     STAGE_SCHEMA_VERSIONS,
     StageResult,
+    _sibling,
     check_upstream,
     list_data_definitions,
     new_run_token,
@@ -178,12 +179,53 @@ def test_a_failed_swap_restores_the_previous_stage(
     assert [path.name for path in tmp_path.iterdir()] == ["eda"]
 
 
+def test_an_aside_folder_that_cannot_be_removed_is_a_note(
+    cc_config: UseCaseConfig, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Once the new folder is in, the stage is committed: when the folder it replaced cannot be
+    removed (here a read-only subfolder inside it), the write prints a note and returns, and the
+    next write names the leftover."""
+    folder = str(tmp_path / "eda")
+    write_stage(_result(cc_config, run=1), folder, "eda")
+    locked = tmp_path / "eda" / "locked"
+    locked.mkdir()
+    (locked / "file").write_text("x")
+    locked.chmod(0o500)
+    try:
+        write_stage(_result(cc_config, run=2), folder, "eda")
+        assert read_stage(folder, "eda")[0]["run"] == 2
+        assert "is written and committed; the folder it replaced" in capsys.readouterr().out
+        (aside,) = tmp_path.glob("eda.old-*")
+        with pytest.raises(ValueError, match="did not finish"):
+            write_stage(_result(cc_config, run=3), folder, "eda")
+    finally:
+        for path in tmp_path.glob("eda.old-*/locked"):
+            path.chmod(0o700)
+
+
 def test_a_left_over_temporary_folder_is_refused(cc_config: UseCaseConfig, tmp_path: Path) -> None:
-    """A `.tmp-*` or `.old-*` sibling from a crashed write is named, never reused or removed."""
+    """A `.tmp-*` or `.old-*` sibling from a crashed write is named, never reused or removed; an
+    `.old-*` one without the folder is the last committed folder, to be renamed back."""
     (tmp_path / "eda.old-123").mkdir()
-    with pytest.raises(ValueError, match=r"eda\.old-123.*did not finish"):
+    with pytest.raises(ValueError, match=r"eda\.old-123.*is the last committed eda; rename it"):
         write_stage(_result(cc_config), str(tmp_path / "eda"), "eda")
     assert [path.name for path in tmp_path.iterdir()] == ["eda.old-123"]
+    (tmp_path / "eda").mkdir()
+    with pytest.raises(ValueError, match=r"eda\.old-123.*did not finish"):
+        write_stage(_result(cc_config), str(tmp_path / "eda"), "eda")
+
+
+def test_a_temporary_sibling_carries_a_random_token(
+    cc_config: UseCaseConfig, tmp_path: Path
+) -> None:
+    """Two temporary siblings of one folder in one process get different names, so another
+    session or host with the same process id cannot collide; a left-over one is still named."""
+    target = tmp_path / "eda"
+    first, second = _sibling(target, "tmp"), _sibling(target, "tmp")
+    assert first != second and first.name.startswith("eda.tmp-")
+    first.mkdir()
+    with pytest.raises(ValueError, match=rf"{first.name}.*did not finish"):
+        write_stage(_result(cc_config), str(target), "eda")
 
 
 def test_a_rerun_rewrites_the_folder_whole(cc_config: UseCaseConfig, tmp_path: Path) -> None:
@@ -214,7 +256,7 @@ def test_a_folder_written_beforehand_is_moved_in_with_the_stage(
     cc_config: UseCaseConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A folder handed to `write_stage` (Evaluation's scores, which Spark writes beside the stage
-    as `<folder>.scores-<pid>`) is inside the stage folder after the commit and in the returned
+    as `<folder>.scores-<token>`) is inside the stage folder after the commit and in the returned
     paths, the stamp's tables unchanged; a write failing before the swap leaves no stage folder
     and the handed-in folder where it was, which a later write names as left over."""
     folder, staged = tmp_path / "evaluation", tmp_path / "evaluation.scores-1"
@@ -235,7 +277,7 @@ def test_a_folder_written_beforehand_is_moved_in_with_the_stage(
     again = {"scores": str(tmp_path / "other.scores-3")}
     with pytest.raises(ValueError, match=r"other\.scores-2'\] are left from an earlier write"):
         write_stage(_result(cc_config), str(other), "evaluation", folders=again)
-    with pytest.raises(ValueError, match=r"must be a written folder named other\.scores-<pid>"):
+    with pytest.raises(ValueError, match=r"must be a written folder named other\.scores-<token>"):
         write_stage(_result(cc_config), str(other), "evaluation", folders={"scores": str(folder)})
 
 
@@ -400,7 +442,7 @@ def test_check_upstream_refuses_artifacts_read_from_moved_sources(
     variant: Callable[..., UseCaseConfig],
 ) -> None:
     """A source the environment file maps elsewhere (same logical name, so the same data
-    definition) refuses the stage, naming the source and both entries (Q577); a source the
+    definition) refuses the stage, naming the source and both entries; a source the
     config does not read changes nothing."""
     resolved = _resolved(variant)
     meta, env = _eda_meta(resolved), _env(resolved)

@@ -30,7 +30,7 @@ from core_modelling.model.family_inputs import (
 FAMILY = "lgbm"
 FILE_NAME = "model.txt"
 MODEL_CLASSES = {"binary": lgb.LGBMClassifier, "regression": lgb.LGBMRegressor}
-OBJECTIVES = {  # Q639's names in LightGBM's words
+OBJECTIVES = {  # the config's objective names in LightGBM's words
     "binary": {"log_loss": {"objective": "binary"}},
     "regression": {
         "squared_error": {"objective": "regression"},
@@ -45,8 +45,8 @@ OBJECTIVES = {  # Q639's names in LightGBM's words
 # trees do not depend on it, and LightGBM reads the file back without it.
 THREADS_LINE = "[num_threads: "
 EXTRA_PARAMS = (  # what is passed beside the estimators' own parameters, and by whom
-    "monotone_constraints",  # fixed_params: the declared constraints (Q650)
-    "monotone_constraints_method",  # fixed_params: `basic`; `intermediate` may be searched (Q650)
+    "monotone_constraints",  # fixed_params: the declared constraints
+    "monotone_constraints_method",  # fixed_params: `basic`; `intermediate` may be searched
     "tweedie_variance_power",  # fixed_params, under Tweedie
     "alpha",  # fixed_params: Huber's delta
     "categorical_feature",  # fixed_params: the declared categoricals, a fit argument
@@ -79,11 +79,11 @@ def fixed_params(
     threads: int,
     tweedie_variance_power: float | None,
 ) -> dict:
-    """The constants every LightGBM fit of a run shares, trials and final fit alike (A55): the
+    """The constants every LightGBM fit of a run shares, trials and final fit alike: the
     objective (with the variance power under Tweedie; Huber's delta is fixed at 1.0), the seed,
     the threads, the declared categoricals (a fit argument), the monotone constraints as a comma
     string in the encoder's order (a bracketed string loses its first entry), and the `basic`
-    constraint method (Q650)."""
+    constraint method."""
     check_encoder(encoder)
     params = {
         **objective_params(FAMILY, task, objective, OBJECTIVES),
@@ -120,7 +120,7 @@ def fit(X: pd.DataFrame, y: np.ndarray, params: dict, task: str) -> lgb.Booster:
 
 def predict(booster: lgb.Booster, X: pd.DataFrame, threads: int | None = None) -> np.ndarray:
     """The margin from every tree: log-odds for binary, the raw output for regression (the log
-    scale under Tweedie and Poisson, A42). `threads` caps LightGBM's threads (None: its default,
+    scale under Tweedie and Poisson). `threads` caps LightGBM's threads (None: its default,
     every core); the margins are the same at any count."""
     extra = {} if threads is None else {"num_threads": threads}
     return booster.predict(
@@ -128,11 +128,13 @@ def predict(booster: lgb.Booster, X: pd.DataFrame, threads: int | None = None) -
     )
 
 
-def contributions(booster: lgb.Booster, X: pd.DataFrame) -> np.ndarray:
+def contributions(booster: lgb.Booster, X: pd.DataFrame, threads: int | None = None) -> np.ndarray:
     """LightGBM's own per-feature contributions to the margin (SHAP's tree values), one column
-    per feature in the booster's order and the base value last; a row sums to its margin."""
+    per feature in the booster's order and the base value last; a row sums to its margin.
+    `threads` as in `predict`."""
+    extra = {} if threads is None else {"num_threads": threads}
     return booster.predict(
-        _values(booster, X), pred_contrib=True, num_iteration=booster.current_iteration()
+        _values(booster, X), pred_contrib=True, num_iteration=booster.current_iteration(), **extra
     )
 
 

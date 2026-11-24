@@ -2,6 +2,8 @@
 each chart builds, has one trace per part plus its reference line, copes with one part only and
 any number of rows, and a missing column fails loud. No pixel checks."""
 
+from functools import partial, update_wrapper
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -10,6 +12,7 @@ import pytest
 from core_modelling.reporting.model_charts import (
     capture_chart,
     metric_lines,
+    part_colour,
     pr_chart,
     predicted_vs_observed,
     reliability_chart,
@@ -17,6 +20,7 @@ from core_modelling.reporting.model_charts import (
     score_distribution,
 )
 from core_modelling.reporting.theme import THEME
+from core_modelling.statistics.score_cells import MEAN
 
 
 def _curves(parts: tuple[str, ...] = ("test", "validation"), bins: int = 40) -> pd.DataFrame:
@@ -120,7 +124,7 @@ def test_reliability_chart_zooms_to_the_rare_rates() -> None:
 def test_predicted_vs_observed_draws_20_groups_with_the_diagonal() -> None:
     """The regression chart: a line per part over 20 groups and the diagonal."""
     amounts = _reliability(groups=20).assign(predicted=lambda d: d["predicted"] * 1e4)
-    fig = predicted_vs_observed(amounts.assign(observed=amounts["predicted"] * 0.9))
+    fig = predicted_vs_observed(amounts.assign(observed=amounts["predicted"] * 0.9), groups=20)
     assert _names(fig) == ["test", "validation", "perfect"]
     assert len(fig.data[0].x) == 20
 
@@ -156,6 +160,10 @@ def test_metric_lines_refuse_two_metrics() -> None:
         metric_lines(both)
 
 
+# the regression chart with its group count, under its own name for the message check
+AMOUNT_CHART = update_wrapper(partial(predicted_vs_observed, groups=20), predicted_vs_observed)
+
+
 @pytest.mark.parametrize(
     ("chart", "table", "column"),
     [
@@ -165,7 +173,7 @@ def test_metric_lines_refuse_two_metrics() -> None:
         (pr_chart, _curves(), "depth"),
         (capture_chart, _curves(), "capture"),
         (reliability_chart, _reliability(), "observed"),
-        (predicted_vs_observed, _reliability(), "predicted"),
+        (AMOUNT_CHART, _reliability(), "predicted"),
         (score_distribution, _distribution(), "percentile"),
         (score_distribution, _distribution(), "ratio"),
         (metric_lines, _metrics(), "insufficient"),
@@ -175,3 +183,26 @@ def test_a_missing_column_fails_loud(chart: object, table: pd.DataFrame, column:
     """Every chart names the chart and the column it lacks."""
     with pytest.raises(ValueError, match=f"{chart.__name__}: .*{column}"):
         chart(table.drop(columns=column))
+
+
+def test_the_score_distribution_carries_one_y_axis_title() -> None:
+    """The panels share one y axis, so one of them carries its title, not every panel."""
+    fig = score_distribution(_distribution())
+    titles = [axis.title.text for axis in (fig.layout.yaxis, fig.layout.yaxis2)]
+    assert titles[0] == "Ratio to chance" and not titles[1]
+
+
+def test_metric_lines_leave_out_the_mean_row_as_the_pooled_one() -> None:
+    """The periods' `mean` row is no point on the time axis, like `pooled`."""
+    metrics = _metrics()
+    mean = metrics.loc[metrics["period"] == "pooled"].assign(period=MEAN)
+    fig = metric_lines(pd.concat([metrics, mean], ignore_index=True))
+    assert {str(x) for trace in fig.data for x in trace.x}.isdisjoint({"pooled", MEAN})
+
+
+def test_part_colour_is_the_place_in_the_parts() -> None:
+    """Test takes the first sequence colour, validation the second; the lines use the same."""
+    assert part_colour("test") == THEME["sequence"][0]
+    assert part_colour("validation") == THEME["sequence"][1]
+    fig = roc_chart(_curves())
+    assert [t.line.color for t in fig.data[:2]] == [part_colour("test"), part_colour("validation")]

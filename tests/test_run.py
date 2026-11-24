@@ -35,33 +35,7 @@ NOTEBOOKS = [
 ]
 EDA_CANDIDATES = ["age", "income", "segment", "onboarding_channel", "cc_bal", "spend_cc_cnt"]
 UNSELECTED = {"cluster": False, "floor_z": None, "prune": False}  # six candidates need no rule
-# The Public API table of docs/architecture.md: what the shipped notebooks may import.
-PUBLIC_API = {
-    "core_modelling.config": {"load_config", "UseCaseConfig"},
-    "core_modelling.environment": {"get_spark_session", "load_environment", "feature_dir"},
-    "core_modelling.config.audit_log": {
-        "record_decision",
-        "show_decisions",
-        "resolve_config",
-        "read_resolved_config",
-    },  # fmt: skip
-    "core_modelling.target_factory": {"run_target_factory", "TargetSummary"},
-    "core_modelling.dataset": {"build_frames", "save_model_input", "Frames"},
-    "core_modelling.run": {"run"},
-    "core_modelling.artifacts": {"StageResult", "read_stage", "list_data_definitions"},
-    "core_modelling.ledger": {"read_ledger"},
-    "core_modelling.eda": {
-        "run_eda",
-        "pivot_target",
-        "lift_by_group",
-        "compare_sides",
-        "rate_by_period",
-    },  # fmt: skip
-    "core_modelling.feature_checks": {"run_feature_checks"},
-    "core_modelling.training": {"run_training"},
-    "core_modelling.evaluation": {"run_evaluation", "compare_runs"},
-    "core_modelling.runs": {"list_runs", "show_run"},
-}
+ARCHITECTURE = ROOT / "docs/architecture.md"  # its Public API table: what notebooks may import
 
 
 def _environment_file(tmp_path: Path, unit_output: tuple[str, dict]) -> Path:
@@ -170,17 +144,34 @@ def test_run_refuses_an_unknown_stage_or_entity_or_no_config(
         run([CONFIG, second_path], env_path=str(env_file))
 
 
+def _public_api() -> dict[str, set[str]]:
+    """The Public API table of `docs/architecture.md`, the one list of public names: per module
+    of a row's Module column, every name a backticked span of its Function column opens with
+    (a CLI command's row names no `core_modelling` module)."""
+    section = ARCHITECTURE.read_text().split("## Public API", 1)[1].split("\n## ", 1)[0]
+    public: dict[str, set[str]] = {}
+    for row in section.splitlines():
+        cells = row.split("|")
+        if len(cells) < 4:
+            continue
+        names = set(re.findall(r"`([A-Za-z_]\w*)", cells[1]))
+        for module in re.findall(r"`(core_modelling[\w.]*)`", cells[2]):
+            public.setdefault(module, set()).update(names)
+    return public
+
+
 @pytest.mark.parametrize("notebook", NOTEBOOKS, ids=lambda path: path.stem)
 def test_notebook_calls_only_the_public_api(notebook: Path) -> None:
     """Each shipped notebook imports from the Public API table only and defines nothing (D-024,
     D-039)."""
+    public = _public_api()
     cells = json.loads(notebook.read_text())["cells"]
     code = "\n".join("".join(cell["source"]) for cell in cells if cell["cell_type"] == "code")
     imports = re.findall(r"^from (core_modelling\S*) import (.+)$", code, flags=re.MULTILINE)
     assert imports, "the notebook imports nothing from core_modelling"
     for module, names in imports:
-        assert module in PUBLIC_API, f"{module} has no public function"
-        unknown = {name.strip() for name in names.split(",")} - PUBLIC_API[module]
+        assert module in public, f"{module} has no public function"
+        unknown = {name.strip() for name in names.split(",")} - public[module]
         assert not unknown, f"{module}: {unknown} are not public"
     assert not re.search(r"^\s*(def|class) ", code, flags=re.MULTILINE)
 

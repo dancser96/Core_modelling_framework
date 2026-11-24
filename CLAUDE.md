@@ -22,10 +22,10 @@ of every live model. Where we start from and where we want to reach: `docs/conte
   only gets a production model's source tables pointed to it at deploy. LLM-assisted modelling
   comes in Phase 3 (D-021).
 - **Current state:** Phase 2: Target Factory, EDA and Feature Checks are built (0.3.0). M2.3
-  Modelling is built (0.4.0): the foundations (the modelling config fields, client folds, the
+  Modelling is built (0.5.0): the foundations (the modelling config fields, client folds, the
   encoder, four model families, the bundle and scoring, numbered runs), Training, and
-  Evaluation with the model results report, the model card and `compare_runs`; the EDS's
-  joint review of Training and Evaluation is open. The crunch
+  Evaluation with the model results report, the model card and `compare_runs`; the audit of
+  2026-11-22 is applied, and the EDS's joint review of Training and Evaluation is open. The crunch
   implementation in `legacy/propensity_crunch/` is reference only. Status: `docs/UPDATES.md`. Plan
   and open decisions: `docs/roadmap.md`. Vocabulary: `docs/glossary.md`. Reading order and the
   stage → component map: `docs/README.md`.

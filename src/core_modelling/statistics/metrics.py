@@ -1,4 +1,4 @@
-"""A scorer's metrics and curve tables, read from its score cells (A92, A95, A96, A102).
+"""A scorer's metrics, slices and curve tables, read from its score cells.
 
 Every function reads one replicate's cells of one part (`score_cells.py`): pooled over periods or
 one period, one stratum level or all, so the client bootstrap (`bootstrap.py`) calls the same
@@ -12,7 +12,7 @@ catching an error. `tasks.TASK_SPECS` imports this module, so a task's choices a
 arguments (`roc`, `target_class`). Pure pandas and numpy.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -85,6 +85,21 @@ def _concordance(table: np.ndarray) -> float:
     return concordance_from_table(table, sign=1)
 
 
+def binned_concordance(
+    score: np.ndarray, target: np.ndarray, score_edges: np.ndarray, target_edges: np.ndarray
+) -> float:
+    """The concordance of rows read on cells: each row's score and target put in their buckets
+    on the edges as the Spark cells cut them (bucket i is `[e_i, e_{i+1})` over `[−inf, *edges,
+    inf]`), the bucket table read as the cells' concordance is. Train's in-sample score on the
+    score edges and target bins of test's cells ties the pairs test's cells tie, so the two
+    compare like with like. NaN when fewer than two target buckets hold rows."""
+    score_at = np.searchsorted(score_edges, np.asarray(score, dtype=float) + 0.0, side="right")
+    target_at = np.searchsorted(target_edges, np.asarray(target, dtype=float) + 0.0, side="right")
+    table = np.zeros((score_edges.size + 1, target_edges.size + 1))
+    np.add.at(table, (score_at, target_at), 1.0)
+    return _concordance(table)
+
+
 def _average_precision(rows: np.ndarray, events: np.ndarray) -> float:
     """The area under the precision–recall curve, a bin's events spread evenly over its rows
     (Davis and Goadrich's interpolation); NaN without events.
@@ -150,21 +165,22 @@ def _calibration_line(x: np.ndarray, n: np.ndarray, k: np.ndarray) -> tuple[floa
 
 
 def _require_sums(total: dict[str, float], columns: list[str]) -> None:
-    """Fail loud when a loss sum the caller declared present (`loss=True`) is null in a cell."""
+    """Fail loud when a loss sum the caller declared present (`has_loss=True`) is null in a
+    cell."""
     for column in columns:
         if np.isnan(total[column]):
             raise ValueError(
-                f"the score cells' `{column}` is null in some cell, yet loss=True declared the "
-                "scorer's loss sums present; pass loss=False for a scorer without them"
+                f"the score cells' `{column}` is null in some cell, yet has_loss=True declared "
+                "the scorer's loss sums present; pass has_loss=False for a scorer without them"
             )
 
 
-def binary_metrics(cells: pd.DataFrame, base: float, loss: bool = True) -> dict[str, float]:
+def binary_metrics(cells: pd.DataFrame, base: float, has_loss: bool = True) -> dict[str, float]:
     """A 0/1 target's metrics on one replicate's cells of one part.
 
-    `base` is the unsampled train split's rate, the forecast of no skill. `loss` says, decided
-    up front, whether the cells carry the scorer's loss sums, `loss_sum` and `link_sum` (the
-    scorer is a probability: a model, not a raw feature as a baseline); without them the
+    `base` is the unsampled train split's rate, the forecast of no skill. `has_loss` says,
+    decided up front, whether the cells carry the scorer's loss sums, `loss_sum` and `link_sum`
+    (the scorer is a probability: a model, not a raw feature as a baseline); without them the
     probability metrics are NaN, and declared but null fails loud. Keys: `rows`, `events`,
     `base_rate` (the part's), `roc_auc`, `ap`, `log_loss`, `log_loss_skill` and `brier_skill`
     (`1 − loss / loss of the constant forecast base`), `observed_to_expected` (events over the
@@ -181,7 +197,7 @@ def binary_metrics(cells: pd.DataFrame, base: float, loss: bool = True) -> dict[
     base_log_loss = -(rate * np.log(base) + (1 - rate) * np.log1p(-base))
     base_brier = rate * (1 - 2 * base) + base**2  # the mean of (y − base)² for a 0/1 y
     slope, intercept, log_loss = NAN, NAN, NAN
-    if loss:
+    if has_loss:
         _require_sums(total, ["loss_sum", "link_sum"])
         filled = grid["rows"] > 0
         n, k = grid["rows"][filled], grid["target_sum"][filled]
@@ -192,17 +208,17 @@ def binary_metrics(cells: pd.DataFrame, base: float, loss: bool = True) -> dict[
         "roc_auc": _concordance(grid["rows"]),
         "ap": _average_precision(grid["rows"].sum(axis=1), grid["target_sum"].sum(axis=1)),
         "log_loss": log_loss, "log_loss_skill": 1 - log_loss / base_log_loss,
-        "brier_skill": 1 - total["sq_error_sum"] / rows / base_brier if loss else NAN,
-        "observed_to_expected": _ratio(events, total["score_sum"]) if loss else NAN,
+        "brier_skill": 1 - total["sq_error_sum"] / rows / base_brier if has_loss else NAN,
+        "observed_to_expected": _ratio(events, total["score_sum"]) if has_loss else NAN,
         "calibration_slope": slope, "calibration_intercept": intercept,
     }  # fmt: skip
 
 
-def regression_metrics(cells: pd.DataFrame, base: float, loss: bool = True) -> dict[str, float]:
+def regression_metrics(cells: pd.DataFrame, base: float, has_loss: bool = True) -> dict[str, float]:
     """An amount's metrics on one replicate's cells of one part.
 
-    `loss` says, decided up front, whether the cells carry the scorer's loss sum, a deviance in
-    `loss_sum` (the objective or the decision names one); without it `deviance` is NaN, and
+    `has_loss` says, decided up front, whether the cells carry the scorer's loss sum, a deviance
+    in `loss_sum` (the objective or the decision names one); without it `deviance` is NaN, and
     declared but null fails loud.
     Keys: `rows`, `events` (rows with a non-zero target: a cell whose target sums to 0, EDA's
     zero bin rule), `mean`, `rmse`, `mae`, `r2` (against the part's own mean), `deviance` (the
@@ -211,7 +227,7 @@ def regression_metrics(cells: pd.DataFrame, base: float, loss: bool = True) -> d
     target). `base` goes unread: it is in the signature every task's `cell_metrics` shares.
     """
     total = _totals(cells)
-    if loss:
+    if has_loss:
         _require_sums(total, ["loss_sum"])
     grid = _grid(cells, ["rows"])
     rows, target = total["rows"], total["target_sum"]
@@ -224,7 +240,7 @@ def regression_metrics(cells: pd.DataFrame, base: float, loss: bool = True) -> d
         "rmse": float(np.sqrt(total["sq_error_sum"] / rows)),
         "mae": total["abs_error_sum"] / rows,
         "r2": 1 - total["sq_error_sum"] / spread if spread > 0 else NAN,
-        "deviance": total["loss_sum"] / rows if loss else NAN,
+        "deviance": total["loss_sum"] / rows if has_loss else NAN,
         "concordance": _concordance(grid["rows"]),
         "predicted_to_observed": _ratio(total["score_sum"], target),
     }
@@ -238,48 +254,75 @@ def slice_labels(slices: "Slices") -> list[str]:
     ]
 
 
-def _slice_shares(slices: "Slices", population: int) -> tuple[list[str], np.ndarray]:
-    """Each slice's label and the share of the part's rows it cuts: a `top_pct` as given, a
-    `top_n` as `n / population`, NaN above the population (not available)."""
+def _slice_shares(
+    slices: "Slices", population: int, narrowest: float
+) -> tuple[list[str], np.ndarray, np.ndarray]:
+    """Each slice's label, the share of the part's rows it cuts (a `top_pct` as given, a `top_n`
+    as `n / population`) and its reason, '' when available, decided from the declared slice and
+    the population alone: a `top_n` above the population, or a share below `narrowest` (the
+    narrowest a slice is read at, `evaluation/slices.py::narrowest_slice`), is not available;
+    its share is then NaN."""
     if not population > 0:
         raise ValueError(f"slice_metrics: the population must be positive, got {population}")
-    shares = [*slices.top_pct, *(n / population if n <= population else NAN for n in slices.top_n)]
-    return slice_labels(slices), np.array(shares, dtype=float)
+    if not 0 < narrowest < 1:
+        raise ValueError(f"slice_metrics: the narrowest slice must lie in (0, 1): {narrowest}")
+    shares = np.array([*slices.top_pct, *(n / population for n in slices.top_n)], dtype=float)
+    above = f"not available: above the population of {population:,}"
+    narrower = (f"not available: narrower than {narrowest * 100:g}% of the rows, below which "
+                "the score bins' error nears a slice's sampling error")  # fmt: skip
+    reasons = np.where(shares > 1, above, np.where(shares < narrowest, narrower, ""))
+    return slice_labels(slices), np.where(reasons == "", shares, NAN), reasons
 
 
-def slice_metrics(cells: pd.DataFrame, slices: "Slices", population: int) -> pd.DataFrame:
-    """One period's slices of one part, cut from the top of the score as additive counts.
+def cut_slices(
+    cells: pd.DataFrame, slices: "Slices", population: int, narrowest: float
+) -> tuple[pd.DataFrame, np.ndarray]:
+    """One period's slices of one part cut from the top of the score, the cut bin split in
+    proportion to its rows: the one cut the slices and the strata's composition share.
 
     A `top_pct` is a share of the part's rows in the period; a `top_n` is read as the share
     `n / population` of the period's eligible rows over both splits and cut at that share inside
-    the part, and above the population it is not available. The cut bin is split in proportion
-    to its rows. Returns one row per slice in config order: `slice` (`top 5%`, `top 10,000`),
-    `rows`, `target` (the events or the amount inside), `part_rows`, `part_target` and
-    `unavailable` (the reason, '' when available; the counts are then null). `slice_rates` adds
-    the periods and derives capture, rate and lift.
+    the part. Above the population, or below `narrowest` (a few of the finest score bins'
+    share, where splitting the cut bin's rows by a guess weighs as much as the sampling), a
+    slice is not available (`_slice_shares`).
+    Returns one row per slice in config order, `slice` (`top 5%`, `top 10,000`), `rows` (the
+    list's) and `unavailable` (the reason, '' when available), and a slices × cells array: the
+    share of each cell's rows inside each list, in the cells' row order (NaN for a slice not
+    available).
     """
     _check_cells(cells)
     period = cells["period"].to_numpy()
     if (period != period[0]).any():
         raise ValueError("slice_metrics: the cells hold several periods; slices are cut per period")
-    sums = _by_score_bin(cells, ["rows", "target_sum"])
-    depth = np.concatenate([[0.0], np.cumsum(sums["rows"][::-1])])  # from the top score bin
-    reached = np.concatenate([[0.0], np.cumsum(sums["target_sum"][::-1])])
-    labels, shares = _slice_shares(slices, population)
-    rows = shares * depth[-1]
-    target = np.where(np.isnan(rows), NAN, np.interp(np.nan_to_num(rows), depth, reached))
-    reason = np.where(
-        np.isnan(shares), f"not available: above the population of {population:,}", ""
-    )
-    return pd.DataFrame({
-        "slice": labels, "rows": rows, "target": target, "part_rows": depth[-1],
-        "part_target": reached[-1], "unavailable": reason,
-    })  # fmt: skip
+    labels, shares, reasons = _slice_shares(slices, population, narrowest)
+    bins, at = np.unique(cells["score_bin"].to_numpy(), return_inverse=True)
+    per_bin = np.bincount(at, cells["rows"].to_numpy(dtype=float), bins.size)
+    above = np.cumsum(per_bin[::-1])[::-1] - per_bin  # the rows in the higher score bins
+    depth = shares * per_bin.sum()
+    inside = np.clip((depth[:, None] - above[None, :]) / per_bin[None, :], 0.0, 1.0)
+    counts = pd.DataFrame({"slice": labels, "rows": depth, "unavailable": reasons})
+    return counts, inside[:, at]
 
 
-def slice_rates(counts: pd.DataFrame) -> pd.DataFrame:
+def slice_metrics(
+    cells: pd.DataFrame, slices: "Slices", population: int, narrowest: float
+) -> pd.DataFrame:
+    """One period's slices of one part as additive counts (`cut_slices`). Returns one row per
+    slice in config order: `slice`, `rows`, `target` (the events or the amount inside),
+    `part_rows`, `part_target` and `unavailable` (the reason, '' when available; the counts are
+    then null). `slice_rates` adds the periods and derives capture, rate and lift."""
+    counts, inside = cut_slices(cells, slices, population, narrowest)
+    return counts.assign(
+        target=inside @ cells["target_sum"].to_numpy(dtype=float),
+        part_rows=cells["rows"].to_numpy(dtype=float).sum(),
+        part_target=cells["target_sum"].to_numpy(dtype=float).sum(),
+    )[["slice", "rows", "target", "part_rows", "part_target", "unavailable"]]
+
+
+def slice_rates(counts: pd.DataFrame, by: tuple[str, ...] = ("slice",)) -> pd.DataFrame:
     """Each slice's capture, rate and lift from `slice_metrics`' counts of one part, its
-    periods' tables stacked and added up first (one period's table works alike).
+    periods' tables stacked and added up first by `by` (`("period", "slice")` keeps each
+    period apart in one call; one period's table works alike).
 
     A slice not available in one period is not available in the sum: its reason is kept and its
     numbers are null, so no period drops out silently. Adds `capture` (the share of the part's
@@ -288,7 +331,7 @@ def slice_rates(counts: pd.DataFrame) -> pd.DataFrame:
     """
     if "part" in counts and counts["part"].nunique() > 1:
         raise ValueError("slice_rates: the counts hold several parts; pass one part's periods")
-    grouped = counts.groupby("slice", sort=False)
+    grouped = counts.groupby(list(by), sort=False)
     added = grouped[SLICE_COUNTS].sum().join(grouped["unavailable"].max()).reset_index()
     added.loc[added["unavailable"] != "", ["rows", "target"]] = NAN  # '' sorts below a reason
     part_rate = added["part_target"] / added["part_rows"]
@@ -326,14 +369,23 @@ def threshold_table(cells: pd.DataFrame, roc: bool) -> pd.DataFrame:
     })  # fmt: skip
 
 
+def curve_at_depths(curve: pd.DataFrame, depths: Sequence[float]) -> pd.DataFrame:
+    """One part's curve rows (`threshold_table`'s) at `depths`: for each, the first score bin
+    from the top whose cumulative share of rows reaches it (the last bin when none does), each
+    bin once, in depth order. Same columns as `curve`."""
+    ordered = curve.sort_values("depth", kind="stable")
+    at = ordered["depth"].searchsorted(list(depths)).clip(max=len(ordered) - 1)
+    return ordered.iloc[sorted(set(at))]
+
+
 def reliability_table(cells: pd.DataFrame, groups: int = 10) -> pd.DataFrame:
     """The mean score beside the mean target in `groups` groups of about equal rows, cut on the
     score bins (a bin joins the group its middle row falls in), lowest scores first.
 
     Columns: `group` (0 the lowest; an empty group is left out), `rows`, `predicted` (the mean
     score) and `observed` (the mean target). Regression's predicted-to-observed chart reads it at
-    20 groups; over its 50 bins, dense at the top, a lower group holds one or two bins (3.6% or
-    7.2% of the rows), not 5%.
+    20 groups; below the top 10%, its bins hold 3.6% of the rows each, so a lower group holds
+    one or two bins (3.6% or 7.2% of the rows), not 5%.
     """
     sums = _by_score_bin(cells, ["rows", "score_sum", "target_sum"])
     middle = np.cumsum(sums["rows"]) - sums["rows"] / 2
